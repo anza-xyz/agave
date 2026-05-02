@@ -259,8 +259,9 @@ impl<'a> State<'a> {
                 }
                 let mut my_handler =
                     MyVoteStateHandler::try_new(vote_accounts, vote_pubkey).unwrap();
-                reward_state.update_account(validator_reward, &mut my_handler.handler);
+                // TODO: this order matters!
                 final_cert_state.update_account(vote_pubkey, &mut my_handler.handler);
+                reward_state.update_account(validator_reward, &mut my_handler.handler);
                 let updated_account = my_handler.serialize().unwrap();
                 StateUpdateAccountResult::NonLeaderReward(updated_account, leader_reward)
             }
@@ -405,36 +406,41 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         (Some(reward_cert), Some((signers, _))) => {
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut total_leader_reward = 0;
-            let state = State::new(bank, None, final_cert_input).unwrap().unwrap();
-            state.update_accounts(
-                &vote_accounts,
-                reward_validators.difference(signers),
-                &mut updated_accounts,
-                &mut total_leader_reward,
-            );
-            assert_eq!(total_leader_reward, 0);
+            {
+                let state = State::new(bank, None, final_cert_input).unwrap().unwrap();
+                state.update_accounts(
+                    &vote_accounts,
+                    signers.difference(&reward_validators),
+                    &mut updated_accounts,
+                    &mut total_leader_reward,
+                );
+                assert_eq!(total_leader_reward, 0);
+            }
 
-            let state = State::new(bank, Some(reward_slot), final_cert_input)
-                .unwrap()
-                .unwrap();
-            state.update_accounts(
-                &vote_accounts,
-                reward_validators.intersection(signers),
-                &mut updated_accounts,
-                &mut total_leader_reward,
-            );
+            {
+                let state = State::new(bank, Some(reward_slot), None).unwrap().unwrap();
+                state.update_accounts(
+                    &vote_accounts,
+                    reward_validators.difference(signers),
+                    &mut updated_accounts,
+                    &mut total_leader_reward,
+                );
+            }
 
-            let state = State::new(bank, Some(reward_slot), None).unwrap().unwrap();
-            state.update_accounts(
-                &vote_accounts,
-                signers.difference(&reward_validators),
-                &mut updated_accounts,
-                &mut total_leader_reward,
-            );
-
-            let leader_vote_pubkey = bank.leader().vote_address;
-            let leader_account = state.update_leader(&vote_accounts, total_leader_reward);
-            updated_accounts.push((leader_vote_pubkey, leader_account));
+            {
+                let state = State::new(bank, Some(reward_slot), final_cert_input)
+                    .unwrap()
+                    .unwrap();
+                state.update_accounts(
+                    &vote_accounts,
+                    reward_validators.intersection(signers),
+                    &mut updated_accounts,
+                    &mut total_leader_reward,
+                );
+                let leader_vote_pubkey = bank.leader().vote_address;
+                let leader_account = state.update_leader(&vote_accounts, total_leader_reward);
+                updated_accounts.push((leader_vote_pubkey, leader_account));
+            }
             bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
             Ok(())
         }
