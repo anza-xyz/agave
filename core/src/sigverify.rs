@@ -313,6 +313,7 @@ impl SigVerifyWorkerPool {
         mut work: GossipVerifyTask,
         verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
     ) -> bool {
+        // Gossip votes are legacy Transaction values, not tx-v1 packets.
         sigverify::ed25519_verify_serial(&mut work.batch, true, false);
 
         if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {

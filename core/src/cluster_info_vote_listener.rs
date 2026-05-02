@@ -997,6 +997,7 @@ mod tests {
         votes: &[Transaction],
     ) {
         let mut packet_batches = packet::to_packet_batches(votes, 1);
+        // Gossip votes are legacy Transaction values, not tx-v1 packets.
         packet_batches
             .iter_mut()
             .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true, false));
