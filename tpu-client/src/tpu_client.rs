@@ -253,7 +253,7 @@ where
     ) -> TransportResult<Signature> {
         let wire_transaction =
             wincode::serialize(&transaction).expect("serialize Transaction in send_batch");
-        self.send_wire_transaction(wire_transaction);
+        self.try_send_wire_transaction(wire_transaction)?;
         Ok(transaction.signatures[0])
     }
 

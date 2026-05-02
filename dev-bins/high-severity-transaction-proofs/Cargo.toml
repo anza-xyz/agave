@@ -1,0 +1,21 @@
+[package]
+name = "high-severity-transaction-proofs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "high-severity-transaction-proofs"
+path = "src/main.rs"
+
+[dependencies]
+solana-commitment-config = "3.1.1"
+solana-hash = "4.3.0"
+solana-pubkey = "4.2.0"
+solana-rpc-client = { path = "../../rpc-client", default-features = false }
+solana-rpc-client-nonce-utils = { path = "../../rpc-client-nonce-utils" }
+
+# This crate intentionally has no signing/keypair/transaction-sending dependencies.
+# Live mode is read-only RPC proofing only.

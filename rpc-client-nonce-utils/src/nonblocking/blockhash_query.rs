@@ -49,10 +49,19 @@ impl Source {
         Ok(match self {
             Self::Cluster => rpc_client.is_blockhash_valid(blockhash, commitment).await?,
             Self::NonceAccount(pubkey) => {
-                let _ = nonblocking::get_account_with_commitment(rpc_client, pubkey, commitment)
+                let data = nonblocking::get_account_with_commitment(rpc_client, pubkey, commitment)
                     .await
                     .and_then(|ref a| nonblocking::data_from_account(a))?;
-                true
+                let nonce_blockhash = data.blockhash();
+                if nonce_blockhash == *blockhash {
+                    true
+                } else {
+                    return Err(nonblocking::Error::InvalidHash {
+                        provided: *blockhash,
+                        expected: nonce_blockhash,
+                    }
+                    .into());
+                }
             }
         })
     }
@@ -414,6 +423,17 @@ mod tests {
                 .await
                 .unwrap(),
             nonce_blockhash,
+        );
+
+        let stale_nonce_blockhash = Hash::new_from_array([5u8; 32]);
+        let mut mocks = HashMap::new();
+        mocks.insert(RpcRequest::GetAccountInfo, get_account_response.clone());
+        let rpc_client = RpcClient::new_mock_with_mocks("".to_string(), mocks);
+        assert!(
+            BlockhashQuery::Validated(Source::NonceAccount(nonce_pubkey), stale_nonce_blockhash,)
+                .get_blockhash(&rpc_client, CommitmentConfig::default())
+                .await
+                .is_err()
         );
 
         let mut mocks = HashMap::new();
