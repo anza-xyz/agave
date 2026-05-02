@@ -45,27 +45,44 @@ pub(super) enum Error {
     RankMapNotFound,
 }
 
-struct MyVoteStateHandler {
+#[derive(Debug, Error)]
+enum VoteStateError {
+    #[error("could not find the vote account")]
+    AccountNotFound,
+    #[error("deserializing vote account failed with {0}")]
+    DeserializeFailed(BincodeError),
+    #[error("converting account into VoteStateHandler failed with {0}")]
+    HandlerConversionFailed(InstructionError),
+    #[error("serializing VoteStateHandler failed with {0}")]
+    SerializeFailed(InstructionError),
+}
+
+/// Data needed to operate on `VoteStateHandler`.
+struct VoteState {
+    /// Reference to actual `VoteStateHandler`.
     handler: VoteStateHandler,
+    /// How many lamports were stored in the account.
     lamports: u64,
+    /// How much space the account takes up.
     space: usize,
+    /// Who owns the account.
     owner: Pubkey,
 }
 
-impl MyVoteStateHandler {
+impl VoteState {
     fn try_new(
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
         vote_pubkey: Pubkey,
-    ) -> Result<Self, UpdateAccountError> {
+    ) -> Result<Self, VoteStateError> {
         let account = vote_accounts
             .get(&vote_pubkey)
-            .ok_or(UpdateAccountError::AccountNotFound)?
+            .ok_or(VoteStateError::AccountNotFound)?
             .1
             .account();
         let versions =
-            bincode::deserialize(account.data()).map_err(UpdateAccountError::DeserializeFailed)?;
+            bincode::deserialize(account.data()).map_err(VoteStateError::DeserializeFailed)?;
         let handler = VoteStateHandler::try_new_from_vote_state_versions(versions)
-            .map_err(UpdateAccountError::HandlerConversionFailed)?;
+            .map_err(VoteStateError::HandlerConversionFailed)?;
         Ok(Self {
             handler,
             lamports: account.lamports(),
@@ -74,11 +91,11 @@ impl MyVoteStateHandler {
         })
     }
 
-    fn serialize(self) -> Result<AccountSharedData, UpdateAccountError> {
+    fn serialize(self) -> Result<AccountSharedData, VoteStateError> {
         let mut updated_account = AccountSharedData::new(self.lamports, self.space, &self.owner);
         self.handler
             .serialize_into(updated_account.data_as_mut_slice())
-            .map_err(UpdateAccountError::SerializeFailed)?;
+            .map_err(VoteStateError::SerializeFailed)?;
         Ok(updated_account)
     }
 }
@@ -186,7 +203,7 @@ impl<'a> FinalCertState<'a> {
 }
 
 enum StateUpdateAccountResult {
-    Err(UpdateAccountError),
+    Err(VoteStateError),
     FinalCert(AccountSharedData),
     NonLeaderReward(AccountSharedData, u64),
     LeaderReward(u64),
@@ -241,15 +258,13 @@ impl<'a> State<'a> {
                         validator_reward + leader_reward,
                     );
                 }
-                let mut my_handler =
-                    MyVoteStateHandler::try_new(vote_accounts, vote_pubkey).unwrap();
+                let mut my_handler = VoteState::try_new(vote_accounts, vote_pubkey).unwrap();
                 state.update_account(validator_reward, &mut my_handler.handler);
                 let updated_account = my_handler.serialize().unwrap();
                 StateUpdateAccountResult::NonLeaderReward(updated_account, leader_reward)
             }
             Self::FinalCert(state) => {
-                let mut my_handler =
-                    MyVoteStateHandler::try_new(vote_accounts, vote_pubkey).unwrap();
+                let mut my_handler = VoteState::try_new(vote_accounts, vote_pubkey).unwrap();
                 state.update_account(vote_pubkey, &mut my_handler.handler);
                 let updated_account = my_handler.serialize().unwrap();
                 StateUpdateAccountResult::FinalCert(updated_account)
@@ -262,8 +277,7 @@ impl<'a> State<'a> {
                         validator_reward + leader_reward,
                     );
                 }
-                let mut my_handler =
-                    MyVoteStateHandler::try_new(vote_accounts, vote_pubkey).unwrap();
+                let mut my_handler = VoteState::try_new(vote_accounts, vote_pubkey).unwrap();
                 reward_state.update_account(validator_reward, &mut my_handler.handler);
                 final_cert_state.update_account(vote_pubkey, &mut my_handler.handler);
                 let updated_account = my_handler.serialize().unwrap();
@@ -305,14 +319,13 @@ impl<'a> State<'a> {
             Self::FinalCert(_) => panic!(),
             Self::Reward(state) => {
                 let mut my_handler =
-                    MyVoteStateHandler::try_new(vote_accounts, state.leader_vote_pubkey).unwrap();
+                    VoteState::try_new(vote_accounts, state.leader_vote_pubkey).unwrap();
                 state.update_account(reward, &mut my_handler.handler);
                 my_handler.serialize().unwrap()
             }
             Self::Both(reward_state, final_cert_state) => {
                 let mut my_handler =
-                    MyVoteStateHandler::try_new(vote_accounts, reward_state.leader_vote_pubkey)
-                        .unwrap();
+                    VoteState::try_new(vote_accounts, reward_state.leader_vote_pubkey).unwrap();
                 reward_state.update_account(reward, &mut my_handler.handler);
                 final_cert_state
                     .update_account(reward_state.leader_vote_pubkey, &mut my_handler.handler);
@@ -320,18 +333,6 @@ impl<'a> State<'a> {
             }
         }
     }
-}
-
-#[derive(Debug, Error)]
-enum UpdateAccountError {
-    #[error("could not find the vote account")]
-    AccountNotFound,
-    #[error("deserializing vote account failed with {0}")]
-    DeserializeFailed(BincodeError),
-    #[error("converting account into VoteStateHandler failed with {0}")]
-    HandlerConversionFailed(InstructionError),
-    #[error("serializing VoteStateHandler failed with {0}")]
-    SerializeFailed(InstructionError),
 }
 
 fn allocate_updated_accounts(
