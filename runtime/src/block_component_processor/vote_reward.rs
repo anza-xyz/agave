@@ -218,8 +218,19 @@ impl<'a> FinalCertState<'a> {
     }
 }
 
-enum StateUpdateAccountResult {
-    Err(VoteStateError),
+#[derive(Debug, Error)]
+enum StateError {
+    #[error("RewardState::new() failed with {0}")]
+    RewardStateNew(RewardStateError),
+    #[error("RewardState::calculate_reward() failed with {0}")]
+    RewardStateCalcReward(RewardStateError),
+    #[error("VoteState::new() failed with {0}")]
+    VoteStateNew(VoteStateError),
+    #[error("VoteState::serialize() failed with {0}")]
+    VoteStateSerialize(VoteStateError),
+}
+
+enum UpdateAccountRes {
     FinalCert(AccountSharedData),
     NonLeaderReward(AccountSharedData, u64),
     LeaderReward(u64),
@@ -236,7 +247,7 @@ impl<'a> State<'a> {
         bank: &'a Bank,
         reward_slot: Option<Slot>,
         final_cert_input: Option<(&'a HashSet<Pubkey>, Slot)>,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Option<Self>, StateError> {
         match (reward_slot, final_cert_input) {
             (None, None) => Ok(None),
             (None, Some((signers, final_slot))) => Ok(Some(Self::FinalCert(FinalCertState {
@@ -244,11 +255,12 @@ impl<'a> State<'a> {
                 final_slot,
             }))),
             (Some(reward_slot), None) => Ok(Some(Self::Reward(
-                RewardState::new(bank, reward_slot, reward_slot).unwrap(),
+                RewardState::new(bank, reward_slot, reward_slot)
+                    .map_err(StateError::RewardStateNew)?,
             ))),
             (Some(reward_slot), Some((signers, final_slot))) => {
-                let reward_state =
-                    RewardState::new(bank, reward_slot, reward_slot.max(final_slot)).unwrap();
+                let reward_state = RewardState::new(bank, reward_slot, reward_slot.max(final_slot))
+                    .map_err(StateError::RewardStateNew)?;
                 let final_cert_state = FinalCertState {
                     signers,
                     final_slot,
@@ -262,40 +274,57 @@ impl<'a> State<'a> {
         &self,
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
         vote_pubkey: Pubkey,
-    ) -> StateUpdateAccountResult {
+    ) -> Result<UpdateAccountRes, StateError> {
         match self {
             Self::Reward(state) => {
-                let (validator_reward, leader_reward) =
-                    state.calculate_reward(vote_pubkey).unwrap();
+                let (validator_reward, leader_reward) = state
+                    .calculate_reward(vote_pubkey)
+                    .map_err(StateError::RewardStateCalcReward)?;
                 if vote_pubkey == state.leader_vote_pubkey {
-                    return StateUpdateAccountResult::LeaderReward(
+                    return Ok(UpdateAccountRes::LeaderReward(
                         validator_reward + leader_reward,
-                    );
+                    ));
                 }
-                let mut my_handler = VoteState::try_new(vote_accounts, vote_pubkey).unwrap();
-                state.update_account(validator_reward, &mut my_handler.handler);
-                let updated_account = my_handler.serialize().unwrap();
-                StateUpdateAccountResult::NonLeaderReward(updated_account, leader_reward)
+                let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
+                    .map_err(StateError::VoteStateNew)?;
+                state.update_account(validator_reward, &mut vote_state.handler);
+                let updated_account = vote_state
+                    .serialize()
+                    .map_err(StateError::VoteStateSerialize)?;
+                Ok(UpdateAccountRes::NonLeaderReward(
+                    updated_account,
+                    leader_reward,
+                ))
             }
             Self::FinalCert(state) => {
-                let mut my_handler = VoteState::try_new(vote_accounts, vote_pubkey).unwrap();
-                state.update_account(vote_pubkey, &mut my_handler.handler);
-                let updated_account = my_handler.serialize().unwrap();
-                StateUpdateAccountResult::FinalCert(updated_account)
+                let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
+                    .map_err(StateError::VoteStateNew)?;
+                state.update_account(vote_pubkey, &mut vote_state.handler);
+                let updated_account = vote_state
+                    .serialize()
+                    .map_err(StateError::VoteStateSerialize)?;
+                Ok(UpdateAccountRes::FinalCert(updated_account))
             }
             Self::Both(reward_state, final_cert_state) => {
-                let (validator_reward, leader_reward) =
-                    reward_state.calculate_reward(vote_pubkey).unwrap();
+                let (validator_reward, leader_reward) = reward_state
+                    .calculate_reward(vote_pubkey)
+                    .map_err(StateError::RewardStateCalcReward)?;
                 if vote_pubkey == reward_state.leader_vote_pubkey {
-                    return StateUpdateAccountResult::LeaderReward(
+                    return Ok(UpdateAccountRes::LeaderReward(
                         validator_reward + leader_reward,
-                    );
+                    ));
                 }
-                let mut my_handler = VoteState::try_new(vote_accounts, vote_pubkey).unwrap();
-                reward_state.update_account(validator_reward, &mut my_handler.handler);
-                final_cert_state.update_account(vote_pubkey, &mut my_handler.handler);
-                let updated_account = my_handler.serialize().unwrap();
-                StateUpdateAccountResult::NonLeaderReward(updated_account, leader_reward)
+                let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
+                    .map_err(StateError::VoteStateNew)?;
+                reward_state.update_account(validator_reward, &mut vote_state.handler);
+                final_cert_state.update_account(vote_pubkey, &mut vote_state.handler);
+                let updated_account = vote_state
+                    .serialize()
+                    .map_err(StateError::VoteStateSerialize)?;
+                Ok(UpdateAccountRes::NonLeaderReward(
+                    updated_account,
+                    leader_reward,
+                ))
             }
         }
     }
@@ -308,16 +337,13 @@ impl<'a> State<'a> {
         total_leader_reward: &mut u64,
     ) {
         for &validator in validators {
-            match self.update_account(vote_accounts, validator) {
-                StateUpdateAccountResult::Err(err) => panic!("{err}"),
-                StateUpdateAccountResult::FinalCert(acct) => {
-                    updated_accounts.push((validator, acct))
-                }
-                StateUpdateAccountResult::NonLeaderReward(acct, leader_reward) => {
+            match self.update_account(vote_accounts, validator).unwrap() {
+                UpdateAccountRes::FinalCert(acct) => updated_accounts.push((validator, acct)),
+                UpdateAccountRes::NonLeaderReward(acct, leader_reward) => {
                     updated_accounts.push((validator, acct));
                     *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
                 }
-                StateUpdateAccountResult::LeaderReward(leader_reward) => {
+                UpdateAccountRes::LeaderReward(leader_reward) => {
                     *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
                 }
             }
@@ -328,22 +354,27 @@ impl<'a> State<'a> {
         &self,
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
         reward: u64,
-    ) -> AccountSharedData {
+    ) -> Result<AccountSharedData, StateError> {
         match self {
             Self::FinalCert(_) => panic!(),
             Self::Reward(state) => {
-                let mut my_handler =
-                    VoteState::try_new(vote_accounts, state.leader_vote_pubkey).unwrap();
-                state.update_account(reward, &mut my_handler.handler);
-                my_handler.serialize().unwrap()
+                let mut vote_state = VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
+                    .map_err(StateError::VoteStateNew)?;
+                state.update_account(reward, &mut vote_state.handler);
+                vote_state
+                    .serialize()
+                    .map_err(StateError::VoteStateSerialize)
             }
             Self::Both(reward_state, final_cert_state) => {
-                let mut my_handler =
-                    VoteState::try_new(vote_accounts, reward_state.leader_vote_pubkey).unwrap();
-                reward_state.update_account(reward, &mut my_handler.handler);
+                let mut vote_state =
+                    VoteState::try_new(vote_accounts, reward_state.leader_vote_pubkey)
+                        .map_err(StateError::VoteStateNew)?;
+                reward_state.update_account(reward, &mut vote_state.handler);
                 final_cert_state
-                    .update_account(reward_state.leader_vote_pubkey, &mut my_handler.handler);
-                my_handler.serialize().unwrap()
+                    .update_account(reward_state.leader_vote_pubkey, &mut vote_state.handler);
+                vote_state
+                    .serialize()
+                    .map_err(StateError::VoteStateSerialize)
             }
         }
     }
@@ -416,7 +447,9 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                 &mut total_leader_reward,
             );
             let leader_vote_pubkey = bank.leader().vote_address;
-            let leader_account = state.update_leader(&vote_accounts, total_leader_reward);
+            let leader_account = state
+                .update_leader(&vote_accounts, total_leader_reward)
+                .unwrap();
             updated_accounts.push((leader_vote_pubkey, leader_account));
             bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
             Ok(())
@@ -457,7 +490,9 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                     &mut total_leader_reward,
                 );
                 let leader_vote_pubkey = bank.leader().vote_address;
-                let leader_account = state.update_leader(&vote_accounts, total_leader_reward);
+                let leader_account = state
+                    .update_leader(&vote_accounts, total_leader_reward)
+                    .unwrap();
                 updated_accounts.push((leader_vote_pubkey, leader_account));
             }
             bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
