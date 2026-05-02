@@ -78,7 +78,7 @@ pub struct ValidatedRewardCert {
 
 impl ValidatedRewardCert {
     /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
-    pub(crate) fn try_new(
+    pub fn try_new(
         bank: &Bank,
         skip: &Option<SkipRewardCertificate>,
         notar: &Option<NotarRewardCertificate>,
