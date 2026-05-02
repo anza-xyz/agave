@@ -157,15 +157,21 @@ pub fn execute(
         }
     }
 
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
+    let xdp_interface = matches
+        .value_of("xdp_interface")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let retransmit_xdp = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
+        .map(|cpus| {
+            XdpConfig::new(
+                xdp_interface,
+                parse_cpu_ranges(cpus).unwrap(),
+                xdp_zero_copy,
+            )
+        });
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())

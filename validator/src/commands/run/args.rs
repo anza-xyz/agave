@@ -1217,32 +1217,27 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
-        Arg::with_name("retransmit_xdp_interface")
-            .hidden(hidden_unless_forced())
-            .long("experimental-retransmit-xdp-interface")
+        Arg::with_name("xdp_interface")
+            .long("xdp-interface")
             .takes_value(true)
             .value_name("INTERFACE")
-            .requires("retransmit_xdp_cpu_cores")
-            .help("EXPERIMENTAL: The network interface to use for XDP retransmit"),
+            .requires("xdp_cpu_cores")
+            .help("Network interface to use for XDP"),
     )
     .arg(
-        Arg::with_name("retransmit_xdp_cpu_cores")
-            .hidden(hidden_unless_forced())
-            .long("experimental-retransmit-xdp-cpu-cores")
+        Arg::with_name("xdp_cpu_cores")
+            .long("xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
-            .validator(|value| {
-                validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
-            })
-            .help("EXPERIMENTAL: Enable XDP retransmit on the specified CPU cores"),
+            .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
+            .help("Use the specified CPU cores for XDP"),
     )
     .arg(
-        Arg::with_name("retransmit_xdp_zero_copy")
-            .hidden(hidden_unless_forced())
-            .long("experimental-retransmit-xdp-zero-copy")
+        Arg::with_name("xdp_zero_copy")
+            .long("xdp-zero-copy")
             .takes_value(false)
-            .requires("retransmit_xdp_cpu_cores")
-            .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
+            .requires("xdp_cpu_cores")
+            .help("Enable XDP zero copy. Requires hardware support"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())

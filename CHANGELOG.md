@@ -27,6 +27,8 @@ Release channels have their own copy of this changelog:
 * `--account-shrink-path` is now deprecated.
 * `sbf-sdk.tar.bz2` is not included anymore in the Agave release tarball. The file will be made available in the new
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
+  `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
 #### Changes
 
 ## 4.0.0
