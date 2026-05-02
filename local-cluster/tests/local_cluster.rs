@@ -44,7 +44,10 @@ use {
         blockstore::{Blockstore, PurgeType, entries_to_test_shreds},
         blockstore_processor::{self, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{
+            ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+            filter::{TurbineMode, TurbineModeKind},
+        },
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
@@ -5223,9 +5226,9 @@ fn test_duplicate_shreds_switch_failure() {
         dup_shred1: &Shred,
         dup_shred2: &Shred,
     ) {
-        let disable_turbine = Arc::new(AtomicBool::new(true));
+        let turbine_mode = TurbineMode::new(TurbineModeKind::TurbineAndRepairDisabled);
         duplicate_fork_validator_info.config.voting_disabled = false;
-        duplicate_fork_validator_info.config.turbine_disabled = disable_turbine.clone();
+        duplicate_fork_validator_info.config.turbine_mode = turbine_mode.clone();
         info!("Restarting node: {pubkey}");
         cluster.restart_node(
             pubkey,
@@ -5246,7 +5249,7 @@ fn test_duplicate_shreds_switch_failure() {
             }
             sleep(Duration::from_millis(1000));
         }
-        disable_turbine.store(false, Ordering::Relaxed);
+        turbine_mode.set(TurbineModeKind::Enabled);
 
         // Send the validator the other version of the shred so they realize it's duplicate
         info!("Resending duplicate shreds to duplicate fork validator");

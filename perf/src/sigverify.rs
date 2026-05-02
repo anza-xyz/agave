@@ -31,11 +31,6 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
             return false;
         };
 
-        // Discard v1 transactions until support is added.
-        if matches!(view.version(), TransactionVersion::V1) {
-            return false;
-        }
-
         let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
         if reject_non_vote && !is_simple_vote_tx {
             (is_simple_vote_tx, false)
@@ -119,6 +114,14 @@ pub fn ed25519_verify(
             }
         });
     });
+}
+
+pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool) {
+    for mut packet in batch.iter_mut() {
+        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            packet.meta_mut().set_discard(true);
+        }
+    }
 }
 
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
@@ -359,9 +362,10 @@ mod tests {
         let tx = test_tx();
         let mut data = bincode::serialize(&tx).unwrap();
 
-        // set message version to 1
+        // Set message version to 2. V1 is supported by transaction-view and
+        // allowed through sigverify; bank performs the feature gate check.
         const MESSAGE_OFFSET: usize = 1 + core::mem::size_of::<Signature>();
-        data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 1;
+        data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 2;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
         assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));

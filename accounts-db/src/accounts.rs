@@ -436,27 +436,6 @@ impl Accounts {
         self.accounts_db.account_indexes.include_key(key)
     }
 
-    pub fn load_all(
-        &self,
-        ancestors: &Ancestors,
-        bank_id: BankId,
-    ) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        let mut collector = Vec::new();
-        self.accounts_db.scan_accounts(
-            ancestors,
-            bank_id,
-            |some_account_tuple| {
-                if let Some((pubkey, account, slot)) =
-                    some_account_tuple.filter(|(_, account, _)| account.is_loadable())
-                {
-                    collector.push((*pubkey, account, slot))
-                }
-            },
-            &ScanConfig::default(),
-        )?;
-        Ok(collector)
-    }
-
     pub fn scan_all<F>(
         &self,
         ancestors: &Ancestors,

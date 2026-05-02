@@ -57,6 +57,8 @@ pub struct SchedulerCountMetricsInner {
     pub num_unschedulable_conflicts: Saturating<usize>,
     /// Number of transactions that were unschedulable due to thread capacity.
     pub num_unschedulable_threads: Saturating<usize>,
+    /// Number of transactions dropped due to account key filtering.
+    pub num_dropped_on_filter_key: Saturating<usize>,
     /// Number of completed transactions received from workers.
     pub num_finished: Saturating<usize>,
     /// Number of transactions that were retryable.
@@ -123,6 +125,7 @@ impl SchedulerCountMetricsInner {
             num_scheduled: Saturating(num_scheduled),
             num_unschedulable_conflicts: Saturating(num_unschedulable_conflicts),
             num_unschedulable_threads: Saturating(num_unschedulable_threads),
+            num_dropped_on_filter_key: Saturating(num_dropped_on_filter_key),
             num_finished: Saturating(num_finished),
             num_retryable: Saturating(num_retryable),
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
@@ -147,6 +150,7 @@ impl SchedulerCountMetricsInner {
             ("num_scheduled", num_scheduled, i64),
             ("num_unschedulable_conflicts", num_unschedulable_conflicts, i64),
             ("num_unschedulable_threads", num_unschedulable_threads, i64),
+            ("num_dropped_on_filter_key", num_dropped_on_filter_key, i64),
             ("num_finished", num_finished, i64),
             ("num_retryable", num_retryable, i64),
             ("num_dropped_on_receive", num_dropped_on_receive, i64),
@@ -198,6 +202,7 @@ impl SchedulerCountMetricsInner {
             || self.num_scheduled != Saturating(0)
             || self.num_unschedulable_conflicts != Saturating(0)
             || self.num_unschedulable_threads != Saturating(0)
+            || self.num_dropped_on_filter_key != Saturating(0)
             || self.num_finished != Saturating(0)
             || self.num_retryable != Saturating(0)
     }
@@ -208,6 +213,7 @@ impl SchedulerCountMetricsInner {
         self.num_scheduled = Saturating(0);
         self.num_unschedulable_conflicts = Saturating(0);
         self.num_unschedulable_threads = Saturating(0);
+        self.num_dropped_on_filter_key = Saturating(0);
         self.num_finished = Saturating(0);
         self.num_retryable = Saturating(0);
         self.num_dropped_on_receive = Saturating(0);

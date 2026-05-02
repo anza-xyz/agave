@@ -16,10 +16,10 @@ use {
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{mem::MaybeUninit, sync::Arc},
+    std::{collections::HashMap, mem::MaybeUninit, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -149,6 +149,14 @@ pub(crate) enum EpochRewardPhase {
     Distribution(StartBlockHeightAndPartitionedRewards),
 }
 
+#[derive(Debug)]
+pub(super) struct RewardCommission {
+    pub(super) commission_bps: u16,
+    pub(super) commission_lamports: u64,
+}
+
+pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
+
 #[derive(Debug, Default)]
 pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
@@ -224,7 +232,7 @@ pub(super) struct StakeRewardCalculation {
 
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -232,7 +240,7 @@ struct CalculateValidatorRewardsResult {
 impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
-            reward_commission_accounts: RewardCommissionAccounts::default(),
+            reward_commissions: RewardCommissions::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
@@ -308,7 +316,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_rewards: StakeRewardCalculation,
     capitalization: u64,
     point_value: PointValue,
