@@ -268,11 +268,7 @@ impl BlockComponentProcessor {
         } = footer;
 
         let reward_cert =
-            match ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert) {
-                Ok(c) => Some(c),
-                Err(ValidatedRewardCertError::Empty) => None,
-                Err(e) => return Err(e.into()),
-            };
+            ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert)?;
         let final_cert = final_cert
             .map(|final_cert| {
                 ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)

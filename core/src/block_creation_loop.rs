@@ -35,7 +35,7 @@ use {
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
-        validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
+        validated_reward_certificate::ValidatedRewardCert,
     },
     solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
@@ -514,13 +514,7 @@ fn record_and_complete_block(
             .reward_certs_receiver
             .recv()
             .map_err(|_| PohRecorderError::ChannelDisconnected)??;
-        let reward_cert = match ValidatedRewardCert::try_new(&bank, &skip, &notar) {
-            Ok(c) => Some(c),
-            Err(ValidatedRewardCertError::Empty) => None,
-            Err(rest) => {
-                return Err(rest.into());
-            }
-        };
+        let reward_cert = ValidatedRewardCert::try_new(&bank, &skip, &notar)?;
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());

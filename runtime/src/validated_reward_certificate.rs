@@ -30,8 +30,6 @@ pub enum Error {
     BlsCertVerify(#[from] BlsCertVerifyError),
     #[error("verify signature failed with {0:?}")]
     VerifySig(#[from] BlsError),
-    #[error("empty certs were provided")]
-    Empty,
 }
 
 /// Extracts the slot corresponding to the provided reward certs.
@@ -82,9 +80,9 @@ impl ValidatedRewardCert {
         bank: &Bank,
         skip: &Option<SkipRewardCertificate>,
         notar: &Option<NotarRewardCertificate>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Option<Self>, Error> {
         let Some(reward_slot) = extract_slot(bank.slot(), skip, notar)? else {
-            return Err(Error::Empty);
+            return Ok(None);
         };
         let rank_map = bank
             .epoch_stakes_from_slot(reward_slot)
@@ -125,12 +123,12 @@ impl ValidatedRewardCert {
             )?
         }
         if validators.is_empty() {
-            return Err(Error::Empty);
+            return Ok(None);
         }
-        Ok(Self {
+        Ok(Some(Self {
             validators,
             reward_slot,
-        })
+        }))
     }
 
     /// Returns the validators that were extracted from the reward certs.
@@ -255,6 +253,7 @@ mod tests {
 
         let validated_reward_cert =
             ValidatedRewardCert::try_new(&bank, &Some(skip_reward_cert), &Some(notar_reward_cert))
+                .unwrap()
                 .unwrap();
         assert_eq!(validated_reward_cert.validators.len(), num_validators);
     }
