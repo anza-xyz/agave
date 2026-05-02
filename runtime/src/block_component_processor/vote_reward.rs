@@ -89,6 +89,7 @@ struct RewardState<'a> {
     reward_epoch: Epoch,
     reward_slot: Slot,
     current_slot: Slot,
+    new_root_slot: Slot,
     leader_vote_pubkey: Pubkey,
     accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
     total_stake: u64,
@@ -96,7 +97,7 @@ struct RewardState<'a> {
 }
 
 impl<'a> RewardState<'a> {
-    fn new(bank: &'a Bank, reward_slot: Slot) -> Result<Self, Error> {
+    fn new(bank: &'a Bank, reward_slot: Slot, new_root_slot: Slot) -> Result<Self, Error> {
         let current_slot = bank.slot();
         let (accounts, total_stake) = {
             let epoch_stakes =
@@ -129,6 +130,7 @@ impl<'a> RewardState<'a> {
         Ok(Self {
             reward_epoch,
             reward_slot,
+            new_root_slot,
             current_slot,
             leader_vote_pubkey: bank.leader().vote_address,
             accounts,
@@ -159,12 +161,12 @@ impl<'a> RewardState<'a> {
 
     fn update_account(&self, reward: u64, handler: &mut VoteStateHandler) {
         handler.increment_credits(self.reward_epoch, reward);
-        let latest_root_or_reward = handler
+        let latest_root = handler
             .root_slot()
-            .unwrap_or(self.reward_slot)
-            .max(self.reward_slot);
+            .unwrap_or(self.new_root_slot)
+            .max(self.new_root_slot);
         handler.set_votes(VecDeque::from([LandedVote {
-            lockout: Lockout::new(latest_root_or_reward),
+            lockout: Lockout::new(latest_root),
             latency: 0,
         }]));
     }
@@ -208,11 +210,14 @@ impl<'a> State<'a> {
                 signers,
                 final_slot,
             }))),
-            (Some(reward_slot), None) => {
-                Ok(Some(Self::Reward(RewardState::new(bank, reward_slot)?)))
-            }
+            (Some(reward_slot), None) => Ok(Some(Self::Reward(RewardState::new(
+                bank,
+                reward_slot,
+                reward_slot,
+            )?))),
             (Some(reward_slot), Some((signers, final_slot))) => {
-                let reward_state = RewardState::new(bank, reward_slot)?;
+                let reward_state =
+                    RewardState::new(bank, reward_slot, reward_slot.max(final_slot))?;
                 let final_cert_state = FinalCertState {
                     signers,
                     final_slot,
@@ -259,9 +264,8 @@ impl<'a> State<'a> {
                 }
                 let mut my_handler =
                     MyVoteStateHandler::try_new(vote_accounts, vote_pubkey).unwrap();
-                // TODO: this order matters!
-                final_cert_state.update_account(vote_pubkey, &mut my_handler.handler);
                 reward_state.update_account(validator_reward, &mut my_handler.handler);
+                final_cert_state.update_account(vote_pubkey, &mut my_handler.handler);
                 let updated_account = my_handler.serialize().unwrap();
                 StateUpdateAccountResult::NonLeaderReward(updated_account, leader_reward)
             }
