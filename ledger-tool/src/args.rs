@@ -366,6 +366,7 @@ pub fn get_accounts_db_config(
         shrink_ratio: AccountShrinkThreshold::default(),
         read_cache_limit_bytes: None,
         read_cache_evict_sample_size: None,
+        read_cache_num_shards: None,
         write_cache_limit_bytes: None,
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),

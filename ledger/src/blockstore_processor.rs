@@ -2391,10 +2391,7 @@ fn load_frozen_forks(
 
                 // If this block was the first alpenglow block and advanced the migration phase, we can enable alpenglow.
                 //
-                // Note: since this code is all startup code we don't have to worry about shutting down `PohService` or any
-                // in flight activity of `ReplayStage`. This bank must have failed to freeze as it is an Alpenglow block
-                // being verified as a TowerBFT one.
-                //
+                // This bank must have failed to freeze as it is an Alpenglow block being verified as a TowerBFT one.
                 // We are safe to cleanly transition to alpenglow here
                 if migration_status.is_ready_to_enable() {
                     let genesis_slot = migration_status.enable_alpenglow_during_startup();
@@ -2853,10 +2850,12 @@ pub mod tests {
             },
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        agave_votor_messages::consensus_message::{Certificate, CertificateType},
         assert_matches::assert_matches,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::{
             block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
@@ -2896,11 +2895,61 @@ pub mod tests {
         std::{
             collections::BTreeSet,
             slice,
-            sync::{Arc, Barrier, RwLock},
+            sync::{Arc, Barrier, RwLock, atomic::Ordering},
+            thread,
         },
         test_case::test_matrix,
         trees::tr,
     };
+
+    /// Generate a dummy alpenglow genesis certificate
+    fn genesis_certificate(slot: Slot, block_id: Hash) -> Arc<Certificate> {
+        Arc::new(Certificate {
+            cert_type: CertificateType::Genesis(slot, block_id),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        })
+    }
+
+    /// Generate a dummy `MigrationStatus` in the `ReadyToEnable` phase
+    fn ready_to_enable_migration_status(genesis_slot: Slot, block_id: Hash) -> MigrationStatus {
+        let migration_status = MigrationStatus::default();
+        let migration_slot = migration_status.record_feature_activation(0);
+        assert!(genesis_slot < migration_slot);
+        migration_status.set_genesis_block((genesis_slot, block_id));
+        migration_status.set_genesis_certificate(genesis_certificate(genesis_slot, block_id));
+        assert!(migration_status.is_ready_to_enable());
+        migration_status
+    }
+
+    #[test]
+    fn test_startup_replay_enable_waits_for_poh_service_when_started() {
+        let genesis_slot = 1;
+        let block_id = Hash::new_from_array([7; solana_hash::HASH_BYTES]);
+        let migration_status = Arc::new(ready_to_enable_migration_status(genesis_slot, block_id));
+        let poh_service = {
+            let migration_status = Arc::clone(&migration_status);
+            migration_status.set_poh_service_started();
+            thread::spawn(move || {
+                while !migration_status.shutdown_poh.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+                migration_status.poh_service_is_shutting_down();
+            })
+        };
+
+        assert_eq!(
+            migration_status.enable_alpenglow_during_startup(),
+            genesis_slot
+        );
+        poh_service.join().unwrap();
+
+        assert!(migration_status.is_alpenglow_enabled());
+        assert_eq!(
+            migration_status.wait_for_migration_or_exit(&AtomicBool::new(false)),
+            Some((genesis_slot, block_id))
+        );
+    }
 
     fn test_process_blockstore(
         genesis_config: &GenesisConfig,

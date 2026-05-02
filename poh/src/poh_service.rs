@@ -107,6 +107,7 @@ impl PohService {
         migration_status: Arc<MigrationStatus>,
         record_receiver_sender: Sender<RecordReceiver>,
     ) -> Self {
+        migration_status.set_poh_service_started();
         let poh_config = poh_config.clone();
         let tick_producer = Builder::new()
             .name("solPohTickProd".to_string())

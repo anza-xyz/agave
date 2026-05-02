@@ -351,7 +351,7 @@ fn produce_block_footer(
     bank: &Bank,
     skip_reward_cert: Option<SkipRewardCertificate>,
     notar_reward_cert: Option<NotarRewardCertificate>,
-    highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
+    highest_finalized: Option<&ValidatedBlockFinalizationCert>,
 ) -> BlockFooterV1 {
     let mut block_producer_time_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -378,11 +378,7 @@ fn produce_block_footer(
     }
 
     // Convert finalization certs into block marker
-    let final_cert = highest_finalized
-        .read()
-        .unwrap()
-        .as_ref()
-        .map(ValidatedBlockFinalizationCert::to_final_certificate);
+    let final_cert = highest_finalized.map(ValidatedBlockFinalizationCert::to_final_certificate);
 
     BlockFooterV1 {
         bank_hash: Hash::default(),
@@ -508,23 +504,28 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
     // Write the single tick for this slot
 
-    let BuildRewardCertsRespSucc {
-        skip,
-        notar,
-        validators: _,
-    } = ctx
-        .reward_certs_receiver
-        .recv()
-        .map_err(|_| PohRecorderError::ChannelDisconnected)??;
-    let footer = produce_block_footer(&bank, skip, notar, &ctx.highest_finalized);
+    let footer = {
+        let BuildRewardCertsRespSucc {
+            skip,
+            notar,
+            validators: _,
+        } = ctx
+            .reward_certs_receiver
+            .recv()
+            .map_err(|_| PohRecorderError::ChannelDisconnected)??;
+        let guard = ctx.highest_finalized.read().unwrap();
+        let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
+        let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
 
-    BlockComponentProcessor::update_bank_with_footer_fields(
-        &bank,
-        footer.block_producer_time_nanos as i64,
-        Hash::default(), // Banks we produce do not need the bank hash mismatch check
-        None,
-        ctx.highest_finalized.read().unwrap().as_ref(),
-    );
+        BlockComponentProcessor::update_bank_with_footer_fields(
+            &bank,
+            footer.block_producer_time_nanos as i64,
+            Hash::default(), // Banks we produce do not need the bank hash mismatch check
+            None,
+            final_cert_input,
+        );
+        footer
+    };
 
     drop(bank);
     w_poh_recorder.tick_alpenglow(max_tick_height, footer);

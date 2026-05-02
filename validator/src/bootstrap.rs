@@ -560,7 +560,6 @@ pub fn rpc_bootstrap(
     do_port_check: bool,
     use_progress_bar: bool,
     maximum_local_snapshot_age: Slot,
-    should_check_duplicate_instance: bool,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
     minimal_snapshot_download_speed: f32,
     maximum_snapshot_download_abort: u64,
@@ -610,7 +609,7 @@ pub fn rpc_bootstrap(
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),
                 validator_config.gossip_validators.clone(),
-                should_check_duplicate_instance,
+                validator_config.should_check_duplicate_instance,
                 socket_addr_space,
             ));
         }

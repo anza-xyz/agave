@@ -4,7 +4,10 @@ use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::shred::{self, filter::ShredFilterContext},
+    solana_ledger::shred::{
+        self,
+        filter::{ShredFilterContext, TurbineMode},
+    },
     solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef},
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::{
@@ -13,10 +16,7 @@ use {
     },
     std::{
         net::UdpSocket,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, Builder, JoinHandle},
         time::Duration,
     },
@@ -52,7 +52,7 @@ impl ShredFetchStage {
         name: &'static str,
         flags: PacketFlags,
         repair_context: Option<&RepairContext>,
-        turbine_disabled: Arc<AtomicBool>,
+        turbine_mode: TurbineMode,
     ) {
         // Only repair shreds need repair context.
         debug_assert_eq!(
@@ -60,7 +60,11 @@ impl ShredFetchStage {
             repair_context.is_some()
         );
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
-        let mut shred_filter_ctx = ShredFilterContext::new(sharable_banks.root(), shred_version);
+        let mut shred_filter_ctx = ShredFilterContext::new_with_turbine_mode(
+            sharable_banks.root(),
+            shred_version,
+            turbine_mode,
+        );
         let repair_keypair = repair_context.map(RepairContext::keypair);
 
         for mut packet_batch in recvr {
@@ -101,9 +105,8 @@ impl ShredFetchStage {
 
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
-            let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
-                if turbine_disabled || shred_filter_ctx.should_discard_packet(packet.as_ref()) {
+                if shred_filter_ctx.should_discard_packet(packet.as_ref()) {
                     packet.meta_mut().set_discard(true);
                 } else {
                     packet.meta_mut().flags.insert(flags);
@@ -139,7 +142,7 @@ impl ShredFetchStage {
         receiver_name: &'static str,
         flags: PacketFlags,
         repair_context: Option<RepairContext>,
-        turbine_disabled: Arc<AtomicBool>,
+        turbine_mode: TurbineMode,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let (packet_sender, packet_receiver) =
@@ -174,7 +177,7 @@ impl ShredFetchStage {
                     name,
                     flags,
                     repair_context.as_ref(),
-                    turbine_disabled,
+                    turbine_mode,
                 )
             })
             .unwrap();
@@ -190,7 +193,7 @@ impl ShredFetchStage {
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
-        turbine_disabled: Arc<AtomicBool>,
+        turbine_mode: TurbineMode,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let recycler = PacketBatchRecycler::new();
@@ -213,7 +216,7 @@ impl ShredFetchStage {
             "shred_fetch_receiver",
             PacketFlags::empty(),
             None, // repair_context
-            turbine_disabled.clone(),
+            turbine_mode.clone(),
         );
 
         let (repair_receiver, repair_handler) = Self::packet_modifier(
@@ -229,7 +232,7 @@ impl ShredFetchStage {
             "shred_fetch_repair_receiver",
             PacketFlags::REPAIR,
             Some(repair_context.clone()),
-            turbine_disabled.clone(),
+            turbine_mode.clone(),
         );
 
         tvu_threads.extend(repair_receiver);

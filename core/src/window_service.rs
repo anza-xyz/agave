@@ -19,12 +19,12 @@ use {
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_meta::BlockLocation,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, ReedSolomonCache, Shred},
+        shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
     std::{
         borrow::Cow,
@@ -174,13 +174,12 @@ fn run_insert<F>(
     thread_pool: &ThreadPool,
     verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     blockstore: &Blockstore,
+    shred_recovery_context: &mut ShredRecoveryContext,
     leader_schedule_cache: &LeaderScheduleCache,
     handle_duplicate: F,
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
-    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
-    reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
@@ -213,9 +212,8 @@ where
         shreds,
         Some(leader_schedule_cache),
         false, // is_trusted
-        retransmit_sender,
+        shred_recovery_context,
         &handle_duplicate,
-        reed_solomon_cache,
         metrics,
     )?;
 
@@ -267,6 +265,7 @@ impl WindowService {
         repair_info: RepairInfo,
         window_service_channels: WindowServiceChannels,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
+        shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
@@ -298,13 +297,16 @@ impl WindowService {
             blockstore.clone(),
             duplicate_receiver,
             duplicate_slots_sender,
-            bank_forks,
+            bank_forks.clone(),
         );
 
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let t_insert = Self::start_window_insert_thread(
             exit,
             blockstore,
+            sharable_banks,
             leader_schedule_cache,
+            shred_version,
             verified_receiver,
             duplicate_sender,
             completed_data_sets_sender,
@@ -352,7 +354,9 @@ impl WindowService {
     fn start_window_insert_thread(
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
+        sharable_banks: SharableBanks,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
+        shred_version: u16,
         verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
@@ -382,19 +386,26 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
+                let mut shred_recovery_context = ShredRecoveryContext::new(
+                    reed_solomon_cache,
+                    retransmit_sender,
+                    sharable_banks.root(),
+                    shred_version,
+                );
 
                 while !exit.load(Ordering::Relaxed) {
+                    shred_recovery_context.maybe_update(sharable_banks.root());
+
                     if let Err(e) = run_insert(
                         &thread_pool,
                         &verified_receiver,
                         &blockstore,
+                        &mut shred_recovery_context,
                         &leader_schedule_cache,
                         handle_duplicate,
                         &mut metrics,
                         &mut ws_metrics,
                         completed_data_sets_sender.as_ref(),
-                        &retransmit_sender,
-                        &reed_solomon_cache,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e, &handle_error) {
@@ -409,6 +420,7 @@ impl WindowService {
                         ws_metrics = WindowServiceMetrics::default();
                         last_print = Instant::now();
                     }
+                    shred_recovery_context.maybe_submit_stats();
                 }
             })
             .unwrap()
@@ -570,14 +582,13 @@ mod test {
             blockstore.clone(),
             duplicate_shred_receiver,
             duplicate_slot_sender,
-            bank_forks,
+            bank_forks.clone(),
         );
 
         let handle_duplicate = |shred| {
             let _ = duplicate_shred_sender.send(shred);
         };
         let num_trials = 100;
-        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         for slot in 0..num_trials {
             let (shreds, _) = make_many_slot_entries(slot, 1, 10);
             let duplicate_index = 0;
@@ -591,14 +602,19 @@ mod test {
             let shreds = [&original_shred, &duplicate_shred]
                 .into_iter()
                 .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+            let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
             blockstore
                 .insert_shreds_handle_duplicate(
                     shreds,
                     None,
                     false, // is_trusted
-                    &dummy_retransmit_sender,
+                    &mut ShredRecoveryContext::new(
+                        ReedSolomonCache::default(),
+                        dummy_retransmit_sender,
+                        bank_forks.read().unwrap().root_bank(),
+                        0, // shred_version
+                    ),
                     &handle_duplicate,
-                    &ReedSolomonCache::default(),
                     &mut BlockstoreInsertionMetrics::default(),
                 )
                 .unwrap();

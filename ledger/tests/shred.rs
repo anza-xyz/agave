@@ -2,14 +2,20 @@
 use {
     solana_clock::Slot,
     solana_entry::entry::Entry,
+    solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{
-        self, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, ShredData,
-        Shredder, max_entries_per_n_shred, max_entries_per_n_shred_last_or_not, recover,
-        verify_test_data_shred,
+    solana_ledger::{
+        genesis_utils::create_genesis_config,
+        shred::{
+            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, ShredData,
+            Shredder, filter::ShredRecoveryContext, max_entries_per_n_shred,
+            max_entries_per_n_shred_last_or_not, verify_test_data_shred,
+        },
     },
+    solana_runtime::bank::Bank,
     solana_signer::Signer,
+    solana_streamer::evicting_sender::EvictingSender,
     solana_system_transaction as system_transaction,
     std::{
         collections::{BTreeMap, HashSet},
@@ -20,6 +26,21 @@ use {
 };
 
 type IndexShredsMap = BTreeMap<u32, Vec<Shred>>;
+
+fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
+    let mut genesis_config = create_genesis_config(1).genesis_config;
+    let shred_slot = shreds.first().map(Shred::slot).unwrap_or_default();
+    let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
+    genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    ShredRecoveryContext::new(
+        ReedSolomonCache::default(),
+        dummy_retransmit_sender,
+        root_bank,
+        shreds.first().map(Shred::version).unwrap_or_default(),
+    )
+}
 
 #[test_case(false)]
 #[test_case(true)]
@@ -84,10 +105,17 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
             .filter_map(|(i, b)| if i % 2 != 0 { Some(b.clone()) } else { None })
             .collect();
 
-        let recovered_data = recover(shred_info.clone(), &reed_solomon_cache)
-            .unwrap()
-            .map(|result| result.unwrap())
-            .filter(|shred| shred.is_data());
+        let mut shred_recovery_context = new_shred_recovery_context(&shred_info);
+        let mut recovered_shreds = Vec::new();
+        let mut recovered_data_shreds = Vec::new();
+        shred_recovery_context
+            .recover(
+                shred_info.clone(),
+                &mut recovered_shreds,
+                &mut recovered_data_shreds,
+            )
+            .unwrap();
+        let recovered_data = recovered_data_shreds.into_iter();
 
         for (i, recovered_shred) in recovered_data.enumerate() {
             let index = shred_start_index + (i * 2);
@@ -124,7 +152,6 @@ fn test_multi_fec_block_different_size_coding() {
         setup_different_sized_fec_blocks(slot, parent_slot, keypair.clone());
 
     let total_num_data_shreds: usize = fec_data.values().map(|x| x.len()).sum();
-    let reed_solomon_cache = ReedSolomonCache::default();
     // Test recovery
     for (fec_data_shreds, fec_coding_shreds) in fec_data.values().zip(fec_coding.values()) {
         let first_data_index = fec_data_shreds.first().unwrap().index() as usize;
@@ -134,13 +161,12 @@ fn test_multi_fec_block_different_size_coding() {
             .chain(fec_coding_shreds.iter().step_by(2))
             .cloned()
             .collect();
-        let recovered_data: Vec<Shred> = shred::recover(all_shreds, &reed_solomon_cache)
-            .unwrap()
-            .filter_map(|s| {
-                let s = s.unwrap();
-                s.is_data().then_some(s)
-            })
-            .collect();
+        let mut shred_recovery_context = new_shred_recovery_context(&all_shreds);
+        let mut recovered_shreds = Vec::new();
+        let mut recovered_data = Vec::new();
+        shred_recovery_context
+            .recover(all_shreds, &mut recovered_shreds, &mut recovered_data)
+            .unwrap();
         // Necessary in order to ensure the last shred in the slot
         // is part of the recovered set, and that the below `index`
         // calculation in the loop is correct

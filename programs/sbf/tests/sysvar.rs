@@ -3,19 +3,21 @@
 use {
     agave_feature_set::disable_fees_sysvar,
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        loader_utils::load_upgradeable_program_and_advance_slot,
+        loader_utils::create_program,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk_ids::sysvar::{
-        clock, epoch_schedule, instructions, recent_blockhashes, rent, slot_hashes, slot_history,
-        stake_history,
+    solana_sdk_ids::{
+        bpf_loader_upgradeable,
+        sysvar::{
+            clock, epoch_schedule, instructions, recent_blockhashes, rent, slot_hashes,
+            slot_history, stake_history,
+        },
     },
     solana_signer::Signer,
     solana_stake_interface::stake_history::{StakeHistory, StakeHistoryEntry},
@@ -60,15 +62,15 @@ fn test_sysvar_syscalls() {
     bank.set_sysvar_for_tests(&stake_history);
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
-        &mut bank_client,
-        bank_forks.as_ref(),
-        &mint_keypair,
-        &authority_keypair,
+    let program_id = create_program(
+        &bank,
+        &bpf_loader_upgradeable::id(),
         "solana_sbf_rust_sysvar",
     );
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let bank = bank_client
+        .advance_slot(1, &bank_forks, SlotLeader::default())
+        .unwrap();
     let dummy_account_key = Pubkey::new_unique();
     bank.store_account(
         &dummy_account_key,
