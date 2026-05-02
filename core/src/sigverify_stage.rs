@@ -20,6 +20,7 @@ use {
         deduper::{self, Deduper},
         packet::PacketBatch,
     },
+    solana_runtime::bank_forks::SharableBanks,
     solana_streamer::streamer::{self, StreamerError},
     solana_transaction::Transaction,
     std::{
@@ -193,6 +194,7 @@ impl SigVerifyStage {
         forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
         num_workers: NonZeroUsize,
         forward_non_votes: bool,
+        sharable_banks: SharableBanks,
     ) -> (Self, GossipSigVerifyHandle) {
         let (gossip_verified_vote_sender, verified_vote_receiver) = unbounded();
         let non_vote_stats = SigVerifierStats::default();
@@ -204,6 +206,7 @@ impl SigVerifyStage {
             gossip_verified_vote_sender,
             forward_stage_sender,
             forward_non_votes,
+            sharable_banks,
             SigVerifyWorkerStats {
                 total_valid_packets: non_vote_stats.total_valid_packets.clone(),
                 total_verify_time_us: non_vote_stats.total_verify_time_us.clone(),
@@ -380,8 +383,30 @@ mod tests {
         super::*,
         crate::banking_trace::BankingTracer,
         crossbeam_channel::unbounded,
-        solana_perf::{packet::to_packet_batches, test_tx::test_tx},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{VersionedMessage, v1},
+        solana_perf::{
+            packet::{BytesPacket, BytesPacketBatch, to_packet_batches},
+            test_tx::test_tx,
+        },
+        solana_pubkey::Pubkey,
+        solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::versioned::VersionedTransaction,
+        test_case::test_case,
     };
+
+    fn test_tx_v1() -> VersionedTransaction {
+        let payer = Keypair::new();
+        let recipient = Pubkey::new_unique();
+        let instruction = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
+        let message =
+            v1::Message::try_compile(&payer.pubkey(), &[instruction], Hash::new_unique()).unwrap();
+
+        VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
+    }
 
     fn gen_batches(
         use_same_tx: bool,
@@ -410,6 +435,9 @@ mod tests {
     fn test_sigverify_stage(use_same_tx: bool) {
         agave_logger::setup();
         trace!("start");
+        let (_bank, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let (packet_s, packet_r) = unbounded();
         let (vote_packet_s, vote_packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
@@ -423,6 +451,7 @@ mod tests {
             forward_stage_s,
             NonZeroUsize::new(4).unwrap(),
             false,
+            sharable_banks,
         );
 
         let now = Instant::now();
@@ -467,6 +496,55 @@ mod tests {
             assert_eq!(valid_received, total_packets);
         }
         drop(vote_packet_s);
+        drop(gossip_sigverify_handle);
+        stage.join().unwrap();
+    }
+
+    #[test_case(false, false; "tx_v1_disabled")]
+    #[test_case(true, true; "tx_v1_enabled")]
+    fn test_sigverify_stage_tx_v1_feature_gate(enable_tx_v1: bool, expected_valid: bool) {
+        let genesis_config = create_genesis_config(1).genesis_config;
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if enable_tx_v1 {
+            bank.activate_feature(&agave_feature_set::enable_tx_v1::id());
+        } else {
+            bank.deactivate_feature(&agave_feature_set::enable_tx_v1::id());
+        }
+        let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let (packet_s, packet_r) = unbounded();
+        let (vote_packet_s, vote_packet_r) = unbounded();
+        let (verified_s, verified_r) = BankingTracer::channel_for_test();
+        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+            packet_r,
+            vote_packet_r,
+            verified_s,
+            tpu_vote_s,
+            forward_stage_s,
+            NonZeroUsize::new(1).unwrap(),
+            false,
+            sharable_banks,
+        );
+
+        let mut bytes_batch = BytesPacketBatch::with_capacity(1);
+        bytes_batch.push(BytesPacket::from_bytes(
+            None,
+            wincode::serialize(&test_tx_v1()).unwrap(),
+        ));
+        packet_s.send(PacketBatch::from(bytes_batch)).unwrap();
+        drop(packet_s);
+        drop(vote_packet_s);
+
+        let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert_eq!(verified_batch.len(), 1);
+        assert_eq!(verified_batch[0].len(), 1);
+        assert_eq!(
+            !verified_batch[0].get(0).unwrap().meta().discard(),
+            expected_valid
+        );
+
         drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }

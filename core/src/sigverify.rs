@@ -11,6 +11,7 @@ use {
         packet::PacketBatch,
         sigverify::{self},
     },
+    solana_runtime::bank_forks::SharableBanks,
     solana_transaction::Transaction,
     std::{
         num::NonZeroUsize,
@@ -132,6 +133,7 @@ struct WorkerPoolChannels {
     tpu_vote_banking_sender: BankingPacketSender,
     gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
     forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
+    sharable_banks: SharableBanks,
     non_vote_stats: SigVerifyWorkerStats,
     tpu_vote_stats: SigVerifyWorkerStats,
 }
@@ -163,6 +165,7 @@ impl SigVerifyWorkerPool {
         gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
         forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
         forward_non_votes: bool,
+        sharable_banks: SharableBanks,
         non_vote_stats: SigVerifyWorkerStats,
         tpu_vote_stats: SigVerifyWorkerStats,
     ) -> Self {
@@ -177,6 +180,7 @@ impl SigVerifyWorkerPool {
             tpu_vote_banking_sender,
             gossip_verified_vote_sender,
             forward_stage_sender,
+            sharable_banks,
             non_vote_stats,
             tpu_vote_stats,
         };
@@ -235,6 +239,7 @@ impl SigVerifyWorkerPool {
                         &channels.forward_stage_sender,
                         forward_non_votes,
                         false,
+                        &channels.sharable_banks,
                         &channels.non_vote_stats,
                     ),
                     Err(_) => false,
@@ -249,6 +254,7 @@ impl SigVerifyWorkerPool {
                         &channels.forward_stage_sender,
                         true,
                         true,
+                        &channels.sharable_banks,
                         &channels.tpu_vote_stats,
                     ),
                     Err(_) => false,
@@ -274,11 +280,14 @@ impl SigVerifyWorkerPool {
         forward_stage_sender: &Sender<(BankingPacketBatch, bool)>,
         should_forward: bool,
         is_tpu_vote: bool,
+        sharable_banks: &SharableBanks,
         stats: &SigVerifyWorkerStats,
     ) -> bool {
+        let enable_tx_v1 = sharable_banks.working().feature_set.snapshot().enable_tx_v1;
         let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(
             &mut work.batch,
-            reject_non_vote
+            reject_non_vote,
+            enable_tx_v1,
         ));
         let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&work.batch));
         stats
@@ -304,7 +313,8 @@ impl SigVerifyWorkerPool {
         mut work: GossipVerifyTask,
         verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
     ) -> bool {
-        sigverify::ed25519_verify_serial(&mut work.batch, true);
+        // Gossip votes are legacy Transaction values, not tx-v1 packets.
+        sigverify::ed25519_verify_serial(&mut work.batch, true, false);
 
         if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {
             transaction: work.transaction,

@@ -274,11 +274,7 @@ impl BlockComponentProcessor {
         } = footer;
 
         let reward_cert =
-            match ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert) {
-                Ok(c) => Some(c),
-                Err(ValidatedRewardCertError::Empty) => None,
-                Err(e) => return Err(e.into()),
-            };
+            ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert)?;
         let final_cert = final_cert
             .map(|final_cert| {
                 ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)
@@ -312,10 +308,12 @@ impl BlockComponentProcessor {
         if let Some((finalize_cert, notarize_cert)) = pool_input {
             if let Some(sender) = finalization_cert_sender {
                 if let Some(notarize_cert) = notarize_cert {
+                    // TODO blocking send.
                     let _ = sender
                         .send(vec![ConsensusMessage::from(notarize_cert)])
                         .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
                 }
+                // TODO blocking send.
                 let _ = sender
                     .send(vec![ConsensusMessage::from(finalize_cert)])
                     .inspect_err(|_| info!("ConsensusMessage sender disconnected"));

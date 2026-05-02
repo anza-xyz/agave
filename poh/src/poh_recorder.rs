@@ -72,14 +72,8 @@ pub enum PohRecorderError {
     #[error("channel disconnected")]
     ChannelDisconnected,
 
-    #[error("couldn't reset bank during fast leader handover slot {0} -> slot {1}")]
-    ResetBankError(Slot, Slot),
-
     #[error("producing reward certs failed with {0}")]
     BuildRewardCerts(#[from] BuildRewardCertsRespError),
-
-    #[error("couldn't reschedule pre-UpdateParent transactions")]
-    RescheduleTransactionsError(Slot),
 
     #[error("constructing validated reward cert failed with {0}")]
     ValidatedRewardCert(#[from] ValidatedRewardCertError),
