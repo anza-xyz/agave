@@ -18,29 +18,6 @@ pub mod epoch_inflation_account_state;
 /// Different types of errors that can happen when calculating and paying voting reward.
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(super) enum Error {
-    #[error("missing EpochInflationAccountState for current slot {current_slot}")]
-    MissingEpochInflationAccountState { current_slot: Slot },
-    #[error("missing epoch stakes for reward_slot {reward_slot} in current_slot {current_slot}")]
-    MissingEpochStakes {
-        reward_slot: Slot,
-        current_slot: Slot,
-    },
-    #[error(
-        "validator {pubkey} missing in current slot {current_slot} for reward slot {reward_slot}"
-    )]
-    MissingRewardSlotValidator {
-        pubkey: Pubkey,
-        reward_slot: Slot,
-        current_slot: Slot,
-    },
-    #[error(
-        "missing validator stake info for reward epoch {reward_epoch} in current_slot \
-         {current_slot}"
-    )]
-    NoEpochValidatorStake {
-        reward_epoch: Epoch,
-        current_slot: Slot,
-    },
     #[error("Missing rank map for reward cert or final cert input")]
     RankMapNotFound,
 }
@@ -100,29 +77,68 @@ impl VoteState {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Error)]
+enum RewardStateError {
+    #[error("missing epoch stakes for reward_slot {reward_slot} in current_slot {current_slot}")]
+    MissingEpochStakes {
+        reward_slot: Slot,
+        current_slot: Slot,
+    },
+    #[error("missing EpochInflationAccountState for current slot {current_slot}")]
+    MissingEpochInflationAccountState { current_slot: Slot },
+    #[error(
+        "missing validator stake info for reward epoch {reward_epoch} in current_slot \
+         {current_slot}"
+    )]
+    NoEpochValidatorStake {
+        reward_epoch: Epoch,
+        current_slot: Slot,
+    },
+    #[error(
+        "validator {pubkey} missing in current slot {current_slot} for reward slot {reward_slot}"
+    )]
+    MissingRewardSlotValidator {
+        pubkey: Pubkey,
+        reward_slot: Slot,
+        current_slot: Slot,
+    },
+}
+
 /// Common state required to pay rewards to different accounts.
 #[derive(Debug)]
 struct RewardState<'a> {
+    /// The epoch in which the reward was earned.
     reward_epoch: Epoch,
+    /// The slot in which the reward was earned.
     reward_slot: Slot,
+    /// The slot in which the reward is being paid into the vote account.
     current_slot: Slot,
+    /// Slot to use when calling `VoteStateHandler::set_votes`
     new_root_slot: Slot,
+    /// The pubkey of the validator that will receive the leader rewards.
     leader_vote_pubkey: Pubkey,
+    /// Vote accounts at reward slot.
     accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
+    /// Total stake at `reward_slot`.
     total_stake: u64,
+    /// inflation state at `reward_slot`.
     epoch_inflation_state: EpochInflationState,
 }
 
 impl<'a> RewardState<'a> {
-    fn new(bank: &'a Bank, reward_slot: Slot, new_root_slot: Slot) -> Result<Self, Error> {
+    fn new(
+        bank: &'a Bank,
+        reward_slot: Slot,
+        new_root_slot: Slot,
+    ) -> Result<Self, RewardStateError> {
         let current_slot = bank.slot();
         let (accounts, total_stake) = {
-            let epoch_stakes =
-                bank.epoch_stakes_from_slot(reward_slot)
-                    .ok_or(Error::MissingEpochStakes {
-                        reward_slot,
-                        current_slot,
-                    })?;
+            let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot).ok_or(
+                RewardStateError::MissingEpochStakes {
+                    reward_slot,
+                    current_slot,
+                },
+            )?;
             (
                 epoch_stakes.stakes().vote_accounts().as_ref(),
                 epoch_stakes.total_stake(),
@@ -137,9 +153,9 @@ impl<'a> RewardState<'a> {
             // that activated Alpenglow should have created the account.
             debug_assert!(epoch_inflation_account_state.is_some());
             epoch_inflation_account_state
-                .ok_or(Error::MissingEpochInflationAccountState { current_slot })?
+                .ok_or(RewardStateError::MissingEpochInflationAccountState { current_slot })?
                 .get_epoch_state(reward_epoch)
-                .ok_or(Error::NoEpochValidatorStake {
+                .ok_or(RewardStateError::NoEpochValidatorStake {
                     reward_epoch,
                     current_slot,
                 })?
@@ -160,11 +176,11 @@ impl<'a> RewardState<'a> {
     ///
     /// Returns Ok(Some(RewardUpdate)) if validator is not the leader and its reward can be paid now.
     /// Returns Ok(None) if validator is the leader and we haven't finished calculating its rewards.
-    fn calculate_reward(&self, validator: Pubkey) -> Result<(u64, u64), Error> {
+    fn calculate_reward(&self, validator: Pubkey) -> Result<(u64, u64), RewardStateError> {
         let (reward_slot_validator_stake, _) =
             self.accounts
                 .get(&validator)
-                .ok_or(Error::MissingRewardSlotValidator {
+                .ok_or(RewardStateError::MissingRewardSlotValidator {
                     pubkey: validator,
                     reward_slot: self.reward_slot,
                     current_slot: self.current_slot,
@@ -227,14 +243,12 @@ impl<'a> State<'a> {
                 signers,
                 final_slot,
             }))),
-            (Some(reward_slot), None) => Ok(Some(Self::Reward(RewardState::new(
-                bank,
-                reward_slot,
-                reward_slot,
-            )?))),
+            (Some(reward_slot), None) => Ok(Some(Self::Reward(
+                RewardState::new(bank, reward_slot, reward_slot).unwrap(),
+            ))),
             (Some(reward_slot), Some((signers, final_slot))) => {
                 let reward_state =
-                    RewardState::new(bank, reward_slot, reward_slot.max(final_slot))?;
+                    RewardState::new(bank, reward_slot, reward_slot.max(final_slot)).unwrap();
                 let final_cert_state = FinalCertState {
                     signers,
                     final_slot,
