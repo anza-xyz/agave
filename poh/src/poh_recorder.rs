@@ -36,7 +36,10 @@ use {
     solana_measure::measure_us,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    solana_runtime::{
+        bank::Bank, installed_scheduler_pool::BankWithScheduler,
+        validated_reward_certificate::Error as ValidatedRewardCertError,
+    },
     solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
@@ -77,6 +80,9 @@ pub enum PohRecorderError {
 
     #[error("couldn't reschedule pre-UpdateParent transactions")]
     RescheduleTransactionsError(Slot),
+
+    #[error("constructing validated reward cert failed with {0}")]
+    ValidatedRewardCert(#[from] ValidatedRewardCertError),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;
