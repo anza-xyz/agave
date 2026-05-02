@@ -57,6 +57,7 @@ pub struct RunArgs {
     pub json_rpc_config: JsonRpcConfig,
     pub pub_sub_config: PubSubConfig,
     pub send_transaction_service_config: SendTransactionServiceConfig,
+    pub filter_keys: HashSet<Pubkey>,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -130,6 +131,13 @@ impl FromClapArgMatches for RunArgs {
             send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
                 matches,
             )?,
+            filter_keys: if matches.is_present("filter_keys") {
+                values_t!(matches, "filter_keys", Pubkey)?
+                    .into_iter()
+                    .collect()
+            } else {
+                HashSet::new()
+            },
         })
     }
 }
@@ -1182,6 +1190,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("filter_keys")
+            .long("filter-keys")
+            .value_name("PUBKEY")
+            .takes_value(true)
+            .min_values(1)
+            .validator(is_pubkey)
+            .help(
+                "Drop internally processed leader-side transactions that touch any listed account \
+                 pubkey. Values are space-separated. Using too many keys will negatively impact \
+                 performance. External schedulers must implement this filtering themselves",
+            ),
+    )
+    .arg(
         Arg::with_name("enable_scheduler_bindings")
             .long("enable-scheduler-bindings")
             .takes_value(false)
@@ -1299,6 +1320,7 @@ mod tests {
                     ..PubSubConfig::default_for_tests()
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
+                filter_keys: HashSet::new(),
             }
         }
     }
@@ -1317,6 +1339,7 @@ mod tests {
                 json_rpc_config: self.json_rpc_config.clone(),
                 pub_sub_config: self.pub_sub_config.clone(),
                 send_transaction_service_config: self.send_transaction_service_config.clone(),
+                filter_keys: self.filter_keys.clone(),
             }
         }
     }
@@ -1498,6 +1521,37 @@ mod tests {
             );
             assert!(fs::exists(&ledger_path).unwrap());
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_filter_keys() {
+        let default_run_args = RunArgs::default();
+        let filter_key = Pubkey::new_unique();
+        let other_filter_key = Pubkey::new_unique();
+
+        let expected_args = RunArgs {
+            filter_keys: HashSet::from([filter_key, other_filter_key]),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--filter-keys",
+                &filter_key.to_string(),
+                &other_filter_key.to_string(),
+            ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_invalid_filter_keys() {
+        let default_run_args = RunArgs::default();
+
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            default_run_args,
+            vec!["--filter-keys", "not-a-pubkey"],
+        );
     }
 
     #[test]

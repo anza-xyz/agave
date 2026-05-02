@@ -97,6 +97,12 @@ pub struct ComputeBudget {
     /// + alt_bn128_pairing_one_pair_cost_other * (num_elems - 1)
     pub alt_bn128_pairing_one_pair_cost_first: u64,
     pub alt_bn128_pairing_one_pair_cost_other: u64,
+    /// Big integer modular exponentiation base cost
+    pub big_modular_exponentiation_base_cost: u64,
+    /// Big integer moduler exponentiation cost divisor
+    /// The modular exponentiation cost is computed as
+    /// `input_length`/`big_modular_exponentiation_cost_divisor` + `big_modular_exponentiation_base_cost`
+    pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
     /// of inputs.
@@ -202,6 +208,8 @@ impl ComputeBudget {
             alt_bn128_g2_multiplication_cost: cost.alt_bn128_g2_multiplication_cost,
             alt_bn128_pairing_one_pair_cost_first: cost.alt_bn128_pairing_one_pair_cost_first,
             alt_bn128_pairing_one_pair_cost_other: cost.alt_bn128_pairing_one_pair_cost_other,
+            big_modular_exponentiation_base_cost: cost.big_modular_exponentiation_base_cost,
+            big_modular_exponentiation_cost_divisor: cost.big_modular_exponentiation_cost_divisor,
             poseidon_cost_coefficient_a: cost.poseidon_cost_coefficient_a,
             poseidon_cost_coefficient_c: cost.poseidon_cost_coefficient_c,
             get_remaining_compute_units_cost: cost.get_remaining_compute_units_cost,
@@ -269,6 +277,8 @@ impl ComputeBudget {
             alt_bn128_g2_multiplication_cost: self.alt_bn128_g2_multiplication_cost,
             alt_bn128_pairing_one_pair_cost_first: self.alt_bn128_pairing_one_pair_cost_first,
             alt_bn128_pairing_one_pair_cost_other: self.alt_bn128_pairing_one_pair_cost_other,
+            big_modular_exponentiation_base_cost: self.big_modular_exponentiation_base_cost,
+            big_modular_exponentiation_cost_divisor: self.big_modular_exponentiation_cost_divisor,
             poseidon_cost_coefficient_a: self.poseidon_cost_coefficient_a,
             poseidon_cost_coefficient_c: self.poseidon_cost_coefficient_c,
             get_remaining_compute_units_cost: self.get_remaining_compute_units_cost,

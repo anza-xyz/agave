@@ -58,6 +58,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
+        shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
@@ -811,6 +812,7 @@ pub fn execute(
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
         repair_validators,
+        should_check_duplicate_instance: true,
         repair_whitelist,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
@@ -818,6 +820,7 @@ pub fn execute(
         blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
+        filter_keys: Arc::new(run_args.filter_keys),
         warp_slot: None,
         generator_config: None,
         contact_debug_interval,
@@ -858,7 +861,7 @@ pub fn execute(
         tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        turbine_disabled: Arc::<AtomicBool>::default(),
+        turbine_mode: TurbineMode::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
@@ -1035,7 +1038,6 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
-    let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1049,7 +1051,6 @@ pub fn execute(
             do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,
-            should_check_duplicate_instance,
             &start_progress,
             minimal_snapshot_download_speed,
             maximum_snapshot_download_abort,
@@ -1074,6 +1075,8 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_receive_threads,
+            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..Default::default()
         },
         qos_config: SwQosConfig {
@@ -1093,6 +1096,8 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_forward_receive_threads,
+            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..Default::default()
         },
         qos_config: SwQosConfig {
@@ -1128,7 +1133,6 @@ pub fn execute(
         authorized_voter_keypairs,
         cluster_entrypoints,
         &validator_config,
-        should_check_duplicate_instance,
         rpc_to_plugin_manager_receiver,
         start_progress,
         run_args.socket_addr_space,

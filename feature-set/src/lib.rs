@@ -28,6 +28,7 @@ pub struct FeatureSnapshot {
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
+    pub enable_big_mod_exp_syscall: bool,
     pub remove_bpf_loader_incorrect_program_id: bool,
     pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
@@ -85,6 +86,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
+    pub enable_tx_v1: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -111,6 +113,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             simplify_alt_bn128_syscall_error_codes: is_active(
                 &simplify_alt_bn128_syscall_error_codes::ID,
             ),
+            enable_big_mod_exp_syscall: is_active(&enable_big_mod_exp_syscall::ID),
             remove_bpf_loader_incorrect_program_id: is_active(
                 &remove_bpf_loader_incorrect_program_id::ID,
             ),
@@ -198,6 +201,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
+            enable_tx_v1: is_active(&enable_tx_v1::ID),
         }
     }
 }
@@ -318,6 +322,7 @@ impl FeatureSet {
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
+            enable_big_mod_exp_syscall: snapshot.enable_big_mod_exp_syscall,
             enable_get_epoch_stake_syscall: snapshot.enable_get_epoch_stake_syscall,
             enable_poseidon_syscall: snapshot.enable_poseidon_syscall,
             disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
@@ -924,6 +929,10 @@ pub mod update_hashes_per_tick {
     solana_pubkey::declare_id!("3uFHb9oKdGfgZGJK9EHaAXN4USvnQtAFC13Fh5gGFS5B");
 }
 
+pub mod enable_big_mod_exp_syscall {
+    solana_pubkey::declare_id!("EBq48m8irRKuE7ZnMTLvLg2UuGSqhe8s8oMqnmja1fJw");
+}
+
 pub mod disable_builtin_loader_ownership_chains {
     solana_pubkey::declare_id!("4UDcAfQ6EcA6bdcadkeHpkarkhZGJ7Bpq7wTAiRMjkoi");
 }
@@ -1527,6 +1536,10 @@ pub mod relax_post_exec_min_balance_check {
     solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
 }
 
+pub mod enable_tx_v1 {
+    solana_pubkey::declare_id!("txv1hPU76QFBVeq3942jJ65e9Em2xbdbCJrzX8sM4U4");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2016,6 +2029,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             update_hashes_per_tick::id(),
             "Update desired hashes per tick on epoch boundary",
+        ),
+        (
+            enable_big_mod_exp_syscall::id(),
+            "add big_mod_exp syscall #28503",
         ),
         (
             disable_builtin_loader_ownership_chains::id(),
@@ -2576,6 +2593,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             relax_post_exec_min_balance_check::id(),
             "SIMD-0392: Relaxation of post-execution min_balance check",
         ),
+        (enable_tx_v1::id(), "SIMD-0385: Transaction V1"),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]
