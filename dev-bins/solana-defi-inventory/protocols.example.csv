@@ -1,0 +1,9 @@
+# protocol,program_id,pda_or_vault_authority,notes
+# Add one row per program id or known PDA/vault authority you want to inventory.
+# protocol,program_id,,will query getProgramAccounts(program_id)
+# protocol,,pda_or_vault_authority,will query SPL Token and Token-2022 accounts owned by PDA/authority
+Kamino Lend,,,
+Jupiter,,,
+Raydium,,,
+Orca,,,
+Drift,,,
