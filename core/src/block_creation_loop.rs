@@ -259,8 +259,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         let LeaderWindowInfo {
             start_slot,
             end_slot,
-            parent_block: (parent_slot, _),
-            block_timer,
+            parent_block: (parent_slot, parent_hash),
+            block_timer: start_of_window,
         } = {
             // Drain all pending messages and keep the latest one
             let Some(info) = ctx
@@ -281,13 +281,16 @@ fn start_loop(config: BlockCreationLoopConfig) {
             info
         };
 
-        trace!("Received window notification for {start_slot} to {end_slot} parent: {parent_slot}");
-        if let Err(e) = produce_window(start_slot, end_slot, parent_slot, block_timer, &mut ctx) {
-            // Give up on this leader window
-            error!(
-                "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
-                 {e:?}"
-            );
+        trace!(
+            "Received window notification for start_slot={start_slot}: end_slot={end_slot} for \
+             parent_slot={parent_slot}: parent_hash={parent_hash}"
+        );
+        match produce_window(start_slot, end_slot, parent_slot, start_of_window, &mut ctx) {
+            Ok(()) => (),
+            Err(e) => error!(
+                "{my_pubkey}: produce_window({start_slot}, {end_slot}, {parent_slot}: \
+                 {parent_hash}, {start_of_window:?}) failed with \"{e}\".  skipping window."
+            ),
         }
 
         ctx.metrics.loop_count += 1;
@@ -397,7 +400,7 @@ fn produce_window(
     start_slot: Slot,
     end_slot: Slot,
     mut parent_slot: Slot,
-    block_timer: Instant,
+    start_of_window: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let my_pubkey = ctx.my_pubkey;
@@ -408,15 +411,17 @@ fn produce_window(
         // Insert the bank. In case `replay_stage` is slow and `parent_slot` is not
         // yet frozen, we wait up until the timeout.
         let working_bank =
-            start_leader_wait_for_parent_replay(slot, parent_slot, block_timer, ctx)?;
+            start_leader_wait_for_parent_replay(slot, parent_slot, start_of_window, ctx)?;
         let timeout = block_timeout(&working_bank, leader_slot_index(slot));
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}",
-            timeout.saturating_sub(block_timer.elapsed()).as_millis(),
+            timeout
+                .saturating_sub(start_of_window.elapsed())
+                .as_millis(),
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
-        if let Err(e) = record_and_complete_block(ctx, block_timer, timeout, slot) {
+        if let Err(e) = record_and_complete_block(ctx, start_of_window, timeout, slot) {
             panic!("PohRecorder record failed: {e:?}");
         }
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
@@ -479,16 +484,12 @@ fn record_and_complete_block(
 
     // Shutdown and clear any inflight records
     ctx.record_receiver.shutdown();
+    let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     for record in ctx.record_receiver.drain() {
-        ctx.poh_recorder.write().unwrap().record(
-            record.bank_id,
-            record.mixins,
-            record.transaction_batches,
-        )?;
+        w_poh_recorder.record(record.bank_id, record.mixins, record.transaction_batches)?;
     }
 
     // Alpentick and clear bank
-    let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     let bank = w_poh_recorder
         .bank()
         .expect("Bank cannot have been cleared as BlockCreationLoop is the only modifier");
@@ -658,11 +659,13 @@ fn maybe_start_leader(
     }
 
     let Some(parent_bank) = ctx.bank_forks.read().unwrap().get(parent_slot) else {
+        trace!("maybe_start_leader: did not find parent_bank for parent_slot={parent_slot}");
         ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     };
 
     if !parent_bank.is_frozen() {
+        trace!("maybe_start_leader: parent bank for parent_slot={parent_slot} is not frozen");
         ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     }
