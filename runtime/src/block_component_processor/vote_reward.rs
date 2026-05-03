@@ -17,14 +17,18 @@ use {
 pub mod epoch_inflation_account_state;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
-#[derive(Debug, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub(super) enum VoteRewardError {
     #[error("Missing rank map for reward cert or final cert input")]
     RankMapNotFound,
+    #[error("Creating reward state failed with {0}")]
+    StateNewReward(StateError),
+    #[error("Creating both state failed with {0}")]
+    StateNewBoth(StateError),
 }
 
 #[derive(Debug, Error)]
-enum VoteStateError {
+pub(super) enum VoteStateError {
     #[error("could not find the vote account")]
     AccountNotFound,
     #[error("deserializing vote account failed with {0}")]
@@ -79,7 +83,7 @@ impl VoteState {
 }
 
 #[derive(Debug, PartialEq, Eq, Error)]
-enum RewardStateError {
+pub(super) enum RewardStateError {
     #[error("missing epoch stakes for reward_slot {reward_slot} in current_slot {current_slot}")]
     MissingEpochStakes {
         reward_slot: Slot,
@@ -222,7 +226,7 @@ impl<'a> FinalCertState<'a> {
 }
 
 #[derive(Debug, Error)]
-enum StateError {
+pub(super) enum StateError {
     #[error("RewardState::new() failed with {0}")]
     RewardStateNew(RewardStateError),
     #[error("RewardState::calculate_reward() failed with {0}")]
@@ -480,7 +484,8 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         (Some(reward_cert), None) => {
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut total_leader_reward = 0;
-            let state = State::new_reward(bank, reward_slot).unwrap();
+            let state =
+                State::new_reward(bank, reward_slot).map_err(VoteRewardError::StateNewReward)?;
             state.update_accounts(
                 &vote_accounts,
                 reward_validators.iter(),
@@ -516,7 +521,8 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             }
 
             {
-                let state = State::new_reward(bank, reward_slot).unwrap();
+                let state = State::new_reward(bank, reward_slot)
+                    .map_err(VoteRewardError::StateNewReward)?;
                 state.update_accounts(
                     &vote_accounts,
                     reward_validators.difference(signers),
@@ -526,7 +532,8 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             }
 
             {
-                let state = State::new_both(bank, reward_slot, signers, final_slot).unwrap();
+                let state = State::new_both(bank, reward_slot, signers, final_slot)
+                    .map_err(VoteRewardError::StateNewBoth)?;
                 state.update_accounts(
                     &vote_accounts,
                     reward_validators.intersection(signers),
