@@ -622,6 +622,7 @@ impl PohRecorder {
         // Send out the block footer - we now have the bank hash
         footer.bank_hash = working_bank.bank.hash();
         let footer = VersionedBlockMarker::new_block_footer(footer);
+
         let footer_entry_marker = (
             EntryOrMarker::Marker(footer),
             working_bank.max_tick_height - 1,
@@ -1020,7 +1021,7 @@ impl PohRecorder {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn set_bank_for_test(&mut self, bank: Arc<Bank>) {
-        self.set_bank(BankWithScheduler::new_without_scheduler(bank));
+        self.set_bank(BankWithScheduler::new_without_scheduler(bank))
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1445,6 +1446,7 @@ mod tests {
 
         // Tick until poh_recorder.tick_height == working bank's min_tick_height
         let num_new_ticks = bank1.tick_height() - poh_recorder.tick_height();
+        println!("{} {}", bank1.tick_height(), poh_recorder.tick_height());
         assert!(num_new_ticks > 0);
         for _ in 0..num_new_ticks {
             poh_recorder.tick();
