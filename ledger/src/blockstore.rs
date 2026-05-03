@@ -426,8 +426,13 @@ impl ParentInfo {
             // New is UpdateParent, prev is BlockHeader
             // Validate and allow UpdateParent to replace BlockHeader
             (false, true) => (new, prev, true),
-            // Both are the same type - ensure they match
-            _ => match new == prev {
+            // Both are UpdateParent - ensure they match
+            (false, false) => match new == prev {
+                true => return Ok(false),
+                false => return Err(BlockstoreError::MultipleUpdateParents(slot)),
+            },
+            // Both are block headers - ensure they match
+            (true, true) => match new == prev {
                 true => return Ok(false),
                 false => return Err(BlockstoreError::BlockComponentMismatch(slot)),
             },
@@ -1051,19 +1056,13 @@ impl Blockstore {
         let slot = shred.slot();
         let previous_parent_info = ParentInfo::from_slot_meta(slot_meta);
 
-        // Try to parse new ParentInfo from the current shred
-        let new_parent_info = match (shred.index(), previous_parent_info.as_ref()) {
-            // Always try to parse block header at index 0
-            (0, _) => ParentInfo::maybe_parse_block_header(shred),
-            // Try to parse UpdateParent only if we don't have one already
-            (_, Some(parent_info)) if parent_info.populated_from_block_header() => {
-                self.maybe_parse_update_parent(shred, slot, location, just_inserted_shreds)
-            }
-            (_, None) => {
-                self.maybe_parse_update_parent(shred, slot, location, just_inserted_shreds)
-            }
-            // previous_parent_info is UpdateParent; don't parse another one
-            _ => None,
+        let new_parent_info = if shred.index() == 0 {
+            ParentInfo::maybe_parse_block_header(shred)
+        } else {
+            // Keep checking FEC boundaries even after an UpdateParent has been
+            // recorded, so multiple UpdateParents are detected independent of
+            // shred arrival order.
+            self.maybe_parse_update_parent(shred, slot, location, just_inserted_shreds)
         };
 
         let Some(new_parent_info) = new_parent_info else {
@@ -13221,6 +13220,72 @@ pub mod tests {
         assert_eq!(blockstore.meta(70).unwrap().unwrap().parent_slot, Some(65));
         verify_next_slots(&blockstore, 68, &[]);
         verify_next_slots(&blockstore, 65, &[70]);
+    }
+
+    #[test]
+    fn test_multiple_update_parents_out_of_order_marks_dead() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let data_shreds = |shreds: Vec<Shred>| {
+            shreds
+                .into_iter()
+                .filter(|shred| shred.is_data())
+                .collect_vec()
+        };
+
+        let slot = 80;
+        blockstore
+            .insert_shreds(
+                data_shreds(create_block_header_shreds(slot, 75, Hash::new_unique())),
+                None,
+                true,
+            )
+            .unwrap();
+
+        let first_update_parent_slot = 70;
+        let mut first_update_parent_shreds = data_shreds(create_update_parent_shreds(
+            slot,
+            first_update_parent_slot,
+            Hash::new_unique(),
+            32,
+            false,
+        ));
+        let first_update_parent_marker = first_update_parent_shreds.remove(0);
+        assert_eq!(first_update_parent_marker.index(), 32);
+
+        // Insert the tail of the earlier FEC set so the later UpdateParent can
+        // be parsed before this UpdateParent marker arrives.
+        blockstore
+            .insert_shreds(first_update_parent_shreds, None, true)
+            .unwrap();
+
+        let second_update_parent_slot = 65;
+        blockstore
+            .insert_shreds(
+                data_shreds(create_update_parent_shreds(
+                    slot,
+                    second_update_parent_slot,
+                    Hash::new_unique(),
+                    64,
+                    false,
+                )),
+                None,
+                true,
+            )
+            .unwrap();
+
+        let parent_info = blockstore
+            .get_parent_info(slot, BlockLocation::Original)
+            .unwrap()
+            .unwrap();
+        assert_eq!(parent_info.parent_slot, second_update_parent_slot);
+        assert_eq!(parent_info.replay_fec_set_index, 64);
+        assert!(!blockstore.is_dead(slot));
+
+        blockstore
+            .insert_shreds(vec![first_update_parent_marker], None, true)
+            .unwrap();
+        assert!(blockstore.is_dead(slot));
     }
 
     #[test]

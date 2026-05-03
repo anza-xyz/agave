@@ -83,6 +83,8 @@ pub enum BlockstoreError {
     UpdateParentSlotGreaterThanBlockHeader(Slot),
     #[error("unexpected block component")]
     UnexpectedBlockComponent,
+    #[error("multiple update parents for slot {0}")]
+    MultipleUpdateParents(Slot),
     #[error("block component mismatch for slot {0}")]
     BlockComponentMismatch(Slot),
 }
