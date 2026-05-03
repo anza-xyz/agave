@@ -1820,13 +1820,20 @@ fn confirm_slot_with_components(
             }
             BlockComponent::BlockMarker(marker) => {
                 if let Some(parent_bank) = bank.parent() {
-                    processor.on_marker(
-                        bank.clone_without_scheduler(),
-                        parent_bank,
-                        marker,
-                        finalization_cert_sender,
-                        migration_status,
-                    )?;
+                    processor
+                        .on_marker(
+                            bank.clone_without_scheduler(),
+                            parent_bank,
+                            marker,
+                            finalization_cert_sender,
+                            migration_status,
+                        )
+                        .inspect_err(|err| {
+                            warn!(
+                                "BlockComponentProcessor::on_marker() for slot {slot} failed with \
+                                 {err}"
+                            );
+                        })?;
                 }
                 progress.num_shreds += num_shreds as u64;
             }
