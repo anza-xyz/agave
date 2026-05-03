@@ -621,8 +621,8 @@ impl PohRecorder {
 
         // Send out the block footer - we now have the bank hash
         footer.bank_hash = working_bank.bank.hash();
-        let footer = VersionedBlockMarker::new_block_footer(footer);
 
+        let footer = VersionedBlockMarker::new_block_footer(footer);
         let footer_entry_marker = (
             EntryOrMarker::Marker(footer),
             working_bank.max_tick_height - 1,
