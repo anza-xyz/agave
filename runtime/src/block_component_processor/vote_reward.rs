@@ -396,8 +396,9 @@ impl<'a> State<'a> {
         reward: u64,
     ) -> Result<AccountSharedData, StateError> {
         match self {
-            // TODO: do not panic.
-            Self::FinalCert(_) => panic!(),
+            Self::FinalCert(_) => {
+                unreachable!("this function should not be called for final cert variant")
+            }
             Self::Reward(state) => {
                 let mut vote_state = VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
