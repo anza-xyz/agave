@@ -18,7 +18,7 @@ pub mod epoch_inflation_account_state;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
 #[derive(Debug, PartialEq, Eq, Error)]
-pub(super) enum Error {
+pub(super) enum VoteRewardError {
     #[error("Missing rank map for reward cert or final cert input")]
     RankMapNotFound,
 }
@@ -261,31 +261,32 @@ enum State<'a> {
 }
 
 impl<'a> State<'a> {
-    fn new(
+    fn new_reward(bank: &'a Bank, reward_slot: Slot) -> Result<Self, StateError> {
+        Ok(Self::Reward(
+            RewardState::new(bank, reward_slot, reward_slot).map_err(StateError::RewardStateNew)?,
+        ))
+    }
+
+    fn new_final_cert(signers: &'a HashSet<Pubkey>, final_slot: Slot) -> Self {
+        Self::FinalCert(FinalCertState {
+            signers,
+            final_slot,
+        })
+    }
+
+    fn new_both(
         bank: &'a Bank,
-        reward_slot: Option<Slot>,
-        final_cert_input: Option<(&'a HashSet<Pubkey>, Slot)>,
-    ) -> Result<Option<Self>, StateError> {
-        match (reward_slot, final_cert_input) {
-            (None, None) => Ok(None),
-            (None, Some((signers, final_slot))) => Ok(Some(Self::FinalCert(FinalCertState {
-                signers,
-                final_slot,
-            }))),
-            (Some(reward_slot), None) => Ok(Some(Self::Reward(
-                RewardState::new(bank, reward_slot, reward_slot)
-                    .map_err(StateError::RewardStateNew)?,
-            ))),
-            (Some(reward_slot), Some((signers, final_slot))) => {
-                let reward_state = RewardState::new(bank, reward_slot, reward_slot.max(final_slot))
-                    .map_err(StateError::RewardStateNew)?;
-                let final_cert_state = FinalCertState {
-                    signers,
-                    final_slot,
-                };
-                Ok(Some(Self::Both(reward_state, final_cert_state)))
-            }
-        }
+        reward_slot: Slot,
+        signers: &'a HashSet<Pubkey>,
+        final_slot: Slot,
+    ) -> Result<Self, StateError> {
+        let reward_state = RewardState::new(bank, reward_slot, reward_slot.max(final_slot))
+            .map_err(StateError::RewardStateNew)?;
+        let final_cert_state = FinalCertState {
+            signers,
+            final_slot,
+        };
+        Ok(Self::Both(reward_state, final_cert_state))
     }
 
     /// Depending on the variant of `Self`, looks up the vote account and updates it.
@@ -419,7 +420,7 @@ fn allocate_updated_accounts(
     bank: &Bank,
     reward_cert: &Option<ValidatedRewardCert>,
     final_cert_input: &Option<(&HashSet<Pubkey>, Slot)>,
-) -> Result<Option<Vec<(Pubkey, AccountSharedData)>>, Error> {
+) -> Result<Option<Vec<(Pubkey, AccountSharedData)>>, VoteRewardError> {
     let max_validators = match (&reward_cert, &final_cert_input) {
         (None, None) => return Ok(None),
         (Some(cert), None) => {
@@ -432,11 +433,11 @@ fn allocate_updated_accounts(
             // use max validators.
             let final_cert_slot_max_validators = bank
                 .get_rank_map(*slot)
-                .ok_or(Error::RankMapNotFound)?
+                .ok_or(VoteRewardError::RankMapNotFound)?
                 .len();
             let reward_cert_slot_max_validators = bank
                 .get_rank_map(reward_cert.slot())
-                .ok_or(Error::RankMapNotFound)?
+                .ok_or(VoteRewardError::RankMapNotFound)?
                 .len();
             final_cert_slot_max_validators.max(reward_cert_slot_max_validators)
         }
@@ -450,7 +451,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
     final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
-) -> Result<(), Error> {
+) -> Result<(), VoteRewardError> {
     let Some(mut updated_accounts) =
         allocate_updated_accounts(bank, &reward_cert, &final_cert_input)?
     else {
@@ -459,12 +460,12 @@ pub(super) fn calc_vote_rewards_update_vote_states(
 
     let vote_accounts = bank.vote_accounts();
 
-    match (reward_cert, &final_cert_input) {
+    match (reward_cert, final_cert_input) {
         (None, None) => Ok(()),
 
-        (None, Some((signers, _))) => {
+        (None, Some((signers, final_slot))) => {
             let mut total_leader_reward = 0;
-            let state = State::new(bank, None, final_cert_input).unwrap().unwrap();
+            let state = State::new_final_cert(signers, final_slot);
             state.update_accounts(
                 &vote_accounts,
                 signers.iter(),
@@ -479,7 +480,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         (Some(reward_cert), None) => {
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut total_leader_reward = 0;
-            let state = State::new(bank, Some(reward_slot), None).unwrap().unwrap();
+            let state = State::new_reward(bank, reward_slot).unwrap();
             state.update_accounts(
                 &vote_accounts,
                 reward_validators.iter(),
@@ -496,7 +497,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             Ok(())
         }
 
-        (Some(reward_cert), Some((signers, _))) => {
+        (Some(reward_cert), Some((signers, final_slot))) => {
             // both finalization cert and reward cert are present.  We have to update three sets of
             // validators: those present in both; those just in reward cert; and those just in the
             // finalization cert.
@@ -504,7 +505,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut total_leader_reward = 0;
             {
-                let state = State::new(bank, None, final_cert_input).unwrap().unwrap();
+                let state = State::new_final_cert(signers, final_slot);
                 state.update_accounts(
                     &vote_accounts,
                     signers.difference(&reward_validators),
@@ -515,7 +516,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             }
 
             {
-                let state = State::new(bank, Some(reward_slot), None).unwrap().unwrap();
+                let state = State::new_reward(bank, reward_slot).unwrap();
                 state.update_accounts(
                     &vote_accounts,
                     reward_validators.difference(signers),
@@ -525,9 +526,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             }
 
             {
-                let state = State::new(bank, Some(reward_slot), final_cert_input)
-                    .unwrap()
-                    .unwrap();
+                let state = State::new_both(bank, reward_slot, signers, final_slot).unwrap();
                 state.update_accounts(
                     &vote_accounts,
                     reward_validators.intersection(signers),
