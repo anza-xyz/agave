@@ -25,8 +25,6 @@ pub(super) enum VoteRewardError {
     StateNewReward(StateError),
     #[error("Creating both state failed with {0}")]
     StateNewBoth(StateError),
-    #[error("Updating leader failed with {0}")]
-    UpdateLeader(StateError),
 }
 
 #[derive(Debug, Error)]
@@ -496,10 +494,15 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                 &mut total_leader_reward,
             );
             let leader_vote_pubkey = bank.leader().vote_address;
-            let leader_account = state
-                .update_leader(&vote_accounts, total_leader_reward)
-                .map_err(VoteRewardError::UpdateLeader)?;
-            updated_accounts.push((leader_vote_pubkey, leader_account));
+            match state.update_leader(&vote_accounts, total_leader_reward) {
+                Err(e) => info!(
+                    "State=\"{state:?}\": update_leader(leader={leader_vote_pubkey}) failed with \
+                     {e}"
+                ),
+                Ok(leader_account) => {
+                    updated_accounts.push((leader_vote_pubkey, leader_account));
+                }
+            }
             bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
             Ok(())
         }
@@ -546,10 +549,15 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                 // Now that all validators have been handled, we have computed the total leader
                 // reward so can update it.
                 let leader_vote_pubkey = bank.leader().vote_address;
-                let leader_account = state
-                    .update_leader(&vote_accounts, total_leader_reward)
-                    .map_err(VoteRewardError::UpdateLeader)?;
-                updated_accounts.push((leader_vote_pubkey, leader_account));
+                match state.update_leader(&vote_accounts, total_leader_reward) {
+                    Err(e) => info!(
+                        "State=\"{state:?}\": update_leader(leader={leader_vote_pubkey}) failed \
+                         with {e}"
+                    ),
+                    Ok(leader_account) => {
+                        updated_accounts.push((leader_vote_pubkey, leader_account));
+                    }
+                }
             }
             bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
             Ok(())
