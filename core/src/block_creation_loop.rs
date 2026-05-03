@@ -170,10 +170,10 @@ fn start_loop(config: BlockCreationLoopConfig) {
         rpc_subscriptions,
         banking_tracer,
         slot_status_notifier,
-        record_receiver_receiver,
         leader_window_info_receiver,
-        replay_highest_frozen,
         highest_parent_ready,
+        replay_highest_frozen,
+        record_receiver_receiver,
         highest_finalized,
         build_reward_certs_sender,
         reward_certs_receiver,
@@ -186,7 +186,6 @@ fn start_loop(config: BlockCreationLoopConfig) {
     let mut my_pubkey = cluster_info.id();
 
     info!("{my_pubkey}: Block creation loop initialized");
-
     // Wait for PohService to be shutdown
     let record_receiver = match record_receiver_receiver.recv() {
         Ok(receiver) => receiver,
@@ -210,23 +209,23 @@ fn start_loop(config: BlockCreationLoopConfig) {
     let mut ctx = LeaderContext {
         exit,
         my_pubkey,
-        highest_parent_ready,
         leader_window_info_receiver,
+        highest_parent_ready,
         blockstore,
-        poh_recorder: poh_recorder.clone(),
         record_receiver,
+        poh_recorder,
         leader_schedule_cache,
         bank_forks,
         rpc_subscriptions,
         slot_status_notifier,
         banking_tracer,
         replay_highest_frozen,
+        build_reward_certs_sender,
+        reward_certs_receiver,
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
         highest_finalized,
         genesis_cert,
-        build_reward_certs_sender,
-        reward_certs_receiver,
     };
 
     // Setup poh
@@ -322,54 +321,9 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 /// index within the leader window, returns the duration after which we should
 /// publish the final shred for the block with starting point being the start of
 /// the leader window.
-fn compute_block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
+fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot)
         .saturating_mul((leader_block_index as u32).saturating_add(1))
-}
-
-/// Produces the leader window from `start_slot` -> `end_slot` using parent
-/// `parent_slot` while abiding to the `skip_timer`
-fn produce_window(
-    start_slot: Slot,
-    end_slot: Slot,
-    window_parent_slot: Slot,
-    start_of_window: Instant,
-    ctx: &mut LeaderContext,
-) -> Result<(), StartLeaderError> {
-    for slot in start_slot..=end_slot {
-        if ctx.exit.load(Ordering::Relaxed) {
-            break;
-        }
-        let parent_slot = if slot == start_slot {
-            window_parent_slot
-        } else {
-            slot - 1
-        };
-        let block_timeout = start_of_window
-            + compute_block_timeout(
-                &ctx.bank_forks.read().unwrap().root_bank(),
-                leader_slot_index(slot),
-            );
-        let start = Instant::now();
-        let ret = wait_for_replay(slot, parent_slot, block_timeout, ctx);
-        trace!(
-            "produce_window: wait_for_replay(slot={slot}) took {}ms",
-            start.elapsed().as_millis()
-        );
-        ret?;
-        match record_and_complete_block(ctx, slot, block_timeout) {
-            Ok(()) => {
-                assert!(!ctx.poh_recorder.read().unwrap().has_bank());
-            }
-            Err(e) => {
-                panic!(
-                    "record_and_complete_block(slot={slot}, start_of_window={start_of_window:?}, \
-                     block_timeout={block_timeout:?}) failed with \"{e}\""
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Clamps the block producer timestamp to ensure that the leader produces a timestamp that conforms
@@ -437,6 +391,51 @@ fn produce_block_footer(
         skip_reward_cert,
         notar_reward_cert,
     }
+}
+
+/// Produces the leader window from `start_slot` -> `end_slot` using parent
+/// `parent_slot` while abiding to the `skip_timer`
+fn produce_window(
+    start_slot: Slot,
+    end_slot: Slot,
+    window_parent_slot: Slot,
+    start_of_window: Instant,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
+    for slot in start_slot..=end_slot {
+        if ctx.exit.load(Ordering::Relaxed) {
+            break;
+        }
+        let parent_slot = if slot == start_slot {
+            window_parent_slot
+        } else {
+            slot - 1
+        };
+        let block_timeout = start_of_window
+            + block_timeout(
+                &ctx.bank_forks.read().unwrap().root_bank(),
+                leader_slot_index(slot),
+            );
+        let start = Instant::now();
+        let ret = wait_for_replay(slot, parent_slot, block_timeout, ctx);
+        trace!(
+            "produce_window: wait_for_replay(slot={slot}) took {}ms",
+            start.elapsed().as_millis()
+        );
+        ret?;
+        match record_and_complete_block(ctx, slot, block_timeout) {
+            Ok(()) => {
+                assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+            }
+            Err(e) => {
+                panic!(
+                    "record_and_complete_block(slot={slot}, start_of_window={start_of_window:?}, \
+                     block_timeout={block_timeout:?}) failed with \"{e}\""
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Records incoming transactions until we reach the block timeout.

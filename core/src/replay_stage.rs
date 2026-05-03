@@ -3485,7 +3485,6 @@ impl ReplayStage {
             }
 
             assert_eq!(bank_slot, bank.slot());
-
             if bank.is_complete() {
                 let mut bank_complete_time = Measure::start("bank_complete_time");
                 let bank_progress = progress
