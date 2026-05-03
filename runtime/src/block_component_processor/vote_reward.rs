@@ -2,6 +2,7 @@ use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
     bincode::Error as BincodeError,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
+    log::error,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
@@ -204,6 +205,7 @@ impl<'a> RewardState<'a> {
 }
 
 /// Common state required to update root_slot on the vote account.
+#[derive(Debug)]
 struct FinalCertState<'a> {
     signers: &'a HashSet<Pubkey>,
     final_slot: Slot,
@@ -248,6 +250,7 @@ enum UpdateAccountRes {
 }
 
 /// enum to handle whether we are handling rewards; finalization cert; or both.
+#[derive(Debug)]
 enum State<'a> {
     /// Handling just rewards.
     Reward(RewardState<'a>),
@@ -357,18 +360,22 @@ impl<'a> State<'a> {
         total_leader_reward: &mut u64,
     ) {
         for &validator in validators {
-            // TODO: remove unwrap.
-            match self.update_account(vote_accounts, validator).unwrap() {
-                UpdateAccountRes::FinalCert(acct) => updated_accounts.push((validator, acct)),
-                UpdateAccountRes::NonLeaderReward {
+            match self.update_account(vote_accounts, validator) {
+                Ok(UpdateAccountRes::FinalCert(acct)) => updated_accounts.push((validator, acct)),
+                Ok(UpdateAccountRes::NonLeaderReward {
                     account,
                     leader_reward,
-                } => {
+                }) => {
                     updated_accounts.push((validator, account));
                     *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
                 }
-                UpdateAccountRes::LeaderReward(leader_reward) => {
+                Ok(UpdateAccountRes::LeaderReward(leader_reward)) => {
                     *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
+                }
+                Err(e) => {
+                    error!(
+                        "State=\"{self:?}\": update_account(validator={validator}) failed with {e}"
+                    );
                 }
             }
         }
