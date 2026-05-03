@@ -463,6 +463,26 @@ impl ParentInfo {
     fn block(&self) -> (Slot, Hash) {
         (self.parent_slot, self.parent_block_id)
     }
+
+    fn validate_shred_parent(&self, slot: Slot, shred_parent_slot: Slot, root: Slot) -> Result<()> {
+        if !verify_shred_slots(slot, self.parent_slot, root) {
+            return Err(BlockstoreError::InvalidParentInfo {
+                slot,
+                parent_slot: self.parent_slot,
+                root,
+            });
+        }
+
+        if self.populated_from_block_header() && self.parent_slot != shred_parent_slot {
+            return Err(BlockstoreError::BlockHeaderParentMismatch {
+                slot,
+                block_header_parent_slot: self.parent_slot,
+                shred_parent_slot,
+            });
+        }
+
+        Ok(())
+    }
 }
 
 pub fn banking_trace_path(path: &Path) -> PathBuf {
@@ -1048,6 +1068,7 @@ impl Blockstore {
     fn maybe_update_parent_info(
         &self,
         shred: &Shred,
+        shred_parent_slot: Slot,
         location: BlockLocation,
         slot_meta: &mut SlotMeta,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
@@ -1069,26 +1090,25 @@ impl Blockstore {
             return Ok(());
         };
 
+        let max_root = self.max_root();
+        if let Err(err) = new_parent_info.validate_shred_parent(slot, shred_parent_slot, max_root) {
+            self.mark_invalid_parent_info_dead(write_batch, new_parent_info, slot, location, &err)?;
+            return Err(err);
+        }
+
         // Validate new ParentInfo against previous (if both exist)
         if let Some(prev) = previous_parent_info.as_ref() {
             match ParentInfo::should_write_parent_info(slot, &new_parent_info, prev) {
                 Ok(true) => {}
                 Ok(false) => return Ok(()),
                 Err(e) => {
-                    if !matches!(location, BlockLocation::Original) {
-                        error!(
-                            "Shreds being inserted to the alternate column {location:?} for slot \
-                             {} have mismatching ParentInfo. Note that these shreds have reached \
-                             a confirmation threshold, and were fetched by block id repair which \
-                             does pre verification via merkle proofs before ingest. For a \
-                             mismatch to occur something has gone disastrously wrong and we might \
-                             not be able to recover. Marking the slot as dead.",
-                            shred.slot(),
-                        );
-                    }
-                    self.dead_slots_cf
-                        .put_in_batch(write_batch, slot, &true)
-                        .unwrap();
+                    self.mark_invalid_parent_info_dead(
+                        write_batch,
+                        new_parent_info,
+                        slot,
+                        location,
+                        &e,
+                    )?;
                     return Err(e);
                 }
             }
@@ -1098,6 +1118,39 @@ impl Blockstore {
         slot_meta.update_from_parent_info(new_parent_info);
 
         Ok(())
+    }
+
+    fn mark_invalid_parent_info_dead(
+        &self,
+        write_batch: &mut WriteBatch,
+        parent_info: ParentInfo,
+        slot: Slot,
+        location: BlockLocation,
+        err: &BlockstoreError,
+    ) -> Result<()> {
+        datapoint_error!(
+            "blockstore_error",
+            (
+                "error",
+                format!(
+                    "Invalid parent info in slot {slot} location {location}: {:?}. Marking slot \
+                     as dead",
+                    parent_info,
+                ),
+                String
+            )
+        );
+        if !matches!(location, BlockLocation::Original) {
+            error!(
+                "Shreds being inserted to the alternate column {location:?} for slot {slot} have \
+                 invalid or mismatching ParentInfo: {err}. Note that these shreds have reached a \
+                 confirmation threshold, and were fetched by block id repair which does pre \
+                 verification via merkle proofs before ingest. For a mismatch to occur something \
+                 has gone disastrously wrong and we might not be able to recover. Marking the \
+                 slot as dead.",
+            );
+        }
+        self.dead_slots_cf.put_in_batch(write_batch, slot, &true)
     }
 
     /// Check whether the specified slot is an orphan slot which does not
@@ -2488,14 +2541,11 @@ impl Blockstore {
         let index_meta_working_set_entry =
             self.get_index_meta_entry(slot, location, index_working_set, index_meta_time_us)?;
         let index_meta = &mut index_meta_working_set_entry.index;
-        let slot_meta_entry = self.get_slot_meta_entry(
-            slot_meta_working_set,
-            slot,
-            location,
-            shred
-                .parent()
-                .map_err(|_| InsertDataShredError::InvalidShred)?,
-        )?;
+        let shred_parent_slot = shred
+            .parent()
+            .map_err(|_| InsertDataShredError::InvalidShred)?;
+        let slot_meta_entry =
+            self.get_slot_meta_entry(slot_meta_working_set, slot, location, shred_parent_slot)?;
 
         let slot_meta = &mut slot_meta_entry.new_slot_meta.borrow_mut();
         let erasure_set = shred.erasure_set();
@@ -2577,6 +2627,7 @@ impl Blockstore {
         {
             self.maybe_update_parent_info(
                 &shred,
+                shred_parent_slot,
                 location,
                 slot_meta,
                 just_inserted_shreds,
@@ -6259,6 +6310,24 @@ pub mod tests {
         shred_index: u32,
         is_last_in_slot: bool,
     ) -> Vec<Shred> {
+        create_update_parent_shreds_with_shred_parent(
+            slot,
+            0,
+            parent_slot,
+            parent_block_id,
+            shred_index,
+            is_last_in_slot,
+        )
+    }
+
+    fn create_update_parent_shreds_with_shred_parent(
+        slot: Slot,
+        shred_parent_slot: Slot,
+        parent_slot: Slot,
+        parent_block_id: Hash,
+        shred_index: u32,
+        is_last_in_slot: bool,
+    ) -> Vec<Shred> {
         use solana_entry::block_component::UpdateParentV1;
         let component = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
             new_parent_slot: parent_slot,
@@ -6266,7 +6335,7 @@ pub mod tests {
         });
         let component = BlockComponent::new_block_marker(component);
 
-        Shredder::new(slot, 0, 0, 0)
+        Shredder::new(slot, shred_parent_slot, 0, 0)
             .unwrap()
             .make_merkle_shreds_from_component(
                 &Keypair::new(),
@@ -6286,6 +6355,20 @@ pub mod tests {
         parent_slot: Slot,
         parent_block_id: Hash,
     ) -> Vec<Shred> {
+        create_block_header_shreds_with_shred_parent(
+            slot,
+            parent_slot,
+            parent_slot,
+            parent_block_id,
+        )
+    }
+
+    fn create_block_header_shreds_with_shred_parent(
+        slot: Slot,
+        shred_parent_slot: Slot,
+        parent_slot: Slot,
+        parent_block_id: Hash,
+    ) -> Vec<Shred> {
         use solana_entry::block_component::BlockHeaderV1;
         let component = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
             parent_slot,
@@ -6293,7 +6376,7 @@ pub mod tests {
         });
         let component = BlockComponent::new_block_marker(component);
 
-        Shredder::new(slot, parent_slot, 0, 0)
+        Shredder::new(slot, shred_parent_slot, 0, 0)
             .unwrap()
             .make_merkle_shreds_from_component(
                 &Keypair::new(),
@@ -13029,6 +13112,74 @@ pub mod tests {
             "block_header_first={block_header_first}, bh_parent={bh_parent_slot}, \
              up_parent={up_parent_slot}, same_block_id={same_block_id}"
         );
+    }
+
+    #[test]
+    fn test_invalid_block_header_parent_info_marks_dead() {
+        let slot = 1000;
+        let shred_parent_slot = slot - 1;
+
+        for block_header_parent_slot in [slot - 2, slot, slot + 1] {
+            let ledger_path = get_tmp_ledger_path_auto_delete!();
+            let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+            let shreds = create_block_header_shreds_with_shred_parent(
+                slot,
+                shred_parent_slot,
+                block_header_parent_slot,
+                Hash::new_unique(),
+            );
+            blockstore.insert_shreds(shreds, None, false).unwrap();
+
+            assert!(
+                blockstore.is_dead(slot),
+                "block_header_parent_slot={block_header_parent_slot}"
+            );
+            assert_ne!(
+                blockstore
+                    .meta(slot)
+                    .unwrap()
+                    .and_then(|meta| meta.parent_slot),
+                Some(block_header_parent_slot),
+                "invalid BlockHeader must not overwrite SlotMeta parent_slot"
+            );
+        }
+    }
+
+    #[test]
+    fn test_invalid_update_parent_parent_info_marks_dead() {
+        let slot = 1000;
+        let shred_parent_slot = slot - 1;
+
+        for update_parent_slot in [slot, slot + 1] {
+            let ledger_path = get_tmp_ledger_path_auto_delete!();
+            let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+            let mut shreds = create_update_parent_shreds_with_shred_parent(
+                slot,
+                shred_parent_slot,
+                update_parent_slot,
+                Hash::new_unique(),
+                32,
+                false,
+            );
+            shreds.extend(create_block_footer_shreds(slot, shred_parent_slot, 0));
+
+            blockstore.insert_shreds(shreds, None, false).unwrap();
+
+            assert!(
+                blockstore.is_dead(slot),
+                "update_parent_slot={update_parent_slot}"
+            );
+            assert_ne!(
+                blockstore
+                    .meta(slot)
+                    .unwrap()
+                    .and_then(|meta| meta.parent_slot),
+                Some(update_parent_slot),
+                "invalid UpdateParent must not overwrite SlotMeta parent_slot"
+            );
+        }
     }
 
     #[test]

@@ -87,6 +87,21 @@ pub enum BlockstoreError {
     MultipleUpdateParents(Slot),
     #[error("block component mismatch for slot {0}")]
     BlockComponentMismatch(Slot),
+    #[error("invalid parent info for slot {slot}: parent {parent_slot}, max root {root}")]
+    InvalidParentInfo {
+        slot: Slot,
+        parent_slot: Slot,
+        root: Slot,
+    },
+    #[error(
+        "block header parent {block_header_parent_slot} does not match shred parent \
+         {shred_parent_slot} for slot {slot}"
+    )]
+    BlockHeaderParentMismatch {
+        slot: Slot,
+        block_header_parent_slot: Slot,
+        shred_parent_slot: Slot,
+    },
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 
