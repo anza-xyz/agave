@@ -2,7 +2,7 @@ use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
     bincode::Error as BincodeError,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
-    log::error,
+    log::info,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
@@ -380,7 +380,7 @@ impl<'a> State<'a> {
                     *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
                 }
                 Err(e) => {
-                    error!(
+                    info!(
                         "State=\"{self:?}\": update_account(validator={validator}) failed with {e}"
                     );
                 }
