@@ -112,8 +112,8 @@ pub(super) enum RewardStateError {
 /// Common state required to pay rewards.
 #[derive(Debug)]
 struct RewardState<'a> {
-    /// The epoch in which the reward was earned.
-    reward_epoch: Epoch,
+    /// The epoch in which the reward was paid into the vote account.
+    current_epoch: Epoch,
     /// The slot in which the reward was earned.
     reward_slot: Slot,
     /// The slot in which the reward is being paid into the vote account.
@@ -163,7 +163,7 @@ impl<'a> RewardState<'a> {
                 })?
         };
         Ok(Self {
-            reward_epoch,
+            current_epoch: bank.epoch(),
             reward_slot,
             new_root_slot,
             current_slot,
@@ -196,7 +196,7 @@ impl<'a> RewardState<'a> {
 
     /// Pays `reward` into `epoch_credits` field and updates the `votes` field in `VoteStateHandler`.
     fn update_account(&self, reward: u64, handler: &mut VoteStateHandler) {
-        handler.increment_credits(self.reward_epoch, reward);
+        handler.increment_credits(self.current_epoch, reward);
         let latest_root = handler
             .root_slot()
             .unwrap_or(self.new_root_slot)
