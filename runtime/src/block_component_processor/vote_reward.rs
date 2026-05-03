@@ -176,9 +176,12 @@ impl<'a> RewardState<'a> {
 
     /// Calculates rewards for the `validator`.
     ///
-    /// Returns Ok(Some(RewardUpdate)) if validator is not the leader and its reward can be paid now.
-    /// Returns Ok(None) if validator is the leader and we haven't finished calculating its rewards.
-    fn calculate_reward(&self, validator: Pubkey) -> Result<(u64, u64), RewardStateError> {
+    /// On success also increments `total_leader_reward` with the leader's share.
+    fn calculate_reward(
+        &self,
+        validator: Pubkey,
+        total_leader_reward: &mut u64,
+    ) -> Result<u64, RewardStateError> {
         let (reward_slot_validator_stake, _) =
             self.accounts
                 .get(&validator)
@@ -187,11 +190,13 @@ impl<'a> RewardState<'a> {
                     reward_slot: self.reward_slot,
                     current_slot: self.current_slot,
                 })?;
-        Ok(calculate_reward(
+        let (validator_reward, leader_reward) = calculate_reward(
             &self.epoch_inflation_state,
             self.total_stake,
             *reward_slot_validator_stake,
-        ))
+        );
+        *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
+        Ok(validator_reward)
     }
 
     /// Pays `reward` into `epoch_credits` field and updates the `votes` field in `VoteStateHandler`.
@@ -242,15 +247,10 @@ enum UpdateAccountRes {
     /// Handled just the finalization cert and returning the updated account.
     FinalCert(AccountSharedData),
     /// Handled rewards (and maybe finalization cert as well) for a non-leader validator.
-    NonLeaderReward {
-        /// The updated account.
-        account: AccountSharedData,
-        /// Leader's share of the reward.
-        leader_reward: u64,
-    },
-    /// Attempted to update the leader validator.  Returning the calculated rewards and deferring
+    NonLeaderReward(AccountSharedData),
+    /// Attempted to update the leader validator.  Deferring
     /// update till all reward calculations are done.
-    LeaderReward(u64),
+    LeaderReward,
 }
 
 /// enum to handle whether we are handling rewards; finalization cert; or both.
@@ -298,16 +298,16 @@ impl<'a> State<'a> {
         &self,
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
         vote_pubkey: Pubkey,
+        total_leader_reward: &mut u64,
     ) -> Result<UpdateAccountRes, StateError> {
         match self {
             Self::Reward(state) => {
-                let (validator_reward, leader_reward) = state
-                    .calculate_reward(vote_pubkey)
+                let validator_reward = state
+                    .calculate_reward(vote_pubkey, total_leader_reward)
                     .map_err(StateError::RewardStateCalcReward)?;
                 if vote_pubkey == state.leader_vote_pubkey {
-                    return Ok(UpdateAccountRes::LeaderReward(
-                        validator_reward + leader_reward,
-                    ));
+                    *total_leader_reward = total_leader_reward.saturating_add(validator_reward);
+                    return Ok(UpdateAccountRes::LeaderReward);
                 }
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
@@ -315,10 +315,7 @@ impl<'a> State<'a> {
                 let updated_account = vote_state
                     .serialize()
                     .map_err(StateError::VoteStateSerialize)?;
-                Ok(UpdateAccountRes::NonLeaderReward {
-                    account: updated_account,
-                    leader_reward,
-                })
+                Ok(UpdateAccountRes::NonLeaderReward(updated_account))
             }
             Self::FinalCert(state) => {
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
@@ -330,13 +327,12 @@ impl<'a> State<'a> {
                 Ok(UpdateAccountRes::FinalCert(updated_account))
             }
             Self::Both(reward_state, final_cert_state) => {
-                let (validator_reward, leader_reward) = reward_state
-                    .calculate_reward(vote_pubkey)
+                let validator_reward = reward_state
+                    .calculate_reward(vote_pubkey, total_leader_reward)
                     .map_err(StateError::RewardStateCalcReward)?;
                 if vote_pubkey == reward_state.leader_vote_pubkey {
-                    return Ok(UpdateAccountRes::LeaderReward(
-                        validator_reward + leader_reward,
-                    ));
+                    *total_leader_reward = total_leader_reward.saturating_add(validator_reward);
+                    return Ok(UpdateAccountRes::LeaderReward);
                 }
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
@@ -345,10 +341,7 @@ impl<'a> State<'a> {
                 let updated_account = vote_state
                     .serialize()
                     .map_err(StateError::VoteStateSerialize)?;
-                Ok(UpdateAccountRes::NonLeaderReward {
-                    account: updated_account,
-                    leader_reward,
-                })
+                Ok(UpdateAccountRes::NonLeaderReward(updated_account))
             }
         }
     }
@@ -365,18 +358,12 @@ impl<'a> State<'a> {
         total_leader_reward: &mut u64,
     ) {
         for &validator in validators {
-            match self.update_account(vote_accounts, validator) {
+            match self.update_account(vote_accounts, validator, total_leader_reward) {
                 Ok(UpdateAccountRes::FinalCert(acct)) => updated_accounts.push((validator, acct)),
-                Ok(UpdateAccountRes::NonLeaderReward {
-                    account,
-                    leader_reward,
-                }) => {
+                Ok(UpdateAccountRes::NonLeaderReward(account)) => {
                     updated_accounts.push((validator, account));
-                    *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
                 }
-                Ok(UpdateAccountRes::LeaderReward(leader_reward)) => {
-                    *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
-                }
+                Ok(UpdateAccountRes::LeaderReward) => {}
                 Err(e) => {
                     info!(
                         "State=\"{self:?}\": update_account(validator={validator}) failed with {e}"
