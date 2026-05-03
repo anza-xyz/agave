@@ -104,7 +104,7 @@ enum RewardStateError {
     },
 }
 
-/// Common state required to pay rewards to different accounts.
+/// Common state required to pay rewards.
 #[derive(Debug)]
 struct RewardState<'a> {
     /// The epoch in which the reward was earned.
@@ -113,7 +113,8 @@ struct RewardState<'a> {
     reward_slot: Slot,
     /// The slot in which the reward is being paid into the vote account.
     current_slot: Slot,
-    /// Slot to use when calling `VoteStateHandler::set_votes`
+    /// Slot to use when calling `VoteStateHandler::set_votes`.
+    /// This is the maximum of the reward_slot and the slot in the finalization cert.
     new_root_slot: Slot,
     /// The pubkey of the validator that will receive the leader rewards.
     leader_vote_pubkey: Pubkey,
@@ -132,18 +133,14 @@ impl<'a> RewardState<'a> {
         new_root_slot: Slot,
     ) -> Result<Self, RewardStateError> {
         let current_slot = bank.slot();
-        let (accounts, total_stake) = {
-            let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot).ok_or(
-                RewardStateError::MissingEpochStakes {
-                    reward_slot,
-                    current_slot,
-                },
-            )?;
-            (
-                epoch_stakes.stakes().vote_accounts().as_ref(),
-                epoch_stakes.total_stake(),
-            )
-        };
+        let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot).ok_or(
+            RewardStateError::MissingEpochStakes {
+                reward_slot,
+                current_slot,
+            },
+        )?;
+        let accounts = epoch_stakes.stakes().vote_accounts().as_ref();
+        let total_stake = epoch_stakes.total_stake();
         // This assumes that if the epoch_schedule ever changes, the new schedule will maintain correct
         // info about older slots as well.
         let reward_epoch = bank.epoch_schedule.get_epoch(reward_slot);
@@ -192,6 +189,7 @@ impl<'a> RewardState<'a> {
         ))
     }
 
+    /// Pays `reward` into `epoch_credits` field and updates the `votes` field in `VoteStateHandler`.
     fn update_account(&self, reward: u64, handler: &mut VoteStateHandler) {
         handler.increment_credits(self.reward_epoch, reward);
         let latest_root = handler
@@ -205,12 +203,15 @@ impl<'a> RewardState<'a> {
     }
 }
 
+/// Common state required to update root_slot on the vote account.
 struct FinalCertState<'a> {
     signers: &'a HashSet<Pubkey>,
     final_slot: Slot,
 }
 
 impl<'a> FinalCertState<'a> {
+    /// Updates the `root_slot` field in the `VoteStateHandler` if the finalization cert was signed
+    /// by this validator.
     fn update_account(&self, vote_pubkey: Pubkey, handler: &mut VoteStateHandler) {
         if self.signers.contains(&vote_pubkey) {
             handler.set_root_slot(Some(self.final_slot));
@@ -230,15 +231,29 @@ enum StateError {
     VoteStateSerialize(VoteStateError),
 }
 
+/// Different variants that can be returned from `State::update_account`.
 enum UpdateAccountRes {
+    /// Handled just the finalization cert and returning the updated account.
     FinalCert(AccountSharedData),
-    NonLeaderReward(AccountSharedData, u64),
+    /// Handled rewards (and maybe finalization cert as well) for a non-leader validator.
+    NonLeaderReward {
+        /// The updated account.
+        account: AccountSharedData,
+        /// Leader's share of the reward.
+        leader_reward: u64,
+    },
+    /// Attempted to update the leader validator.  Returning the calculated rewards and deferring
+    /// update till all reward calculations are done.
     LeaderReward(u64),
 }
 
+/// enum to handle whether we are handling rewards; finalization cert; or both.
 enum State<'a> {
+    /// Handling just rewards.
     Reward(RewardState<'a>),
+    /// Handling just finalization cert.
     FinalCert(FinalCertState<'a>),
+    /// Handling both.
     Both(RewardState<'a>, FinalCertState<'a>),
 }
 
@@ -270,6 +285,7 @@ impl<'a> State<'a> {
         }
     }
 
+    /// Depending on the variant of `Self`, looks up the vote account and updates it.
     fn update_account(
         &self,
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
@@ -291,10 +307,10 @@ impl<'a> State<'a> {
                 let updated_account = vote_state
                     .serialize()
                     .map_err(StateError::VoteStateSerialize)?;
-                Ok(UpdateAccountRes::NonLeaderReward(
-                    updated_account,
+                Ok(UpdateAccountRes::NonLeaderReward {
+                    account: updated_account,
                     leader_reward,
-                ))
+                })
             }
             Self::FinalCert(state) => {
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
@@ -321,14 +337,18 @@ impl<'a> State<'a> {
                 let updated_account = vote_state
                     .serialize()
                     .map_err(StateError::VoteStateSerialize)?;
-                Ok(UpdateAccountRes::NonLeaderReward(
-                    updated_account,
+                Ok(UpdateAccountRes::NonLeaderReward {
+                    account: updated_account,
                     leader_reward,
-                ))
+                })
             }
         }
     }
 
+    /// Updates all the validators in the provided `validators` iterator.
+    ///
+    /// The updated validator accounts are stored in `updated_accounts`.
+    /// `total_leader_reward` is incremented by the leader's share of the reward observed.
     fn update_accounts(
         &self,
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
@@ -337,10 +357,14 @@ impl<'a> State<'a> {
         total_leader_reward: &mut u64,
     ) {
         for &validator in validators {
+            // TODO: remove unwrap.
             match self.update_account(vote_accounts, validator).unwrap() {
                 UpdateAccountRes::FinalCert(acct) => updated_accounts.push((validator, acct)),
-                UpdateAccountRes::NonLeaderReward(acct, leader_reward) => {
-                    updated_accounts.push((validator, acct));
+                UpdateAccountRes::NonLeaderReward {
+                    account,
+                    leader_reward,
+                } => {
+                    updated_accounts.push((validator, account));
                     *total_leader_reward = total_leader_reward.saturating_add(leader_reward);
                 }
                 UpdateAccountRes::LeaderReward(leader_reward) => {
@@ -350,12 +374,15 @@ impl<'a> State<'a> {
         }
     }
 
+    /// Once the total rewards for the leader have been calculated, this is used to update leader
+    /// vote account state.
     fn update_leader(
         &self,
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
         reward: u64,
     ) -> Result<AccountSharedData, StateError> {
         match self {
+            // TODO: do not panic.
             Self::FinalCert(_) => panic!(),
             Self::Reward(state) => {
                 let mut vote_state = VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
@@ -380,6 +407,7 @@ impl<'a> State<'a> {
     }
 }
 
+/// Allocates a `Vec` for storing updated accounts.  Uses `Vec::with_capacity` to reduce reallocations.
 fn allocate_updated_accounts(
     bank: &Bank,
     reward_cert: &Option<ValidatedRewardCert>,
@@ -387,9 +415,14 @@ fn allocate_updated_accounts(
 ) -> Result<Option<Vec<(Pubkey, AccountSharedData)>>, Error> {
     let max_validators = match (&reward_cert, &final_cert_input) {
         (None, None) => return Ok(None),
-        (Some(cert), None) => cert.validators().len(),
+        (Some(cert), None) => {
+            // Adding one in the off chance that the current leader is not in the cert.
+            cert.validators().len() + 1
+        }
         (None, Some((signers, _))) => signers.len(),
         (Some(reward_cert), Some((_, slot))) => {
+            // Both finalization cert and reward cert are present.  Instead of computing overlap,
+            // use max validators.
             let final_cert_slot_max_validators = bank
                 .get_rank_map(*slot)
                 .ok_or(Error::RankMapNotFound)?
@@ -405,7 +438,7 @@ fn allocate_updated_accounts(
 }
 
 /// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
-/// based on the calculated rewards and the `final_cert`.
+/// based on the calculated rewards and the `final_cert_input`.
 pub(super) fn calc_vote_rewards_update_vote_states(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
@@ -447,6 +480,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                 &mut total_leader_reward,
             );
             let leader_vote_pubkey = bank.leader().vote_address;
+            // TODO
             let leader_account = state
                 .update_leader(&vote_accounts, total_leader_reward)
                 .unwrap();
@@ -456,6 +490,10 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         }
 
         (Some(reward_cert), Some((signers, _))) => {
+            // both finalization cert and reward cert are present.  We have to update three sets of
+            // validators: those present in both; those just in reward cert; and those just in the
+            // finalization cert.
+
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut total_leader_reward = 0;
             {
@@ -489,7 +527,11 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                     &mut updated_accounts,
                     &mut total_leader_reward,
                 );
+
+                // Now that all validators have been handled, we have computed the total leader
+                // reward so can update it.
                 let leader_vote_pubkey = bank.leader().vote_address;
+                // TODO
                 let leader_account = state
                     .update_leader(&vote_accounts, total_leader_reward)
                     .unwrap();
