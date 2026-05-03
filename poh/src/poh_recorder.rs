@@ -17,7 +17,9 @@ use {
         poh_controller::PohController, poh_service::PohService, record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{
+        migration::MigrationStatus, reward_certificate::BuildRewardCertsRespError,
+    },
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, unbounded},
     log::*,
@@ -34,7 +36,10 @@ use {
     solana_measure::measure_us,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    solana_runtime::{
+        bank::Bank, installed_scheduler_pool::BankWithScheduler,
+        validated_reward_certificate::Error as ValidatedRewardCertError,
+    },
     solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
@@ -50,7 +55,7 @@ use {
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Debug, Error)]
 pub enum PohRecorderError {
     #[error("max height reached")]
     MaxHeightReached,
@@ -66,6 +71,12 @@ pub enum PohRecorderError {
 
     #[error("channel disconnected")]
     ChannelDisconnected,
+
+    #[error("producing reward certs failed with {0}")]
+    BuildRewardCerts(#[from] BuildRewardCertsRespError),
+
+    #[error("constructing validated reward cert failed with {0}")]
+    ValidatedRewardCert(#[from] ValidatedRewardCertError),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;

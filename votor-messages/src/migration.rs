@@ -301,6 +301,9 @@ pub struct MigrationStatus {
     /// Flag indicating whether we should shutdown Poh
     pub shutdown_poh: AtomicBool,
 
+    /// Flag indicating whether PohService has been started.
+    poh_service_started: AtomicBool,
+
     /// The current phase of the migration we are in
     phase: RwLock<MigrationPhase>,
 
@@ -333,6 +336,7 @@ impl MigrationStatus {
         Self {
             my_pubkey: RwLock::default(),
             shutdown_poh: AtomicBool::new(is_alpenglow_enabled),
+            poh_service_started: AtomicBool::new(false),
             phase: RwLock::new(phase),
             migration_wait: (Mutex::new(is_alpenglow_enabled), Condvar::new()),
         }
@@ -409,6 +413,11 @@ impl MigrationStatus {
         let my_pubkey = self.my_pubkey();
         let phase = self.phase.read().unwrap();
         warn!("{my_pubkey}: Alpenglow migration phase {phase:?}");
+    }
+
+    /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
+    pub fn set_poh_service_started(&self) {
+        self.poh_service_started.store(true, Ordering::Release);
     }
 
     dispatch!(pub fn is_pre_feature_activation(&self) -> bool);
@@ -641,7 +650,7 @@ impl MigrationStatus {
         condvar.notify_all();
     }
 
-    /// Enables alpenglow in the startup pathway. This is pre `PohService` so we can do this from a single thread.
+    /// Enables alpenglow in the startup pathway.
     /// Returns the genesis slot
     ///
     /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
@@ -657,6 +666,15 @@ impl MigrationStatus {
         };
 
         let genesis_slot = genesis_cert.cert_type.slot();
+        if self.poh_service_started.load(Ordering::Acquire) {
+            // If `PohService` is started, use the full enable pathway
+            // We do not respect the exit flag during startup replay
+            let exit = AtomicBool::new(false);
+            self.enable_alpenglow(&exit);
+            return genesis_slot;
+        }
+
+        // If `PohService` has not yet started, enable in this single thread
         self.shutdown_poh.store(true, Ordering::Release);
         *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
         let (is_alpenglow_enabled, _condvar) = &self.migration_wait;

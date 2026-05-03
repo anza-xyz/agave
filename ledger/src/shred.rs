@@ -52,7 +52,6 @@
 pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 use {
     self::traits::{Shred as _, ShredData as _},
-    assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
@@ -694,31 +693,6 @@ unsafe impl<'a, C: ConfigCore> SchemaRead<'a, C> for ShredVariant {
         dst.write(value);
         Ok(())
     }
-}
-
-pub fn recover<T: IntoIterator<Item = Shred>>(
-    shreds: T,
-    reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<T>, Error> {
-    let shreds = shreds
-        .into_iter()
-        .map(|shred| {
-            debug_assert_matches!(
-                shred.common_header().shred_variant,
-                ShredVariant::MerkleCode { .. } | ShredVariant::MerkleData { .. }
-            );
-            merkle::Shred::try_from(shred)
-        })
-        .collect::<Result<_, _>>()?;
-    // With Merkle shreds, leader signs the Merkle root of the erasure batch
-    // and all shreds within the same erasure batch have the same signature.
-    // For recovered shreds, the (unique) signature is copied from shreds which
-    // were received from turbine (or repair) and are already sig-verified.
-    // The same signature also verifies for recovered shreds because when
-    // reconstructing the Merkle tree for the erasure batch, we will obtain the
-    // same Merkle root.
-    let shreds = merkle::recover(shreds, reed_solomon_cache)?;
-    Ok(shreds.map(|shred| shred.map(Shred::from)))
 }
 
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {

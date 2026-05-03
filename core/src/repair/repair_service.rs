@@ -427,7 +427,7 @@ struct RepairTracker {
 
 pub struct RepairService {
     t_repair: JoinHandle<()>,
-    ancestor_hashes_service: AncestorHashesService,
+    ancestor_hashes_service: Option<AncestorHashesService>,
 }
 
 impl RepairService {
@@ -1200,7 +1200,10 @@ impl RepairService {
 
     pub fn join(self) -> thread::Result<()> {
         self.t_repair.join()?;
-        self.ancestor_hashes_service.join()
+        if let Some(ancestor_hashes_service) = self.ancestor_hashes_service {
+            ancestor_hashes_service.join()?;
+        }
+        Ok(())
     }
 }
 

@@ -26,6 +26,9 @@ pub struct AccountsDbConfig {
     /// The number of elements that will be randomly sampled at eviction time,
     /// the oldest of which will get evicted.
     pub read_cache_evict_sample_size: Option<usize>,
+    /// Number of shards for the read-only accounts cache's DashMap.
+    /// Must be a power of two. If None, defaults to 65536.
+    pub read_cache_num_shards: Option<usize>,
     pub write_cache_limit_bytes: Option<u64>,
     /// if None, ancient append vecs are set to ANCIENT_APPEND_VEC_DEFAULT_OFFSET
     /// Some(offset) means include slots up to (max_slot - (slots_per_epoch - 'offset'))
@@ -51,6 +54,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
     read_cache_evict_sample_size: None,
+    read_cache_num_shards: None,
     write_cache_limit_bytes: None,
     ancient_append_vec_offset: None,
     ancient_storage_ideal_size: None,
@@ -72,6 +76,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
     read_cache_evict_sample_size: None,
+    read_cache_num_shards: None,
     write_cache_limit_bytes: None,
     ancient_append_vec_offset: None,
     ancient_storage_ideal_size: None,

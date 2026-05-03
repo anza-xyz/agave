@@ -10,7 +10,10 @@ use {
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_votor::event::LeaderWindowInfo,
-    agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
+    agave_votor_messages::reward_certificate::{
+        BuildRewardCertsRequest, BuildRewardCertsRespSucc, BuildRewardCertsResponse,
+        NotarRewardCertificate, SkipRewardCertificate,
+    },
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_entry::block_component::{
@@ -32,6 +35,7 @@ use {
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
+        validated_reward_certificate::ValidatedRewardCert,
     },
     solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
@@ -117,9 +121,7 @@ struct LeaderContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    #[allow(dead_code)]
     build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
-    #[allow(dead_code)]
     reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 
     // Metrics
@@ -348,6 +350,8 @@ fn skew_block_producer_time_nanos(
 /// The bank_hash field is left as default and will be filled in after the bank freezes.
 fn produce_block_footer(
     bank: &Bank,
+    skip_reward_cert: Option<SkipRewardCertificate>,
+    notar_reward_cert: Option<NotarRewardCertificate>,
     highest_finalized: Option<&ValidatedBlockFinalizationCert>,
 ) -> BlockFooterV1 {
     let mut block_producer_time_nanos = SystemTime::now()
@@ -382,8 +386,8 @@ fn produce_block_footer(
         block_producer_time_nanos: block_producer_time_nanos as u64,
         block_user_agent: format!("agave/{}", version!()).into_bytes(),
         final_cert,
-        skip_reward_cert: None,
-        notar_reward_cert: None,
+        skip_reward_cert,
+        notar_reward_cert,
     }
 }
 
@@ -412,7 +416,7 @@ fn produce_window(
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
-        if let Err(e) = record_and_complete_block(ctx, block_timer, timeout) {
+        if let Err(e) = record_and_complete_block(ctx, block_timer, timeout, slot) {
             panic!("PohRecorder record failed: {e:?}");
         }
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
@@ -452,7 +456,12 @@ fn record_and_complete_block(
     ctx: &mut LeaderContext,
     block_timer: Instant,
     block_timeout: Duration,
+    bank_slot: Slot,
 ) -> Result<(), PohRecorderError> {
+    ctx.build_reward_certs_sender
+        .send(BuildRewardCertsRequest { bank_slot })
+        .map_err(|_| PohRecorderError::ChannelDisconnected)?;
+
     // loop until we hit the block timeout
     while !block_timeout
         .saturating_sub(block_timer.elapsed())
@@ -497,15 +506,24 @@ fn record_and_complete_block(
     // Write the single tick for this slot
 
     let footer = {
+        let BuildRewardCertsRespSucc {
+            skip,
+            notar,
+            validators: _,
+        } = ctx
+            .reward_certs_receiver
+            .recv()
+            .map_err(|_| PohRecorderError::ChannelDisconnected)??;
+        let reward_cert = ValidatedRewardCert::try_new(&bank, &skip, &notar)?;
         let guard = ctx.highest_finalized.read().unwrap();
-        let footer = produce_block_footer(&bank, guard.as_ref());
+        let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
 
         BlockComponentProcessor::update_bank_with_footer_fields(
             &bank,
             footer.block_producer_time_nanos as i64,
             Hash::default(), // Banks we produce do not need the bank hash mismatch check
-            None,
+            reward_cert,
             final_cert_input,
         );
         footer

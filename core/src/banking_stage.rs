@@ -37,6 +37,7 @@ use {
     solana_time_utils::AtomicInterval,
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
+        collections::HashSet,
         num::{NonZeroU64, NonZeroUsize},
         ops::Deref,
         sync::{
@@ -334,6 +335,7 @@ pub struct BankingStage {
     bank_forks: Arc<RwLock<BankForks>>,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
+    filter_keys: Arc<HashSet<Pubkey>>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
 
@@ -354,6 +356,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        filter_keys: Arc<HashSet<Pubkey>>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -375,6 +378,7 @@ impl BankingStage {
             bank_forks,
             committer,
             log_messages_bytes_limit,
+            filter_keys,
             threads: FuturesUnordered::default(),
         };
 
@@ -503,6 +507,7 @@ impl BankingStage {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver: self.non_vote_receiver.clone(),
             sharable_banks: sharable_banks.clone(),
+            filter_keys: self.filter_keys.clone(),
         };
 
         // Spawn vote worker.
@@ -592,8 +597,10 @@ impl BankingStage {
 
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
         let vote_storage = VoteStorage::new(&self.bank_forks.read().unwrap().working_bank());
-        let tpu_receiver = VotePacketReceiver::new(self.tpu_vote_receiver.clone());
-        let gossip_receiver = VotePacketReceiver::new(self.gossip_vote_receiver.clone());
+        let tpu_receiver =
+            VotePacketReceiver::new(self.tpu_vote_receiver.clone(), self.filter_keys.clone());
+        let gossip_receiver =
+            VotePacketReceiver::new(self.gossip_vote_receiver.clone(), self.filter_keys.clone());
         let consumer = Consumer::new(
             self.committer.clone(),
             self.transaction_recorder.clone(),
@@ -903,6 +910,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            Arc::default(),
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -963,6 +971,7 @@ mod tests {
             None,
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
+            Arc::default(),
         );
 
         // good tx, and no verify
@@ -1117,6 +1126,7 @@ mod tests {
                 None,
                 bank_forks,
                 None,
+                Arc::default(),
             );
 
             // wait for banking_stage to eat the packets
@@ -1270,6 +1280,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            Arc::default(),
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

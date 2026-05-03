@@ -180,14 +180,21 @@ pub async fn generate_pull_request_pipeline(pr_number: u64) -> Result<buildkite:
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    if changed_files.iter().any(|file| {
+    let rust_changed = changed_files.iter().any(|file| {
         file.ends_with("Cargo.toml")
             || file.ends_with("Cargo.lock")
             || file.ends_with(".rs")
             || file.ends_with("rust-toolchain.toml")
             || file.ends_with("ci/rust-version.sh")
             || file.ends_with("ci/docker/Dockerfile")
-    }) {
+    });
+    let coverage_scripts_changed = changed_files.iter().any(|file| {
+        file.ends_with("scripts/coverage.sh")
+            || file.ends_with("ci/test-coverage.sh")
+            || file.starts_with("ci/coverage/")
+    });
+
+    if rust_changed {
         pipeline.add_step(default_checks_step());
         pipeline.add_step(default_feature_check_step(5));
         pipeline.add_step(default_miri_step());
@@ -204,6 +211,8 @@ pub async fn generate_pull_request_pipeline(pr_number: u64) -> Result<buildkite:
 
         pipeline.add_step(default_stable_sbf_step());
         pipeline.add_step(default_shuttle_step());
+        pipeline.add_step(default_coverage_step(3));
+    } else if coverage_scripts_changed {
         pipeline.add_step(default_coverage_step(3));
     }
 

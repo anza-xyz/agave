@@ -21,6 +21,7 @@ Release channels have their own copy of this changelog:
 #### Breaking
 * `--block-production-method central-scheduler` is no longer supported. If passed, a warning is emitted and behavior
   will default to the greedy-scheduler implementation.
+* scheduler-bindings version has been increased to 4. Connecting external schedulers must be updated.
 #### Deprecations
 * Using `minimal` for `--accounts-index-limit` is now deprecated.
 * `--account-shrink-path` is now deprecated.

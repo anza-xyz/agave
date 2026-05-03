@@ -88,7 +88,7 @@ use {
     solana_accounts_db::{
         account_locks::validate_account_locks,
         account_storage_entry::AccountStorageEntry,
-        accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
+        accounts::{AccountAddressFilter, Accounts},
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
         accounts_index::IndexKey,
@@ -4607,11 +4607,6 @@ impl Bank {
         self.rc.accounts.account_indexes_include_key(key)
     }
 
-    /// Returns all the accounts this bank can load
-    pub fn get_all_accounts(&self) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        self.rc.accounts.load_all(&self.ancestors, self.bank_id)
-    }
-
     // Scans all the accounts this bank can load, applying `scan_func`
     pub fn scan_all_accounts<F>(&self, scan_func: F) -> ScanResult<()>
     where
@@ -4965,8 +4960,10 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        // Discard v1 transactions until support is added.
-        if tx.version() == TransactionVersion::Number(1) {
+        // Discard v1 transactions until feature gate is activated.
+        if !self.feature_set.snapshot().enable_tx_v1
+            && tx.version() == TransactionVersion::Number(1)
+        {
             return Err(TransactionError::UnsupportedVersion);
         }
 
@@ -4986,10 +4983,17 @@ impl Bank {
         serialized_message: &[u8],
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        // Discard v1 transactions until support is added.
-        if tx.version() == TransactionVersion::Number(1) {
+        // Discard v1 transactions until feature gate is activated.
+        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
+        if !enable_tx_v1 && tx.version() == TransactionVersion::Number(1) {
             return Err(TransactionError::UnsupportedVersion);
         }
+        let max_transaction_size = match tx.version() {
+            TransactionVersion::Number(1) if enable_tx_v1 => {
+                solana_message::v1::MAX_TRANSACTION_SIZE
+            }
+            _ => PACKET_DATA_SIZE,
+        } as u64;
 
         let enable_instruction_account_limit =
             self.feature_set.snapshot().limit_instruction_accounts;
@@ -4999,7 +5003,7 @@ impl Bank {
         let sanitized_tx = {
             let size =
                 wincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
-            if size > PACKET_DATA_SIZE as u64 {
+            if size > max_transaction_size {
                 return Err(TransactionError::SanitizeFailure);
             }
 
@@ -5914,17 +5918,19 @@ impl Bank {
     ///
     /// Panics if total overflows a u64.
     ///
-    /// Note, this may be *very* expensive, as *all* accounts are collected
-    /// into a Vec before summing each account's data size.
+    /// Note, this may be *very* expensive, as *all* accounts are accessed.
     ///
     /// Only intended to be called by tests or when the number of accounts is small.
     pub fn calculate_accounts_data_size(&self) -> ScanResult<u64> {
-        let accounts = self.get_all_accounts()?;
-        let accounts_data_size = accounts
-            .into_iter()
-            .map(|(_pubkey, account, _slot)| account.data().len() as u64)
-            .try_fold(0, u64::checked_add)
-            .expect("accounts data size cannot overflow");
+        let mut accounts_data_size: u64 = 0;
+        self.scan_all_accounts(|address_account_slot| {
+            let Some((_address, account, _slot)) = address_account_slot else {
+                return;
+            };
+            accounts_data_size = accounts_data_size
+                .checked_add(account.data().len() as u64)
+                .expect("accounts data size cannot overflow");
+        })?;
         Ok(accounts_data_size)
     }
 
