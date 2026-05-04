@@ -47,6 +47,18 @@ struct RewardsAccumulator {
     total_stake_rewards_lamports: u64,
 }
 
+/// If a commission account is used by multiple vote accounts, the reported
+/// `commission_bps` may be incorrect. To keep things simple and correct, don't
+/// report `commission_bps` if there's any variation.
+fn unset_commission_bps_if_different(src: &RewardCommission, dst: &mut RewardCommission) {
+    if dst
+        .commission_bps
+        .is_some_and(|bps| Some(bps) != src.commission_bps)
+    {
+        dst.commission_bps = None;
+    }
+}
+
 impl RewardsAccumulator {
     fn add_reward(
         &mut self,
@@ -57,16 +69,7 @@ impl RewardsAccumulator {
         self.reward_commissions
             .entry(commission_pubkey)
             .and_modify(|dst_reward_commission| {
-                // If a commission account is used by multiple vote accounts,
-                // the reported `commission_bps` may be incorrect. To keep
-                // things simple and correct, don't report `commission_bps` if
-                // there's any variation.
-                if dst_reward_commission
-                    .commission_bps
-                    .is_some_and(|bps| Some(bps) != reward_commission.commission_bps)
-                {
-                    dst_reward_commission.commission_bps = None;
-                }
+                unset_commission_bps_if_different(&reward_commission, dst_reward_commission);
                 dst_reward_commission.commission_lamports = dst_reward_commission
                     .commission_lamports
                     .saturating_add(reward_commission.commission_lamports)
@@ -95,6 +98,7 @@ impl RewardsAccumulator {
             dst.reward_commissions
                 .entry(commission_pubkey)
                 .and_modify(|dst_reward_commission: &mut RewardCommission| {
+                    unset_commission_bps_if_different(&reward_commission, dst_reward_commission);
                     dst_reward_commission.commission_lamports = dst_reward_commission
                         .commission_lamports
                         .saturating_add(reward_commission.commission_lamports)
