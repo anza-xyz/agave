@@ -6,7 +6,7 @@ use {
 
 pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
     ValidatorConfig {
-        logfile: config.logfile.clone(),
+        log_config: config.log_config.clone(),
         expected_genesis_hash: config.expected_genesis_hash,
         expected_bank_hash: config.expected_bank_hash,
         expected_shred_version: config.expected_shred_version,
