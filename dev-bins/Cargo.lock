@@ -1183,9 +1183,9 @@ dependencies = [
 
 [[package]]
 name = "blake3"
-version = "1.8.4"
+version = "1.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d2d5991425dfd0785aed03aedcf0b321d61975c9b5b3689c774a2610ae0b51e"
+checksum = "0aa83c34e62843d924f905e0f5c866eb1dd6545fc4d719e803d9ba6030371fce"
 dependencies = [
  "arrayref",
  "arrayvec",
@@ -3961,9 +3961,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0b564323a0fb6d54b864f625ae139de9612e27edb944dda37c109f05aac531"
+checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -5442,13 +5442,13 @@ dependencies = [
 
 [[package]]
 name = "rpassword"
-version = "7.4.0"
+version = "7.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66d4c8b64f049c6721ec8ccec37ddfc3d641c4a7fca57e8f2a89de509c73df39"
+checksum = "2501c67132bd19c3005b0111fba298907ef002c8c1cf68e25634707e38bf66fe"
 dependencies = [
  "libc",
  "rtoolbox",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5463,9 +5463,9 @@ dependencies = [
 
 [[package]]
 name = "rts-alloc"
-version = "3.0.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53ced2d9fa1303e8c6814fe3fceb6599951e17622088df430ed6de039930cb9b"
+checksum = "eddfcbcf855d5fa999ae18a991204dca661237b6e6fda7c4cb06bd97ad0b3af2"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
@@ -5545,9 +5545,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "log",
  "once_cell",
@@ -5922,9 +5922,9 @@ dependencies = [
 
 [[package]]
 name = "shaq"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c34483a45b522d9b15cc1031536718acb3f2d94f7bc09d7156a3e8d173dfdffe"
+checksum = "f70af47ac33fc236ff3d3185a60d0821622475415a6f3aa8378d50eed158913b"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
@@ -6551,7 +6551,6 @@ dependencies = [
  "solana-clock",
  "solana-instruction",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
  "solana-packet 4.1.0",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
@@ -6592,7 +6591,6 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-hash 4.3.0",
- "solana-loader-v4-program",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
@@ -7638,7 +7636,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru 0.17.0",
+ "lru 0.18.0",
  "mockall",
  "num_cpus",
  "num_enum",
@@ -7744,34 +7742,9 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4c948b33ff81fa89699911b207059e493defdba9647eaf18f23abdf3674e0fb"
 dependencies = [
- "serde",
- "serde_bytes",
- "serde_derive",
  "solana-instruction",
  "solana-pubkey 3.0.0",
  "solana-sdk-ids",
- "solana-system-interface 2.0.0",
-]
-
-[[package]]
-name = "solana-loader-v4-program"
-version = "4.1.0-alpha.0"
-dependencies = [
- "solana-account 4.3.0",
- "solana-bincode",
- "solana-bpf-loader-program",
- "solana-instruction",
- "solana-loader-v3-interface",
- "solana-loader-v4-interface",
- "solana-packet 4.1.0",
- "solana-program-runtime",
- "solana-pubkey 4.2.0",
- "solana-sbpf",
- "solana-sdk-ids",
- "solana-svm-log-collector",
- "solana-svm-measure",
- "solana-svm-type-overrides",
- "solana-transaction-context",
 ]
 
 [[package]]
@@ -8651,6 +8624,7 @@ dependencies = [
  "solana-perf",
  "solana-poh-config",
  "solana-precompile-error",
+ "solana-program-binaries",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-rayon-threadlimit",
@@ -9016,7 +8990,6 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bzip2",
- "enum-iterator",
  "flate2",
  "futures 0.3.32",
  "goauth",
@@ -9122,7 +9095,6 @@ dependencies = [
  "solana-instructions-sysvar",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-loader-v4-program",
  "solana-message",
  "solana-nonce",
  "solana-nonce-account",
@@ -9546,7 +9518,7 @@ dependencies = [
  "futures 0.3.32",
  "futures-util",
  "log",
- "lru 0.17.0",
+ "lru 0.18.0",
  "quinn",
  "rustls",
  "solana-clock",
@@ -9692,7 +9664,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru 0.17.0",
+ "lru 0.18.0",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",

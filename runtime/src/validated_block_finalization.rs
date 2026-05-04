@@ -305,18 +305,25 @@ impl ValidatedBlockFinalizationCert {
         self.signers.contains(vote_pubkey)
     }
 
-    /// Consumes self and returns the contained certificates.
+    /// Returns the data needed to calculating and paying vote rewards.
+    pub fn vote_rewards_input(&self) -> (&HashSet<Pubkey>, Slot) {
+        (&self.signers, self.slot())
+    }
+
+    /// Consumes self and returns the contained certificates and the signers.
     ///
-    /// For slow finalization, returns (finalize_cert, Some(notarize_cert)).
-    /// For fast finalization, returns (fast_finalize_cert, None).
-    pub fn into_certificates(self) -> (Certificate, Option<Certificate>) {
-        match self.kind {
+    /// For slow finalization, returns (signers, finalize_cert, Some(notarize_cert)).
+    /// For fast finalization, returns (signers, fast_finalize_cert, None).
+    pub fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
+        let signers = self.signers;
+        let (final_cert, notar_cert) = match self.kind {
             ValidatedBlockFinalizationCertKind::Finalize {
                 finalize_cert,
                 notarize_cert,
             } => (finalize_cert, Some(notarize_cert)),
             ValidatedBlockFinalizationCertKind::FastFinalize(cert) => (cert, None),
-        }
+        };
+        (signers, final_cert, notar_cert)
     }
 
     /// Converts this validated certificate into a [`FinalCertificate`] for inclusion in a block footer.

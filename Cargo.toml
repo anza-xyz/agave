@@ -9,7 +9,6 @@ members = [
     "banks-client",
     "banks-interface",
     "banks-server",
-    "bench-streamer",
     "bloom",
     "bls-cert-verify",
     "bls12-381-syscall",
@@ -67,7 +66,6 @@ members = [
     "programs/compute-budget",
     "programs/compute-budget-bench",
     "programs/ed25519-tests",
-    "programs/loader-v4",
     "programs/system",
     "programs/vote",
     "programs/zk-elgamal-proof",
@@ -219,7 +217,7 @@ bencher = "0.1.5"
 bincode = "1.3.3"
 bitflags = { version = "2.11.1" }
 bitvec = { version = "1.0.1", features = ["serde"] }
-blake3 = "1.8.4"
+blake3 = "1.8.5"
 blst = "0.3.16"
 blstrs = "0.7.1"
 borsh = { version = "1.6.1", features = ["derive", "unstable__schema"] }
@@ -296,7 +294,7 @@ libsecp256k1 = { version = "0.7.2", default-features = false, features = [
     "static-context",
 ] }
 log = "0.4.29"
-lru = "0.17.0"
+lru = "0.18.0"
 lz4 = "1.28.1"
 memmap2 = "0.9.10"
 memoffset = "0.9.1"
@@ -321,6 +319,7 @@ proptest = "1.11"
 prost = "0.14.3"
 prost-types = "0.14.3"
 protobuf-src = "1.1.0"
+protosol = "=6.1.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.9"
 rand = "0.9.4"
@@ -331,9 +330,9 @@ regex = "1.12.3"
 reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
-rpassword = "7.4"
-rts-alloc = { version = "3.0.0" }
-rustls = { version = "0.23.39", features = ["std"], default-features = false }
+rpassword = "7.5"
+rts-alloc = { version = "4.0.0" }
+rustls = { version = "0.23.40", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.28"
 seqlock = "0.2.0"
@@ -344,7 +343,7 @@ serde_json = "1.0.149"
 serde_with = { version = "3.18.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "3.4.0"
-shaq = { version = "2.0.0" }
+shaq = { version = "3.0.0" }
 shuttle = "0.7.1"
 signal-hook = "0.4.4"
 siphasher = "1.0.2"
@@ -409,8 +408,8 @@ solana-fee = { path = "fee", version = "=4.1.0-alpha.0", features = ["agave-unst
 solana-fee-calculator = "3.2.0"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.4"
-solana-frozen-abi = "3.2.2"
-solana-frozen-abi-macro = "3.2.1"
+solana-frozen-abi = "3.3.0"
+solana-frozen-abi-macro = "3.3.0"
 solana-genesis = { path = "genesis", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -432,7 +431,6 @@ solana-ledger = { path = "ledger", version = "=4.1.0-alpha.0", features = ["agav
 solana-loader-v2-interface = "3.0.0"
 solana-loader-v3-interface = "7.0.0"
 solana-loader-v4-interface = "3.1.0"
-solana-loader-v4-program = { path = "programs/loader-v4", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-local-cluster = { path = "local-cluster", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }

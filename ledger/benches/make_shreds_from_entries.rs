@@ -3,14 +3,37 @@ use {
     criterion::{Criterion, criterion_group, criterion_main},
     rand::Rng,
     solana_entry::entry::Entry,
+    solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{self, ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+    solana_ledger::{
+        genesis_utils::create_genesis_config,
+        shred::{
+            ProcessShredsStats, ReedSolomonCache, Shred, Shredder, filter::ShredRecoveryContext,
+        },
+    },
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
+    solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
-    std::{hint::black_box, iter::repeat_with},
+    std::{hint::black_box, iter::repeat_with, sync::Arc},
 };
+
+fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
+    let mut genesis_config = create_genesis_config(1).genesis_config;
+    let shred_slot = shreds.first().map(Shred::slot).unwrap_or_default();
+    let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
+    genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    ShredRecoveryContext::new(
+        ReedSolomonCache::default(),
+        dummy_retransmit_sender,
+        root_bank,
+        shreds.first().map(Shred::version).unwrap_or_default(),
+    )
+}
 
 fn make_dummy_hash<R: Rng>(rng: &mut R) -> Hash {
     Hash::from(rng.random::<[u8; 32]>())
@@ -178,12 +201,18 @@ fn run_recover_shreds(
     let mut shreds = data;
     shreds.extend(code);
     c.bench_function(name, |b| {
+        let mut shred_recovery_context = new_shred_recovery_context(&shreds);
         b.iter(|| {
-            let recovered_shreds = shred::recover(shreds.clone(), &reed_solomon_cache)
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
+            let mut recovered_shreds = Vec::new();
+            let mut recovered_data_shreds = Vec::new();
+            shred_recovery_context
+                .recover(
+                    shreds.clone(),
+                    &mut recovered_shreds,
+                    &mut recovered_data_shreds,
+                )
                 .unwrap();
-            black_box(recovered_shreds);
+            black_box((recovered_shreds, recovered_data_shreds));
         })
     });
 }

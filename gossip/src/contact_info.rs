@@ -102,11 +102,11 @@ pub struct ContactInfo {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-struct SocketEntry {
-    key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
-    index: u8, // IpAddr index in the accompanying addrs vector.
+pub(crate) struct SocketEntry {
+    pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
+    pub(crate) index: u8, // IpAddr index in the accompanying addrs vector.
     #[serde(with = "serde_varint")]
-    offset: u16, // Port offset with respect to the previous entry.
+    pub(crate) offset: u16, // Port offset with respect to the previous entry.
 }
 
 define_tlv_enum!(
@@ -238,9 +238,25 @@ impl ContactInfo {
         self.shred_version
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[inline]
+    pub(crate) fn outset(&self) -> u64 {
+        self.outset
+    }
+
     #[inline]
     pub(crate) fn version(&self) -> &solana_version::Version {
         &self.version
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub(crate) fn addrs(&self) -> &[IpAddr] {
+        &self.addrs
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub(crate) fn sockets(&self) -> &[SocketEntry] {
+        &self.sockets
     }
 
     pub fn hot_swap_pubkey(&mut self, pubkey: Pubkey) {

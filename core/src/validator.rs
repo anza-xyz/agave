@@ -86,6 +86,7 @@ use {
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
         leader_schedule_cache::LeaderScheduleCache,
+        shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure::Measure,
@@ -319,7 +320,7 @@ pub struct ValidatorConfig {
     pub max_ledger_shreds: Option<u64>,
     pub blockstore_options: BlockstoreOptions,
     pub broadcast_stage_type: BroadcastStageType,
-    pub turbine_disabled: Arc<AtomicBool>,
+    pub turbine_mode: TurbineMode,
     pub fixed_leader_schedule: Option<FixedSchedule>,
     pub wait_for_supermajority: Option<Slot>,
     pub new_hard_forks: Option<Vec<Slot>>,
@@ -327,6 +328,7 @@ pub struct ValidatorConfig {
     pub repair_validators: Option<HashSet<Pubkey>>, // None = repair from all
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
+    pub should_check_duplicate_instance: bool,
     pub max_genesis_archive_unpacked_size: u64,
     /// Run PoH, transaction signature and other transaction verification during blockstore
     /// processing.
@@ -335,6 +337,7 @@ pub struct ValidatorConfig {
     pub tower_storage: Arc<dyn TowerStorage>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
+    pub filter_keys: Arc<HashSet<Pubkey>>,
     pub contact_debug_interval: u64,
     pub contact_save_interval: u64,
     pub send_transaction_service_config: SendTransactionServiceConfig,
@@ -399,12 +402,13 @@ impl ValidatorConfig {
             pubsub_config: PubSubConfig::default(),
             snapshot_config: SnapshotConfig::new_load_only(),
             broadcast_stage_type: BroadcastStageType::Standard,
-            turbine_disabled: Arc::<AtomicBool>::default(),
+            turbine_mode: TurbineMode::default(),
             fixed_leader_schedule: None,
             wait_for_supermajority: None,
             new_hard_forks: None,
             known_validators: None,
             repair_validators: None,
+            should_check_duplicate_instance: true,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
             gossip_validators: None,
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -413,6 +417,7 @@ impl ValidatorConfig {
             tower_storage: Arc::new(NullTowerStorage::default()),
             vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
             debug_keys: None,
+            filter_keys: Arc::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
             send_transaction_service_config: SendTransactionServiceConfig::default(),
@@ -659,7 +664,6 @@ impl Validator {
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
         cluster_entrypoints: Vec<ContactInfo>,
         config: &ValidatorConfig,
-        should_check_duplicate_instance: bool,
         rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
         start_progress: Arc<RwLock<ValidatorStartProgress>>,
         socket_addr_space: SocketAddrSpace,
@@ -676,7 +680,6 @@ impl Validator {
             authorized_voter_keypairs,
             cluster_entrypoints,
             config,
-            should_check_duplicate_instance,
             rpc_to_plugin_manager_receiver,
             start_progress,
             socket_addr_space,
@@ -696,7 +699,6 @@ impl Validator {
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
         cluster_entrypoints: Vec<ContactInfo>,
         config: &ValidatorConfig,
-        should_check_duplicate_instance: bool,
         rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
         start_progress: Arc<RwLock<ValidatorStartProgress>>,
         socket_addr_space: SocketAddrSpace,
@@ -1392,7 +1394,7 @@ impl Validator {
             Some(epoch_specs),
             node.sockets.gossip.clone(),
             config.gossip_validators.clone(),
-            should_check_duplicate_instance,
+            config.should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
             exit.clone(),
         );
@@ -1447,7 +1449,12 @@ impl Validator {
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let highest_parent_ready = Arc::new(RwLock::default());
+        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
         let highest_finalized = Arc::new(RwLock::new(None));
+        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
+        let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
+        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
+        let (reward_certs_sender, reward_certs_receiver) = bounded(1);
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1464,6 +1471,8 @@ impl Validator {
             replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
             highest_finalized: highest_finalized.clone(),
+            build_reward_certs_sender,
+            reward_certs_receiver,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
@@ -1561,7 +1570,7 @@ impl Validator {
             &leader_schedule_cache,
             exit.clone(),
             block_commitment_cache,
-            config.turbine_disabled.clone(),
+            config.turbine_mode.clone(),
             transaction_status_sender.clone(),
             entry_notification_sender.clone(),
             vote_tracker.clone(),
@@ -1608,6 +1617,8 @@ impl Validator {
                 bls_connection_cache,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
+                build_reward_certs_receiver,
+                reward_certs_sender,
             },
         )
         .map_err(ValidatorError::Other)?;
@@ -1671,6 +1682,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
+            config.filter_keys.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),
@@ -2915,7 +2927,6 @@ mod tests {
             Arc::new(RwLock::new(vec![voting_keypair])),
             vec![leader_node.info],
             &config,
-            true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
@@ -3134,7 +3145,6 @@ mod tests {
                     Arc::new(RwLock::new(vec![Arc::new(vote_account_keypair)])),
                     vec![leader_node.info.clone()],
                     &config,
-                    true, // should_check_duplicate_instance.
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,

@@ -18,7 +18,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     dashmap::{DashMap, mapref::entry::Entry::Occupied},
     solana_clock::Slot,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
+    solana_gossip::{contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{Keypair, Signer, signable::Signable},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
@@ -155,7 +155,17 @@ impl AncestorHashesService {
         ancestor_hashes_request_socket: Arc<UdpSocket>,
         ancestor_hashes_channels: AncestorHashesChannels,
         repair_info: RepairInfo,
-    ) -> Self {
+    ) -> Option<Self> {
+        if repair_info
+            .bank_forks
+            .read()
+            .unwrap()
+            .migration_status()
+            .is_alpenglow_enabled()
+        {
+            info!("Alpenglow enabled, not starting AncestorHashesService");
+            return None;
+        }
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
         let (response_sender, response_receiver) = unbounded();
         let t_receiver = streamer::receiver(
@@ -187,9 +197,8 @@ impl AncestorHashesService {
             blockstore.clone(),
             outstanding_requests.clone(),
             exit.clone(),
-            repair_info.ancestor_duplicate_slots_sender.clone(),
+            &repair_info,
             retryable_slots_sender,
-            repair_info.cluster_info.clone(),
             ancestor_hashes_request_socket.clone(),
         );
 
@@ -204,9 +213,9 @@ impl AncestorHashesService {
             ancestor_hashes_replay_update_receiver,
             retryable_slots_receiver,
         );
-        Self {
+        Some(Self {
             thread_hdls: vec![t_receiver, t_ancestor_hashes_responses, t_ancestor_requests],
-        }
+        })
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -220,18 +229,20 @@ impl AncestorHashesService {
         blockstore: Arc<Blockstore>,
         outstanding_requests: Arc<RwLock<OutstandingAncestorHashesRepairs>>,
         exit: Arc<AtomicBool>,
-        ancestor_duplicate_slots_sender: AncestorDuplicateSlotsSender,
+        repair_info: &RepairInfo,
         retryable_slots_sender: RetryableSlotsSender,
-        cluster_info: Arc<ClusterInfo>,
         ancestor_socket: Arc<UdpSocket>,
     ) -> JoinHandle<()> {
+        let ancestor_duplicate_slots_sender = repair_info.ancestor_duplicate_slots_sender.clone();
+        let cluster_info = repair_info.cluster_info.clone();
+        let migration_status = repair_info.bank_forks.read().unwrap().migration_status();
         Builder::new()
             .name("solAncHashesSvc".to_string())
             .spawn(move || {
                 let mut last_stats_report = Instant::now();
                 let mut stats = AncestorHashesResponsesStats::default();
                 let mut packet_threshold = DynamicPacketToProcessThreshold::default();
-                while !exit.load(Ordering::Relaxed) {
+                while !exit.load(Ordering::Relaxed) && !migration_status.is_alpenglow_enabled() {
                     let keypair = cluster_info.keypair();
                     let result = Self::process_new_packets_from_channel(
                         &ancestor_hashes_request_statuses,
@@ -576,6 +587,7 @@ impl AncestorHashesService {
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
         retryable_slots_receiver: RetryableSlotsReceiver,
     ) -> JoinHandle<()> {
+        let migration_status = repair_info.bank_forks.read().unwrap().migration_status();
         let serve_repair = {
             let bank_forks_r = repair_info.bank_forks.read().unwrap();
             ServeRepair::new(
@@ -609,7 +621,7 @@ impl AncestorHashesService {
             .name("solManAncReqs".to_string())
             .spawn(move || {
                 loop {
-                    if exit.load(Ordering::Relaxed) {
+                    if exit.load(Ordering::Relaxed) || migration_status.is_alpenglow_enabled() {
                         return;
                     }
                     Self::manage_ancestor_requests(

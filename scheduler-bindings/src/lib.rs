@@ -183,6 +183,11 @@ pub struct ProgressMessage {
     /// - To check if within a leader slot: `leader_state != NOT_LEADER`.
     /// - To check if transactions can be processed: `leader_state == LEADER_READY`.
     pub leader_state: u8,
+    /// Progress through the current slot in percentage.
+    pub current_slot_progress: u8,
+    /// The current epoch of the working bank.
+    /// Only valid if `leader_state == LEADER_READY`, otherwise zeroed.
+    pub epoch: u64,
     /// The current slot.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
@@ -198,8 +203,9 @@ pub struct ProgressMessage {
     /// i.e. block_limit - current_cost_units_used.
     /// Only valid if currently leader, otherwise the value is undefined.
     pub remaining_cost_units: u64,
-    /// Progress through the current slot in percentage.
-    pub current_slot_progress: u8,
+    /// The latest blockhash of the working bank.
+    /// Only valid if `leader_state == LEADER_READY`, otherwise zeroed.
+    pub latest_blockhash: [u8; 32],
 }
 
 /// Maximum number of transactions allowed in a [`PackToWorkerMessage`].

@@ -14,6 +14,7 @@ pub(crate) struct NewEpochTimings {
     pub(crate) calculate_activated_stake_time_us: u64,
     pub(crate) update_epoch_stakes_time_us: u64,
     pub(crate) update_rewards_with_thread_pool_time_us: u64,
+    pub(crate) begin_partitioned_rewards_time_us: u64,
 }
 
 #[derive(Debug, Default)]
@@ -22,6 +23,7 @@ pub(crate) struct RewardsMetrics {
     pub(crate) redeem_rewards_us: u64,
     pub(crate) store_stake_accounts_us: AtomicU64,
     pub(crate) store_commission_accounts_us: AtomicU64,
+    pub(crate) load_and_reward_commission_accounts_us: u64,
 }
 
 pub(crate) struct NewBankTimings {
@@ -80,6 +82,11 @@ pub(crate) fn report_new_epoch_metrics(
             i64
         ),
         (
+            "begin_partitioned_rewards_us",
+            timings.begin_partitioned_rewards_time_us,
+            i64
+        ),
+        (
             "calculate_points_us",
             metrics.calculate_points_us.load(Relaxed),
             i64
@@ -93,6 +100,11 @@ pub(crate) fn report_new_epoch_metrics(
         (
             "store_commission_accounts_us",
             metrics.store_commission_accounts_us.load(Relaxed),
+            i64
+        ),
+        (
+            "load_and_reward_commission_accounts_us",
+            metrics.load_and_reward_commission_accounts_us,
             i64
         ),
     );

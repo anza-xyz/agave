@@ -405,7 +405,7 @@ impl StandardBroadcastRun {
                 let fec_set_count = self.double_merkle_leaves.len();
                 // Add the final leaf (parent info)
                 let parent_info_leaf =
-                    hashv(&[&self.parent.to_le_bytes(), Hash::default().as_bytes()]);
+                    hashv(&[&self.parent.to_le_bytes(), self.parent_block_id.as_bytes()]);
                 self.double_merkle_leaves.push(parent_info_leaf);
 
                 // Compute the double merkle root

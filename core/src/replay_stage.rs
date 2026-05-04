@@ -901,6 +901,7 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &mut replay_timing,
+                    &own_vote_sender,
                 );
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 if migration_status.is_alpenglow_enabled() {
@@ -2548,6 +2549,7 @@ impl ReplayStage {
         bank: &BankWithScheduler,
         replay_stats: &RwLock<ReplaySlotStats>,
         replay_progress: &RwLock<ConfirmationProgress>,
+        finalization_cert_sender: &Sender<Vec<ConsensusMessage>>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
@@ -2569,6 +2571,7 @@ impl ReplayStage {
                 .entry_notification_sender
                 .as_ref(),
             Some(&process_active_banks_context.replay_vote_sender),
+            Some(finalization_cert_sender),
             false,
             process_active_banks_context.log_messages_bytes_limit,
             process_active_banks_context
@@ -3307,6 +3310,7 @@ impl ReplayStage {
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_tracker: BankReplayResultTracker,
         my_pubkey: &Pubkey,
+        finalization_cert_sender: &Sender<Vec<ConsensusMessage>>,
     ) -> (ReplaySlotFromBlockstore, Option<u64>) {
         let BankReplayResultTracker {
             mut replay_result,
@@ -3354,6 +3358,7 @@ impl ReplayStage {
             &bank,
             &replay_stats,
             &replay_progress,
+            finalization_cert_sender,
         );
         replay_blockstore_time.stop();
         replay_result.replay_result = Some(blockstore_result);
@@ -3366,6 +3371,7 @@ impl ReplayStage {
         bank_replay_result_trackers: Vec<BankReplayResultTracker>,
         replay_timing: &mut ReplayLoopTiming,
         my_pubkey: &Pubkey,
+        finalization_cert_sender: &Sender<Vec<ConsensusMessage>>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         match &process_active_banks_context.replay_mode {
             // Skip the overhead of the threadpool if there is only one bank to play
@@ -3387,6 +3393,7 @@ impl ReplayStage {
                                         process_active_banks_context,
                                         bank_replay_result_tracker,
                                         my_pubkey,
+                                        finalization_cert_sender,
                                     );
                                 if let Some(replay_blockstore_us) = replay_blockstore_us {
                                     longest_replay_time_us
@@ -3414,6 +3421,7 @@ impl ReplayStage {
                         process_active_banks_context,
                         bank_replay_result_tracker,
                         my_pubkey,
+                        finalization_cert_sender,
                     );
                     if let Some(replay_blockstore_us) = replay_blockstore_us {
                         replay_timing.replay_blockstore_us += replay_blockstore_us;
@@ -3850,6 +3858,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         replay_timing: &mut ReplayLoopTiming,
+        finalization_cert_sender: &Sender<Vec<ConsensusMessage>>,
     ) -> Vec<Slot> /* completed slots */ {
         let bank_replay_result_trackers = Self::prepare_active_banks_for_replay(
             process_active_banks_context,
@@ -3868,6 +3877,7 @@ impl ReplayStage {
             bank_replay_result_trackers,
             replay_timing,
             my_pubkey,
+            finalization_cert_sender,
         );
 
         // Process replay results.
@@ -5575,6 +5585,7 @@ pub(crate) mod tests {
 
         let slot = bank.slot();
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (finalization_cert_sender, _finalization_cert_receiver) = unbounded();
         let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
             bank_forks.clone(),
             blockstore.clone(),
@@ -5633,6 +5644,7 @@ pub(crate) mod tests {
                     &bank,
                     &bank_progress.replay_stats,
                     &bank_progress.replay_progress,
+                    &finalization_cert_sender,
                 )),
             }
         };
@@ -5716,6 +5728,7 @@ pub(crate) mod tests {
             let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
             let exit = Arc::new(AtomicBool::new(false));
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+            let (finalization_cert_sender, _finalization_cert_receiver) = unbounded();
             let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
                 bank_forks.clone(),
                 blockstore.clone(),
@@ -5726,6 +5739,7 @@ pub(crate) mod tests {
                 &bank1,
                 &bank1_progress.replay_stats,
                 &bank1_progress.replay_progress,
+                &finalization_cert_sender,
             )
             .and_then(|replay_tx_count| {
                 let mut poh_verify_elapsed = 0;

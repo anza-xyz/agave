@@ -886,7 +886,7 @@ impl TypedColumn for columns::DoubleMerkleMeta {
 mod tests {
     use {
         super::*,
-        crate::blockstore_meta::{ConnectedFlags, SlotMetaV3},
+        crate::blockstore_meta::{CompletedDataIndexes, ConnectedFlags},
         solana_hash::Hash,
         wincode,
     };
@@ -903,6 +903,8 @@ mod tests {
             next_slots: vec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+            parent_block_id: Hash::new_unique(),
+            replay_fec_set_index: 7,
         };
 
         let bytes = <columns::SlotMeta as TypedColumn>::serialize(&meta).unwrap();
@@ -911,8 +913,8 @@ mod tests {
     }
 
     #[test]
-    fn test_slot_meta_column_deserialize_v2_from_v3_bytes() {
-        let meta_v3 = SlotMetaV3 {
+    fn test_slot_meta_column_deserialize_from_v2_bytes() {
+        let v2 = blockstore_meta::SlotMetaV2 {
             slot: 42,
             consumed: 10,
             received: 15,
@@ -922,16 +924,58 @@ mod tests {
             next_slots: vec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+        };
+        let v2_bytes = wincode::serialize(&v2).unwrap();
+
+        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v2_bytes).unwrap();
+        let expected = blockstore_meta::SlotMeta {
+            slot: 42,
+            consumed: 10,
+            received: 15,
+            first_shred_timestamp: 1234567890,
+            last_index: Some(14),
+            parent_slot: Some(41),
+            next_slots: vec![43, 44],
+            connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
+            completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+            ..Default::default()
+        };
+        assert_eq!(deserialized, expected);
+    }
+
+    #[test]
+    fn test_default_wincode_deserialize_handles_v2_bytes() {
+        let v2 = blockstore_meta::SlotMetaV2 {
+            slot: 1,
+            consumed: 0,
+            received: 0,
+            first_shred_timestamp: 0,
+            last_index: None,
+            parent_slot: Some(0),
+            next_slots: vec![],
+            connected_flags: ConnectedFlags::empty(),
+            completed_data_indexes: CompletedDataIndexes::default(),
+        };
+        let v2_bytes = wincode::serialize(&v2).unwrap();
+        let deserialized = wincode::deserialize::<blockstore_meta::SlotMeta>(&v2_bytes).unwrap();
+        assert_eq!(deserialized.parent_block_id, Hash::default());
+        assert_eq!(deserialized.replay_fec_set_index, 0);
+
+        let v3 = blockstore_meta::SlotMeta {
+            slot: 1,
+            consumed: 0,
+            received: 0,
+            first_shred_timestamp: 0,
+            last_index: None,
+            parent_slot: Some(0),
+            next_slots: vec![],
+            connected_flags: ConnectedFlags::empty(),
+            completed_data_indexes: CompletedDataIndexes::default(),
             parent_block_id: Hash::new_unique(),
             replay_fec_set_index: 7,
         };
-        let v3_bytes = wincode::serialize(&meta_v3).unwrap();
-
-        let expected = blockstore_meta::SlotMeta::from(meta_v3);
-
-        assert!(deserialize_reject_trailing::<blockstore_meta::SlotMeta>(&v3_bytes).is_err());
-
-        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v3_bytes).unwrap();
-        assert_eq!(expected, deserialized);
+        let v3_bytes = wincode::serialize(&v3).unwrap();
+        let deserialized = wincode::deserialize::<blockstore_meta::SlotMeta>(&v3_bytes).unwrap();
+        assert_eq!(deserialized, v3);
     }
 }
