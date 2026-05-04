@@ -20,27 +20,37 @@ pub enum DirectIoSupport {
 /// direct I/O (`O_DIRECT`).
 ///
 /// Returns `Ok(Supported)` if direct I/O is supported, `Ok(Unsupported)` if it is not,
-/// or `Ok(Uncertain)` if no conclusion can be drawn (e.g. an empty directory or a path
-/// that does not exist).
+/// or `Ok(Uncertain)` if no conclusion can be drawn (e.g. a file path that doesn't exist).
 ///
-/// On Linux: resolves a concrete file under `path` first, then attempts a `statx(2)`-based
-/// check; if the kernel does not support it (< 6.1), falls back to an open-probe check.
+/// On Linux: resolves a concrete file under `path` first; if none exists, falls back to
+/// creating a temporary probe file in `path`. For a resolved or created file, attempts a
+/// `statx(2)`-based check; if the kernel does not support it (< 6.1), falls back to an
+/// open-probe check.
 /// On non-Linux platforms: always returns `Ok(Uncertain)`.
 #[cfg(target_os = "linux")]
 pub fn check_direct_io_capability(path: impl AsRef<Path>) -> io::Result<DirectIoSupport> {
     let Some(file) = find_any_file_under_path(path.as_ref())? else {
-        return Ok(DirectIoSupport::Uncertain);
+        return check_direct_io_via_tmpfile_open_probe(path.as_ref());
     };
+    check_direct_io_for_file(&file)
+}
+
+/// Check direct I/O capability for an existing `file`.
+///
+/// Attempts a `statx(2)`-based check first; falls back to an open-probe if the kernel did
+/// not populate `STATX_DIOALIGN` fields (kernel < 6.1).
+#[cfg(target_os = "linux")]
+fn check_direct_io_for_file(file: &Path) -> io::Result<DirectIoSupport> {
     // statx with STATX_DIOALIGN is the preferred check, but libc does not expose
     // statx on musl (requires musl >= 1.2.3), so skip it there.
     #[cfg(not(target_env = "musl"))]
     {
-        let statx_result = check_direct_io_via_statx(&file);
+        let statx_result = check_direct_io_via_statx(file);
         if !matches!(&statx_result, Ok(DirectIoSupport::Uncertain)) {
             return statx_result;
         }
     }
-    Ok(check_direct_io_via_open_probe(&file))
+    Ok(check_direct_io_via_open_probe(file))
 }
 
 /// Always returns `Ok(Uncertain)`, since direct I/O functionality is not used on non-Linux.
@@ -111,6 +121,25 @@ fn check_direct_io_via_open_probe(file: &Path) -> DirectIoSupport {
     } else {
         DirectIoSupport::Unsupported
     }
+}
+
+/// Check direct I/O capability by creating a temporary probe file in `dir`, then running
+/// [`check_direct_io_for_file`] on it.
+///
+/// Returns `Uncertain` if `dir` is not a writable directory.
+#[cfg(target_os = "linux")]
+fn check_direct_io_via_tmpfile_open_probe(dir: &Path) -> io::Result<DirectIoSupport> {
+    if !dir.is_dir() {
+        return Ok(DirectIoSupport::Uncertain);
+    }
+
+    let Ok(tmp) = tempfile::NamedTempFile::new_in(dir) else {
+        return Ok(DirectIoSupport::Uncertain);
+    };
+
+    let result = check_direct_io_for_file(tmp.path());
+    tmp.close()?;
+    result
 }
 
 /// Returns a path to any regular file at or under `path`, recursively traversing
@@ -192,7 +221,11 @@ mod tests {
     fn test_path_supports_direct_io_empty_dir() {
         let dir = TempDir::new().unwrap();
         let result = check_direct_io_capability(dir.path()).expect("check must not fail");
-        assert_eq!(result, DirectIoSupport::Uncertain);
+        assert_eq!(
+            result,
+            DirectIoSupport::Supported,
+            "dev filesystem must support direct I/O"
+        );
     }
 
     #[test]
