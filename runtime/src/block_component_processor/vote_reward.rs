@@ -386,8 +386,13 @@ impl<'a> State<'a> {
         reward: u64,
     ) -> Result<AccountSharedData, StateError> {
         match self {
-            Self::FinalCert(_) => {
-                unreachable!("this function should not be called for final cert variant")
+            Self::FinalCert(state) => {
+                let mut vote_state = VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
+                    .map_err(StateError::VoteStateNew)?;
+                state.update_account(state.leader_vote_pubkey, &mut vote_state.handler);
+                vote_state
+                    .serialize()
+                    .map_err(StateError::VoteStateSerialize)
             }
             Self::Reward(state) => {
                 let mut vote_state = VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
@@ -398,12 +403,16 @@ impl<'a> State<'a> {
                     .map_err(StateError::VoteStateSerialize)
             }
             Self::Both(reward_state, final_cert_state) => {
+                debug_assert_eq!(
+                    reward_state.leader_vote_pubkey,
+                    final_cert_state.leader_vote_pubkey
+                );
                 let mut vote_state =
                     VoteState::try_new(vote_accounts, reward_state.leader_vote_pubkey)
                         .map_err(StateError::VoteStateNew)?;
                 reward_state.update_account(reward, &mut vote_state.handler);
                 final_cert_state
-                    .update_account(reward_state.leader_vote_pubkey, &mut vote_state.handler);
+                    .update_account(final_cert_state.leader_vote_pubkey, &mut vote_state.handler);
                 vote_state
                     .serialize()
                     .map_err(StateError::VoteStateSerialize)
@@ -470,6 +479,16 @@ pub(super) fn calc_vote_rewards_update_vote_states(
                 &mut total_leader_reward,
             );
             assert_eq!(total_leader_reward, 0);
+            let leader_vote_pubkey = bank.leader().vote_address;
+            match state.update_leader(&vote_accounts, total_leader_reward) {
+                Err(e) => info!(
+                    "State=\"{state:?}\": update_leader(leader={leader_vote_pubkey}) failed with \
+                     {e}"
+                ),
+                Ok(leader_account) => {
+                    updated_accounts.push((leader_vote_pubkey, leader_account));
+                }
+            }
             bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
             Ok(())
         }
