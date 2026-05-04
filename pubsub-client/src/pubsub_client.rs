@@ -44,7 +44,7 @@
 //! This example subscribes to account events and then loops forever receiving
 //! them.
 //!
-//! ```
+//! ```no_run
 //! use anyhow::Result;
 //! use solana_commitment_config::CommitmentConfig;
 //! use solana_pubkey::Pubkey;
