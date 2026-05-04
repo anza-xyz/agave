@@ -8,7 +8,7 @@ use {
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
     agave_votor_messages::migration::MigrationStatus,
-    solana_entry::block_component::BlockComponent,
+    solana_entry::block_component::{BlockComponent, VersionedBlockMarker, VersionedUpdateParent},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
@@ -24,8 +24,14 @@ use {
 #[derive(Clone)]
 pub struct StandardBroadcastRun {
     slot: Slot,
+    // Parent encoded in shred headers. This must remain stable for the slot
+    // because it is used to derive PARENT_OFFSET.
     parent: Slot,
     parent_block_id: Hash,
+    // Parent committed into the double-merkle block id. This can change after
+    // an UpdateParent marker.
+    double_merkle_parent: Slot,
+    double_merkle_parent_block_id: Hash,
     chained_merkle_root: Hash,
     carryover_entry: Option<WorkingBankEntryOrMarker>,
     double_merkle_leaves: Vec<Hash>,
@@ -68,6 +74,8 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             parent_block_id: Hash::default(),
+            double_merkle_parent: Slot::MAX,
+            double_merkle_parent_block_id: Hash::default(),
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
             carryover_entry: None,
@@ -129,6 +137,8 @@ impl StandardBroadcastRun {
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
         self.parent_block_id = parent_block_id;
+        self.double_merkle_parent = bank.parent_slot();
+        self.double_merkle_parent_block_id = parent_block_id;
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
         self.next_shred_index = 0u32;
@@ -206,16 +216,23 @@ impl StandardBroadcastRun {
                 })
                 .collect();
 
-        let fec_set_roots = shreds
-            .iter()
-            .unique_by(|shred| shred.fec_set_index())
-            .sorted_unstable_by_key(|shred| shred.fec_set_index())
-            .map(|shred| shred.merkle_root().expect("no more legacy shreds"));
-        // If necessary for perf, these leaves could start being joined in the background
-        self.double_merkle_leaves.extend(fec_set_roots);
+        if self
+            .migration_status
+            .should_use_double_merkle_block_id(self.slot)
+        {
+            let fec_set_roots = shreds
+                .iter()
+                .unique_by(|shred| shred.fec_set_index())
+                .sorted_unstable_by_key(|shred| shred.fec_set_index())
+                .map(|shred| shred.merkle_root().expect("no more legacy shreds"));
+            // If necessary for perf, these leaves could start being joined in the background
+            self.double_merkle_leaves.extend(fec_set_roots);
 
-        if let Some(fec_set_root) = self.double_merkle_leaves.last() {
-            self.chained_merkle_root = *fec_set_root;
+            if let Some(fec_set_root) = self.double_merkle_leaves.last() {
+                self.chained_merkle_root = *fec_set_root;
+            }
+        } else if let Some(shred) = shreds.last() {
+            self.chained_merkle_root = shred.merkle_root().expect("no more legacy shreds");
         }
         if self.next_shred_index > self.max_data_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
@@ -224,6 +241,35 @@ impl StandardBroadcastRun {
             return Err(BroadcastError::TooManyShreds);
         }
         Ok(shreds)
+    }
+
+    /// Update only the double-merkle parent commitment after an UpdateParent marker.
+    ///
+    /// The shred-header parent remains `self.parent` for the whole slot so
+    /// PARENT_OFFSET stays stable and receivers do not see parent mismatches.
+    fn maybe_update_parent_from_component(&mut self, component: &BlockComponent) {
+        let Some(VersionedBlockMarker::V1(marker)) = component.as_marker() else {
+            return;
+        };
+        let Some(update_parent) = marker.as_update_parent() else {
+            return;
+        };
+        let (new_parent_slot, new_parent_block_id) = match update_parent {
+            VersionedUpdateParent::V1(update_parent) => (
+                update_parent.new_parent_slot,
+                update_parent.new_parent_block_id,
+            ),
+        };
+        self.double_merkle_parent = new_parent_slot;
+        self.double_merkle_parent_block_id = new_parent_block_id;
+    }
+
+    /// Leaf that binds the current replay parent into the double-merkle block id.
+    fn parent_info_leaf(&self) -> Hash {
+        hashv(&[
+            &self.double_merkle_parent.to_le_bytes(),
+            self.double_merkle_parent_block_id.as_bytes(),
+        ])
     }
 
     #[cfg(test)]
@@ -336,6 +382,7 @@ impl StandardBroadcastRun {
                 process_stats,
             )
             .unwrap();
+        self.maybe_update_parent_from_component(&component);
 
         let shreds = if maybe_send_header {
             header_shreds.extend(shreds);
@@ -404,9 +451,7 @@ impl StandardBroadcastRun {
                 // Block id is the double merkle root
                 let fec_set_count = self.double_merkle_leaves.len();
                 // Add the final leaf (parent info)
-                let parent_info_leaf =
-                    hashv(&[&self.parent.to_le_bytes(), self.parent_block_id.as_bytes()]);
-                self.double_merkle_leaves.push(parent_info_leaf);
+                self.double_merkle_leaves.push(self.parent_info_leaf());
 
                 // Compute the double merkle root
                 // Blockstore population of the DoubleMerkleMeta happens asynchronously when shreds are inserted
@@ -950,5 +995,66 @@ mod test {
         let component = BlockComponent::new_entry_batch(entries).unwrap();
         let r = bs.component_to_shreds(&keypair, &component, 0, false, &mut stats);
         assert_matches!(r, Err(BroadcastError::TooManyShreds));
+    }
+
+    #[test]
+    fn test_update_parent() {
+        let keypair = Keypair::new();
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::post_migration_status()),
+            votor_event_sender,
+        );
+        bs.slot = 12;
+        bs.parent = 10;
+        let original_parent_block_id = Hash::new_unique();
+        bs.parent_block_id = original_parent_block_id;
+        bs.double_merkle_parent = bs.parent;
+        bs.double_merkle_parent_block_id = bs.parent_block_id;
+
+        let new_parent_slot = 7;
+        let new_parent_block_id = Hash::new_unique();
+        let component = BlockComponent::new_block_marker(VersionedBlockMarker::new_update_parent(
+            solana_entry::block_component::UpdateParentV1 {
+                new_parent_slot,
+                new_parent_block_id,
+            },
+        ));
+        let mut stats = ProcessShredsStats::default();
+        let shreds = bs
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
+            .unwrap();
+        assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .all(|shred| shred.parent().unwrap() == 10)
+        );
+
+        bs.maybe_update_parent_from_component(&component);
+        assert_eq!(bs.parent, 10);
+        assert_eq!(bs.parent_block_id, original_parent_block_id);
+        assert_eq!(bs.double_merkle_parent, new_parent_slot);
+        assert_eq!(bs.double_merkle_parent_block_id, new_parent_block_id);
+        assert_eq!(
+            bs.parent_info_leaf(),
+            hashv(&[
+                &new_parent_slot.to_le_bytes(),
+                new_parent_block_id.as_bytes()
+            ])
+        );
+
+        let entries = create_ticks(1, 0, Hash::default());
+        let component = BlockComponent::new_entry_batch(entries).unwrap();
+        let shreds = bs
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
+            .unwrap();
+        assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .all(|shred| shred.parent().unwrap() == 10)
+        );
     }
 }

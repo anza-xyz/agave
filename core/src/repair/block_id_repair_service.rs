@@ -28,7 +28,7 @@ use {
         event::{RepairEvent, RepairEventReceiver},
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
-    crossbeam_channel::select,
+    crossbeam_channel::{Receiver, Sender, select},
     lazy_lru::LruCache,
     log::{debug, info},
     solana_clock::Slot,
@@ -67,6 +67,21 @@ use {
 };
 
 type OutstandingBlockIdRepairs = OutstandingRequests<BlockIdRepairType>;
+
+/// Replay's transient soft-dead state for slots that may still recover via an
+/// `UpdateParent` marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SoftDeadSlotNotification {
+    /// Replay failed before observing a usable `UpdateParent` marker. Block-id
+    /// repair should stop waiting for the Original location and repair by block id.
+    MarkSoftDead(Slot),
+    /// Replay restarted the slot from `UpdateParent`; the transient soft-dead
+    /// signal is stale and should no longer trigger block-id repair.
+    ClearSoftDead(Slot),
+}
+
+pub type SoftDeadSlotSender = Sender<SoftDeadSlotNotification>;
+pub type SoftDeadSlotReceiver = Receiver<SoftDeadSlotNotification>;
 
 const MAX_REPAIR_REQUESTS_PER_ITERATION: usize = 200;
 const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 11;
@@ -176,6 +191,12 @@ struct RepairState {
     /// These are re-processed each iteration until Turbine/Eager repair completes or marks the slot dead.
     /// Only the lowest slots are retained if the queue reaches MAX_PENDING_REPAIR_EVENTS.
     pending_repair_events: BTreeSet<RepairEvent>,
+    /// Slots that replay marked soft-dead before a possible `UpdateParent`.
+    ///
+    /// These are not durable dead slots in blockstore, but they are enough signal
+    /// for block-id repair to stop waiting on the Original column and fetch the
+    /// requested certified block by block id.
+    soft_dead_slots: HashSet<Slot>,
 
     /// Requests that have been sent, mapped to the timestamp they were sent.
     /// Used for retry logic - requests that exceed DELTA
@@ -192,6 +213,26 @@ struct RepairState {
 }
 
 impl RepairState {
+    fn apply_soft_dead_slot_notification(&mut self, notification: SoftDeadSlotNotification) {
+        match notification {
+            SoftDeadSlotNotification::MarkSoftDead(slot) => {
+                self.soft_dead_slots.insert(slot);
+            }
+            SoftDeadSlotNotification::ClearSoftDead(slot) => {
+                self.soft_dead_slots.remove(&slot);
+            }
+        }
+    }
+
+    fn apply_soft_dead_slot_notifications(
+        &mut self,
+        notifications: impl IntoIterator<Item = SoftDeadSlotNotification>,
+    ) {
+        for notification in notifications {
+            self.apply_soft_dead_slot_notification(notification);
+        }
+    }
+
     fn push_pending_repair_event(&mut self, event: RepairEvent) {
         self.pending_repair_events.insert(event);
         if self.pending_repair_events.len() > MAX_PENDING_REPAIR_EVENTS {
@@ -228,6 +269,7 @@ impl RepairState {
 pub struct BlockIdRepairChannels {
     pub repair_event_receiver: RepairEventReceiver,
     pub completed_slots_receiver: CompletedSlotsReceiver,
+    pub soft_dead_slot_receiver: SoftDeadSlotReceiver,
 }
 
 struct BlockIdRepairSockets {
@@ -328,6 +370,7 @@ impl BlockIdRepairService {
                     sent_requests: HashMap::default(),
                     requested_blocks: HashSet::default(),
                     pending_repair_events: BTreeSet::default(),
+                    soft_dead_slots: HashSet::default(),
                     response_stats: BlockIdRepairResponsesStats::default(),
                     request_stats: BlockIdRepairRequestsStats::default(),
                 };
@@ -389,6 +432,10 @@ impl BlockIdRepairService {
                     Ok(event) => state.push_pending_repair_event(event),
                     Err(_) => return Ok(false),
                 },
+                recv(&context.channels.soft_dead_slot_receiver) -> result => match result {
+                    Ok(notification) => state.apply_soft_dead_slot_notification(notification),
+                    Err(_) => return Ok(false),
+                },
                 recv(&context.response_receiver) -> result => match result {
                     Ok(response) => pending_response = Some(response),
                     Err(_) => return Ok(false),
@@ -404,6 +451,7 @@ impl BlockIdRepairService {
 
         // Clean up old request tracking
         state.requested_blocks.retain(|(slot, _)| *slot > root);
+        state.soft_dead_slots.retain(|slot| *slot > root);
         state.prune_expected_ping_responses(timestamp());
 
         // Process responses, generate new requests / repair events
@@ -419,9 +467,13 @@ impl BlockIdRepairService {
 
         // Receive new repair events from votor / replay
         state.extend_pending_repair_events(context.channels.repair_event_receiver.try_iter());
+        state.apply_soft_dead_slot_notifications(
+            context.channels.soft_dead_slot_receiver.try_iter(),
+        );
 
         // Filter out actionable repair events from the pending queue
         let requested_blocks = &state.requested_blocks;
+        let soft_dead_slots = &state.soft_dead_slots;
         state.pending_repair_events.retain(|event| {
             if first_error.is_some() {
                 return true;
@@ -433,6 +485,7 @@ impl BlockIdRepairService {
                 root,
                 context.blockstore.as_ref(),
                 requested_blocks,
+                soft_dead_slots,
             ) {
                 Ok(PendingRepairDecision::KeepPending) => true,
                 Ok(PendingRepairDecision::Drop) => false,
@@ -714,6 +767,7 @@ impl BlockIdRepairService {
         root: Slot,
         blockstore: &Blockstore,
         requested_blocks: &HashSet<Block>,
+        soft_dead_slots: &HashSet<Slot>,
     ) -> Result<PendingRepairDecision, BlockstoreError> {
         if event.slot() <= root {
             return Ok(PendingRepairDecision::Drop);
@@ -734,14 +788,15 @@ impl BlockIdRepairService {
                     }));
                 }
 
-                // We don't have the block. Check if turbine failed (dead)
+                // We don't have the block. Check if turbine/replay failed.
                 // Note: we require the invariant that Turbine + Eager repair will either:
                 // - Eventually fill in all shreds for a slot (slot_meta.is_full()) resulting in the DMR calculation
-                // - Mark the slot as dead
-                if blockstore.is_dead(slot) {
+                // - Mark the slot dead, or notify us that replay soft-dead the
+                //   slot before a possible UpdateParent
+                if blockstore.is_dead(slot) || soft_dead_slots.contains(&slot) {
                     info!(
-                        "{my_pubkey}: FetchBlock: slot {slot} is dead, starting repair for \
-                         block_id={block_id:?}"
+                        "{my_pubkey}: FetchBlock: slot {slot} is dead or soft-dead, starting \
+                         repair for block_id={block_id:?}"
                     );
                     return Ok(PendingRepairDecision::Act(RepairAction::StartRepair {
                         slot,
@@ -1145,6 +1200,7 @@ mod tests {
             sent_requests: HashMap::default(),
             requested_blocks: HashSet::default(),
             pending_repair_events: BTreeSet::default(),
+            soft_dead_slots: HashSet::default(),
             response_stats: BlockIdRepairResponsesStats::default(),
             request_stats: BlockIdRepairRequestsStats::default(),
         };
@@ -1165,6 +1221,7 @@ mod tests {
             root,
             blockstore,
             &state.requested_blocks,
+            &state.soft_dead_slots,
         )? {
             PendingRepairDecision::KeepPending => {
                 state.push_pending_repair_event(event);
@@ -1737,6 +1794,37 @@ mod tests {
     }
 
     #[test]
+    fn test_soft_dead_repairs() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (mut state, _bank_forks) = create_test_repair_state();
+
+        let slot = 100u64;
+        let block_id = Hash::new_unique();
+        state.apply_soft_dead_slot_notification(SoftDeadSlotNotification::MarkSoftDead(slot));
+
+        let event = RepairEvent::FetchBlock { slot, block_id };
+        process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
+            .unwrap();
+
+        assert_eq!(state.pending_repair_requests.len(), 1);
+        assert!(state.requested_blocks.contains(&(slot, block_id)));
+        assert!(state.pending_repair_events.is_empty());
+    }
+
+    #[test]
+    fn test_clear_soft_dead() {
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let slot = 100u64;
+
+        state.apply_soft_dead_slot_notification(SoftDeadSlotNotification::MarkSoftDead(slot));
+        assert!(state.soft_dead_slots.contains(&slot));
+
+        state.apply_soft_dead_slot_notification(SoftDeadSlotNotification::ClearSoftDead(slot));
+        assert!(!state.soft_dead_slots.contains(&slot));
+    }
+
+    #[test]
     fn test_process_repair_event_deferred_when_turbine_not_complete() {
         // When Turbine hasn't completed (slot not dead, no DMR), event should be deferred
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -1904,6 +1992,7 @@ mod tests {
                     0,
                     &blockstore,
                     &state.requested_blocks,
+                    &state.soft_dead_slots,
                 )
                 .unwrap()
                 {

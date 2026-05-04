@@ -70,6 +70,10 @@ pub enum BlockComponentProcessorError {
     NanosecondClockOutOfBounds,
     #[error("Spurious update parent")]
     SpuriousUpdateParent,
+    #[error(
+        "UpdateParent cannot be the initial parent marker unless replay starts at UpdateParent"
+    )]
+    UnexpectedInitialUpdateParent,
     #[error("Abandoned bank")]
     AbandonedBank(VersionedUpdateParent),
     #[error("invalid reward certs {0}")]
@@ -83,9 +87,22 @@ pub struct BlockComponentProcessor {
     has_header: bool,
     has_footer: bool,
     update_parent: Option<VersionedUpdateParent>,
+    /// True when replay intentionally starts at the UpdateParent FEC set.
+    ///
+    /// In normal replay, a block header must be observed before any UpdateParent.
+    /// Restart-from-UpdateParent replay skips the obsolete optimistic-parent
+    /// prefix, so the UpdateParent marker is allowed to act as the first parent
+    /// marker only in that explicit mode.
+    replay_starts_at_update_parent: bool,
 }
 
 impl BlockComponentProcessor {
+    /// Allow `UpdateParent` to be the first parent marker only for banks whose
+    /// replay starts at the persisted UpdateParent FEC-set offset.
+    pub fn set_replay_starts_at_update_parent(&mut self, replay_starts_at_update_parent: bool) {
+        self.replay_starts_at_update_parent = replay_starts_at_update_parent;
+    }
+
     pub fn on_final(
         &self,
         migration_status: &MigrationStatus,
@@ -96,9 +113,8 @@ impl BlockComponentProcessor {
             return Ok(());
         }
 
-        // If we encounter an UpdateParent when fast leader handover is disabled, error.
-        if !migration_status.should_allow_fast_leader_handover(slot) && self.update_parent.is_some()
-        {
+        // If we encounter an UpdateParent before it is legal for this slot, error.
+        if !migration_status.should_allow_update_parent(slot) && self.update_parent.is_some() {
             return Err(BlockComponentProcessorError::SpuriousUpdateParent);
         }
 
@@ -153,6 +169,7 @@ impl BlockComponentProcessor {
         let VersionedBlockMarker::V1(marker) = marker;
 
         let markers_fully_enabled = migration_status.should_allow_block_markers(slot);
+        let update_parent_enabled = migration_status.should_allow_update_parent(slot);
         let in_migration = migration_status.is_in_migration();
 
         match marker {
@@ -176,7 +193,7 @@ impl BlockComponentProcessor {
                 finalization_cert_sender,
             ),
 
-            BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
+            BlockMarkerV1::UpdateParent(update_parent) if update_parent_enabled => {
                 self.on_update_parent(update_parent.inner())
             }
 
@@ -377,6 +394,10 @@ impl BlockComponentProcessor {
     ) -> Result<(), BlockComponentProcessorError> {
         if self.update_parent.is_some() {
             return Err(BlockComponentProcessorError::MultipleUpdateParents);
+        }
+
+        if !self.has_header && !self.replay_starts_at_update_parent {
+            return Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent);
         }
 
         self.update_parent = Some(update_parent.clone());
@@ -1174,14 +1195,30 @@ mod tests {
     }
 
     #[test]
-    fn test_update_parent_as_first_marker() {
+    fn test_initial_up_reject() {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
             new_parent_block_id: Hash::default(),
         });
 
-        assert!(processor.on_update_parent(&update_parent).is_ok());
+        assert!(matches!(
+            processor.on_update_parent(&update_parent),
+            Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent)
+        ));
+        assert!(processor.update_parent.is_none());
+    }
+
+    #[test]
+    fn test_initial_up_ok() {
+        let mut processor = BlockComponentProcessor::default();
+        processor.set_replay_starts_at_update_parent(true);
+        let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
+            new_parent_slot: 0,
+            new_parent_block_id: Hash::default(),
+        });
+
+        processor.on_update_parent(&update_parent).unwrap();
         assert!(processor.update_parent.is_some());
     }
 
@@ -1218,6 +1255,7 @@ mod tests {
         });
 
         // First should succeed
+        processor.set_replay_starts_at_update_parent(true);
         processor.on_update_parent(&update_parent).unwrap();
 
         // Second should fail
@@ -1230,6 +1268,7 @@ mod tests {
     #[test]
     fn test_header_after_update_parent_error() {
         let mut processor = BlockComponentProcessor::default();
+        processor.set_replay_starts_at_update_parent(true);
         processor
             .on_update_parent(&VersionedUpdateParent::V1(UpdateParentV1 {
                 new_parent_slot: 0,
@@ -1249,10 +1288,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO(ksn): Enable when fast leader handover is enabled in MigrationPhase::should_allow_fast_leader_handover
+    #[ignore] // TODO(ksn): Enable when UpdateParent is enabled in MigrationPhase::should_allow_update_parent
     fn test_workflow_with_update_parent() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
+        processor.set_replay_starts_at_update_parent(true);
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
 

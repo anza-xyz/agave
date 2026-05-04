@@ -108,7 +108,10 @@ impl ConsensusRewards {
                 recv(self.build_reward_certs_receiver) -> msg => {
                     match msg {
                         Ok(msg) => {
-                            let resp = self.build_certs(msg.bank_slot);
+                            let resp = BuildRewardCertsResponse {
+                                bank_slot: msg.bank_slot,
+                                result: self.build_certs(msg.bank_slot),
+                            };
                             if self.reward_certs_sender.send(resp).is_err() {
                                 error!("{my_pubkey}: cert sender channel is disconnected; exiting.");
                                 break;

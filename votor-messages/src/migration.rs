@@ -185,6 +185,22 @@ impl MigrationPhase {
         }
     }
 
+    /// First slot where `UpdateParent` may alter parent metadata.
+    ///
+    /// Before this slot, Tower or migration blocks may contain marker-shaped
+    /// bytes, but they must not be allowed to reparent `SlotMeta`.
+    fn first_slot_allowing_update_parent(&self) -> Option<Slot> {
+        match self {
+            MigrationPhase::PreFeatureActivation
+            | MigrationPhase::Migration { .. }
+            | MigrationPhase::ReadyToEnable { .. } => None,
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
+                genesis_cert.cert_type.slot().checked_add(1)
+            }
+            MigrationPhase::FullAlpenglowEpoch { .. } => Some(0),
+        }
+    }
+
     /// Check if we are in the process of discovering the genesis block, and `slot` could qualify
     /// to be used for discovery. This entails that `slot` > `migration_slot`. The caller must additionally
     /// check that the parent of `slot` is super-OC.
@@ -274,6 +290,11 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
+    /// Should live leader-bank creation use the Alpenglow block creation path?
+    fn should_use_alpenglow_leader_path(&self, slot: Slot) -> bool {
+        self.is_alpenglow_block(slot)
+    }
+
     /// Should this block be allowed to have block markers?
     fn should_allow_block_markers(&self, slot: Slot) -> bool {
         // Only allow for alpenglow blocks, TowerBFT blocks should not have markers
@@ -285,9 +306,14 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
-    /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
-    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
+    /// Should this block allow an `UpdateParent` marker?
+    fn should_allow_update_parent(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
+    }
+
+    /// Should replay notify block creation about optimistic parents for this slot?
+    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
+        self.should_allow_update_parent(slot)
     }
 }
 
@@ -434,9 +460,12 @@ impl MigrationStatus {
     dispatch!(pub fn should_send_votor_event(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_use_alpenglow_leader_path(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_allow_update_parent(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
+    dispatch!(pub fn first_slot_allowing_update_parent(&self) -> Option<Slot>);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
     /// This should only be called using the feature account of a *rooted* slot,

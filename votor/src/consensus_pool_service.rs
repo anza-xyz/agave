@@ -21,7 +21,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::SharableBanks,
@@ -47,7 +47,6 @@ pub(crate) struct ConsensusPoolContext {
 
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) my_vote_pubkey: Pubkey,
-    pub(crate) blockstore: Arc<Blockstore>,
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
 
@@ -400,15 +399,6 @@ impl ConsensusPoolService {
         let start_slot = *highest_parent_ready;
         let end_slot = last_of_consecutive_leader_slots(start_slot);
 
-        if (start_slot..=end_slot).any(|s| ctx.blockstore.has_existing_shreds_for_slot(s)) {
-            warn!(
-                "{}: We have already produced shreds in the window {start_slot}-{end_slot}, \
-                 skipping production of our leader window",
-                ctx.cluster_info.id()
-            );
-            return;
-        }
-
         match consensus_pool
             .parent_ready_tracker
             .block_production_parent(start_slot)
@@ -459,7 +449,6 @@ mod tests {
         },
         solana_gossip::cluster_info::ClusterInfo,
         solana_hash::Hash,
-        solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
@@ -481,7 +470,6 @@ mod tests {
         sharable_banks: SharableBanks,
         my_pubkey: Pubkey,
         my_vote_pubkey: Pubkey,
-        blockstore: Arc<Blockstore>,
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
@@ -511,8 +499,6 @@ mod tests {
             let bank0 = Bank::new_for_tests(&genesis.genesis_config);
             let bank_forks = BankForks::new_rw_arc(bank0);
 
-            let ledger_path = get_tmp_ledger_path_auto_delete!();
-            let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let leader_schedule_cache =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
@@ -537,7 +523,6 @@ mod tests {
                 sharable_banks,
                 my_pubkey,
                 my_vote_pubkey,
-                blockstore,
                 exit: Arc::new(AtomicBool::new(false)),
                 cluster_info,
                 highest_finalized: Arc::new(RwLock::new(None)),
@@ -740,7 +725,6 @@ mod tests {
             generated_cert_types: Arc::new(GeneratedCertTypes::default()),
             cluster_info: ctx.cluster_info.clone(),
             my_vote_pubkey: ctx.my_vote_pubkey,
-            blockstore: ctx.blockstore.clone(),
             sharable_banks: ctx.sharable_banks.clone(),
             leader_schedule_cache: ctx.leader_schedule_cache.clone(),
             consensus_message_receiver: crossbeam_channel::unbounded().1,

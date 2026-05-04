@@ -2,7 +2,7 @@ use {
     crate::{
         block_error::BlockError,
         blockstore::{Blockstore, BlockstoreError},
-        blockstore_meta::SlotMeta,
+        blockstore_meta::{BlockLocation, SlotMeta},
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,
         transaction_balances::compile_collected_balances,
@@ -1461,6 +1461,9 @@ pub struct ConfirmationProgress {
     pub last_entry: Hash,
     pub tick_hash_count: u64,
     pub num_shreds: u64,
+    /// True when this bank's replay began at an `UpdateParent` FEC-set offset
+    /// rather than at shred zero.
+    pub replay_starts_at_update_parent: bool,
     pub num_entries: usize,
     pub num_txs: usize,
     async_verification: Option<AsyncVerificationProgress>,
@@ -1785,8 +1788,35 @@ fn confirm_slot_with_components(
         load_result
     }?;
 
-    let mut processor = bank.block_component_processor.write().unwrap();
+    // Process block components for Alpenglow slots. Note that we don't need to run migration checks
+    // for BlockMarkers here, despite BlockMarkers only being active post-Alpenglow. Here's why:
+    //
+    // Post-Alpenglow migration - validators that have Alpenglow enabled can parse BlockComponents.
+    // Things just work.
+    //
+    // Pre-Alpenglow migration, suppose a validator receives a BlockMarker:
+    //
+    // (1) validators *incapable* of processing BlockMarkers will mark the slot as dead on shred
+    //     ingest in blockstore.
+    //
+    // (2) validators *capable* of processing BlockMarkers will store the BlockMarkers in shred
+    //     ingest, run through this verifying code here, and then error out when processing a
+    //     BlockMarker, resulting in the slot being marked as dead.
+    let replay_starts_at_update_parent = progress.replay_starts_at_update_parent
+        && migration_status.should_allow_update_parent(slot)
+        && progress.num_shreds > 0
+        && blockstore
+            .meta(slot)
+            .expect("Blockstore operations must succeed")
+            .is_some_and(|meta| {
+                meta.has_update_parent()
+                    && progress.num_shreds == u64::from(meta.replay_fec_set_index)
+            });
 
+    let mut processor = bank.block_component_processor.write().unwrap();
+    processor.set_replay_starts_at_update_parent(replay_starts_at_update_parent);
+
+    // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
         .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
@@ -1801,7 +1831,18 @@ fn confirm_slot_with_components(
             BlockComponent::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
-                processor.on_entry_batch(migration_status, slot)?;
+                // Skip block component validation for genesis block. Slot 0 is handled specially,
+                // since it won't have the required block markers.
+                if slot != 0 {
+                    processor
+                        .on_entry_batch(migration_status, slot)
+                        .inspect_err(|err| {
+                            warn!(
+                                "BlockComponentProcessor::on_entry_batch() for slot {slot} failed \
+                                 with {err}"
+                            );
+                        })?;
+                }
 
                 confirm_slot_entries(
                     bank,
@@ -2185,6 +2226,26 @@ fn cleanup_and_populate_pending_from_alpenglow_genesis(
         }
     }
 
+    // Shreds for slots after the genesis block may have arrived while this node
+    // was still in the migration phase. At that point `UpdateParent` is not
+    // allowed to update SlotMeta, so any persisted parent metadata for those
+    // slots can be stale. Match the live transition path and repair these blocks
+    // after Alpenglow is enabled instead of replaying stale metadata.
+    let start_slot = genesis_slot.saturating_add(1);
+    if let Some(end_slot) = blockstore.highest_slot().map_err(|err| {
+        warn!("Failed to load highest slot while enabling Alpenglow during startup: {err:?}");
+        BlockstoreProcessorError::FailedToLoadMeta
+    })? {
+        if end_slot >= start_slot {
+            warn!(
+                "{}: startup Alpenglow migration purging shreds {start_slot} to {end_slot} from \
+                 blockstore",
+                migration_status.my_pubkey()
+            );
+            blockstore.clear_unconfirmed_slots(start_slot, end_slot);
+        }
+    }
+
     let genesis_slot_meta = blockstore
         .meta(genesis_slot)
         .map_err(|err| {
@@ -2252,6 +2313,21 @@ fn process_next_slots(
         // Only process full slots in blockstore_processor, replay_stage
         // handles any partials
         if next_meta.is_full() {
+            let parent_block_id = bank.block_id();
+            if migration_status.should_use_double_merkle_block_id(*next_slot)
+                && bank.slot() != 0
+                && Some(next_meta.parent_block_id) != parent_block_id
+            {
+                warn!(
+                    "startup replay deferring slot {next_slot}: parent {} has block id {:?}, but \
+                     SlotMeta expects {:?}",
+                    bank.slot(),
+                    parent_block_id,
+                    next_meta.parent_block_id,
+                );
+                continue;
+            }
+
             let next_bank = Bank::new_from_parent(
                 bank.clone(),
                 leader_schedule_cache
@@ -2313,6 +2389,7 @@ fn load_frozen_forks(
     snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(u64, usize), BlockstoreProcessorError> {
     let migration_status = bank_forks.read().unwrap().migration_status();
+    blockstore.configure_block_markers_for_migration(&migration_status);
     let blockstore_max_root = blockstore.max_root();
     let mut root = bank_forks.read().unwrap().root();
     let max_root = std::cmp::max(root, blockstore_max_root);
@@ -2385,6 +2462,16 @@ fn load_frozen_forks(
                 last_entry_hash,
                 async_verification.take(),
             );
+            // Live replay restarts UpdateParent slots from the marker's FEC set.
+            // Startup replay must use the same offset or a restarted validator can
+            // execute the obsolete optimistic-parent prefix.
+            if migration_status.should_allow_update_parent(slot)
+                && meta.has_update_parent()
+                && blockstore.can_replay_from_update_parent(slot, BlockLocation::Original)?
+            {
+                progress.num_shreds = u64::from(meta.replay_fec_set_index);
+                progress.replay_starts_at_update_parent = true;
+            }
             let mut m = Measure::start("process_single_slot");
             let bank = bank_forks.write().unwrap().insert_from_ledger(bank);
             if let Err(error) = process_single_slot(
@@ -2410,6 +2497,7 @@ fn load_frozen_forks(
                 // We are safe to cleanly transition to alpenglow here
                 if migration_status.is_ready_to_enable() {
                     let genesis_slot = migration_status.enable_alpenglow_during_startup();
+                    blockstore.configure_block_markers_for_migration(&migration_status);
 
                     // We need to clear pending_slots as it might contain Alpenglow blocks initialized as TowerBFT banks.
                     // Clear and populate pending slots from alpenglow genesis
@@ -2531,6 +2619,7 @@ fn load_frozen_forks(
                         .activated_slot(&agave_feature_set::alpenglow::id())
                     {
                         migration_status.record_feature_activation(slot);
+                        blockstore.configure_block_markers_for_migration(&migration_status);
                     }
                 }
             }
@@ -2620,16 +2709,32 @@ fn supermajority_root_from_vote_accounts(
 /// Returns:
 /// - `Inactive`: feature not active, no validation performed
 /// - `Pass`: chained block ID matches parent's block ID (or parent has no
-///   block ID yet), safe to proceed with replay
+///   block ID yet), or the slot replays from an UpdateParent FEC set
 /// - `Mismatch`: definitive mismatch between child's chained merkle root
 ///   and parent's block ID
 /// - `Unavailable`: data shred 0 not received yet, cannot validate
-pub fn check_chained_block_id(blockstore: &Blockstore, bank: &Bank) -> ChainedBlockIdCheck {
+pub fn check_chained_block_id(
+    blockstore: &Blockstore,
+    bank: &Bank,
+    migration_status: &MigrationStatus,
+) -> ChainedBlockIdCheck {
     if !bank.feature_set.snapshot().validate_chained_block_id {
         return ChainedBlockIdCheck::Inactive;
     }
 
     let slot = bank.slot();
+    if migration_status.should_allow_update_parent(slot)
+        && blockstore
+            .meta(slot)
+            .expect("Blockstore operations must succeed")
+            .is_some_and(|meta| meta.has_update_parent())
+    {
+        // This block must contain an `UpdateParent` and Alpenglow is active, so
+        // we rely on Double Merkle verification of parent chained block ID
+        // instead of CMR.
+        return ChainedBlockIdCheck::Pass;
+    }
+
     let parent_slot = bank.parent_slot();
 
     let Ok(expected_parent_block_id) = blockstore.get_parent_chained_block_id(slot) else {
@@ -2678,7 +2783,7 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
-    match check_chained_block_id(blockstore, bank) {
+    match check_chained_block_id(blockstore, bank, migration_status) {
         ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
         ChainedBlockIdCheck::Unavailable => {
             // no shreds to replay
@@ -6251,7 +6356,7 @@ pub mod tests {
         // Case 1: No shreds for child slot — should return Unavailable
         let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 10);
         assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank),
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Unavailable
         ));
 
@@ -6260,7 +6365,7 @@ pub mod tests {
         insert_shreds_with_chained_merkle_root(11, 0, parent_block_id);
         let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 11);
         assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank),
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Pass
         ));
 
@@ -6269,11 +6374,33 @@ pub mod tests {
         insert_shreds_with_chained_merkle_root(12, 0, Hash::new_unique());
         let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 12);
         assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank),
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Mismatch
         ));
 
-        // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
+        // Case 4: UpdateParent metadata does not bypass Tower validation.
+        insert_shreds_with_chained_merkle_root(13, 0, Hash::new_unique());
+        let mut meta = blockstore.meta(13).unwrap().unwrap();
+        meta.replay_fec_set_index = 32;
+        blockstore.put_meta(13, &meta).unwrap();
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 13);
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 5: Alpenglow UpdateParent slots skip shred-0 chained block ID
+        // validation because replay starts at the UpdateParent FEC set.
+        assert!(matches!(
+            check_chained_block_id(
+                &blockstore,
+                &child_bank,
+                &MigrationStatus::post_migration_status()
+            ),
+            ChainedBlockIdCheck::Pass
+        ));
+
+        // Case 6: Parent has no shreds (get_block_merkle_root returns Err) —
         // should return Pass regardless of chained merkle root.
         let no_shreds_parent_bank = Arc::new(Bank::new_from_parent(
             parent_bank,
@@ -6283,8 +6410,50 @@ pub mod tests {
         insert_shreds_with_chained_merkle_root(21, 20, Hash::new_unique());
         let child_bank = Bank::new_from_parent(no_shreds_parent_bank, SlotLeader::default(), 21);
         assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank),
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Pass
         ));
+    }
+
+    #[test]
+    fn test_startup_parent_id_check() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let parent_bank = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let parent_block_id = Hash::new_unique();
+        parent_bank.set_block_id(Some(parent_block_id));
+
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&parent_bank);
+        let mut parent_meta = SlotMeta::new(1, Some(0));
+        parent_meta.next_slots = vec![2, 3];
+
+        for (slot, block_id) in [(2, Hash::new_unique()), (3, parent_block_id)] {
+            let mut meta = SlotMeta::new(slot, Some(1));
+            meta.consumed = 1;
+            meta.received = 1;
+            meta.last_index = Some(0);
+            meta.parent_block_id = block_id;
+            meta.replay_fec_set_index = 32;
+            blockstore.put_meta(slot, &meta).unwrap();
+        }
+
+        let mut pending_slots = Vec::new();
+        process_next_slots(
+            &parent_bank,
+            &parent_meta,
+            &blockstore,
+            &leader_schedule_cache,
+            &mut pending_slots,
+            &ProcessOptions::default(),
+            &MigrationStatus::post_migration_status(),
+        )
+        .unwrap();
+
+        assert_eq!(pending_slots.len(), 1);
+        assert_eq!(pending_slots[0].1.slot(), 3);
     }
 }

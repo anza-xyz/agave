@@ -93,6 +93,11 @@ pub enum BlockstoreError {
         parent_slot: Slot,
         root: Slot,
     },
+    #[error("invalid parent block id for genesis parent in slot {slot}: {parent_block_id}")]
+    InvalidGenesisParentBlockId {
+        slot: Slot,
+        parent_block_id: solana_hash::Hash,
+    },
     #[error(
         "block header parent {block_header_parent_slot} does not match shred parent \
          {shred_parent_slot} for slot {slot}"

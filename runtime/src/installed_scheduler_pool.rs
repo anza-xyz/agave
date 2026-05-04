@@ -546,6 +546,20 @@ impl BankWithScheduler {
         )
     }
 
+    /// Waits for scheduler workers before this bank is purged from `BankForks`.
+    ///
+    /// This gives callers an explicit quiescence point without dropping the
+    /// `BankWithScheduler`, so account-cache cleanup can still run before
+    /// `Bank::drop()` removes scan-tracker state.
+    #[must_use]
+    pub(crate) fn wait_for_dropped_scheduler(&self) -> Option<ResultWithTimings> {
+        BankWithSchedulerInner::wait_for_scheduler_termination(
+            &self.inner.bank,
+            &self.inner.scheduler,
+            WaitReason::DroppedFromBankForks,
+        )
+    }
+
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
         RwLock::new(SchedulerStatus::Unavailable)
     }
