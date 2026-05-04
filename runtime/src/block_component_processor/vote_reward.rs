@@ -1011,12 +1011,11 @@ mod tests {
 
         let mut looping_bank = bank;
         for _ in 0..num_reward_slots {
-            calculate_and_pay_voting_reward_and_update_vote_state(
-                &looping_bank,
-                Some((looping_bank.slot() - 100, validators_to_reward.clone())),
-                None,
-            )
-            .unwrap();
+            let reward_cert = ValidatedRewardCert::new_for_tests(
+                looping_bank.slot() - 100,
+                validators_to_reward.clone(),
+            );
+            calc_vote_rewards_update_vote_states(&looping_bank, Some(reward_cert), None).unwrap();
 
             let leader = *looping_bank.leader();
             let slot = looping_bank.slot() + 1;
