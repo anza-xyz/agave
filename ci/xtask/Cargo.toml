@@ -29,7 +29,7 @@ regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_yaml = "0.9.34"
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.2", features = ["full"] }
 xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "a9b0cf5facf85eb11458bbefc651132722c18dae" }
 
 [dev-dependencies]
