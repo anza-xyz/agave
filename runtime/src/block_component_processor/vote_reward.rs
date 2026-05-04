@@ -449,10 +449,15 @@ impl<'a> State<'a> {
                     reward_state.leader_vote_pubkey,
                     final_cert_state.leader_vote_pubkey
                 );
-                let new_root_slot = reward_state
-                    .reward_validators
-                    .contains(&leader_vote_pubkey)
-                    .then_some(reward_state.reward_slot);
+                let new_root_slot = match (
+                    reward_state.reward_validators.contains(&leader_vote_pubkey),
+                    final_cert_state.signers.contains(&leader_vote_pubkey),
+                ) {
+                    (false, false) => None,
+                    (true, false) => Some(reward_state.reward_slot),
+                    (false, true) => Some(final_cert_state.final_slot),
+                    (true, true) => Some(reward_state.reward_slot.max(final_cert_state.final_slot)),
+                };
                 let reward_updated =
                     reward_state.update_account(reward, new_root_slot, &mut vote_state.handler);
                 let final_cert_updated = final_cert_state
