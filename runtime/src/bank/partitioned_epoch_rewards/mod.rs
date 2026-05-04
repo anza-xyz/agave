@@ -151,9 +151,8 @@ pub(crate) enum EpochRewardPhase {
 
 #[derive(Debug)]
 pub(super) struct RewardCommission {
-    pub(super) commission_bps: Option<u16>,
+    pub(super) commission_bps: u16,
     pub(super) commission_lamports: u64,
-    pub(super) is_vote_account: bool,
 }
 
 pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
