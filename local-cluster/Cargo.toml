@@ -33,11 +33,13 @@ rand = { workspace = true }
 rayon = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
+solana-connection-cache = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -95,3 +97,4 @@ solana-genesis-utils = { path = "../genesis-utils", features = ["agave-unstable-
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+wincode = { workspace = true }

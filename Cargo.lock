@@ -8961,11 +8961,13 @@ dependencies = [
  "serial_test",
  "solana-account 4.3.0",
  "solana-accounts-db",
+ "solana-bls-signatures",
  "solana-client",
  "solana-client-traits",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
+ "solana-connection-cache",
  "solana-core",
  "solana-download-utils",
  "solana-entry",
@@ -9014,6 +9016,7 @@ dependencies = [
  "strum",
  "tempfile",
  "tokio-util 0.7.18",
+ "wincode",
 ]
 
 [[package]]

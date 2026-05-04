@@ -242,7 +242,6 @@ impl Votor {
             generated_cert_types,
             cluster_info: cluster_info.clone(),
             my_vote_pubkey: vote_account,
-            blockstore,
             sharable_banks: sharable_banks.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             consensus_message_receiver,

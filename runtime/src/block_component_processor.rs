@@ -25,7 +25,7 @@ use {
     thiserror::Error,
 };
 
-pub(crate) mod vote_reward;
+pub mod vote_reward;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BlockComponentProcessorError {

@@ -5,7 +5,13 @@ use {
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
     agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
-    agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
+    agave_votor_messages::{
+        consensus_message::{
+            BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType, ConsensusMessage, VoteMessage,
+        },
+        migration::MIGRATION_SLOT_OFFSET,
+        vote::Vote,
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{Receiver, unbounded},
     gag::BufferRedirect,
@@ -15,12 +21,17 @@ use {
     serial_test::serial,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
+    solana_bls_signatures::{
+        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+    },
+    solana_client::connection_cache::ConnectionCache,
     solana_client_traits::AsyncClient,
     solana_clock::{
         self as clock, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot,
     },
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
+    solana_connection_cache::client_connection::ClientConnection,
     solana_core::{
         consensus::{
             SWITCH_FORK_THRESHOLD, Tower, VOTE_THRESHOLD_DEPTH, tower_storage::FileTowerStorage,
@@ -30,7 +41,10 @@ use {
         validator::{BlockProductionMethod, BlockVerificationMethod, ValidatorConfig},
     },
     solana_download_utils::download_snapshot_archive,
-    solana_entry::entry::create_ticks,
+    solana_entry::{
+        block_component::{BlockComponent, BlockMarkerV1, VersionedBlockMarker},
+        entry::create_ticks,
+    },
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_genesis_utils::open_genesis_config,
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
@@ -81,7 +95,7 @@ use {
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
     solana_signer::Signer,
     solana_stake_interface as stake,
-    solana_system_interface::program as system_program,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
     solana_transaction_error::TransportError,
     solana_turbine::broadcast_stage::{
@@ -96,6 +110,7 @@ use {
         fs,
         io::Read,
         iter,
+        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
@@ -5910,6 +5925,652 @@ fn test_alpenglow_4_1_offline() {
     const NUM_NODES: usize = 4;
     const NUM_OFFLINE: usize = 1;
     test_alpenglow_nodes_basic(NUM_NODES, NUM_OFFLINE);
+}
+
+fn alpenglow_validator_ranks(validator_keys: &[ValidatorKeys], node_stakes: &[u64]) -> Vec<u16> {
+    assert_eq!(validator_keys.len(), node_stakes.len());
+
+    let mut validators_by_rank = validator_keys
+        .iter()
+        .enumerate()
+        .map(|(validator_index, keypair)| {
+            let bls_keypair =
+                BLSKeypair::derive_from_signer(&keypair.vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
+                    .expect("failed to derive BLS keypair");
+            (
+                validator_index,
+                node_stakes[validator_index],
+                BLSPubkeyCompressed::from(*bls_keypair.public),
+            )
+        })
+        .collect::<Vec<_>>();
+    validators_by_rank.sort_by(|(_, a_stake, a_bls_pubkey), (_, b_stake, b_bls_pubkey)| {
+        b_stake.cmp(a_stake).then(a_bls_pubkey.cmp(b_bls_pubkey))
+    });
+
+    let mut validator_ranks = vec![0; validator_keys.len()];
+    for (rank, (validator_index, _, _)) in validators_by_rank.into_iter().enumerate() {
+        validator_ranks[validator_index] = u16::try_from(rank).unwrap();
+    }
+    validator_ranks
+}
+
+fn sign_and_construct_vote(vote: Vote, vote_keypair: &Keypair, rank: u16) -> ConsensusMessage {
+    let bls_keypair = BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
+        .expect("failed to derive BLS keypair");
+    let vote_serialized = wincode::serialize(&vote).expect("failed to serialize vote");
+    let signature = bls_keypair.sign(&vote_serialized).into();
+    ConsensusMessage::new_vote(vote, signature, rank)
+}
+
+fn broadcast_vote(
+    message: ConsensusMessage,
+    tpu_socket_addrs: &[SocketAddr],
+    additional_listeners: Option<&[SocketAddr]>,
+    connection_cache: Arc<ConnectionCache>,
+) {
+    let buf = Arc::new(wincode::serialize(&message).expect("failed to serialize vote"));
+    for tpu_socket_addr in tpu_socket_addrs {
+        let client = connection_cache.get_connection(tpu_socket_addr);
+        client.send_data_async(buf.clone()).unwrap_or_else(|_| {
+            panic!("failed to broadcast vote to {tpu_socket_addr}");
+        });
+    }
+    if let Some(additional_listeners) = additional_listeners {
+        for tpu_socket_addr in additional_listeners {
+            let client = connection_cache.get_connection(tpu_socket_addr);
+            client.send_data_async(buf.clone()).unwrap_or_else(|_| {
+                panic!("failed to broadcast vote to {tpu_socket_addr}");
+            });
+        }
+    }
+}
+
+fn log_blockstore_slot_components(ledger_path: &Path, from_slot: u64) {
+    let blockstore = open_blockstore(ledger_path);
+    for (slot, _meta) in blockstore
+        .slot_meta_iterator(from_slot)
+        .expect("slot iterator must open")
+    {
+        let Ok((components, _ranges, _is_full)) =
+            blockstore.get_slot_components_with_shred_info(slot, 0, true)
+        else {
+            continue;
+        };
+        if components.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<String> = components
+            .iter()
+            .map(|component| match component {
+                BlockComponent::EntryBatch(entries) => {
+                    let num_txs: usize = entries.iter().map(|e| e.transactions.len()).sum();
+                    format!("EntryBatch({num_txs})")
+                }
+                BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker)) => match marker {
+                    BlockMarkerV1::BlockHeader(_) => "BlockHeader".to_string(),
+                    BlockMarkerV1::BlockFooter(_) => "BlockFooter".to_string(),
+                    BlockMarkerV1::UpdateParent(_) => "UpdateParent".to_string(),
+                    BlockMarkerV1::GenesisCertificate(_) => "GenesisCertificate".to_string(),
+                },
+            })
+            .collect();
+
+        info!("Slot {slot} components: [{}]", parts.join(", "));
+    }
+}
+
+/// Validates fast leader handover "sad path" recovery when the optimistic parent later loses
+/// to skip finalization, forcing the next leader to wait for the finalized parent instead.
+#[test]
+#[serial]
+fn test_alpenglow_flh_simple_sad_leader_handover() {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+
+    let send_background_txs = true;
+
+    const NUM_NODES: usize = 4;
+    const TOTAL_STAKE: u64 = 100 * DEFAULT_NODE_STAKE;
+    const STAGE_2_START_SLOT: u64 = 4;
+    const STAGE_3_START_SLOT: u64 = 40;
+    const SKIP_INJECTION_DELAY: Duration = Duration::from_millis(600);
+    const REQUIRED_SAD_PATH_FINALIZED_SLOTS: usize = 2;
+    const POST_SAD_PATH_ROOT_OBSERVATIONS: usize = 3;
+
+    let node_stakes = [
+        TOTAL_STAKE * 15 / 100,
+        TOTAL_STAKE * 15 / 100,
+        TOTAL_STAKE * 35 / 100,
+        TOTAL_STAKE * 35 / 100,
+    ];
+    assert_eq!(TOTAL_STAKE, node_stakes.iter().sum::<u64>());
+
+    let (leader_schedule, validator_keys) =
+        create_custom_leader_schedule_with_random_keys(&[4, 4, 0, 0]);
+    let validator_ranks = alpenglow_validator_ranks(&validator_keys, &node_stakes);
+    info!("validator ranks: {validator_ranks:?}");
+    let leader_schedule = FixedSchedule {
+        leader_schedule: Arc::new(leader_schedule),
+    };
+
+    let vote_listener_socket = bind_to_localhost_unique().unwrap();
+    let vote_listener_socket_addr = vote_listener_socket.local_addr().unwrap();
+    let listener_keys: Vec<_> = validator_keys
+        .iter()
+        .map(|keypair| keypair.node_keypair.clone())
+        .collect();
+    let (cancel, quic_server_thread, receiver) =
+        cluster_tests::start_quic_streamer_to_listen_for_votes_and_certs(
+            vote_listener_socket,
+            &listener_keys,
+            &node_stakes,
+        );
+
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
+    validator_config.fixed_leader_schedule = Some(leader_schedule);
+    validator_config.voting_service_test_override = Some(VotingServiceOverride {
+        additional_listeners: vec![vote_listener_socket_addr],
+        alpenglow_port_override: AlpenglowPortOverride::default(),
+    });
+
+    let validator_configs = make_identical_validator_configs(&validator_config, NUM_NODES);
+    let mut cluster_config = ClusterConfig {
+        mint_lamports: DEFAULT_MINT_LAMPORTS + TOTAL_STAKE,
+        node_stakes: node_stakes.to_vec(),
+        validator_configs,
+        validator_keys: Some(
+            validator_keys
+                .iter()
+                .cloned()
+                .zip(iter::repeat(true))
+                .collect(),
+        ),
+        skip_warmup_slots: true,
+        ..ClusterConfig::default()
+    };
+
+    let mut cluster =
+        LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+    assert_eq!(NUM_NODES, cluster.validators.len());
+
+    let alpenglow_socket_addrs: Vec<_> = validator_keys
+        .iter()
+        .map(|keypair| {
+            cluster
+                .get_contact_info(&keypair.node_keypair.pubkey())
+                .unwrap()
+                .alpenglow()
+                .unwrap()
+        })
+        .collect();
+
+    let node_2_vote_keypair = validator_keys[2].vote_keypair.clone();
+    let node_2_rank = validator_ranks[2];
+    let node_3_vote_keypair = validator_keys[3].vote_keypair.clone();
+    let node_3_rank = validator_ranks[3];
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Stage {
+        Stability,
+        TriggerSadPath,
+    }
+
+    impl Stage {
+        fn timeout(&self) -> Duration {
+            match self {
+                Self::Stability => Duration::from_secs(120),
+                Self::TriggerSadPath => Duration::from_secs(180),
+            }
+        }
+    }
+
+    struct SadPathState {
+        stage: Stage,
+        timer: Instant,
+        pending_skips: Vec<(Slot, Instant)>,
+        observed_finalized_slots: HashSet<Slot>,
+        expected_sad_path_slots: HashSet<Slot>,
+        finalized_sad_path_slots: HashSet<Slot>,
+    }
+
+    impl SadPathState {
+        fn new() -> Self {
+            Self {
+                stage: Stage::Stability,
+                timer: Instant::now(),
+                pending_skips: vec![],
+                observed_finalized_slots: HashSet::new(),
+                expected_sad_path_slots: HashSet::new(),
+                finalized_sad_path_slots: HashSet::new(),
+            }
+        }
+
+        fn check_timeout(&self) {
+            if self.finalized_sad_path_slots.len() >= REQUIRED_SAD_PATH_FINALIZED_SLOTS {
+                return;
+            }
+
+            assert!(
+                self.timer.elapsed() <= self.stage.timeout(),
+                "Timeout during {:?}. sad_path_finalized: {}/{}",
+                self.stage,
+                self.finalized_sad_path_slots.len(),
+                self.expected_sad_path_slots.len(),
+            );
+        }
+
+        fn process_pending_skips(
+            &mut self,
+            node_2_vote_keypair: &Keypair,
+            node_2_rank: u16,
+            node_3_vote_keypair: &Keypair,
+            node_3_rank: u16,
+            alpenglow_socket_addrs: &[SocketAddr],
+            connection_cache: Arc<ConnectionCache>,
+        ) {
+            let now = Instant::now();
+            self.pending_skips.retain(|&(slot, inject_at)| {
+                if now < inject_at {
+                    return true;
+                }
+
+                info!("Injecting delayed skip votes for slot {slot}");
+                broadcast_vote(
+                    sign_and_construct_vote(
+                        Vote::new_skip_vote(slot),
+                        node_2_vote_keypair,
+                        node_2_rank,
+                    ),
+                    alpenglow_socket_addrs,
+                    None,
+                    connection_cache.clone(),
+                );
+                broadcast_vote(
+                    sign_and_construct_vote(
+                        Vote::new_skip_vote(slot),
+                        node_3_vote_keypair,
+                        node_3_rank,
+                    ),
+                    alpenglow_socket_addrs,
+                    None,
+                    connection_cache.clone(),
+                );
+                false
+            });
+        }
+
+        fn handle_vote(
+            &mut self,
+            vote_message: &VoteMessage,
+            node_2_vote_keypair: &Keypair,
+            node_2_rank: u16,
+            node_3_vote_keypair: &Keypair,
+            node_3_rank: u16,
+            validator_ranks: &[u16],
+            alpenglow_socket_addrs: &[SocketAddr],
+            connection_cache: Arc<ConnectionCache>,
+        ) {
+            let vote = vote_message.vote;
+            let slot = vote.slot();
+
+            let leader_index = ((slot / 4) % 2) as usize;
+            let non_leader_rank = validator_ranks[1 - leader_index];
+            if vote_message.rank != non_leader_rank {
+                return;
+            }
+
+            if self.stage == Stage::Stability && slot >= STAGE_2_START_SLOT {
+                info!("Transitioning to TriggerSadPath at slot {slot}");
+                self.stage = Stage::TriggerSadPath;
+                self.timer = Instant::now();
+            }
+
+            let should_inject_skip =
+                self.stage == Stage::TriggerSadPath && slot < STAGE_3_START_SLOT && slot % 4 == 3;
+
+            if should_inject_skip {
+                if !self
+                    .pending_skips
+                    .iter()
+                    .any(|(queued_slot, _)| *queued_slot == slot)
+                {
+                    let expected_sad_path_slot = slot + 1;
+                    self.pending_skips
+                        .push((slot, Instant::now() + SKIP_INJECTION_DELAY));
+                    self.expected_sad_path_slots.insert(expected_sad_path_slot);
+                    if self
+                        .observed_finalized_slots
+                        .contains(&expected_sad_path_slot)
+                    {
+                        self.record_finalized_sad_path_slot(expected_sad_path_slot);
+                    }
+                    info!("Queued delayed skip injection for slot {slot}");
+                }
+            } else {
+                broadcast_vote(
+                    sign_and_construct_vote(vote, node_2_vote_keypair, node_2_rank),
+                    alpenglow_socket_addrs,
+                    None,
+                    connection_cache.clone(),
+                );
+                broadcast_vote(
+                    sign_and_construct_vote(vote, node_3_vote_keypair, node_3_rank),
+                    alpenglow_socket_addrs,
+                    None,
+                    connection_cache,
+                );
+            }
+        }
+
+        fn handle_cert(&mut self, certificate: &Certificate) {
+            let (CertificateType::Finalize(finalized_slot)
+            | CertificateType::FinalizeFast(finalized_slot, _)) = certificate.cert_type
+            else {
+                return;
+            };
+
+            self.observed_finalized_slots.insert(finalized_slot);
+            if self.stage == Stage::TriggerSadPath
+                && self.expected_sad_path_slots.contains(&finalized_slot)
+            {
+                self.record_finalized_sad_path_slot(finalized_slot);
+            }
+        }
+
+        fn record_finalized_sad_path_slot(&mut self, finalized_slot: Slot) {
+            if self.finalized_sad_path_slots.insert(finalized_slot) {
+                info!("Observed finalized sad-path slot {finalized_slot}");
+            }
+        }
+    }
+
+    let alive_contact_infos: Vec<_> = validator_keys
+        .iter()
+        .take(2)
+        .map(|keypair| {
+            cluster
+                .get_contact_info(&keypair.node_keypair.pubkey())
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    let finalized_sad_path_slots = Arc::new(Mutex::new(HashSet::new()));
+
+    let vote_listener_thread = Builder::new()
+        .name("flh-vote-listener".to_string())
+        .spawn({
+            let connection_cache = cluster.connection_cache.clone();
+            let cancel = cancel.clone();
+            let finalized_sad_path_slots = finalized_sad_path_slots.clone();
+            move || {
+                let mut state = SadPathState::new();
+
+                loop {
+                    if cancel.is_cancelled() {
+                        *finalized_sad_path_slots.lock().unwrap() =
+                            state.finalized_sad_path_slots.clone();
+                        return;
+                    }
+
+                    state.check_timeout();
+                    state.process_pending_skips(
+                        &node_2_vote_keypair,
+                        node_2_rank,
+                        &node_3_vote_keypair,
+                        node_3_rank,
+                        &alpenglow_socket_addrs,
+                        connection_cache.clone(),
+                    );
+
+                    let Ok(packet_batch) = receiver.recv_timeout(Duration::from_millis(50)) else {
+                        continue;
+                    };
+
+                    for packet in packet_batch.iter() {
+                        let Ok(message) = packet.deserialize_slice(..) else {
+                            continue;
+                        };
+                        match message {
+                            ConsensusMessage::Vote(vote_message) => {
+                                state.handle_vote(
+                                    &vote_message,
+                                    &node_2_vote_keypair,
+                                    node_2_rank,
+                                    &node_3_vote_keypair,
+                                    node_3_rank,
+                                    &validator_ranks,
+                                    &alpenglow_socket_addrs,
+                                    connection_cache.clone(),
+                                );
+                            }
+                            ConsensusMessage::Certificate(certificate) => {
+                                let old_len = state.finalized_sad_path_slots.len();
+                                state.handle_cert(&certificate);
+                                if state.finalized_sad_path_slots.len() != old_len {
+                                    *finalized_sad_path_slots.lock().unwrap() =
+                                        state.finalized_sad_path_slots.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .unwrap();
+
+    cluster.exit_node(&validator_keys[2].node_keypair.pubkey());
+    cluster.exit_node(&validator_keys[3].node_keypair.pubkey());
+
+    let tx_sender_thread = if send_background_txs {
+        let cancel = cancel.clone();
+        let rpc_url_0 = format!(
+            "http://{}",
+            cluster
+                .get_contact_info(&validator_keys[0].node_keypair.pubkey())
+                .unwrap()
+                .rpc()
+                .unwrap()
+        );
+        let rpc_url_1 = format!(
+            "http://{}",
+            cluster
+                .get_contact_info(&validator_keys[1].node_keypair.pubkey())
+                .unwrap()
+                .rpc()
+                .unwrap()
+        );
+        let funding_keypair = cluster.funding_keypair.insecure_clone();
+
+        Some(
+            Builder::new()
+                .name("dummy-tx-sender".to_string())
+                .spawn(move || {
+                    let clients = [
+                        RpcClient::new_with_commitment(rpc_url_0, CommitmentConfig::processed()),
+                        RpcClient::new_with_commitment(rpc_url_1, CommitmentConfig::processed()),
+                    ];
+                    let tx_source_keypair = Keypair::new();
+                    let fund_amount = 10 * solana_native_token::LAMPORTS_PER_SOL;
+
+                    loop {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+
+                        let Ok(blockhash) = clients[0].get_latest_blockhash() else {
+                            sleep(Duration::from_millis(200));
+                            continue;
+                        };
+                        let fund_tx = solana_transaction::Transaction::new_signed_with_payer(
+                            &[system_instruction::transfer(
+                                &funding_keypair.pubkey(),
+                                &tx_source_keypair.pubkey(),
+                                fund_amount,
+                            )],
+                            Some(&funding_keypair.pubkey()),
+                            &[&funding_keypair],
+                            blockhash,
+                        );
+                        let _ = clients[0].send_transaction(&fund_tx);
+
+                        for _ in 0..20 {
+                            sleep(Duration::from_millis(200));
+                            if let Ok(balance) = clients[0].get_balance(&tx_source_keypair.pubkey())
+                            {
+                                if balance >= fund_amount {
+                                    break;
+                                }
+                            }
+                        }
+                        if let Ok(balance) = clients[0].get_balance(&tx_source_keypair.pubkey()) {
+                            if balance >= fund_amount {
+                                break;
+                            }
+                        }
+                        warn!("tx-sender: funding not confirmed yet, retrying");
+                    }
+                    info!("tx-sender: funded source account");
+
+                    let mut send_count = 0u64;
+                    let mut blockhash = Hash::default();
+
+                    loop {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+
+                        if send_count.is_multiple_of(20) {
+                            match clients[0].get_latest_blockhash() {
+                                Ok(hash) => blockhash = hash,
+                                Err(err) => {
+                                    debug!("tx-sender: failed to get blockhash: {err:?}");
+                                    sleep(Duration::from_millis(50));
+                                    continue;
+                                }
+                            }
+                        }
+
+                        let client = &clients[send_count as usize % 2];
+                        let dest_pubkey = solana_pubkey::new_rand();
+                        let transfer_ix = system_instruction::transfer(
+                            &tx_source_keypair.pubkey(),
+                            &dest_pubkey,
+                            100_000,
+                        );
+                        let tx = solana_transaction::Transaction::new_signed_with_payer(
+                            &[transfer_ix],
+                            Some(&tx_source_keypair.pubkey()),
+                            &[&tx_source_keypair],
+                            blockhash,
+                        );
+
+                        if let Err(err) = client.send_transaction(&tx) {
+                            debug!("tx-sender: failed to send tx: {err:?}");
+                        }
+                        send_count += 1;
+                        sleep(Duration::from_millis(50));
+                    }
+                })
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+
+    let blockstore_monitor_thread = {
+        let cancel = cancel.clone();
+        let node_0_ledger_path = cluster.ledger_path(&validator_keys[0].node_keypair.pubkey());
+        let node_0_rpc_url = format!(
+            "http://{}",
+            cluster
+                .get_contact_info(&validator_keys[0].node_keypair.pubkey())
+                .unwrap()
+                .rpc()
+                .unwrap()
+        );
+        Builder::new()
+            .name("blockstore-monitor".to_string())
+            .spawn(move || {
+                let rpc_client = RpcClient::new(node_0_rpc_url);
+                let mut last_finalized = 0;
+
+                loop {
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+
+                    let finalized = rpc_client
+                        .get_slot_with_commitment(CommitmentConfig::finalized())
+                        .unwrap_or(0);
+                    if finalized > last_finalized {
+                        info!(
+                            "Node 0 finalized slot {finalized} (was {last_finalized}), logging \
+                             components for slots {}..={finalized}",
+                            last_finalized + 1
+                        );
+                        log_blockstore_slot_components(&node_0_ledger_path, last_finalized + 1);
+                        last_finalized = finalized;
+                    }
+
+                    sleep(Duration::from_millis(500));
+                }
+            })
+            .unwrap()
+    };
+
+    let sad_path_wait_start = Instant::now();
+    let finalized_sad_path_snapshot = loop {
+        let finalized_sad_path_snapshot = finalized_sad_path_slots.lock().unwrap().clone();
+        if finalized_sad_path_snapshot.len() >= REQUIRED_SAD_PATH_FINALIZED_SLOTS {
+            break finalized_sad_path_snapshot;
+        }
+        assert!(
+            sad_path_wait_start.elapsed() <= Stage::TriggerSadPath.timeout(),
+            "Expected at least {REQUIRED_SAD_PATH_FINALIZED_SLOTS} sad path slots to be finalized \
+             before shutdown, got {}",
+            finalized_sad_path_snapshot.len(),
+        );
+        sleep(Duration::from_millis(50));
+    };
+    let highest_sad_path_slot = *finalized_sad_path_snapshot.iter().max().unwrap();
+
+    cluster_tests::check_min_slot_is_rooted(
+        highest_sad_path_slot,
+        &alive_contact_infos,
+        &cluster.connection_cache,
+        "test_alpenglow_flh_simple_sad_leader_handover",
+    );
+    cluster_tests::check_for_new_roots(
+        POST_SAD_PATH_ROOT_OBSERVATIONS,
+        &alive_contact_infos,
+        &cluster.connection_cache,
+        "test_alpenglow_flh_simple_sad_leader_handover",
+    );
+
+    cancel.cancel();
+    cluster.exit();
+    vote_listener_thread.join().expect("vote listener panicked");
+    quic_server_thread.join().expect("quic server panicked");
+    if let Some(thread) = tx_sender_thread {
+        thread.join().expect("tx sender panicked");
+    }
+    blockstore_monitor_thread
+        .join()
+        .expect("blockstore monitor panicked");
+
+    let finalized_sad_path_slots = finalized_sad_path_slots.lock().unwrap();
+    assert!(
+        finalized_sad_path_slots.len() >= REQUIRED_SAD_PATH_FINALIZED_SLOTS,
+        "Expected at least {REQUIRED_SAD_PATH_FINALIZED_SLOTS} sad path slots to be finalized, \
+         got {}",
+        finalized_sad_path_slots.len()
+    );
+    info!(
+        "{} sad path slots finalized",
+        finalized_sad_path_slots.len()
+    );
 }
 
 /// Basic restart coverage for the Alpenglow execution path.

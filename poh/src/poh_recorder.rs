@@ -77,6 +77,12 @@ pub enum PohRecorderError {
 
     #[error("constructing validated reward cert failed with {0}")]
     ValidatedRewardCert(#[from] ValidatedRewardCertError),
+
+    #[error("couldn't reset bank during fast leader handover slot {0} -> slot {1}")]
+    ResetBankError(Slot, Slot),
+
+    #[error("couldn't reschedule pre-UpdateParent transactions")]
+    RescheduleTransactionsError(Slot),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;

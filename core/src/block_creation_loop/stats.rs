@@ -108,6 +108,7 @@ impl LoopMetrics {
 pub(crate) struct SlotMetrics {
     pub(crate) slot: Slot,
     pub(crate) attempt_start_leader_count: u64,
+    pub(crate) fast_leader_handover_count: u64,
     pub(crate) replay_is_behind_count: u64,
     pub(crate) already_have_bank_count: u64,
 
@@ -122,6 +123,11 @@ impl SlotMetrics {
             "slot-metrics",
             ("slot", self.slot, i64),
             ("attempt_count", self.attempt_start_leader_count, i64),
+            (
+                "fast_leader_handover_count",
+                self.fast_leader_handover_count,
+                i64
+            ),
             ("replay_is_behind_count", self.replay_is_behind_count, i64),
             ("already_have_bank_count", self.already_have_bank_count, i64),
             (
@@ -178,8 +184,18 @@ impl SlotMetrics {
         );
     }
 
+    pub(crate) fn mark_fast_leader_handover(&mut self) {
+        self.fast_leader_handover_count = 1;
+    }
+
     pub(crate) fn reset(&mut self, slot: Slot) {
+        let fast_leader_handover_count = if self.slot == slot {
+            self.fast_leader_handover_count
+        } else {
+            0
+        };
         *self = Self::default();
         self.slot = slot;
+        self.fast_leader_handover_count = fast_leader_handover_count;
     }
 }

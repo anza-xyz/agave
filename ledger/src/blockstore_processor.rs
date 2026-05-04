@@ -1785,8 +1785,23 @@ fn confirm_slot_with_components(
         load_result
     }?;
 
+    // Process block components for Alpenglow slots. Note that we don't need to run migration checks
+    // for BlockMarkers here, despite BlockMarkers only being active post-Alpenglow. Here's why:
+    //
+    // Post-Alpenglow migration - validators that have Alpenglow enabled can parse BlockComponents.
+    // Things just work.
+    //
+    // Pre-Alpenglow migration, suppose a validator receives a BlockMarker:
+    //
+    // (1) validators *incapable* of processing BlockMarkers will mark the slot as dead on shred
+    //     ingest in blockstore.
+    //
+    // (2) validators *capable* of processing BlockMarkers will store the BlockMarkers in shred
+    //     ingest, run through this verifying code here, and then error out when processing a
+    //     BlockMarker, resulting in the slot being marked as dead.
     let mut processor = bank.block_component_processor.write().unwrap();
 
+    // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
         .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
@@ -1801,7 +1816,18 @@ fn confirm_slot_with_components(
             BlockComponent::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
-                processor.on_entry_batch(migration_status, slot)?;
+                // Skip block component validation for genesis block. Slot 0 is handled specially,
+                // since it won't have the required block markers.
+                if slot != 0 {
+                    processor
+                        .on_entry_batch(migration_status, slot)
+                        .inspect_err(|err| {
+                            warn!(
+                                "BlockComponentProcessor::on_entry_batch() for slot {slot} failed \
+                                 with {err}"
+                            );
+                        })?;
+                }
 
                 confirm_slot_entries(
                     bank,

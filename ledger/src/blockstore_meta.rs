@@ -43,6 +43,7 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
+        // PARENT_CONNECTED IS INTENTIONALLY UNUSED FOR NOW
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -469,7 +470,7 @@ impl ShredIndex {
         }
     }
 
-    pub(crate) fn contains(&self, idx: u64) -> bool {
+    pub fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
 
@@ -582,15 +583,13 @@ impl SlotMeta {
         self.is_connected()
     }
 
-    /// Clear the parent_connected and connected flags.
-    /// Returns true if the slot was previously parent-connected (signaling
-    /// that children need clearing too).
+    /// Clear the meta's parent_connected and connected flags.
+    /// Returns true if the meta was connected, indicating children need clearing.
     pub fn clear_parent_connected(&mut self) -> bool {
-        let was_parent_connected = self.is_parent_connected();
+        let originally_connected = self.is_connected();
         self.connected_flags
-            .set(ConnectedFlags::PARENT_CONNECTED, false);
-        self.connected_flags.set(ConnectedFlags::CONNECTED, false);
-        was_parent_connected
+            .remove(ConnectedFlags::PARENT_CONNECTED | ConnectedFlags::CONNECTED);
+        originally_connected
     }
 
     /// Dangerous.
@@ -632,6 +631,10 @@ impl SlotMeta {
 
     pub(crate) fn populated_from_block_header(&self) -> bool {
         self.replay_fec_set_index == 0
+    }
+
+    pub(crate) fn populated_from_update_parent(&self) -> bool {
+        self.replay_fec_set_index > 0
     }
 }
 

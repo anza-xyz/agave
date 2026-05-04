@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
     static_assertions::const_assert_eq, std::iter::successors,
@@ -34,6 +36,7 @@ impl MerkleTree {
     ///
     /// [`Error::EmptyIterator`] if the function is called with an empty iterator.
     /// [`Error`] if any of the elements in the iterator contains an [`Error`].
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn try_new(
         shreds: impl ExactSizeIterator<Item = Result<Hash, Error>>,
     ) -> Result<MerkleTree, Error> {
