@@ -201,7 +201,9 @@ impl<'a> RewardState<'a> {
 
     /// Pays `reward` into `epoch_credits` field and updates the `votes` field in `VoteStateHandler`.
     fn update_account(&self, reward: u64, handler: &mut VoteStateHandler) {
-        handler.increment_credits(self.current_epoch, reward);
+        if reward != 0 {
+            handler.increment_credits(self.current_epoch, reward);
+        }
         let latest_root = handler
             .root_slot()
             .unwrap_or(self.new_root_slot)
