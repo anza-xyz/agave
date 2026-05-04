@@ -29,10 +29,20 @@ pub enum DirectIoSupport {
 /// On non-Linux platforms: always returns `Ok(Uncertain)`.
 #[cfg(target_os = "linux")]
 pub fn check_direct_io_capability(path: impl AsRef<Path>) -> io::Result<DirectIoSupport> {
-    let Some(file) = find_any_file_under_path(path.as_ref())? else {
-        return check_direct_io_via_tmpfile_open_probe(path.as_ref());
-    };
-    check_direct_io_for_file(&file)
+    let path = path.as_ref();
+    if let Some(file) = find_any_file_under_path(path)? {
+        check_direct_io_for_file(&file)
+    } else {
+        if !path.is_dir() {
+            return Ok(DirectIoSupport::Uncertain);
+        }
+        let Ok(tmp) = tempfile::NamedTempFile::new_in(path) else {
+            return Ok(DirectIoSupport::Uncertain);
+        };
+        let result = check_direct_io_for_file(tmp.path());
+        tmp.close()?;
+        result
+    }
 }
 
 /// Check direct I/O capability for an existing `file`.
@@ -121,25 +131,6 @@ fn check_direct_io_via_open_probe(file: &Path) -> DirectIoSupport {
     } else {
         DirectIoSupport::Unsupported
     }
-}
-
-/// Check direct I/O capability by creating a temporary probe file in `dir`, then running
-/// [`check_direct_io_for_file`] on it.
-///
-/// Returns `Uncertain` if `dir` is not a writable directory.
-#[cfg(target_os = "linux")]
-fn check_direct_io_via_tmpfile_open_probe(dir: &Path) -> io::Result<DirectIoSupport> {
-    if !dir.is_dir() {
-        return Ok(DirectIoSupport::Uncertain);
-    }
-
-    let Ok(tmp) = tempfile::NamedTempFile::new_in(dir) else {
-        return Ok(DirectIoSupport::Uncertain);
-    };
-
-    let result = check_direct_io_for_file(tmp.path());
-    tmp.close()?;
-    result
 }
 
 /// Returns a path to any regular file at or under `path`, recursively traversing
