@@ -872,6 +872,7 @@ mod tests {
     #[derive(Debug)]
     struct State {
         entries: HashMap<Pubkey, StateEntry>,
+        epoch: Epoch,
     }
 
     impl State {
@@ -918,7 +919,10 @@ mod tests {
                 entries.insert(leader, state_entry);
             }
 
-            Self { entries }
+            Self {
+                entries,
+                epoch: bank.epoch(),
+            }
         }
     }
 
@@ -1041,7 +1045,7 @@ mod tests {
         num_reward_slots: u64,
     ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
         let (initial_bank, _bank_forks) =
-            initial_bank.unwrap_or(initial_state(validators, commission_bps));
+            initial_bank.unwrap_or_else(|| initial_state(validators, commission_bps));
 
         let reward_epoch = initial_bank.epoch() + 1;
         let reward_epoch_slot = initial_bank
@@ -1143,13 +1147,17 @@ mod tests {
         for (vote_pubkey, state) in voter_rewards {
             let vote_account = final_bank.get_account(&vote_pubkey).unwrap();
             let vote_cur = vote_account.lamports();
-            assert_eq!(vote_cur - state.prev_lamports, state.expected_rewards);
+            assert_eq!(
+                vote_cur + VAT_TO_BURN_PER_EPOCH - state.prev_lamports,
+                state.expected_rewards
+            );
         }
     }
 
     #[test_matrix([true, false], [1_000, 5_000])]
     fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
         let num_validators = 2;
+        let num_add_stakers = 5;
         let num_reward_slots = 10;
         let lamports = LAMPORTS_PER_SOL * 20;
         let mint_keypair = Keypair::new();
@@ -1212,7 +1220,9 @@ mod tests {
             .clone()
             .into();
 
-        let staker_keypairs = (0..5).map(|_| Keypair::new()).collect::<Vec<_>>();
+        let staker_keypairs = (0..num_add_stakers)
+            .map(|_| Keypair::new())
+            .collect::<Vec<_>>();
         for (ind, keypair) in staker_keypairs.iter().enumerate() {
             let stake_pubkey = keypair.pubkey();
             let account = Account::from(stake_utils::create_stake_account(
@@ -1298,8 +1308,9 @@ mod tests {
                 );
             }
 
-            let voter_diff =
-                final_entry.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_entry.voter_lamports;
+            let voter_diff = final_entry.voter_lamports
+                + VAT_TO_BURN_PER_EPOCH * (final_state.epoch - prev_state.epoch)
+                - prev_entry.voter_lamports;
             // Due to rounding issues, off by 1 errors are possible.
             assert!(
                 voter_diff.abs_diff(prev_entry.voter_expected_reward) <= 1,
