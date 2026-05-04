@@ -267,8 +267,14 @@ pub fn load_and_process_ledger(
 
     validate_account_paths_for_direct_io(
         snapshot_config.use_direct_io,
-        &account_paths,
-        &account_snapshot_paths,
+        account_paths
+            .iter()
+            .chain(account_snapshot_paths.iter())
+            .chain([
+                &snapshot_config.full_snapshot_archives_dir,
+                &snapshot_config.incremental_snapshot_archives_dir,
+                &snapshot_config.bank_snapshots_dir,
+            ]),
     )
     .map_err(LoadAndProcessLedgerError::ValidateAccountPaths)?;
 
