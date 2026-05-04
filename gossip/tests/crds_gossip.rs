@@ -14,6 +14,7 @@ use {
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsTimeouts, ProcessPullStats, PullRequest,
+            SAMPLE_RATE,
         },
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -275,7 +276,9 @@ fn network_simulator_pull_only(thread_pool: &ThreadPool, network: &Network) {
         let mut crds = network.nodes[&pubkey].gossip.crds.write().unwrap();
         let _ = crds.insert(entry, timestamp(), GossipRoute::LocalMessage);
     }
-    let (converged, bytes_tx) = network_run_pull(thread_pool, network, 0, num * 2, 0.9);
+    // Star convergence needs O(SAMPLE_RATE * num) rounds.
+    let (converged, bytes_tx) =
+        network_run_pull(thread_pool, network, 0, num * 2 * SAMPLE_RATE, 0.9);
     trace!("network_simulator_pull_{num}: converged: {converged} total_bytes: {bytes_tx}");
     assert!(converged >= 0.9);
 }
