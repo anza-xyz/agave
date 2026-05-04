@@ -2048,6 +2048,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.9.12+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2559,10 +2574,12 @@ dependencies = [
  "octocrab",
  "pretty_assertions",
  "regex",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
  "tokio",
+ "toml",
  "xtask 0.1.0 (git+https://github.com/anza-xyz/xtask?rev=a9b0cf5facf85eb11458bbefc651132722c18dae)",
 ]
 

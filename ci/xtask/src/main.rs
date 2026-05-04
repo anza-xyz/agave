@@ -28,6 +28,8 @@ enum Commands {
     Publish(xtask_shared::commands::publish::CommandArgs),
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
+    #[command(about = "Print release channel info")]
+    ChannelInfo,
 }
 
 #[derive(Args, Debug)]
@@ -77,6 +79,9 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::GeneratePipeline(args) => {
             commands::generate_pipeline::run(args).await?;
+        }
+        Commands::ChannelInfo => {
+            commands::channel_info::run().await?;
         }
     }
 
