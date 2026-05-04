@@ -52,6 +52,7 @@ pub struct SVMFeatureSet {
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
+    pub define_ltds_fee_only_semantics: bool,
 }
 
 impl SVMFeatureSet {
@@ -108,6 +109,7 @@ impl SVMFeatureSet {
             loader_v3_minimum_extend_program_size: true,
             enable_sha512_syscall: true,
             relax_post_exec_min_balance_check: true,
+            define_ltds_fee_only_semantics: true,
         }
     }
 }

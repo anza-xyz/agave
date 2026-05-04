@@ -168,7 +168,6 @@ pub struct FeesOnlyTransaction {
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     loaded_accounts: AHashMap<Pubkey, (AccountSharedData, Slot)>,
     callbacks: &'a CB,
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
 
@@ -433,13 +432,19 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                     fee_details: tx_details.fee_details,
                     rollback_accounts: tx_details.rollback_accounts,
                     compute_budget: tx_details.compute_budget,
-                    loaded_accounts_data_size: loaded_transaction_data_size
-                        .loaded_accounts_data_size,
+                    loaded_accounts_data_size: loaded_transaction_data_size.into(),
                 }),
                 Err(err) => TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                     load_error: err,
                     fee_details: tx_details.fee_details,
-                    loaded_accounts_data_size: tx_details.rollback_accounts.data_size() as u32,
+                    loaded_accounts_data_size: if account_loader
+                        .feature_set
+                        .define_ltds_fee_only_semantics
+                    {
+                        loaded_transaction_data_size.into()
+                    } else {
+                        tx_details.rollback_accounts.data_size() as u32
+                    },
                     rollback_accounts: tx_details.rollback_accounts,
                 }),
             }
@@ -449,8 +454,8 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct LoadedTransactionDataSize {
-    pub(crate) loaded_accounts_data_size: u32,
-    pub(crate) requested_loaded_accounts_data_size_limit: u32,
+    loaded_accounts_data_size: u32,
+    requested_loaded_accounts_data_size_limit: u32,
 }
 
 impl LoadedTransactionDataSize {
@@ -466,7 +471,10 @@ impl LoadedTransactionDataSize {
         data_size_delta: usize,
         error_metrics: &mut TransactionErrorMetrics,
     ) -> Result<()> {
+        // this branch is unreachable in practice (though not by construction),
+        // since it would imply an account >4gb in size
         let Ok(data_size_delta) = u32::try_from(data_size_delta) else {
+            self.loaded_accounts_data_size = u32::MAX;
             error_metrics.max_loaded_accounts_data_size_exceeded += 1;
             return Err(TransactionError::MaxLoadedAccountsDataSizeExceeded);
         };
@@ -481,6 +489,14 @@ impl LoadedTransactionDataSize {
         } else {
             Ok(())
         }
+    }
+}
+
+impl From<LoadedTransactionDataSize> for u32 {
+    fn from(value: LoadedTransactionDataSize) -> Self {
+        value
+            .loaded_accounts_data_size
+            .min(value.requested_loaded_accounts_data_size_limit)
     }
 }
 
@@ -1133,22 +1149,40 @@ mod tests {
     fn test_increase_calculated_data_size() {
         let mut error_metrics = TransactionErrorMetrics::default();
         let data_size: usize = 123;
-        let requested_data_size_limit = data_size as u32;
+        let requested_data_size_limit = data_size as u32 + 1;
         let mut acc = LoadedTransactionDataSize::with_max_size(requested_data_size_limit);
 
-        // OK - loaded data size is up to limit
+        // OK - loaded data size is under limit
         assert!(
             acc.increase_calculated_data_size(data_size, &mut error_metrics)
                 .is_ok()
         );
-        assert_eq!(data_size as u32, acc.loaded_accounts_data_size);
+        assert_eq!(data_size as u32, acc.clone().into());
 
-        // fail - loading more data that would exceed limit
-        let another_byte: usize = 1;
+        // OK - loaded data size meets limit
+        assert!(
+            acc.increase_calculated_data_size(1, &mut error_metrics)
+                .is_ok()
+        );
+        assert_eq!(requested_data_size_limit, acc.clone().into());
+
+        // fail - loading more data would exceed limit
+        // data size helper reports the limit only
         assert_eq!(
-            acc.increase_calculated_data_size(another_byte, &mut error_metrics),
+            acc.increase_calculated_data_size(1, &mut error_metrics),
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         );
+        assert_eq!(requested_data_size_limit, acc.into());
+
+        let mut acc = LoadedTransactionDataSize::with_max_size(requested_data_size_limit);
+
+        // fail - adding a huge number exceeds limit
+        // data size helper correctly reports we hit the limit
+        assert_eq!(
+            acc.increase_calculated_data_size(u32::MAX as usize + 1, &mut error_metrics),
+            Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
+        );
+        assert_eq!(requested_data_size_limit, acc.into());
     }
 
     struct ValidateFeePayerTestParameter {
