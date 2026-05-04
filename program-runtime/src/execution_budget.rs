@@ -155,8 +155,9 @@ pub struct SVMTransactionExecutionCost {
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
     /// Big integer moduler exponentiation cost divisor
-    /// The modular exponentiation cost is computed as
-    /// `input_length`/`big_modular_exponentiation_cost_divisor` + `big_modular_exponentiation_base_cost`
+    /// The modular exponentiation cost is computed from operand words and
+    /// adjusted exponent bit length, divided by this divisor, plus
+    /// `big_modular_exponentiation_base_cost`.
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
