@@ -1450,7 +1450,7 @@ pub mod commission_rate_in_basis_points {
 }
 
 pub mod custom_commission_collector {
-    solana_pubkey::declare_id!("CustomCommissionCo11ector111111111111111111");
+    solana_pubkey::declare_id!("3HcSrCTGXTUnrTueHi4DAwNuMxZSsm5xui2Ax3mgxHqf");
 }
 
 pub mod enable_bls12_381_syscall {
