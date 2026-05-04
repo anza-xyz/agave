@@ -204,8 +204,9 @@ impl<'a> RewardState<'a> {
     #[must_use]
     fn update_account(
         &self,
+        vote_pubkey: Pubkey,
         reward: u64,
-        new_root_slot: Option<Slot>,
+        new_root_slot: Slot,
         handler: &mut VoteStateHandler,
     ) -> bool {
         let mut updated = false;
@@ -213,16 +214,19 @@ impl<'a> RewardState<'a> {
             handler.increment_credits(self.current_epoch, reward);
             updated = true;
         }
-        let latest_root = match (handler.root_slot(), new_root_slot) {
-            (None, None) => return updated,
-            (Some(r), None) | (None, Some(r)) => r,
-            (Some(r0), Some(r1)) => r0.max(r1),
-        };
-        handler.set_votes(VecDeque::from([LandedVote {
-            lockout: Lockout::new(latest_root),
-            latency: 0,
-        }]));
-        true
+        if self.reward_validators.contains(&vote_pubkey) {
+            let latest_root = handler
+                .root_slot()
+                .unwrap_or(new_root_slot)
+                .max(new_root_slot);
+            handler.set_votes(VecDeque::from([LandedVote {
+                lockout: Lockout::new(latest_root),
+                latency: 0,
+            }]));
+            true
+        } else {
+            updated
+        }
     }
 }
 
@@ -335,8 +339,9 @@ impl<'a> State<'a> {
                     .map_err(StateError::VoteStateNew)?;
                 let updated_account = state
                     .update_account(
+                        vote_pubkey,
                         validator_reward,
-                        Some(state.reward_slot),
+                        state.reward_slot,
                         &mut vote_state.handler,
                     )
                     .then_some(
@@ -371,14 +376,16 @@ impl<'a> State<'a> {
                 }
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
+
                 let new_root_slot = if final_cert_state.signers.contains(&vote_pubkey) {
                     reward_state.reward_slot.max(final_cert_state.final_slot)
                 } else {
                     reward_state.reward_slot
                 };
                 let reward_updated = reward_state.update_account(
+                    vote_pubkey,
                     validator_reward,
-                    Some(new_root_slot),
+                    new_root_slot,
                     &mut vote_state.handler,
                 );
                 let final_cert_updated =
@@ -437,11 +444,12 @@ impl<'a> State<'a> {
             }
             Self::Reward(state) => {
                 debug_assert_eq!(leader_vote_pubkey, state.leader_vote_pubkey);
-                let new_root_slot = state
-                    .reward_validators
-                    .contains(&leader_vote_pubkey)
-                    .then_some(state.reward_slot);
-                state.update_account(reward, new_root_slot, &mut vote_state.handler)
+                state.update_account(
+                    leader_vote_pubkey,
+                    reward,
+                    state.reward_slot,
+                    &mut vote_state.handler,
+                )
             }
             Self::Both(reward_state, final_cert_state) => {
                 debug_assert_eq!(leader_vote_pubkey, reward_state.leader_vote_pubkey);
@@ -449,17 +457,17 @@ impl<'a> State<'a> {
                     reward_state.leader_vote_pubkey,
                     final_cert_state.leader_vote_pubkey
                 );
-                let new_root_slot = match (
-                    reward_state.reward_validators.contains(&leader_vote_pubkey),
-                    final_cert_state.signers.contains(&leader_vote_pubkey),
-                ) {
-                    (false, false) => None,
-                    (true, false) => Some(reward_state.reward_slot),
-                    (false, true) => Some(final_cert_state.final_slot),
-                    (true, true) => Some(reward_state.reward_slot.max(final_cert_state.final_slot)),
+                let new_root_slot = if final_cert_state.signers.contains(&leader_vote_pubkey) {
+                    final_cert_state.final_slot.max(reward_state.reward_slot)
+                } else {
+                    reward_state.reward_slot
                 };
-                let reward_updated =
-                    reward_state.update_account(reward, new_root_slot, &mut vote_state.handler);
+                let reward_updated = reward_state.update_account(
+                    leader_vote_pubkey,
+                    reward,
+                    new_root_slot,
+                    &mut vote_state.handler,
+                );
                 let final_cert_updated = final_cert_state
                     .update_account(final_cert_state.leader_vote_pubkey, &mut vote_state.handler);
                 reward_updated || final_cert_updated
