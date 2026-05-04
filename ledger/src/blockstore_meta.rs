@@ -43,6 +43,7 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
+        // Parent is connected; the slot becomes CONNECTED once it is also full.
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -147,12 +148,12 @@ pub struct SlotMetaBase<T> {
 
 pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexes>;
 
-/// SlotMetaV3 extends SlotMeta with two additional fields: `parent_block_id`
-/// and `replay_fec_set_index`. The SlotMeta type will continue to be used
-/// (written) for now, but a SlotMetaV3 can be read from the Blockstore and
-/// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
-/// SlotMeta enables this software to read a Blockstore modified by a future
-/// version where the SlotMetaV3 format is persisted.
+/// Slot metadata persisted by blockstore.
+///
+/// V3 adds `parent_block_id` and `replay_fec_set_index` so replay can validate
+/// and restart slots that switch parent through an UpdateParent marker. The new
+/// fields default on old ledger reads, preserving backward-compatible reads of
+/// V2 data.
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
 pub struct SlotMetaV3 {
     pub slot: Slot,
@@ -167,12 +168,17 @@ pub struct SlotMetaV3 {
     #[wincode(with = "PodConnectedFlags")]
     pub connected_flags: ConnectedFlags,
     pub completed_data_indexes: CompletedDataIndexes,
-    /// The block id of the parent block.
-    /// Populated from the block header / update parent marker.
+    /// Block id paired with `parent_slot`.
+    ///
+    /// Populated by the block header initially, then replaced if an UpdateParent
+    /// marker changes the replay parent for this slot.
     #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Hash>")]
     pub parent_block_id: Hash,
-    /// The FEC set index from which replay should start for this block.
-    /// Populated from the block header / update parent marker.
+    /// Shred/FEC-set index where replay should start for this slot.
+    ///
+    /// A value of zero means replay starts from the block header. A non-zero
+    /// value means an UpdateParent marker was observed and replay must skip the
+    /// optimistic-parent prefix before this FEC set.
     #[wincode(with = "wincode_compat::DefaultOnEmptyRead<u32>")]
     pub replay_fec_set_index: u32,
 }
@@ -582,15 +588,13 @@ impl SlotMeta {
         self.is_connected()
     }
 
-    /// Clear the parent_connected and connected flags.
-    /// Returns true if the slot was previously parent-connected (signaling
-    /// that children need clearing too).
+    /// Clear the meta's parent_connected and connected flags.
+    /// Returns true if the meta was connected, indicating children need clearing.
     pub fn clear_parent_connected(&mut self) -> bool {
-        let was_parent_connected = self.is_parent_connected();
+        let originally_connected = self.is_connected();
         self.connected_flags
-            .set(ConnectedFlags::PARENT_CONNECTED, false);
-        self.connected_flags.set(ConnectedFlags::CONNECTED, false);
-        was_parent_connected
+            .remove(ConnectedFlags::PARENT_CONNECTED | ConnectedFlags::CONNECTED);
+        originally_connected
     }
 
     /// Dangerous.
@@ -632,6 +636,12 @@ impl SlotMeta {
 
     pub(crate) fn populated_from_block_header(&self) -> bool {
         self.replay_fec_set_index == 0
+    }
+
+    /// Returns true once this slot's replay parent has been changed by an
+    /// `UpdateParent` marker.
+    pub fn has_update_parent(&self) -> bool {
+        self.replay_fec_set_index > 0
     }
 }
 

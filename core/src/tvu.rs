@@ -49,7 +49,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL},
+        blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
         blockstore_cleanup_service::BlockstoreCleanupService,
         blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
@@ -168,6 +168,8 @@ impl Default for TvuConfig {
 pub struct AlpenglowInitializationState {
     // Shared with block creation loop
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
+    pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
+    pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
@@ -208,6 +210,7 @@ impl Tvu {
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
         ledger_signal_receiver: Receiver<bool>,
+        update_parent_receiver: UpdateParentReceiver,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         poh_controller: PohController,
@@ -257,6 +260,8 @@ impl Tvu {
 
         let AlpenglowInitializationState {
             leader_window_info_sender,
+            optimistic_parent_sender,
+            optimistic_parent_receiver,
             replay_highest_frozen,
             highest_parent_ready,
             bank_forks_controller,
@@ -539,11 +544,14 @@ impl Tvu {
             dumped_slots_sender,
             votor_event_sender,
             own_vote_sender: consensus_message_sender,
+            optimistic_parent_sender,
             lockouts_sender,
         };
 
         let replay_receivers = ReplayReceivers {
             ledger_signal_receiver,
+            update_parent_receiver,
+            optimistic_parent_receiver,
             duplicate_slots_receiver,
             ancestor_duplicate_slots_receiver,
             duplicate_confirmed_slots_receiver,
@@ -576,7 +584,6 @@ impl Tvu {
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
-            migration_status,
         };
 
         let voting_service = VotingService::new(
@@ -758,6 +765,7 @@ pub mod tests {
         let BlockstoreSignals {
             blockstore,
             ledger_signal_receiver,
+            update_parent_receiver,
             ..
         } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default())
             .expect("Expected to successfully open ledger");
@@ -799,6 +807,7 @@ pub mod tests {
         );
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
+        let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
         let highest_parent_ready = Arc::new(RwLock::new((0, (0, Hash::default()))));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
             unbounded();
@@ -837,6 +846,7 @@ pub mod tests {
             },
             blockstore,
             ledger_signal_receiver,
+            update_parent_receiver,
             Some(Arc::new(RpcSubscriptions::new_for_tests(
                 exit.clone(),
                 max_complete_transaction_status_slot,
@@ -879,6 +889,8 @@ pub mod tests {
             Arc::new(connection_cache),
             AlpenglowInitializationState {
                 leader_window_info_sender,
+                optimistic_parent_sender,
+                optimistic_parent_receiver,
                 replay_highest_frozen,
                 highest_parent_ready,
                 votor_event_sender,

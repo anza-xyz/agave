@@ -2233,6 +2233,16 @@ impl Bank {
         self.hash.read().unwrap()
     }
 
+    /// Waits for in-flight BankingStage commits to finish without freezing the bank.
+    ///
+    /// BankingStage holds the read side of this lock from before a successful
+    /// PoH record until after the matching account commit. Taking and dropping
+    /// the write side gives callers a quiescence point before abandoning and
+    /// purging an unfrozen leader bank.
+    pub fn wait_for_inflight_commits(&self) {
+        drop(self.hash.write().unwrap());
+    }
+
     pub fn hash(&self) -> Hash {
         *self.hash.read().unwrap()
     }

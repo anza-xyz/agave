@@ -152,5 +152,10 @@ pub enum BuildRewardCertsRespError {
     Encode(EncodeError),
 }
 
-/// A type alias to minimise making changes if the above types change.
-pub type BuildRewardCertsResponse = Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>;
+/// Response to a [`BuildRewardCertsRequest`].
+pub struct BuildRewardCertsResponse {
+    /// The bank slot from the corresponding request.
+    pub bank_slot: Slot,
+    /// The result of building reward certs for `bank_slot`.
+    pub result: Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>,
+}

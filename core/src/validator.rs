@@ -78,7 +78,7 @@ use {
         bank_forks_utils,
         blockstore::{
             Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL,
-            MAX_REPLAY_WAKE_UP_SIGNALS, PurgeType,
+            MAX_REPLAY_WAKE_UP_SIGNALS, MAX_UPDATE_PARENT_SIGNALS, PurgeType, UpdateParentReceiver,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions},
@@ -899,6 +899,7 @@ impl Validator {
             blockstore,
             original_blockstore_root,
             ledger_signal_receiver,
+            update_parent_receiver,
             leader_schedule_cache,
             starting_snapshot_hashes,
             TransactionHistoryServices {
@@ -1464,10 +1465,16 @@ impl Validator {
         let highest_parent_ready = Arc::new(RwLock::default());
         // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
         let highest_finalized = Arc::new(RwLock::new(None));
+        // This channel growing > ~1 indicates problems, so bound channel at a
+        // small (but highly overprovisioned) number for performance and easier
+        // debug if things go off the rails.
+        let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
         let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
         let (reward_certs_sender, reward_certs_receiver) = bounded(1);
+
+        let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1484,9 +1491,11 @@ impl Validator {
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
+            optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
             build_reward_certs_sender,
             reward_certs_receiver,
+            banking_stage_sender: banking_stage_sender_for_bcl,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
@@ -1575,6 +1584,7 @@ impl Validator {
             },
             blockstore.clone(),
             ledger_signal_receiver,
+            update_parent_receiver,
             rpc_subscriptions.clone(),
             &poh_recorder,
             poh_controller,
@@ -1622,6 +1632,8 @@ impl Validator {
             vote_connection_cache,
             AlpenglowInitializationState {
                 leader_window_info_sender,
+                optimistic_parent_sender,
+                optimistic_parent_receiver,
                 replay_highest_frozen,
                 highest_parent_ready,
                 bank_forks_controller,
@@ -2137,6 +2149,7 @@ fn load_blockstore(
         Arc<Blockstore>,
         Slot,
         Receiver<bool>,
+        UpdateParentReceiver,
         LeaderScheduleCache,
         Option<StartingSnapshotHashes>,
         TransactionHistoryServices,
@@ -2244,12 +2257,15 @@ fn load_blockstore(
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit);
     let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
     blockstore.add_new_shred_signal(ledger_signal_sender);
+    let (update_parent_sender, update_parent_receiver) = bounded(MAX_UPDATE_PARENT_SIGNALS);
+    blockstore.add_update_parent_signal(update_parent_sender);
 
     Ok((
         bank_forks,
         blockstore,
         original_blockstore_root,
         ledger_signal_receiver,
+        update_parent_receiver,
         leader_schedule_cache,
         starting_snapshot_hashes,
         transaction_history_services,

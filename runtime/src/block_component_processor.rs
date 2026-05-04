@@ -70,12 +70,41 @@ pub enum BlockComponentProcessorError {
     NanosecondClockOutOfBounds,
     #[error("Spurious update parent")]
     SpuriousUpdateParent,
+    #[error(
+        "UpdateParent cannot be the initial parent marker unless replay starts at UpdateParent"
+    )]
+    UnexpectedInitialUpdateParent,
     #[error("Abandoned bank")]
     AbandonedBank(VersionedUpdateParent),
     #[error("invalid reward certs {0}")]
     InvalidRewardCerts(#[from] ValidatedRewardCertError),
     #[error("updating bank footer failed with \"{0}\"")]
     UpdateBankFooter(#[from] BankFooterError),
+}
+
+impl BlockComponentProcessorError {
+    pub fn is_update_parent_recoverable_replay_error(&self) -> bool {
+        match self {
+            BlockComponentProcessorError::MissingParentMarker
+            | BlockComponentProcessorError::MultipleBlockFooters
+            | BlockComponentProcessorError::MultipleBlockHeaders
+            | BlockComponentProcessorError::HeaderParentSlotMismatch { .. }
+            | BlockComponentProcessorError::NanosecondClockOutOfBounds
+            | BlockComponentProcessorError::UnexpectedInitialUpdateParent
+            | BlockComponentProcessorError::AbandonedBank(_)
+            | BlockComponentProcessorError::InvalidRewardCerts(_)
+            | BlockComponentProcessorError::UpdateBankFooter(_)
+            | BlockComponentProcessorError::InvalidFinalizationCertificate(_) => true,
+            BlockComponentProcessorError::BlockComponentPreMigration
+            | BlockComponentProcessorError::GenesisCertificateAlreadyPopulated
+            | BlockComponentProcessorError::GenesisCertificateInAlpenglowCluster
+            | BlockComponentProcessorError::GenesisCertificateOnNonChild
+            | BlockComponentProcessorError::GenesisCertificateFailedVerification
+            | BlockComponentProcessorError::MissingBlockFooter
+            | BlockComponentProcessorError::MultipleUpdateParents
+            | BlockComponentProcessorError::SpuriousUpdateParent => false,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -146,6 +175,7 @@ impl BlockComponentProcessor {
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         marker: VersionedBlockMarker,
+        allow_initial_update_parent: bool,
         finalization_cert_sender: Option<&Sender<Vec<ConsensusMessage>>>,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
@@ -177,7 +207,7 @@ impl BlockComponentProcessor {
             ),
 
             BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
-                self.on_update_parent(update_parent.inner())
+                self.on_update_parent(update_parent.inner(), allow_initial_update_parent)
             }
 
             // Any other combination means we saw a marker too early
@@ -374,14 +404,22 @@ impl BlockComponentProcessor {
     fn on_update_parent(
         &mut self,
         update_parent: &VersionedUpdateParent,
+        allow_initial_update_parent: bool,
     ) -> Result<(), BlockComponentProcessorError> {
         if self.update_parent.is_some() {
             return Err(BlockComponentProcessorError::MultipleUpdateParents);
         }
 
+        if !self.has_header && !allow_initial_update_parent {
+            return Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent);
+        }
+
         self.update_parent = Some(update_parent.clone());
 
         if self.has_header {
+            // Only an error in the sense that replay execution of this block
+            // prefix is now over. Replay execution can continue after resetting
+            // bank.
             Err(BlockComponentProcessorError::AbandonedBank(
                 update_parent.clone(),
             ))
@@ -663,7 +701,7 @@ mod tests {
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
         processor
-            .on_marker(bank, parent, marker, None, &migration_status)
+            .on_marker(bank, parent, marker, false, None, &migration_status)
             .unwrap();
         assert!(processor.has_header);
     }
@@ -681,7 +719,7 @@ mod tests {
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
         assert!(matches!(
-            processor.on_marker(bank, parent, marker, None, &migration_status),
+            processor.on_marker(bank, parent, marker, false, None, &migration_status),
             Err(BlockComponentProcessorError::HeaderParentSlotMismatch {
                 header_parent_slot: 7,
                 bank_parent_slot: 0,
@@ -715,7 +753,7 @@ mod tests {
         });
 
         processor
-            .on_marker(bank.clone(), parent, marker, None, &migration_status)
+            .on_marker(bank.clone(), parent, marker, false, None, &migration_status)
             .unwrap();
         assert!(processor.has_footer);
 
@@ -779,7 +817,7 @@ mod tests {
             parent_block_id: Hash::default(),
         });
 
-        let result = processor.on_marker(bank, parent, marker, None, &migration_status);
+        let result = processor.on_marker(bank, parent, marker, false, None, &migration_status);
         assert!(matches!(
             result,
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
@@ -808,6 +846,7 @@ mod tests {
                 bank.clone(),
                 parent.clone(),
                 footer_marker,
+                false,
                 None,
                 &migration_status
             ),
@@ -821,7 +860,14 @@ mod tests {
 
         let mut processor = BlockComponentProcessor::default();
         assert!(matches!(
-            processor.on_marker(bank, parent, update_parent_marker, None, &migration_status),
+            processor.on_marker(
+                bank,
+                parent,
+                update_parent_marker,
+                false,
+                None,
+                &migration_status
+            ),
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
         ));
     }
@@ -857,6 +903,7 @@ mod tests {
                 bank.clone(),
                 parent.clone(),
                 header_marker,
+                false,
                 None,
                 &migration_status,
             )
@@ -880,7 +927,14 @@ mod tests {
             notar_reward_cert: None,
         });
         processor
-            .on_marker(bank.clone(), parent, footer_marker, None, &migration_status)
+            .on_marker(
+                bank.clone(),
+                parent,
+                footer_marker,
+                false,
+                None,
+                &migration_status,
+            )
             .unwrap();
 
         // Verify clock sysvar was updated
@@ -940,8 +994,14 @@ mod tests {
         });
 
         // Should succeed - footer is processed
-        let result =
-            processor.on_marker(bank.clone(), parent, footer_marker, None, &migration_status);
+        let result = processor.on_marker(
+            bank.clone(),
+            parent,
+            footer_marker,
+            false,
+            None,
+            &migration_status,
+        );
         assert!(result.is_ok());
         assert!(processor.has_footer);
 
@@ -1174,14 +1234,29 @@ mod tests {
     }
 
     #[test]
-    fn test_update_parent_as_first_marker() {
+    fn test_initial_up_reject() {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
             new_parent_block_id: Hash::default(),
         });
 
-        assert!(processor.on_update_parent(&update_parent).is_ok());
+        assert!(matches!(
+            processor.on_update_parent(&update_parent, false),
+            Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent)
+        ));
+        assert!(processor.update_parent.is_none());
+    }
+
+    #[test]
+    fn test_initial_up_ok() {
+        let mut processor = BlockComponentProcessor::default();
+        let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
+            new_parent_slot: 0,
+            new_parent_block_id: Hash::default(),
+        });
+
+        processor.on_update_parent(&update_parent, true).unwrap();
         assert!(processor.update_parent.is_some());
     }
 
@@ -1204,7 +1279,7 @@ mod tests {
         });
 
         assert!(matches!(
-            processor.on_update_parent(&update_parent),
+            processor.on_update_parent(&update_parent, false),
             Err(BlockComponentProcessorError::AbandonedBank(_))
         ));
     }
@@ -1218,11 +1293,11 @@ mod tests {
         });
 
         // First should succeed
-        processor.on_update_parent(&update_parent).unwrap();
+        processor.on_update_parent(&update_parent, true).unwrap();
 
         // Second should fail
         assert!(matches!(
-            processor.on_update_parent(&update_parent),
+            processor.on_update_parent(&update_parent, true),
             Err(BlockComponentProcessorError::MultipleUpdateParents)
         ));
     }
@@ -1231,10 +1306,13 @@ mod tests {
     fn test_header_after_update_parent_error() {
         let mut processor = BlockComponentProcessor::default();
         processor
-            .on_update_parent(&VersionedUpdateParent::V1(UpdateParentV1 {
-                new_parent_slot: 0,
-                new_parent_block_id: Hash::default(),
-            }))
+            .on_update_parent(
+                &VersionedUpdateParent::V1(UpdateParentV1 {
+                    new_parent_slot: 0,
+                    new_parent_block_id: Hash::default(),
+                }),
+                true,
+            )
             .unwrap();
 
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
@@ -1257,10 +1335,13 @@ mod tests {
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
         processor
-            .on_update_parent(&VersionedUpdateParent::V1(UpdateParentV1 {
-                new_parent_slot: 0,
-                new_parent_block_id: Hash::default(),
-            }))
+            .on_update_parent(
+                &VersionedUpdateParent::V1(UpdateParentV1 {
+                    new_parent_slot: 0,
+                    new_parent_block_id: Hash::default(),
+                }),
+                true,
+            )
             .unwrap();
 
         assert!(processor.on_entry_batch(&migration_status, 1).is_ok());

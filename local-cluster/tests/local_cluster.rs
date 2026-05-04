@@ -354,14 +354,14 @@ fn test_restart_node() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster.exit_restart_node(&nodes[0], validator_config, SocketAddrSpace::Unspecified);
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(
@@ -5939,7 +5939,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     info!("Restarting node");
@@ -5947,7 +5947,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(

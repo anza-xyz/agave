@@ -421,15 +421,6 @@ impl ConsensusPoolService {
         let start_slot = *highest_parent_ready;
         let end_slot = last_of_consecutive_leader_slots(start_slot);
 
-        if (start_slot..=end_slot).any(|s| ctx.blockstore.has_existing_shreds_for_slot(s)) {
-            warn!(
-                "{}: We have already produced shreds in the window {start_slot}-{end_slot}, \
-                 skipping production of our leader window",
-                ctx.cluster_info.id()
-            );
-            return;
-        }
-
         match consensus_pool
             .parent_ready_tracker
             .block_production_parent(start_slot)
