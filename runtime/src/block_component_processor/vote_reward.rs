@@ -216,6 +216,7 @@ impl<'a> RewardState<'a> {
 /// Common state required to update root_slot on the vote account.
 #[derive(Debug)]
 struct FinalCertState<'a> {
+    leader_vote_pubkey: Pubkey,
     signers: &'a HashSet<Pubkey>,
     final_slot: Slot,
 }
@@ -248,9 +249,8 @@ enum UpdateAccountRes {
     FinalCert(AccountSharedData),
     /// Handled rewards (and maybe finalization cert as well) for a non-leader validator.
     NonLeaderReward(AccountSharedData),
-    /// Attempted to update the leader validator.  Deferring
-    /// update till all reward calculations are done.
-    LeaderReward,
+    /// Attempted to update the leader validator.  Should be updated using the update_leader() method.
+    Leader,
 }
 
 /// enum to handle whether we are handling rewards; finalization cert; or both.
@@ -271,8 +271,9 @@ impl<'a> State<'a> {
         ))
     }
 
-    fn new_final_cert(signers: &'a HashSet<Pubkey>, final_slot: Slot) -> Self {
+    fn new_final_cert(bank: &'a Bank, signers: &'a HashSet<Pubkey>, final_slot: Slot) -> Self {
         Self::FinalCert(FinalCertState {
+            leader_vote_pubkey: bank.leader().vote_address,
             signers,
             final_slot,
         })
@@ -287,6 +288,7 @@ impl<'a> State<'a> {
         let reward_state = RewardState::new(bank, reward_slot, reward_slot.max(final_slot))
             .map_err(StateError::RewardStateNew)?;
         let final_cert_state = FinalCertState {
+            leader_vote_pubkey: bank.leader().vote_address,
             signers,
             final_slot,
         };
@@ -307,7 +309,7 @@ impl<'a> State<'a> {
                     .map_err(StateError::RewardStateCalcReward)?;
                 if vote_pubkey == state.leader_vote_pubkey {
                     *total_leader_reward = total_leader_reward.saturating_add(validator_reward);
-                    return Ok(UpdateAccountRes::LeaderReward);
+                    return Ok(UpdateAccountRes::Leader);
                 }
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
@@ -318,6 +320,9 @@ impl<'a> State<'a> {
                 Ok(UpdateAccountRes::NonLeaderReward(updated_account))
             }
             Self::FinalCert(state) => {
+                if vote_pubkey == state.leader_vote_pubkey {
+                    return Ok(UpdateAccountRes::Leader);
+                }
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
                 state.update_account(vote_pubkey, &mut vote_state.handler);
@@ -332,7 +337,7 @@ impl<'a> State<'a> {
                     .map_err(StateError::RewardStateCalcReward)?;
                 if vote_pubkey == reward_state.leader_vote_pubkey {
                     *total_leader_reward = total_leader_reward.saturating_add(validator_reward);
-                    return Ok(UpdateAccountRes::LeaderReward);
+                    return Ok(UpdateAccountRes::Leader);
                 }
                 let mut vote_state = VoteState::try_new(vote_accounts, vote_pubkey)
                     .map_err(StateError::VoteStateNew)?;
@@ -363,7 +368,7 @@ impl<'a> State<'a> {
                 Ok(UpdateAccountRes::NonLeaderReward(account)) => {
                     updated_accounts.push((validator, account));
                 }
-                Ok(UpdateAccountRes::LeaderReward) => {}
+                Ok(UpdateAccountRes::Leader) => {}
                 Err(e) => {
                     info!(
                         "State=\"{self:?}\": update_account(validator={validator}) failed with {e}"
@@ -457,7 +462,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
 
         (None, Some((signers, final_slot))) => {
             let mut total_leader_reward = 0;
-            let state = State::new_final_cert(signers, final_slot);
+            let state = State::new_final_cert(bank, signers, final_slot);
             state.update_accounts(
                 &vote_accounts,
                 signers.iter(),
@@ -502,7 +507,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut total_leader_reward = 0;
             {
-                let state = State::new_final_cert(signers, final_slot);
+                let state = State::new_final_cert(bank, signers, final_slot);
                 state.update_accounts(
                     &vote_accounts,
                     signers.difference(&reward_validators),
