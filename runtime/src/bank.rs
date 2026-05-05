@@ -2575,7 +2575,9 @@ impl Bank {
         let slot_in_year = self.slot_in_year_for_inflation();
         let validator_rate = self.inflation.read().unwrap().validator(slot_in_year);
         let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
-        (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64
+        let ret = (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64;
+        info!("akhi: epoch_inflation is {ret} capi= {capitalization}");
+        ret
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {

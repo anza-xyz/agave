@@ -861,6 +861,7 @@ impl Bank {
                             );
                             return None;
                         };
+                        info!("akhi: rewarding: commission= {commission_lamports} to pubkey= {commission_pubkey}");
                         if let Err(err) =
                             commission_account.checked_add_lamports(*commission_lamports)
                         {
