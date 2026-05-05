@@ -383,6 +383,7 @@ mod tests {
             upgrade_authority_address: None,
         };
         let mut account_data2 = AccountSharedData::default();
+        account_data2.set_owner(bpf_loader_upgradeable::id());
         account_data2.set_data(bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
