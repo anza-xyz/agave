@@ -80,6 +80,61 @@ pub struct TpuSockets {
     pub vote_forwarding_client: UdpSocket,
 }
 
+/// Long-lived shared services injected into the TPU pipeline.
+pub struct TpuInfra {
+    pub cluster_info: Arc<ClusterInfo>,
+    pub poh_recorder: Arc<RwLock<PohRecorder>>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub blockstore: Arc<Blockstore>,
+    pub keypair: Arc<Keypair>,
+    pub subscriptions: Option<Arc<RpcSubscriptions>>,
+    pub vote_tracker: Arc<VoteTracker>,
+    pub staked_nodes: Arc<RwLock<StakedNodes>>,
+    pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
+    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+    pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
+    pub exit: Arc<AtomicBool>,
+    pub cancel: CancellationToken,
+}
+
+pub struct TpuChannels {
+    pub transaction_recorder: TransactionRecorder,
+    pub entry_receiver: Receiver<WorkingBankEntryOrMarker>,
+    pub retransmit_slots_receiver: Receiver<Slot>,
+    pub verified_voter_slots_sender: VerifiedVoterSlotsSender,
+    pub gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
+    pub replay_vote_receiver: ReplayVoteReceiver,
+    pub replay_vote_sender: ReplayVoteSender,
+    pub bank_notification_sender: Option<BankNotificationSenderConfig>,
+    pub duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
+    pub transaction_status_sender: Option<TransactionStatusSender>,
+    pub entry_notification_sender: Option<EntryNotifierSender>,
+    pub banking_tracer_channels: Channels,
+    pub banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
+    pub votor_event_sender: VotorEventSender,
+}
+
+pub struct TpuConfig {
+    pub sockets: TpuSockets,
+    pub shred_version: u16,
+    pub broadcast_stage_type: BroadcastStageType,
+    pub turbine_xdp_sender: Option<XdpSender>,
+    pub tpu_forwarding_client_config: ForwardingClientConfig,
+    pub tpu_quic_server_config: SwQosQuicStreamerConfig,
+    pub tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
+    pub vote_quic_server_config: SimpleQosQuicStreamerConfig,
+    pub tpu_sigverify_threads: NonZeroUsize,
+    pub log_messages_bytes_limit: Option<usize>,
+    pub block_production_method: BlockProductionMethod,
+    pub block_production_num_workers: NonZeroUsize,
+    pub block_production_scheduler_config: SchedulerConfig,
+    pub filter_keys: Arc<HashSet<Pubkey>>,
+    pub enable_block_production_forwarding: bool,
+    pub generator_config: Option<GeneratorConfig>,
+    pub tracer_thread_hdl: TracerThread,
+    pub scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
+}
+
 // Conservatively allow 20 TPS per validator.
 pub const MAX_VOTES_PER_SECOND: u64 = 20;
 
@@ -103,54 +158,61 @@ pub struct Tpu {
 }
 
 impl Tpu {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_client(
-        cluster_info: &Arc<ClusterInfo>,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        transaction_recorder: TransactionRecorder,
-        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
-        retransmit_slots_receiver: Receiver<Slot>,
-        sockets: TpuSockets,
-        subscriptions: Option<Arc<RpcSubscriptions>>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        entry_notification_sender: Option<EntryNotifierSender>,
-        blockstore: Arc<Blockstore>,
-        broadcast_type: &BroadcastStageType,
-        turbine_xdp_sender: Option<XdpSender>,
-        exit: Arc<AtomicBool>,
-        shred_version: u16,
-        vote_tracker: Arc<VoteTracker>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        verified_voter_slots_sender: VerifiedVoterSlotsSender,
-        gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
-        replay_vote_receiver: ReplayVoteReceiver,
-        replay_vote_sender: ReplayVoteSender,
-        bank_notification_sender: Option<BankNotificationSenderConfig>,
-        duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        tpu_forwarding_client_config: ForwardingClientConfig,
-        keypair: &Keypair,
-        log_messages_bytes_limit: Option<usize>,
-        staked_nodes: &Arc<RwLock<StakedNodes>>,
-        shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-        banking_tracer_channels: Channels,
-        tracer_thread_hdl: TracerThread,
-        tpu_quic_server_config: SwQosQuicStreamerConfig,
-        tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
-        vote_quic_server_config: SimpleQosQuicStreamerConfig,
-        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        tpu_sigverify_threads: NonZeroUsize,
-        block_production_method: BlockProductionMethod,
-        block_production_num_workers: NonZeroUsize,
-        block_production_scheduler_config: SchedulerConfig,
-        filter_keys: Arc<HashSet<Pubkey>>,
-        enable_block_production_forwarding: bool,
-        _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
-        key_notifiers: Arc<RwLock<KeyUpdaters>>,
-        banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
-        scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
-        cancel: CancellationToken,
-        votor_event_sender: VotorEventSender,
-    ) -> Self {
+    pub fn new_with_client(infra: TpuInfra, channels: TpuChannels, config: TpuConfig) -> Self {
+        let TpuInfra {
+            cluster_info,
+            poh_recorder,
+            bank_forks,
+            blockstore,
+            keypair,
+            subscriptions,
+            vote_tracker,
+            staked_nodes,
+            staked_nodes_overrides,
+            prioritization_fee_cache,
+            key_notifiers,
+            exit,
+            cancel,
+        } = infra;
+
+        let TpuChannels {
+            transaction_recorder,
+            entry_receiver,
+            retransmit_slots_receiver,
+            verified_voter_slots_sender,
+            gossip_verified_vote_hash_sender,
+            replay_vote_receiver,
+            replay_vote_sender,
+            bank_notification_sender,
+            duplicate_confirmed_slot_sender,
+            transaction_status_sender,
+            entry_notification_sender,
+            banking_tracer_channels,
+            banking_control_receiver,
+            votor_event_sender,
+        } = channels;
+
+        let TpuConfig {
+            sockets,
+            shred_version,
+            broadcast_stage_type,
+            turbine_xdp_sender,
+            tpu_forwarding_client_config,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
+            tpu_sigverify_threads,
+            log_messages_bytes_limit,
+            block_production_method,
+            block_production_num_workers,
+            block_production_scheduler_config,
+            filter_keys,
+            enable_block_production_forwarding,
+            generator_config: _generator_config,
+            tracer_thread_hdl,
+            scheduler_bindings,
+        } = config;
+
         let TpuSockets {
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
@@ -169,7 +231,7 @@ impl Tpu {
             &packet_sender,
             &vote_packet_sender,
             forwarded_packet_receiver,
-            poh_recorder,
+            &poh_recorder,
             None, // coalesce
         );
 
@@ -177,7 +239,7 @@ impl Tpu {
             exit.clone(),
             bank_forks.clone(),
             staked_nodes.clone(),
-            shared_staked_nodes_overrides,
+            staked_nodes_overrides,
         );
 
         let Channels {
@@ -203,7 +265,7 @@ impl Tpu {
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             quic_vote_sockets,
-            keypair,
+            keypair.as_ref(),
             vote_packet_sender,
             staked_nodes.clone(),
             vote_quic_server_config.quic_streamer_config,
@@ -225,7 +287,7 @@ impl Tpu {
             "solQuicTpu",
             "quic_streamer_tpu",
             transactions_quic_sockets,
-            keypair,
+            keypair.as_ref(),
             packet_sender,
             staked_nodes.clone(),
             tpu_quic_server_config.quic_streamer_config,
@@ -248,7 +310,7 @@ impl Tpu {
             "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
-            keypair,
+            keypair.as_ref(),
             forwarded_packet_sender,
             staked_nodes.clone(),
             tpu_fwd_quic_server_config.quic_streamer_config,
@@ -336,7 +398,7 @@ impl Tpu {
                 (entry_receiver, None)
             };
 
-        let broadcast_stage = broadcast_type.new_broadcast_stage(
+        let broadcast_stage = broadcast_stage_type.new_broadcast_stage(
             broadcast_sockets,
             cluster_info.clone(),
             entry_receiver,
