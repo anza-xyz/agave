@@ -12,7 +12,7 @@ pub mod resolved_transaction_view;
 pub mod result;
 mod sanitize;
 mod signature_frame;
-pub mod static_account_keys_frame;
+mod static_account_keys_frame;
 mod transaction_config_frame;
 pub mod transaction_data;
 mod transaction_frame;
