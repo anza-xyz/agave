@@ -483,7 +483,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             error!("Program cache doesn't have fork graph.");
             return;
         };
-        let fork_graph = fork_graph.upgrade().unwrap();
+        let Some(fork_graph) = fork_graph.upgrade() else {
+            error!("Program cache fork graph has been dropped.");
+            return;
+        };
         let Ok(fork_graph) = fork_graph.read() else {
             error!("Failed to lock fork graph for reading.");
             return;
@@ -1665,10 +1668,10 @@ pub(crate) mod tests {
 
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, None, &fork_graph.read().unwrap());
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, None, &fork_graph.read().unwrap());
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
@@ -1678,10 +1681,10 @@ pub(crate) mod tests {
 
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, None, &fork_graph.read().unwrap());
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, None, &fork_graph.read().unwrap());
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
@@ -1691,10 +1694,10 @@ pub(crate) mod tests {
 
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, None, &fork_graph.read().unwrap());
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, None, &fork_graph.read().unwrap());
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
@@ -1703,10 +1706,10 @@ pub(crate) mod tests {
         }));
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, None, &fork_graph.read().unwrap());
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, None, &fork_graph.read().unwrap());
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
     }
 
@@ -1754,12 +1757,12 @@ pub(crate) mod tests {
         // Test that there are 2 entries for the program
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 2);
 
-        cache.prune(21, None, &fork_graph.read().unwrap());
+        cache.prune(21, None);
 
         // Test that prune didn't remove the entry, since environments are different.
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 2);
 
-        cache.prune(22, upcoming_environment, &fork_graph.read().unwrap());
+        cache.prune(22, upcoming_environment);
 
         // Test that prune removed 1 entry, since epoch changed
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 1);
@@ -2001,7 +2004,7 @@ pub(crate) mod tests {
         assert_eq!(tombstone.deployment_slot, 11);
         assert!(match_slot(&extracted, &program4, 5, 11));
 
-        cache.prune(5, None, &fork_graph.read().unwrap());
+        cache.prune(5, None);
 
         // Fork graph after pruning
         //                   0
@@ -2039,7 +2042,7 @@ pub(crate) mod tests {
         assert!(match_slot(&extracted, &program3, 25, 27));
         assert!(match_slot(&extracted, &program4, 5, 27));
 
-        cache.prune(15, None, &fork_graph.read().unwrap());
+        cache.prune(15, None);
 
         // Fork graph after pruning
         //                  0
@@ -2338,7 +2341,7 @@ pub(crate) mod tests {
         cache.assign_program(&env, program1, 0, new_test_entry(0, 1));
         cache.assign_program(&env, program1, 5, new_test_entry(5, 6));
 
-        cache.prune(10, None, &fork_graph.read().unwrap());
+        cache.prune(10, None);
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(20);

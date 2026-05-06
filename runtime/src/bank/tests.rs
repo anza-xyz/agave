@@ -10827,11 +10827,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
             .global_program_cache
             .write()
             .unwrap();
-        program_cache.prune(
-            bank.slot(),
-            upcoming_environment,
-            &bank_forks.read().unwrap(),
-        );
+        program_cache.prune(bank.slot(), upcoming_environment);
 
         // Unload all (which is only the entry with the new environment)
         program_cache.sort_and_unload(percentage::Percentage::from(0));
