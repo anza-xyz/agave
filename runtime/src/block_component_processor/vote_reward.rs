@@ -969,22 +969,44 @@ mod tests {
         expected_rewards: u64,
     }
 
+    fn new_bank(parent_bank: Arc<Bank>, slot: Slot) -> Arc<Bank> {
+        let leader = *parent_bank.leader();
+        Arc::new(Bank::new_from_parent(parent_bank, leader, slot))
+    }
+
     fn initial_state(
-        validator_keypairs: &[ValidatorVoteKeypairs],
-        leader: SlotLeader,
+        num_validators: u64,
+        pay_leader: bool,
         commission_bps: u16,
-    ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+    ) -> (
+        Arc<Bank>,
+        Arc<RwLock<BankForks>>,
+        Vec<ValidatorVoteKeypairs>,
+    ) {
+        let validators = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let leader = if pay_leader {
+            let vote_pubkey = validators[0].vote_keypair.pubkey();
+            let node_pubkey = validators[0].node_keypair.pubkey();
+            SlotLeader {
+                id: node_pubkey,
+                vote_address: vote_pubkey,
+            }
+        } else {
+            SlotLeader::new_unique()
+        };
         let per_validator_stake = LAMPORTS_PER_SOL;
         let mut genesis_config_info = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
-            validator_keypairs,
-            vec![per_validator_stake; validator_keypairs.len()],
+            &validators,
+            vec![per_validator_stake; validators.len()],
         );
         genesis_config_info.genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         genesis_config_info.genesis_config.rent = Rent::default();
         set_commission(
             &mut genesis_config_info.genesis_config,
-            validator_keypairs,
+            &validators,
             commission_bps,
         );
 
@@ -995,7 +1017,7 @@ mod tests {
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
         let bank_epoch1 = Arc::new(Bank::new_from_parent(bank_epoch0, leader, epoch1_slot));
         assert_eq!(bank_epoch1.epoch(), 1);
-        (bank_epoch1, bank_forks)
+        (bank_epoch1, bank_forks, validators)
     }
 
     fn reward_validators(
@@ -1018,9 +1040,8 @@ mod tests {
             );
             calc_vote_rewards_update_vote_states(&looping_bank, Some(reward_cert), None).unwrap();
 
-            let leader = *looping_bank.leader();
             let slot = looping_bank.slot() + 1;
-            looping_bank = Arc::new(Bank::new_from_parent(looping_bank, leader, slot));
+            looping_bank = new_bank(looping_bank, slot);
         }
 
         let map = validators
@@ -1036,7 +1057,6 @@ mod tests {
 
     fn test_vote_reward_payout_impl(
         validators: &[ValidatorVoteKeypairs],
-        leader: SlotLeader,
         initial_bank: Arc<Bank>,
         num_reward_slots: u64,
     ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
@@ -1044,11 +1064,7 @@ mod tests {
         let reward_epoch_slot = initial_bank
             .epoch_schedule
             .get_first_slot_in_epoch(reward_epoch);
-        let reward_bank = Arc::new(Bank::new_from_parent(
-            initial_bank,
-            leader,
-            reward_epoch_slot,
-        ));
+        let reward_bank = new_bank(initial_bank, reward_epoch_slot);
         assert_eq!(reward_bank.epoch(), reward_epoch);
 
         let (reward_bank, rewarded_validators) =
@@ -1058,15 +1074,14 @@ mod tests {
         let payout_epoch_slot = reward_bank
             .epoch_schedule
             .get_first_slot_in_epoch(payout_epoch);
-        let payout_bank = Bank::new_from_parent(reward_bank, leader, payout_epoch_slot);
+        let payout_bank = new_bank(reward_bank, payout_epoch_slot);
         assert_eq!(payout_bank.epoch(), payout_epoch);
 
         // Need to progress banks a few times for the rewards to be paid.
-        let mut prev_bank = Arc::new(payout_bank);
+        let mut prev_bank = payout_bank;
         for i in 0..10 {
-            let leader = *prev_bank.leader();
             let slot = prev_bank.slot() + 1 + i;
-            prev_bank = Arc::new(Bank::new_from_parent(prev_bank, leader, slot));
+            prev_bank = new_bank(prev_bank, slot);
         }
 
         (prev_bank, rewarded_validators)
@@ -1076,22 +1091,10 @@ mod tests {
     fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
         let num_validators = 3;
         let num_reward_slots = 10;
-        let validators = (0..num_validators)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        let leader = if pay_leader {
-            let vote_pubkey = validators[0].vote_keypair.pubkey();
-            let node_pubkey = validators[0].node_keypair.pubkey();
-            SlotLeader {
-                id: node_pubkey,
-                vote_address: vote_pubkey,
-            }
-        } else {
-            SlotLeader::new_unique()
-        };
-        let (initial_bank, _bank_forks) = initial_state(&validators, leader, commission_bps);
+        let (initial_bank, _bank_forks, validators) =
+            initial_state(num_validators, pay_leader, commission_bps);
         let (final_bank, rewarded_validators) =
-            test_vote_reward_payout_impl(&validators, leader, initial_bank, num_reward_slots);
+            test_vote_reward_payout_impl(&validators, initial_bank, num_reward_slots);
         let mut voter_rewards = HashMap::new();
 
         for (stake_pubkey, reward_state) in rewarded_validators {
@@ -1264,7 +1267,7 @@ mod tests {
         );
 
         let (final_bank, _) =
-            test_vote_reward_payout_impl(&validators, leader, initial_bank, num_reward_slots);
+            test_vote_reward_payout_impl(&validators, initial_bank, num_reward_slots);
 
         let final_state = State::new(
             &final_bank,
