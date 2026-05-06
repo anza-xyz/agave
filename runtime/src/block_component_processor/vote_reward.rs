@@ -1040,13 +1040,9 @@ mod tests {
     fn test_vote_reward_payout_impl(
         validators: &[ValidatorVoteKeypairs],
         leader: SlotLeader,
-        commission_bps: u16,
-        initial_bank: Option<(Arc<Bank>, Arc<RwLock<BankForks>>)>,
+        initial_bank: Arc<Bank>,
         num_reward_slots: u64,
     ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
-        let (initial_bank, _bank_forks) =
-            initial_bank.unwrap_or_else(|| initial_state(validators, commission_bps));
-
         let reward_epoch = initial_bank.epoch() + 1;
         let reward_epoch_slot = initial_bank
             .epoch_schedule
@@ -1096,13 +1092,9 @@ mod tests {
         } else {
             SlotLeader::new_unique()
         };
-        let (final_bank, rewarded_validators) = test_vote_reward_payout_impl(
-            &validators,
-            leader,
-            commission_bps,
-            None,
-            num_reward_slots,
-        );
+        let (initial_bank, _bank_forks) = initial_state(&validators, commission_bps);
+        let (final_bank, rewarded_validators) =
+            test_vote_reward_payout_impl(&validators, leader, initial_bank, num_reward_slots);
         let mut voter_rewards = HashMap::new();
 
         for (stake_pubkey, reward_state) in rewarded_validators {
@@ -1235,7 +1227,7 @@ mod tests {
             genesis_config.accounts.insert(stake_pubkey, account);
         }
 
-        let (bank_epoch0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let (bank_epoch0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         assert_eq!(bank_epoch0.epoch(), 0);
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
@@ -1278,13 +1270,8 @@ mod tests {
             num_reward_slots,
         );
 
-        let (final_bank, _) = test_vote_reward_payout_impl(
-            &validators,
-            leader,
-            commission_bps,
-            Some((initial_bank, bank_forks)),
-            num_reward_slots,
-        );
+        let (final_bank, _) =
+            test_vote_reward_payout_impl(&validators, leader, initial_bank, num_reward_slots);
 
         let final_state = State::new(
             &final_bank,
