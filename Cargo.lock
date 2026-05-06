@@ -7272,6 +7272,7 @@ dependencies = [
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
+ "shuttle",
  "solana-account 4.3.0",
  "solana-bincode",
  "solana-bpf-loader-program",

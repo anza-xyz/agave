@@ -1099,13 +1099,81 @@ mod tests {
         std::{fs::File, io::Read, ops::Range},
     };
 
-    fn process_instruction(
+    // 10 iterations is intentionally low: `mock_process_instruction` runs on a
+    // single thread, so additional `shuttle::check_random` iterations validate
+    // only the harness wiring, not concurrent interleavings. Bump this if a
+    // future refactor introduces `shuttle::thread::spawn` inside
+    // `mock_process_instruction`.
+    #[cfg(feature = "shuttle-test")]
+    const MOCK_PROCESS_RANDOM_ITERATIONS: usize = 10;
+
+    /// Wrapper around `mock_process_instruction` that runs under
+    /// `shuttle::check_random` when the `shuttle-test` feature is enabled,
+    /// providing the Shuttle scheduler context required by
+    /// `solana-svm-type-overrides`'s shuttle-aware atomic types. With default
+    /// features, this is a thin pass-through to `mock_process_instruction`
+    /// with `Entrypoint::register` and an empty post-adjustment closure.
+    ///
+    /// `mock_process_instruction` itself is single-threaded: the only
+    /// Shuttle-backed atomic in the access path is
+    /// `ProgramCacheEntry::latest_access_slot` (routed to
+    /// `shuttle::sync::atomic::AtomicU64` by `solana_svm_type_overrides`), and
+    /// it is touched from one Shuttle thread. Iteration-to-iteration variance
+    /// under `shuttle::check_random` is solely scheduler bookkeeping noise, so
+    /// any iteration's captured result is equivalent. If
+    /// `mock_process_instruction` ever spawns Shuttle threads internally,
+    /// this last-write-wins capture must be re-evaluated.
+    ///
+    /// `setup` is typed as `fn(&mut InvokeContext)` (function pointer, not
+    /// `impl Fn`) so it satisfies Shuttle's `Fn + Send + Sync + 'static` bound
+    /// when captured by value into the inner closure. Callers must pass
+    /// non-capturing closures or `fn` items; capturing closures will produce a
+    /// fn-pointer coercion error at the call site.
+    fn process_instruction_with_setup(
         program_id: &Pubkey,
         instruction_data: &[u8],
         transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
         instruction_accounts: Vec<AccountMeta>,
         expected_result: Result<(), InstructionError>,
+        setup: fn(&mut InvokeContext),
     ) -> Vec<AccountSharedData> {
+        #[cfg(feature = "shuttle-test")]
+        {
+            let program_id = *program_id;
+            let instruction_data = instruction_data.to_vec();
+            let result = shuttle::sync::Arc::new(shuttle::sync::Mutex::new(None));
+            let result_for_test = shuttle::sync::Arc::clone(&result);
+            shuttle::check_random(
+                move || {
+                    let accounts = mock_process_instruction(
+                        &program_id,
+                        &instruction_data,
+                        transaction_accounts.clone(),
+                        instruction_accounts.clone(),
+                        expected_result.clone(),
+                        Entrypoint::register,
+                        setup,
+                        |_invoke_context| {},
+                    );
+                    *result_for_test.lock().unwrap() = Some(accounts);
+                },
+                MOCK_PROCESS_RANDOM_ITERATIONS,
+            );
+
+            // Consume the harness cell after Shuttle exits so extraction does
+            // not call `shuttle::sync::Mutex::lock` outside the scheduler.
+            let mut result = match shuttle::sync::Arc::try_unwrap(result) {
+                Ok(result) => result,
+                Err(_) => panic!("shuttle test result still has outstanding references"),
+            };
+            result
+                .get_mut()
+                .unwrap()
+                .take()
+                .expect("shuttle test did not produce a result")
+        }
+
+        #[cfg(not(feature = "shuttle-test"))]
         mock_process_instruction(
             program_id,
             instruction_data,
@@ -1113,10 +1181,27 @@ mod tests {
             instruction_accounts,
             expected_result,
             Entrypoint::register,
+            setup,
+            |_invoke_context| {},
+        )
+    }
+
+    fn process_instruction(
+        program_id: &Pubkey,
+        instruction_data: &[u8],
+        transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+        instruction_accounts: Vec<AccountMeta>,
+        expected_result: Result<(), InstructionError>,
+    ) -> Vec<AccountSharedData> {
+        process_instruction_with_setup(
+            program_id,
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+            expected_result,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
-            |_invoke_context| {},
         )
     }
 
@@ -1189,32 +1274,28 @@ mod tests {
         );
 
         // Case: limited budget
-        mock_process_instruction(
+        process_instruction_with_setup(
             &program_id,
             &[],
             vec![(program_id, program_account)],
             Vec::new(),
             Err(InstructionError::ProgramFailedToComplete),
-            Entrypoint::register,
             |invoke_context| {
                 invoke_context.compute_meter.mock_set_remaining(0);
                 test_utils::load_all_invoked_programs(invoke_context);
             },
-            |_invoke_context| {},
         );
 
         // Case: Account not a program
-        mock_process_instruction(
+        process_instruction_with_setup(
             &program_id,
             &[],
             vec![(program_id, parameter_account.clone())],
             Vec::new(),
             Err(InstructionError::UnsupportedProgramId),
-            Entrypoint::register,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
-            |_invoke_context| {},
         );
         process_instruction(
             &program_id,
@@ -1730,14 +1811,12 @@ mod tests {
         ) -> Vec<AccountSharedData> {
             let instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
-            mock_process_instruction(
+            process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
                 expected_result,
-                Entrypoint::register,
-                |_invoke_context| {},
                 |_invoke_context| {},
             )
         }
@@ -1883,17 +1962,15 @@ mod tests {
         *instruction_accounts.get_mut(1).unwrap() = instruction_accounts.get(2).unwrap().clone();
         let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
 
-        mock_process_instruction(
+        process_instruction_with_setup(
             &bpf_loader_upgradeable::id(),
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
-            Entrypoint::register,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
-            |_invoke_context| {},
         );
         process_instruction(
             transaction_accounts.clone(),
@@ -2266,13 +2343,12 @@ mod tests {
                     max_data_len,
                 })
                 .unwrap();
-            mock_process_instruction(
+            process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
                 expected_result,
-                Entrypoint::register,
                 |invoke_context| {
                     // Register the system program for CPI support.
                     invoke_context.program_cache_for_tx_batch.replenish(
@@ -2284,7 +2360,6 @@ mod tests {
                         )),
                     );
                 },
-                |_invoke_context| {},
             )
         }
 
@@ -3746,8 +3821,39 @@ mod tests {
         Ok(())
     }
 
+    // Concurrency rationale: these tests construct `ProgramCacheEntry` instances
+    // directly. The struct's `latest_access_slot: AtomicU64` field is defined in
+    // `solana-program-runtime`; under the `shuttle-test` feature
+    // `solana-svm-type-overrides` swaps `std::sync::atomic::AtomicU64` for
+    // `shuttle::sync::atomic::AtomicU64`, whose Shuttle-backed operations
+    // (load, fetch_max, and similar) must run inside an active Shuttle
+    // scheduler. We therefore extract the test bodies into `do_test_*` helpers
+    // and drive them via `shuttle::check_random` stubs when the feature is on.
+    // We use `check_random` only (no `check_dfs` companion) because the test
+    // bodies spawn no Shuttle threads, so DFS gives no meaningful interleaving
+    // coverage; `check_random` is enough to provide the scheduler context.
+    // This matches the single-scheduler pattern used in
+    // `net-utils/src/token_bucket.rs` and `poh/src/record_channels.rs`.
+    //
+    // 100 iterations is intentionally low: the test bodies are single-threaded
+    // (no `shuttle::thread::spawn`), so additional iterations validate only
+    // the harness wiring, not concurrent interleavings. Bump this if a future
+    // refactor introduces real concurrency in the test bodies.
+    #[cfg(feature = "shuttle-test")]
+    const PROGRAM_USAGE_COUNT_RANDOM_ITERATIONS: usize = 100;
+
     #[test]
     fn test_program_usage_count_on_upgrade() {
+        #[cfg(feature = "shuttle-test")]
+        shuttle::check_random(
+            do_test_program_usage_count_on_upgrade,
+            PROGRAM_USAGE_COUNT_RANDOM_ITERATIONS,
+        );
+        #[cfg(not(feature = "shuttle-test"))]
+        do_test_program_usage_count_on_upgrade();
+    }
+
+    fn do_test_program_usage_count_on_upgrade() {
         let transaction_accounts = vec![(
             sysvar::epoch_schedule::id(),
             create_account_for_test(&EpochSchedule::default()),
@@ -3791,6 +3897,16 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_non_upgrade() {
+        #[cfg(feature = "shuttle-test")]
+        shuttle::check_random(
+            do_test_program_usage_count_on_non_upgrade,
+            PROGRAM_USAGE_COUNT_RANDOM_ITERATIONS,
+        );
+        #[cfg(not(feature = "shuttle-test"))]
+        do_test_program_usage_count_on_non_upgrade();
+    }
+
+    fn do_test_program_usage_count_on_non_upgrade() {
         let transaction_accounts = vec![(
             sysvar::epoch_schedule::id(),
             create_account_for_test(&EpochSchedule::default()),
