@@ -971,6 +971,7 @@ mod tests {
 
     fn initial_state(
         validator_keypairs: &[ValidatorVoteKeypairs],
+        leader: SlotLeader,
         commission_bps: u16,
     ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let per_validator_stake = LAMPORTS_PER_SOL;
@@ -992,11 +993,7 @@ mod tests {
         assert_eq!(bank_epoch0.epoch(), 0);
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
-        let bank_epoch1 = Arc::new(Bank::new_from_parent(
-            bank_epoch0,
-            SlotLeader::new_unique(),
-            epoch1_slot,
-        ));
+        let bank_epoch1 = Arc::new(Bank::new_from_parent(bank_epoch0, leader, epoch1_slot));
         assert_eq!(bank_epoch1.epoch(), 1);
         (bank_epoch1, bank_forks)
     }
@@ -1092,7 +1089,7 @@ mod tests {
         } else {
             SlotLeader::new_unique()
         };
-        let (initial_bank, _bank_forks) = initial_state(&validators, commission_bps);
+        let (initial_bank, _bank_forks) = initial_state(&validators, leader, commission_bps);
         let (final_bank, rewarded_validators) =
             test_vote_reward_payout_impl(&validators, leader, initial_bank, num_reward_slots);
         let mut voter_rewards = HashMap::new();
@@ -1231,11 +1228,7 @@ mod tests {
         assert_eq!(bank_epoch0.epoch(), 0);
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
-        let initial_bank = Arc::new(Bank::new_from_parent(
-            bank_epoch0,
-            SlotLeader::new_unique(),
-            epoch1_slot,
-        ));
+        let initial_bank = Arc::new(Bank::new_from_parent(bank_epoch0, leader, epoch1_slot));
         assert_eq!(initial_bank.epoch(), 1);
 
         let staker_pubkeys = {
