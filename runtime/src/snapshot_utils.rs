@@ -582,7 +582,7 @@ pub fn serialize_snapshot(
             Ok(())
         };
         let (bank_snapshot_consumed_size, bank_serialize) = measure_time!(
-            serialize_snapshot_data_file(&bank_snapshot_path, bank_snapshot_serializer, io_setup)
+            serialize_snapshot_data_file(&bank_snapshot_path, io_setup, bank_snapshot_serializer)
                 .map_err(|err| AddBankSnapshotError::SerializeBank(Box::new(err)))?,
             "bank serialize"
         );
@@ -789,8 +789,8 @@ fn deserialize_obsolete_accounts(
 
 pub fn serialize_snapshot_data_file<F>(
     data_file_path: &Path,
-    serializer: F,
     io_setup: &IoSetupState,
+    serializer: F,
 ) -> Result<u64>
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
@@ -798,8 +798,8 @@ where
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
         MAX_SNAPSHOT_DATA_FILE_SIZE,
-        serializer,
         io_setup,
+        serializer,
     )
 }
 
@@ -837,8 +837,8 @@ pub fn deserialize_snapshot_data_files<T: Sized>(
 fn serialize_snapshot_data_file_capped<F>(
     data_file_path: &Path,
     maximum_file_size: u64,
-    serializer: F,
     io_setup: &IoSetupState,
+    serializer: F,
 ) -> Result<u64>
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
@@ -1864,11 +1864,11 @@ mod tests {
         let consumed_size = serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &2323_u32)?;
                 Ok(())
             },
-            &IoSetupState::default(),
         )
         .unwrap();
         assert_eq!(consumed_size, expected_consumed_size);
@@ -1881,11 +1881,11 @@ mod tests {
         let result = serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size - 1,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &2323_u32)?;
                 Ok(())
             },
-            &IoSetupState::default(),
         );
         assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().contains("bytes would exceed limit of"));
     }
@@ -1899,11 +1899,11 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &expected_data)?;
                 Ok(())
             },
-            &IoSetupState::default(),
         )
         .unwrap();
 
@@ -1934,11 +1934,11 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &expected_data)?;
                 Ok(())
             },
-            &IoSetupState::default(),
         )
         .unwrap();
 
@@ -1968,12 +1968,12 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size * 2,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(&mut *stream, &expected_data)?;
                 serialize_into(&mut *stream, &expected_data)?;
                 Ok(())
             },
-            &IoSetupState::default(),
         )
         .unwrap();
 

@@ -33,6 +33,7 @@ pub fn serialize_status_cache(
 ) -> agave_snapshots::Result<u64> {
     snapshot_utils::serialize_snapshot_data_file(
         status_cache_path,
+        &IoSetupState::default(),
         |stream| {
             let snapshot_slot_deltas = slot_deltas
                 .iter()
@@ -65,7 +66,6 @@ pub fn serialize_status_cache(
             bincode::serialize_into(stream, &snapshot_slot_deltas)?;
             Ok(())
         },
-        &IoSetupState::default(),
     )
 }
 
