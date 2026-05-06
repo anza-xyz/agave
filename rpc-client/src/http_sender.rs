@@ -185,6 +185,12 @@ impl RpcSender for HttpSender {
             }
 
             let mut json = response.json::<serde_json::Value>().await?;
+            if !json.is_object() {
+                return Err(RpcError::RpcRequestError(format!(
+                    "RPC response is not a JSON object: {json}",
+                ))
+                .into());
+            }
             if json["error"].is_object() {
                 return match serde_json::from_value::<RpcErrorObject>(json["error"].clone()) {
                     Ok(rpc_error_object) => {
@@ -251,5 +257,42 @@ mod tests {
         let _ = http_sender
             .send(RpcRequest::GetVersion, serde_json::Value::Null)
             .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn http_sender_returns_error_for_non_object_json_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn a server that returns a JSON string instead of a JSON object,
+        // simulating a misbehaving RPC proxy or load balancer.
+        tokio::task::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            stream.readable().await.unwrap();
+            let _ = stream.try_read(&mut buf);
+            let body = r#""Service Unavailable""#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            stream.writable().await.unwrap();
+            stream.try_write(response.as_bytes()).unwrap();
+        });
+
+        let http_sender = HttpSender::new(format!("http://{addr}"));
+        let result = http_sender
+            .send(RpcRequest::GetVersion, serde_json::Value::Null)
+            .await;
+
+        let err = result.unwrap_err();
+        let err_string = err.to_string();
+        assert!(
+            err_string.contains("not a JSON object"),
+            "Expected 'not a JSON object' error, got: {err_string}"
+        );
     }
 }

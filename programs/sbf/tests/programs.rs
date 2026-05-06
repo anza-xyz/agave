@@ -7,6 +7,10 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
+use solana_runtime::loader_utils::{
+    load_upgradeable_program_and_advance_slot, set_upgrade_authority, upgrade_program,
+};
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
@@ -39,10 +43,7 @@ use {
             GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
         },
-        loader_utils::{
-            create_program, load_upgradeable_buffer, load_upgradeable_program_and_advance_slot,
-            set_upgrade_authority, upgrade_program,
-        },
+        loader_utils::{create_program, load_upgradeable_buffer},
     },
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
@@ -2102,7 +2103,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 fn test_program_sbf_invoke_in_same_tx_as_deployment() {
     agave_logger::setup();
 
@@ -2192,7 +2193,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
     agave_logger::setup();
 
@@ -2278,7 +2279,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
     agave_logger::setup();
 
@@ -2502,7 +2503,7 @@ fn test_program_sbf_c_dup() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 fn test_program_sbf_upgrade() {
     agave_logger::setup();
 
@@ -2567,7 +2568,7 @@ fn test_program_sbf_upgrade() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 fn test_program_sbf_upgrade_via_cpi() {
     agave_logger::setup();
 

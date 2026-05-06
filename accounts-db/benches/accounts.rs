@@ -68,6 +68,7 @@ where
     let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
     let num_keys = 1000;
     let slot = 0;
+    let mut ancestors = Ancestors::from(vec![slot]);
 
     let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
         .take(num_keys)
@@ -78,7 +79,7 @@ where
     )
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
-    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None, None);
+    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None, &ancestors);
     accounts.accounts_db.add_root_and_flush_write_cache(slot);
 
     let pubkeys = Arc::new(pubkeys);
@@ -94,6 +95,7 @@ where
     }
 
     let num_new_keys = 1000;
+    ancestors.insert(slot + 1);
     bencher.iter(|| {
         let new_pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(num_new_keys)
@@ -102,7 +104,11 @@ where
         // Write to a different slot than the one being read from. Because
         // there's a new account pubkey being written to every time, will
         // compete for the accounts index lock on every store
-        accounts.store_accounts_par((slot + 1, new_storable_accounts.as_slice()), None, None);
+        accounts.store_accounts_par(
+            (slot + 1, new_storable_accounts.as_slice()),
+            None,
+            &ancestors,
+        );
     });
 }
 

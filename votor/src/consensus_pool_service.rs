@@ -61,6 +61,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
 
+    /// Used to communicate the highest finalization cert the pool has observed to the block creation loop.
     pub(crate) highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 }
 
@@ -384,8 +385,10 @@ impl ConsensusPoolService {
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
             error!(
-                "Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, \
-                 exiting"
+                "my_pubkey={}: unable to compute leader: \
+                 highest_parent_ready={highest_parent_ready} root_bank_slot={}.  Exiting",
+                ctx.cluster_info.id(),
+                root_bank.slot()
             );
             ctx.exit.store(true, Ordering::Relaxed);
             return;

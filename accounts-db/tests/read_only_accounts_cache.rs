@@ -1,7 +1,10 @@
 use {
     rand::{SeedableRng, rngs::SmallRng},
     solana_account::{Account, AccountSharedData},
-    solana_accounts_db::read_only_accounts_cache::{CACHE_ENTRY_SIZE, ReadOnlyAccountsCache},
+    solana_accounts_db::{
+        accounts_db::AccountsDb,
+        read_only_accounts_cache::{CACHE_ENTRY_SIZE, ReadOnlyAccountsCache},
+    },
     solana_pubkey::Pubkey,
     std::{collections::HashSet, sync::atomic::Ordering},
     test_case::test_matrix,
@@ -28,6 +31,7 @@ fn test_read_only_accounts_cache_eviction(num_accounts: (usize, usize), evict_sa
         max_cache_size,
         usize::MAX, // <-- do not evict in the background
         evict_sample_size,
+        AccountsDb::DEFAULT_READ_ONLY_CACHE_NUM_SHARDS,
     );
     let data = vec![0u8; DATA_SIZE];
     let mut newer_half = HashSet::new();

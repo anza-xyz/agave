@@ -67,10 +67,17 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            github.rest.pulls.create({
+            const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `Bump version to ${process.env.NEW_VERSION}`,
               head: `version-bump-${process.env.NEW_VERSION}`,
               base: process.env.TARGET_BRANCH
+            })
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.data.number,
+              assignees: [context.actor],
             })
