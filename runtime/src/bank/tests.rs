@@ -9,6 +9,7 @@ use {
         bank::BankRc,
         bank_client::BankClient,
         bank_forks::BankForks,
+        epoch_stakes::VersionedEpochStakes,
         genesis_utils::{
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
@@ -20,7 +21,7 @@ use {
         serde_snapshot::fields_from_stream,
         stake_history::StakeHistory,
         stake_utils,
-        stakes::InvalidCacheEntryReason,
+        stakes::{DeserializableStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes},
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
@@ -39,10 +40,13 @@ use {
     },
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
-        accounts::AccountAddressFilter,
+        accounts::{AccountAddressFilter, Accounts},
+        accounts_db::AccountsDb,
+        accounts_hash::AccountsLtHash,
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
         accounts_scan::ScanError,
         ancestors::Ancestors,
+        blockhash_queue::BlockhashQueue,
     },
     solana_client_traits::SyncClient,
     solana_clock::{
@@ -63,9 +67,12 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::FeeStructure,
     solana_genesis_config::GenesisConfig,
+    solana_hard_forks::HardForks,
     solana_hash::Hash,
+    solana_inflation::Inflation,
     solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::{Keypair, keypair_from_seed},
+    solana_lattice_hash::lt_hash::LtHash,
     solana_loader_v3_interface::{
         get_program_data_address, instruction::UpgradeableLoaderInstruction,
         state::UpgradeableLoaderState,
@@ -118,6 +125,7 @@ use {
         versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, TowerSync},
     solana_vote_program::{
         vote_instruction,
@@ -11787,30 +11795,20 @@ fn test_calculate_and_set_block_id_for_dcou() {
     }
 }
 
+/// Exercises `Bank::new_for_txn_tests` by constructing a bank from
+/// deserialized fields and executing a system transfer. Covers the
+/// full transaction processing pipeline including transaction
+/// age/nonce checks, requested compute budget and limits
+/// sanitization, transaction account loading, and instruction
+/// processing (everything under `load_and_execute_transactions`).
 #[test]
 fn test_new_for_txn_tests_system_transfer() {
-    use {
-        crate::{
-            epoch_stakes::VersionedEpochStakes,
-            stake_history::StakeHistory,
-            stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
-        },
-        solana_accounts_db::{
-            accounts::Accounts, accounts_db::AccountsDb, accounts_hash::AccountsLtHash,
-            blockhash_queue::BlockhashQueue,
-        },
-        solana_hard_forks::HardForks,
-        solana_inflation::Inflation,
-        solana_lattice_hash::lt_hash::LtHash,
-        solana_vote::vote_account::VoteAccounts,
-    };
-
-    let slot: Slot = 10;
-    let parent_slot: Slot = slot - 1;
+    let slot = 10;
+    let parent_slot = slot - 1;
     let epoch_schedule = EpochSchedule::default();
     let epoch = epoch_schedule.get_epoch(slot);
-    let lamports_per_signature: u64 = 5000;
-    let transfer_amount: u64 = 100_000;
+    let lamports_per_signature = 5000;
+    let transfer_amount = 100_000;
 
     let sender = Keypair::new();
     let recipient = Pubkey::new_unique();
@@ -11819,8 +11817,7 @@ fn test_new_for_txn_tests_system_transfer() {
     let recent_blockhash = Hash::new_unique();
     blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
 
-    let accounts_db = AccountsDb::default_for_tests();
-    let accounts = Accounts::new(Arc::new(accounts_db));
+    let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
 
     let clock = solana_clock::Clock {
         slot,
@@ -11829,13 +11826,13 @@ fn test_new_for_txn_tests_system_transfer() {
     };
     let rent = Rent::default();
 
-    let make_sysvar = |data: Vec<u8>| -> AccountSharedData {
+    let make_sysvar = |data: Vec<u8>| {
         let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
         acct.set_data_from_slice(&data);
         acct
     };
 
-    let owned_accounts: Vec<(Pubkey, AccountSharedData)> = vec![
+    let owned_accounts = vec![
         (
             sender.pubkey(),
             AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
@@ -11868,14 +11865,13 @@ fn test_new_for_txn_tests_system_transfer() {
         }),
     ];
 
-    let refs: Vec<(&Pubkey, &AccountSharedData)> =
-        owned_accounts.iter().map(|(k, v)| (k, v)).collect();
+    let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, None);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
 
-    let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();
+    let mut epoch_stakes = HashMap::new();
     for key in [epoch, epoch.saturating_add(1)] {
         epoch_stakes.insert(
             key,
@@ -11946,31 +11942,22 @@ fn test_new_for_txn_tests_system_transfer() {
     assert_eq!(recipient_balance, 1_000_000_000 + transfer_amount);
 }
 
+/// Exercises `Bank::new_for_block_tests` by constructing a bank with
+/// vote/stake accounts, executing a system transfer, and verifying a
+/// deterministic bank hash. Covers epoch boundary processing,
+/// rewards distribution, LT and bank hash calculation, sysvar
+/// updates, runtime transaction processing, and the votes/stakes
+/// caches.
 #[test]
 fn test_new_for_block_tests_with_vote_account() {
-    use {
-        crate::{
-            epoch_stakes::VersionedEpochStakes,
-            stake_history::StakeHistory,
-            stakes::{DeserializableStakes, Stakes},
-        },
-        solana_accounts_db::{
-            accounts::Accounts, accounts_db::AccountsDb, accounts_hash::AccountsLtHash,
-            blockhash_queue::BlockhashQueue,
-        },
-        solana_hard_forks::HardForks,
-        solana_inflation::Inflation,
-        solana_lattice_hash::lt_hash::LtHash,
-        solana_vote::vote_account::{VoteAccount, VoteAccounts},
-    };
-
-    let slot: Slot = 10;
-    let parent_slot: Slot = slot - 1;
+    let slot = 10;
+    let parent_slot = slot - 1;
     let epoch_schedule = EpochSchedule::default();
     let epoch = epoch_schedule.get_epoch(slot);
-    let lamports_per_signature: u64 = 5000;
+    let lamports_per_signature = 5000;
+    let transfer_amount = 100_000;
 
-    let make_sysvar = |data: Vec<u8>| -> AccountSharedData {
+    let make_sysvar = |data: Vec<u8>| {
         let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
         acct.set_data_from_slice(&data);
         acct
@@ -11983,24 +11970,51 @@ fn test_new_for_block_tests_with_vote_account() {
     };
     let rent = Rent::default();
 
-    let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-        crate::stakes::tests::create_staked_node_accounts(1_000_000, &rent);
-    let vote_account_shared = vote_account.clone();
-    let stake_account_shared = stake_account.clone();
+    let node_pubkey = Pubkey::from([1u8; 32]);
+    let vote_pubkey = Pubkey::from([2u8; 32]);
+    let stake_pubkey = Pubkey::from([3u8; 32]);
+    let sender = keypair_from_seed(&[4u8; 32]).unwrap();
+    let recipient = Pubkey::from([5u8; 32]);
+
+    let vote_account = vote_state::create_v4_account_with_authorized(
+        &node_pubkey,
+        &vote_pubkey,
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+        &vote_pubkey,
+        0,
+        &vote_pubkey,
+        0,
+        &node_pubkey,
+        1,
+    );
+    let stake_lamports = rent.minimum_balance(StakeStateV2::size_of()) + 1_000_000;
+    let stake_account = stake_utils::create_stake_account(
+        &stake_pubkey,
+        &vote_pubkey,
+        &vote_account,
+        &rent,
+        stake_lamports,
+    );
 
     let vote_acct = VoteAccount::try_from(vote_account.clone()).unwrap();
-    let node_pubkey = *vote_acct.node_pubkey();
 
+    let recent_blockhash = Hash::from([42u8; 32]);
     let mut blockhash_queue = BlockhashQueue::default();
-    let recent_blockhash = Hash::new_unique();
     blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
 
-    let accounts_db = AccountsDb::default_for_tests();
-    let accounts = Accounts::new(Arc::new(accounts_db));
+    let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
 
-    let owned_accounts: Vec<(Pubkey, AccountSharedData)> = vec![
-        (vote_pubkey, vote_account_shared),
-        (stake_pubkey, stake_account_shared),
+    let owned_accounts = vec![
+        (vote_pubkey, vote_account),
+        (stake_pubkey, stake_account),
+        (
+            sender.pubkey(),
+            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+        ),
+        (
+            recipient,
+            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+        ),
         (
             sysvar::clock::id(),
             make_sysvar(bincode::serialize(&clock).unwrap()),
@@ -12031,16 +12045,14 @@ fn test_new_for_block_tests_with_vote_account() {
         .sum();
     let total_lamports: u64 = owned_accounts.iter().map(|(_, a)| a.lamports()).sum();
 
-    let refs: Vec<(&Pubkey, &AccountSharedData)> =
-        owned_accounts.iter().map(|(k, v)| (k, v)).collect();
+    let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, None);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
 
-    let vote_accounts_map: HashMap<Pubkey, (u64, VoteAccount)> =
-        HashMap::from([(vote_pubkey, (1_000_000, vote_acct))]);
-    let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();
+    let vote_accounts_map = HashMap::from([(vote_pubkey, (1_000_000, vote_acct))]);
+    let mut epoch_stakes = HashMap::new();
     for key in [epoch, epoch.saturating_add(1)] {
         epoch_stakes.insert(
             key,
@@ -12095,9 +12107,29 @@ fn test_new_for_block_tests_with_vote_account() {
         Stakes::<StakeAccount<Delegation>>::default(),
         accounts_data_size,
     );
+    let bank_forks = BankForks::new_rw_arc(bank);
+    let bank = bank_forks.read().unwrap().root_bank();
 
     assert_eq!(bank.slot(), slot);
     assert_eq!(bank.epoch(), epoch);
     assert!(bank.capitalization() > 0);
     assert_eq!(bank.last_blockhash(), recent_blockhash);
+
+    let tx = system_transaction::transfer(&sender, &recipient, transfer_amount, recent_blockhash);
+    let result = bank.process_transaction(&tx);
+    assert!(result.is_ok(), "transaction failed: {result:?}");
+
+    let sender_balance = bank.get_balance(&sender.pubkey());
+    let recipient_balance = bank.get_balance(&recipient);
+    assert_eq!(
+        sender_balance,
+        1_000_000_000 - transfer_amount - lamports_per_signature
+    );
+    assert_eq!(recipient_balance, 1_000_000_000 + transfer_amount);
+
+    bank.freeze();
+    assert_eq!(
+        bank.hash().to_string(),
+        "8ZixvxzpQPr8zWvMyxoTsnFYFmUUKEytytyztDhgQ7oD"
+    );
 }

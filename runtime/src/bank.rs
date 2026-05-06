@@ -6338,6 +6338,11 @@ impl Bank {
     /// (`prepare_for_block_execution`, partitioned rewards recalc) and
     /// snapshot fields (stakes loading, debug keys, accounts data size)
     /// that are irrelevant to individual transaction execution.
+    ///
+    /// Covers the full transaction processing pipeline including
+    /// transaction age/nonce checks, compute budget and limits
+    /// sanitization, transaction account loading, and instruction
+    /// processing (everything under `load_and_execute_transactions`).
     pub fn new_for_txn_tests(
         bank_rc: BankRc,
         fields: BankFieldsToDeserialize,
@@ -6370,6 +6375,10 @@ impl Bank {
     /// mid-distribution, and runs `prepare_for_block_execution` to
     /// complete the `_new_from_parent`-equivalent initialization
     /// (epoch processing, sysvar updates, LT hash cache).
+    ///
+    /// Covers epoch boundary processing, rewards distribution, LT and
+    /// bank hash calculation, sysvar updates, runtime transaction
+    /// processing, and the votes/stakes caches.
     pub fn new_for_block_tests(
         bank_rc: BankRc,
         fields: BankFieldsToDeserialize,
