@@ -118,7 +118,11 @@ impl SnapshotPackagerService {
                     }
 
                     let archive_time = Instant::now();
-                    let io_setup = Self::new_io_setup_state(snapshot_config, false);
+                    // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
+                    let io_setup = IoSetupState::default()
+                        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+                        .with_direct_io(snapshot_config.use_direct_io);
+
                     // Serializing the snapshot package is not allowed to fail, as archiving is
                     // not allowed to fail (see comment on archive_snapshot_package below
                     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
@@ -232,7 +236,16 @@ impl SnapshotPackagerService {
             bank_snapshot_package,
         } = state;
 
-        let io_setup = Self::new_io_setup_state(snapshot_config, true);
+        // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
+        // Also, don't use direct I/O, since data is likely going to be re-read soon after.
+        let io_setup = IoSetupState::default()
+            .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+            .with_direct_io(false)
+            .with_shared_sqpoll()
+            .unwrap_or_else(|error| {
+                warn!("unable to use sqpoll for io-uring: {error}");
+                IoSetupState::default()
+            });
 
         if let Some(bank_snapshot_package) = bank_snapshot_package {
             info!("Serializing bank snapshot...");
@@ -315,21 +328,6 @@ impl SnapshotPackagerService {
         let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
         if let Err(err) = result {
             warn!("Failed to mark bank snapshot as loadable: {err}");
-        }
-    }
-
-    fn new_io_setup_state(snapshot_config: &SnapshotConfig, is_teardown: bool) -> IoSetupState {
-        let io_state = IoSetupState::default()
-            .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
-        if is_teardown {
-            // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
-            io_state.with_shared_sqpoll().unwrap_or_else(|error| {
-                warn!("unable to use sqpoll for io-uring: {error}");
-                Self::new_io_setup_state(snapshot_config, false)
-            })
-        } else {
-            // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
-            io_state.with_direct_io(snapshot_config.use_direct_io)
         }
     }
 }
