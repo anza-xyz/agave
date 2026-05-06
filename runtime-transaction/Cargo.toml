@@ -53,7 +53,6 @@ solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
-solana-vote-interface = { workspace = true, features = ["bincode"] }
 
 [[bench]]
 name = "get_signature_details"

@@ -10139,7 +10139,6 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
- "solana-vote-interface",
  "wincode",
 ]
 
