@@ -1,7 +1,7 @@
 use {
     crossbeam_channel::{Receiver, Sender},
     solana_clock::{BankId, Slot},
-    solana_signature::Signature,
+    solana_hash::Hash,
     solana_vote::vote_parser::ParsedVote,
 };
 
@@ -11,8 +11,8 @@ use {
 /// votes immediately.
 ///
 /// Replay runs sigverify and execution in parallel, and sends Verified and Executed respectively as
-/// those stages complete. solCiProcVotes waits until it has received both messages for a given vote
-/// before processing it.
+/// those stages complete. solCiProcVotes waits until it has received both messages for the same
+/// vote transaction before processing it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayVoteMessage {
     /// The vote was sigverified and executed
@@ -21,13 +21,14 @@ pub enum ReplayVoteMessage {
     Executed {
         replay_bank_id: BankId,
         replay_slot: Slot,
+        message_hash: Hash,
         parsed_vote: ParsedVote,
     },
-    /// The vote was sigverified.
+    /// The votes were sigverified.
     Verified {
         replay_bank_id: BankId,
         replay_slot: Slot,
-        verified_signatures: Vec<Signature>,
+        message_hashes: Vec<Hash>,
     },
     /// The bank is invalid no more votes should be processed.
     ///

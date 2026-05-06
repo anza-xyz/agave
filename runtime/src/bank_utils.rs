@@ -64,6 +64,7 @@ pub fn find_and_send_votes(
                                 } => ReplayVoteMessage::Executed {
                                     replay_bank_id,
                                     replay_slot,
+                                    message_hash: *tx.message_hash(),
                                     parsed_vote,
                                 },
                             };
