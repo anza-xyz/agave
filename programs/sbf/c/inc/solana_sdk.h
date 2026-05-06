@@ -5,7 +5,6 @@
 
 #include <sol/assert.h>
 #include <sol/big_mod_exp.h>
-#include <sol/bigint_modexp.h>
 #include <sol/blake3.h>
 #include <sol/compute_units.h>
 #include <sol/cpi.h>

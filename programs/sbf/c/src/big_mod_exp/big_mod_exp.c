@@ -6,14 +6,7 @@
 
 extern uint64_t entrypoint(const uint8_t *input) {
 
-    struct BigModExpParam{
-        char* base;
-        size_t base_len;
-        char* exponent;
-        size_t exponent_len;
-        char* modulus;
-        size_t modulus_len;
-    } params;
+    SolBigModExpParams params;
 
     uint8_t base[32] = {
             0x98, 0x74, 0x23, 0x14, 0x72, 0x31, 0x74, 0x32, 0x84, 0x79, 0x23, 0x17, 0x43, 0x92, 0x87, 0x49,
@@ -33,14 +26,16 @@ extern uint64_t entrypoint(const uint8_t *input) {
     };
     uint8_t result[32];
 
-    params.base = (char*) base;
+    params.base_addr = (uint64_t) base;
     params.base_len = sizeof(base);
-    params.exponent = (char*) exponent;
+    params.exponent_addr = (uint64_t) exponent;
     params.exponent_len = sizeof(exponent);
-    params.modulus = (char*) modulus;
+    params.modulus_addr = (uint64_t) modulus;
     params.modulus_len = sizeof(modulus);
+    params.result_addr = (uint64_t) result;
+    params.result_len = sizeof(result);
 
-    uint64_t result_code = sol_big_mod_exp((uint8_t *) &params, result);
+    uint64_t result_code = sol_big_mod_exp(BIG_MOD_EXP_ENDIANNESS_BE, &params);
 
     sol_assert(0 == result_code);
     sol_assert(0 == sol_memcmp(result, expected, 32));
