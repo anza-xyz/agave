@@ -466,7 +466,7 @@ impl EventHandler {
                         "{my_pubkey}: Extending timeouts starting at slot {highest_parent_ready}"
                     );
                 }
-                // certs refresh happens in CertificatePoolService
+                // certs refresh happens in ConsensusPoolService
                 Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
             }
 
