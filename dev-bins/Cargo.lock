@@ -8417,7 +8417,6 @@ dependencies = [
  "solana-poh-config",
  "solana-program-pack",
  "solana-pubkey 4.2.0",
- "solana-rayon-threadlimit",
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-runtime-transaction",

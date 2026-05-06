@@ -409,7 +409,7 @@ impl ValidatorConfig {
             on_start_geyser_plugin_config_files: None,
             geyser_plugin_always_enabled: false,
             rpc_addrs: None,
-            pubsub_config: PubSubConfig::default(),
+            pubsub_config: PubSubConfig::default_for_tests(),
             snapshot_config: SnapshotConfig::new_load_only(),
             broadcast_stage_type: BroadcastStageType::Standard,
             turbine_mode: TurbineMode::default(),

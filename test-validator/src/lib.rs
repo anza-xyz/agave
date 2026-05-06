@@ -160,7 +160,7 @@ impl Default for TestValidatorGenesis {
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
             rent: Rent::default(),
             rpc_config: JsonRpcConfig::default_for_test(),
-            pubsub_config: PubSubConfig::default(),
+            pubsub_config: PubSubConfig::default_for_tests(),
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
             accounts: HashMap::<Pubkey, AccountSharedData>::default(),

@@ -613,7 +613,7 @@ mod tests {
             let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
 
             let control = SubscriptionControl::new(
-                PubSubConfig::default().max_active_subscriptions,
+                PubSubConfig::default_for_tests().max_active_subscriptions,
                 sender,
                 broadcast_sender,
             );

@@ -9761,7 +9761,6 @@ dependencies = [
  "solana-program-pack",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
- "solana-rayon-threadlimit",
  "solana-rent",
  "solana-rpc",
  "solana-rpc-client-api",
