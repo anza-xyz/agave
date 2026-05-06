@@ -10530,7 +10530,6 @@ dependencies = [
 name = "solana-storage-proto"
 version = "4.1.0-alpha.0"
 dependencies = [
- "bincode",
  "bs58",
  "enum-iterator",
  "prost 0.14.3",
@@ -10548,6 +10547,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status",
  "test-case",
+ "thiserror 2.0.18",
  "tonic-prost-build",
  "wincode",
 ]
