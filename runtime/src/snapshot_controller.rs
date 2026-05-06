@@ -5,7 +5,6 @@ use {
         },
         bank::{Bank, SquashTiming},
     },
-    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
     log::*,
     solana_clock::Slot,
@@ -49,21 +48,6 @@ impl SnapshotController {
 
     pub fn snapshot_config(&self) -> &SnapshotConfig {
         &self.snapshot_config
-    }
-
-    pub fn new_io_setup_state(&self, is_teardown: bool) -> IoSetupState {
-        let io_state = IoSetupState::default()
-            .with_buffers_registered(self.snapshot_config.use_registered_io_uring_buffers);
-        if is_teardown {
-            // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
-            io_state.with_shared_sqpoll().unwrap_or_else(|error| {
-                warn!("unable to use sqpoll for io-uring: {error}");
-                self.new_io_setup_state(false)
-            })
-        } else {
-            // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
-            io_state.with_direct_io(self.snapshot_config.use_direct_io)
-        }
     }
 
     pub fn request_sender(&self) -> &SnapshotRequestSender {

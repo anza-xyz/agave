@@ -1,7 +1,9 @@
 mod snapshot_gossip_manager;
 use {
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
-        SnapshotKind, paths as snapshot_paths, snapshot_hash::StartingSnapshotHashes,
+        SnapshotKind, paths as snapshot_paths, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::account_storage_entry::AccountStorageEntry,
@@ -63,7 +65,7 @@ impl SnapshotPackagerService {
                         if let Some(teardown_state) = teardown_state {
                             info!("Received exit request, tearing down...");
                             let (_, dur) =
-                                meas_dur!(Self::teardown(teardown_state, &snapshot_controller));
+                                meas_dur!(Self::teardown(teardown_state, snapshot_config));
                             info!("Teardown completed in {dur:?}.");
                         }
                         break;
@@ -116,7 +118,7 @@ impl SnapshotPackagerService {
                     }
 
                     let archive_time = Instant::now();
-                    let io_setup = snapshot_controller.new_io_setup_state(false);
+                    let io_setup = Self::new_io_setup_state(snapshot_config, false);
                     // Serializing the snapshot package is not allowed to fail, as archiving is
                     // not allowed to fail (see comment on archive_snapshot_package below
                     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
@@ -223,15 +225,14 @@ impl SnapshotPackagerService {
     }
 
     /// Performs final operations before gracefully shutting down
-    fn teardown(state: TeardownState, snapshot_controller: &SnapshotController) {
-        let snapshot_config = snapshot_controller.snapshot_config();
+    fn teardown(state: TeardownState, snapshot_config: &SnapshotConfig) {
         let TeardownState {
             snapshot_slot,
             snapshot_storages,
             bank_snapshot_package,
         } = state;
 
-        let io_setup = snapshot_controller.new_io_setup_state(true);
+        let io_setup = Self::new_io_setup_state(snapshot_config, true);
 
         if let Some(bank_snapshot_package) = bank_snapshot_package {
             info!("Serializing bank snapshot...");
@@ -314,6 +315,21 @@ impl SnapshotPackagerService {
         let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
         if let Err(err) = result {
             warn!("Failed to mark bank snapshot as loadable: {err}");
+        }
+    }
+
+    fn new_io_setup_state(snapshot_config: &SnapshotConfig, is_teardown: bool) -> IoSetupState {
+        let io_state = IoSetupState::default()
+            .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
+        if is_teardown {
+            // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
+            io_state.with_shared_sqpoll().unwrap_or_else(|error| {
+                warn!("unable to use sqpoll for io-uring: {error}");
+                Self::new_io_setup_state(snapshot_config, false)
+            })
+        } else {
+            // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
+            io_state.with_direct_io(snapshot_config.use_direct_io)
         }
     }
 }
