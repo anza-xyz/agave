@@ -2301,14 +2301,17 @@ declare_builtin_function!(
     }
 );
 
+fn reversed(b: &[u8]) -> Vec<u8> {
+    let mut v = b.to_vec();
+    v.reverse();
+    v
+}
+
 fn big_mod_exp_result(endianness: u64, base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
     match endianness {
         BIG_MOD_EXP_ENDIANNESS_BE => big_mod_exp(base, exponent, modulus),
         BIG_MOD_EXP_ENDIANNESS_LE => {
-            let base: Vec<_> = base.iter().rev().copied().collect();
-            let exponent: Vec<_> = exponent.iter().rev().copied().collect();
-            let modulus: Vec<_> = modulus.iter().rev().copied().collect();
-            let mut result = big_mod_exp(&base, &exponent, &modulus);
+            let mut result = big_mod_exp(&reversed(base), &reversed(exponent), &reversed(modulus));
             result.reverse();
             result
         }
@@ -2345,17 +2348,6 @@ fn big_mod_exp_adjusted_exponent_length(endianness: u64, exponent: &[u8]) -> u64
     }
 }
 
-fn big_mod_exp_memory_cost(
-    execution_cost: &SVMTransactionExecutionCost,
-    bytes_len: u64,
-) -> Option<u64> {
-    Some(
-        execution_cost
-            .mem_op_base_cost
-            .max(bytes_len.checked_div(execution_cost.cpi_bytes_per_unit)?),
-    )
-}
-
 fn big_mod_exp_cost(
     execution_cost: &SVMTransactionExecutionCost,
     endianness: u64,
@@ -2363,8 +2355,8 @@ fn big_mod_exp_cost(
     exponent: &[u8],
 ) -> Option<u64> {
     let max_len = params.base_len.max(params.modulus_len);
-    let words = max_len.checked_add(7)?.checked_div(8)?;
-    let multiplication_complexity = (words as u128).saturating_mul(words as u128).max(1);
+    let words = max_len.div_ceil(8) as u128;
+    let multiplication_complexity = words.checked_mul(words)?.max(1);
     let iteration_count = big_mod_exp_adjusted_exponent_length(endianness, exponent).max(1) as u128;
     let divisor = execution_cost.big_modular_exponentiation_cost_divisor as u128;
     if divisor == 0 {
@@ -2381,7 +2373,9 @@ fn big_mod_exp_cost(
         .checked_add(params.exponent_len)?
         .checked_add(params.modulus_len)?
         .checked_add(params.result_len)?;
-    let memory_cost = big_mod_exp_memory_cost(execution_cost, bytes_len)?;
+    let memory_cost = execution_cost
+        .mem_op_base_cost
+        .max(bytes_len.checked_div(execution_cost.cpi_bytes_per_unit)?);
 
     execution_cost
         .big_modular_exponentiation_base_cost
