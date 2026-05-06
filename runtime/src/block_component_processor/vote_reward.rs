@@ -278,7 +278,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::VAT_TO_BURN_PER_EPOCH,
+            bank::{BankTestConfig, VAT_TO_BURN_PER_EPOCH},
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, activate_all_features_alpenglow,
@@ -286,6 +286,7 @@ mod tests {
                 create_genesis_config_with_leader_ex, create_validator,
             },
             inflation_rewards::commission_split,
+            runtime_config::RuntimeConfig,
             stake_utils,
             test_utils::new_rand_vote_account,
             validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -302,6 +303,7 @@ mod tests {
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
         solana_fee_calculator::FeeRateGovernor,
+        solana_fee_structure::FeeStructure,
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -360,8 +362,8 @@ mod tests {
         // it is staked by a single validator.
         let circulating_supply = 566_000_000 * LAMPORTS_PER_SOL;
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
-        let bank = bank_forks.read().unwrap().root_bank();
+        let (bank, _bank_forks) =
+            new_bank_for_tests(SlotLeader::new_unique(), &GenesisConfig::default());
         let validator_rewards_lamports =
             bank.calculate_epoch_inflation_rewards(circulating_supply, 1);
 
@@ -446,13 +448,12 @@ mod tests {
             vote_address: leader_vote_pubkey,
         };
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let prev_bank = bank_forks.read().unwrap().root_bank();
+        let (prev_bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
         let current_slot = prev_bank
             .epoch_schedule
             .get_first_slot_in_epoch(prev_bank.epoch() + 1)
             + NUM_SLOTS_FOR_REWARD;
-        let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
+        let bank = new_bank(prev_bank.clone(), current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
         calc_vote_rewards_update_vote_states(
@@ -514,8 +515,7 @@ mod tests {
         };
         let target_vote_pubkey = validator_keypairs[1].vote_keypair.pubkey();
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let prev_bank = bank_forks.read().unwrap().root_bank();
+        let (prev_bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
         let current_slot = prev_bank
             .epoch_schedule
             .get_first_slot_in_epoch(prev_bank.epoch() + 1)
@@ -974,6 +974,34 @@ mod tests {
         Arc::new(Bank::new_from_parent(parent_bank, leader, slot))
     }
 
+    fn new_bank_for_tests(
+        leader: SlotLeader,
+        genesis_config: &GenesisConfig,
+    ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let runtime_config = Arc::new(RuntimeConfig::default());
+        let test_config = BankTestConfig::default();
+        let paths = Vec::new();
+        let mut bank = Bank::new_from_genesis(
+            genesis_config,
+            runtime_config,
+            paths,
+            None,
+            test_config.accounts_db_config,
+            None,
+            Some(leader),
+            Arc::default(),
+            None,
+            None,
+        );
+        // Keep test-bank fee structure aligned with the genesis fee configuration.
+        bank.set_fee_structure(&FeeStructure {
+            lamports_per_signature: genesis_config.fee_rate_governor.lamports_per_signature,
+            ..FeeStructure::default()
+        });
+        assert_eq!(*bank.leader(), leader);
+        bank.wrap_with_bank_forks_for_tests()
+    }
+
     fn initial_state(
         num_validators: u64,
         pay_leader: bool,
@@ -1011,7 +1039,7 @@ mod tests {
         );
 
         let (bank_epoch0, bank_forks) =
-            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
+            new_bank_for_tests(leader, &genesis_config_info.genesis_config);
         assert_eq!(bank_epoch0.epoch(), 0);
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
@@ -1150,7 +1178,6 @@ mod tests {
     fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
         let num_validators = 2;
         let num_add_stakers = 5;
-        let num_reward_slots = 10;
         let lamports = LAMPORTS_PER_SOL * 20;
         let mint_keypair = Keypair::new();
         let validators = (0..num_validators)
@@ -1227,11 +1254,13 @@ mod tests {
             genesis_config.accounts.insert(stake_pubkey, account);
         }
 
-        let (bank_epoch0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let (bank_epoch0, _bank_forks) = new_bank_for_tests(leader, &genesis_config);
         assert_eq!(bank_epoch0.epoch(), 0);
+        assert_eq!(*bank_epoch0.leader(), leader);
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
-        let initial_bank = Arc::new(Bank::new_from_parent(bank_epoch0, leader, epoch1_slot));
+        let initial_bank = new_bank(bank_epoch0, epoch1_slot);
+        assert_eq!(*initial_bank.leader(), leader);
         assert_eq!(initial_bank.epoch(), 1);
 
         let staker_pubkeys = {
@@ -1254,6 +1283,7 @@ mod tests {
             staker_pubkeys
         };
 
+        let num_reward_slots = 10;
         let reward_epoch = initial_bank.epoch() + 1;
 
         let prev_state = State::new(

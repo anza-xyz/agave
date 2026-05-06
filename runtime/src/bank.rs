@@ -2801,7 +2801,7 @@ impl Bank {
         // leader during tests.
         let leader = self.stakes_cache.stakes().highest_staked_node();
         #[cfg(feature = "dev-context-only-utils")]
-        let leader = leader.or(leader_for_tests);
+        let leader = leader_for_tests.or(leader);
         self.leader = leader.expect("genesis processing failed because no staked nodes exist");
 
         #[cfg(not(feature = "dev-context-only-utils"))]
