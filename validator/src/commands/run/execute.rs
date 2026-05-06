@@ -796,6 +796,14 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
+    if matches.is_present("disable_block_production")
+        && matches.is_present("enable_scheduler_bindings")
+    {
+        Err(String::from(
+            "`--disable-block-production` cannot be used with `--enable-scheduler-bindings`",
+        ))?;
+    }
+
     let mut validator_config = ValidatorConfig {
         log_config,
         require_tower: matches.is_present("require_tower"),
@@ -904,6 +912,7 @@ pub fn execute(
             ),
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
+        disable_block_production: matches.is_present("disable_block_production"),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
         banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
         validator_exit: Arc::new(RwLock::new(Exit::default())),

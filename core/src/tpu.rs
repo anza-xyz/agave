@@ -98,7 +98,6 @@ pub struct Tpu {
     tpu_forwards_quic_t: thread::JoinHandle<()>,
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
-    tracer_thread_hdl: TracerThread,
     tpu_vote_quic_t: thread::JoinHandle<()>,
 }
 
@@ -150,7 +149,7 @@ impl Tpu {
         scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         cancel: CancellationToken,
         votor_event_sender: VotorEventSender,
-    ) -> Self {
+    ) -> (Self, TracerThread) {
         let TpuSockets {
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
@@ -355,20 +354,22 @@ impl Tpu {
         key_notifiers.add(KeyUpdaterType::TpuVote, vote_streamer_key_updater);
         key_notifiers.add(KeyUpdaterType::Forward, client_updater);
 
-        Self {
-            fetch_stage,
-            cluster_info_vote_listener,
-            sigverify_stage,
-            banking_stage,
-            forwarding_stage,
-            broadcast_stage,
-            tpu_quic_t,
-            tpu_forwards_quic_t,
-            tpu_entry_notifier,
-            staked_nodes_updater_service,
+        (
+            Self {
+                fetch_stage,
+                cluster_info_vote_listener,
+                sigverify_stage,
+                banking_stage,
+                forwarding_stage,
+                broadcast_stage,
+                tpu_quic_t,
+                tpu_forwards_quic_t,
+                tpu_entry_notifier,
+                staked_nodes_updater_service,
+                tpu_vote_quic_t,
+            },
             tracer_thread_hdl,
-            tpu_vote_quic_t,
-        }
+        )
     }
 
     pub fn join(self) -> thread::Result<()> {
@@ -391,14 +392,6 @@ impl Tpu {
             tpu_entry_notifier.join()?;
         }
         let _ = broadcast_result?;
-        if let Some(tracer_thread_hdl) = self.tracer_thread_hdl {
-            if let Err(tracer_result) = tracer_thread_hdl.join()? {
-                error!(
-                    "banking tracer thread returned error after successful thread join: \
-                     {tracer_result:?}"
-                );
-            }
-        }
         Ok(())
     }
 }

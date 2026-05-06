@@ -7,8 +7,11 @@ use {
         banking_stage::{
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        banking_trace::{self, BankingTracer, TraceError},
+        banking_trace::{self, BankingTracer, TraceError, TracerThread},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
+        block_production_disabled_loop::{
+            BlockProductionDisabledLoop, BlockProductionDisabledLoopConfig,
+        },
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -40,7 +43,7 @@ use {
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
     anyhow::{Context, Result, anyhow},
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_accounts_db::{
@@ -376,6 +379,11 @@ pub struct ValidatorConfig {
     pub block_production_num_workers: NonZeroUsize,
     pub block_production_scheduler_config: SchedulerConfig,
     pub enable_block_production_forwarding: bool,
+    /// When true, skips the TPU (QUIC ingress, sigverify, banking, forwarding, broadcast) and
+    /// retains an Alpenglow handoff shim that drops leader windows instead of producing blocks.
+    ///
+    /// Do not enable on validators that can become cluster leader.
+    pub disable_block_production: bool,
     pub enable_scheduler_bindings: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
@@ -458,6 +466,7 @@ impl ValidatorConfig {
             block_production_scheduler_config: SchedulerConfig::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
+            disable_block_production: false,
             enable_scheduler_bindings: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
@@ -646,8 +655,12 @@ pub struct Validator {
     snapshot_packager_service: SnapshotPackagerService,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     poh_service: PohService,
-    block_creation_loop: BlockCreationLoop,
-    tpu: Tpu,
+    block_creation_loop: Option<BlockCreationLoop>,
+    block_production_disabled_loop: Option<BlockProductionDisabledLoop>,
+    tpu: Option<Tpu>,
+    banking_tracer_thread: TracerThread,
+    inactive_tpu_entry_drainer: Option<JoinHandle<()>>,
+    inactive_tpu_retransmit_drainer: Option<JoinHandle<()>>,
     tvu: Tvu,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
     pub cluster_info: Arc<ClusterInfo>,
@@ -1465,25 +1478,54 @@ impl Validator {
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
         let (reward_certs_sender, reward_certs_receiver) = bounded(1);
 
-        let block_creation_loop_config = BlockCreationLoopConfig {
-            exit: exit.clone(),
-            bank_forks: bank_forks.clone(),
-            blockstore: blockstore.clone(),
-            cluster_info: cluster_info.clone(),
-            poh_recorder: poh_recorder.clone(),
-            leader_schedule_cache: leader_schedule_cache.clone(),
-            rpc_subscriptions: rpc_subscriptions.clone(),
-            banking_tracer: banking_tracer.clone(),
-            slot_status_notifier: slot_status_notifier.clone(),
-            leader_window_info_receiver,
-            highest_parent_ready: highest_parent_ready.clone(),
-            replay_highest_frozen: replay_highest_frozen.clone(),
-            record_receiver_receiver,
-            highest_finalized: highest_finalized.clone(),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+        let disable_bp = config.disable_block_production;
+        if disable_bp {
+            info!(
+                "Disable block production requested: QUIC TPU ingress, TPU sigverify, banking stage, \
+                 forwarding, broadcast, and cluster vote listener will not run"
+            );
+        }
+
+        let (block_creation_loop, block_production_disabled_loop) = if disable_bp {
+            (
+                None,
+                Some(BlockProductionDisabledLoop::new(
+                    BlockProductionDisabledLoopConfig {
+                        exit: exit.clone(),
+                        bank_forks: bank_forks.clone(),
+                        blockstore: blockstore.clone(),
+                        cluster_info: cluster_info.clone(),
+                        poh_recorder: poh_recorder.clone(),
+                        leader_schedule_cache: leader_schedule_cache.clone(),
+                        record_receiver_receiver,
+                        leader_window_info_receiver,
+                    },
+                )),
+            )
+        } else {
+            let block_creation_loop_config = BlockCreationLoopConfig {
+                exit: exit.clone(),
+                bank_forks: bank_forks.clone(),
+                blockstore: blockstore.clone(),
+                cluster_info: cluster_info.clone(),
+                poh_recorder: poh_recorder.clone(),
+                leader_schedule_cache: leader_schedule_cache.clone(),
+                rpc_subscriptions: rpc_subscriptions.clone(),
+                banking_tracer: banking_tracer.clone(),
+                slot_status_notifier: slot_status_notifier.clone(),
+                leader_window_info_receiver,
+                highest_parent_ready: highest_parent_ready.clone(),
+                replay_highest_frozen: replay_highest_frozen.clone(),
+                record_receiver_receiver,
+                highest_finalized: highest_finalized.clone(),
+                build_reward_certs_sender,
+                reward_certs_receiver,
+            };
+            (
+                Some(BlockCreationLoop::new(block_creation_loop_config)),
+                None,
+            )
         };
-        let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
         assert_eq!(
             blockstore.get_new_shred_signals_len(),
@@ -1632,79 +1674,120 @@ impl Validator {
         )
         .map_err(ValidatorError::Other)?;
 
-        let tpu_forwarding_client_config = {
-            let runtime_handle = tpu_client_next_runtime
-                .as_ref()
-                .map(TokioRuntime::handle)
-                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-            ForwardingClientConfig {
-                stake_identity: Arc::as_ref(&identity_keypair),
-                tpu_client_sockets: tpu_transactions_forwards_client_sockets.take().unwrap(),
-                runtime_handle: runtime_handle.clone(),
-                cancel: cancel.clone(),
-                node_multihoming: node_multihoming.clone(),
-            }
-        };
-        let (banking_control_sender, banking_control_receiver) = mpsc::channel(1);
-        let tpu = Tpu::new_with_client(
-            &cluster_info,
-            &poh_recorder,
-            transaction_recorder,
-            entry_receiver,
-            retransmit_slots_receiver,
-            TpuSockets {
-                vote: node.sockets.tpu_vote,
-                broadcast: node.sockets.broadcast,
-                transactions_quic: node.sockets.tpu_quic,
-                transactions_forwards_quic: node.sockets.tpu_forwards_quic,
-                vote_quic: node.sockets.tpu_vote_quic,
-                vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
-            },
-            rpc_subscriptions,
-            transaction_status_sender,
-            entry_notification_sender,
-            blockstore.clone(),
-            &config.broadcast_stage_type,
-            turbine_xdp_sender,
-            exit.clone(),
-            node.info.shred_version(),
-            vote_tracker,
-            bank_forks.clone(),
-            verified_vote_sender,
-            gossip_verified_vote_hash_sender,
-            replay_vote_receiver,
-            replay_vote_sender,
-            bank_notification_sender,
-            duplicate_confirmed_slot_sender,
-            tpu_forwarding_client_config,
-            &identity_keypair,
-            config.runtime_config.log_messages_bytes_limit,
-            &staked_nodes,
-            config.staked_nodes_overrides.clone(),
-            banking_tracer_channels,
-            tracer_thread,
-            tpu_quic_server_config,
-            tpu_fwd_quic_server_config,
-            vote_quic_server_config,
-            prioritization_fee_cache,
-            tpu_sigverify_threads,
-            config.block_production_method.clone(),
-            config.block_production_num_workers,
-            config.block_production_scheduler_config.clone(),
-            config.filter_keys.clone(),
-            config.enable_block_production_forwarding,
-            config.generator_config.clone(),
-            key_notifiers.clone(),
-            banking_control_receiver,
-            config.enable_scheduler_bindings.then(|| {
+        let banking_control_sender;
+        let (
+            tpu,
+            banking_tracer_thread,
+            inactive_tpu_entry_drainer,
+            inactive_tpu_retransmit_drainer,
+        ) = if disable_bp {
+                banking_control_sender = None;
+                let exit_e = exit.clone();
+                let inactive_tpu_entry_drainer = Some(thread::spawn(move || loop {
+                    if exit_e.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match entry_receiver.recv_timeout(Duration::from_secs(1)) {
+                        Ok(_) => {}
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }));
+                let exit_r = exit.clone();
+                let inactive_tpu_retransmit_drainer =
+                    Some(thread::spawn(move || loop {
+                        if exit_r.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        match retransmit_slots_receiver.recv_timeout(Duration::from_secs(1)) {
+                            Ok(_) => {}
+                            Err(RecvTimeoutError::Timeout) => {}
+                            Err(RecvTimeoutError::Disconnected) => break,
+                        }
+                    }));
+                (None, tracer_thread, inactive_tpu_entry_drainer, inactive_tpu_retransmit_drainer)
+            } else {
+                let tpu_forwarding_client_config = {
+                    let runtime_handle = tpu_client_next_runtime
+                        .as_ref()
+                        .map(TokioRuntime::handle)
+                        .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                    ForwardingClientConfig {
+                        stake_identity: Arc::as_ref(&identity_keypair),
+                        tpu_client_sockets: tpu_transactions_forwards_client_sockets.take().unwrap(),
+                        runtime_handle: runtime_handle.clone(),
+                        cancel: cancel.clone(),
+                        node_multihoming: node_multihoming.clone(),
+                    }
+                };
+                let (bc_tx, banking_control_receiver) = mpsc::channel(1);
+                banking_control_sender = Some(bc_tx.clone());
+                let (tpu, tracer_hdl) = Tpu::new_with_client(
+                    &cluster_info,
+                    &poh_recorder,
+                    transaction_recorder,
+                    entry_receiver,
+                    retransmit_slots_receiver,
+                    TpuSockets {
+                        vote: node.sockets.tpu_vote,
+                        broadcast: node.sockets.broadcast,
+                        transactions_quic: node.sockets.tpu_quic,
+                        transactions_forwards_quic: node.sockets.tpu_forwards_quic,
+                        vote_quic: node.sockets.tpu_vote_quic,
+                        vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
+                    },
+                    rpc_subscriptions,
+                    transaction_status_sender,
+                    entry_notification_sender,
+                    blockstore.clone(),
+                    &config.broadcast_stage_type,
+                    turbine_xdp_sender,
+                    exit.clone(),
+                    node.info.shred_version(),
+                    vote_tracker,
+                    bank_forks.clone(),
+                    verified_vote_sender,
+                    gossip_verified_vote_hash_sender,
+                    replay_vote_receiver,
+                    replay_vote_sender,
+                    bank_notification_sender,
+                    duplicate_confirmed_slot_sender,
+                    tpu_forwarding_client_config,
+                    &identity_keypair,
+                    config.runtime_config.log_messages_bytes_limit,
+                    &staked_nodes,
+                    config.staked_nodes_overrides.clone(),
+                    banking_tracer_channels,
+                    tracer_thread,
+                    tpu_quic_server_config,
+                    tpu_fwd_quic_server_config,
+                    vote_quic_server_config,
+                    prioritization_fee_cache,
+                    tpu_sigverify_threads,
+                    config.block_production_method.clone(),
+                    config.block_production_num_workers,
+                    config.block_production_scheduler_config.clone(),
+                    config.filter_keys.clone(),
+                    config.enable_block_production_forwarding,
+                    config.generator_config.clone(),
+                    key_notifiers.clone(),
+                    banking_control_receiver,
+                    config.enable_scheduler_bindings.then(|| {
+                        (
+                            ledger_path.join("scheduler_bindings.ipc"),
+                            bc_tx.clone(),
+                        )
+                    }),
+                    cancel,
+                    votor_event_sender.clone(),
+                );
                 (
-                    ledger_path.join("scheduler_bindings.ipc"),
-                    banking_control_sender.clone(),
+                    Some(tpu),
+                    tracer_hdl,
+                    None,
+                    None,
                 )
-            }),
-            cancel,
-            votor_event_sender.clone(),
-        );
+            };
 
         datapoint_info!(
             "validator-new",
@@ -1760,6 +1843,7 @@ impl Validator {
             tvu,
             poh_service,
             block_creation_loop,
+            block_production_disabled_loop,
             poh_recorder,
             ip_echo_server,
             validator_exit: config.validator_exit.clone(),
@@ -1770,6 +1854,9 @@ impl Validator {
             blockstore_metric_report_service,
             accounts_background_service,
             xdp_transmitter,
+            banking_tracer_thread,
+            inactive_tpu_entry_drainer,
+            inactive_tpu_retransmit_drainer,
             _tpu_client_next_runtime: tpu_client_next_runtime,
         })
     }
@@ -1862,9 +1949,13 @@ impl Validator {
         drop(self.cluster_info);
 
         self.poh_service.join().expect("poh_service");
-        self.block_creation_loop
-            .join()
-            .expect("block_creation_loop");
+        if let Some(block_creation_loop) = self.block_creation_loop {
+            block_creation_loop
+                .join()
+                .expect("block_creation_loop");
+        } else if let Some(loop_disabled) = self.block_production_disabled_loop {
+            loop_disabled.join().expect("block_production_disabled_loop");
+        }
         drop(self.poh_recorder);
 
         if let Some(json_rpc_service) = self.json_rpc_service {
@@ -1933,8 +2024,33 @@ impl Validator {
         if let Some(xdp_transmitter) = self.xdp_transmitter {
             xdp_transmitter.join().expect("xdp_transmitter");
         }
-        self.tpu.join().expect("tpu");
+        if let Some(tpu) = self.tpu {
+            tpu.join().expect("tpu");
+        } else if let Some(drainer) = self.inactive_tpu_entry_drainer {
+            drainer
+                .join()
+                .expect("inactive_tpu_entry_drainer");
+        }
+        if let Some(tracer_thread_hdl) = self.banking_tracer_thread {
+            match tracer_thread_hdl.join() {
+                Ok(Ok(())) => (),
+                Ok(Err(tracer_result)) => {
+                    error!(
+                        "banking tracer thread returned error after successful thread join: \
+                         {tracer_result:?}"
+                    );
+                }
+                Err(err) => {
+                    panic!("panic while joining banking tracer thread: {err:?}");
+                }
+            }
+        }
         self.tvu.join().expect("tvu");
+        if let Some(drainer) = self.inactive_tpu_retransmit_drainer {
+            drainer
+                .join()
+                .expect("inactive_tpu_retransmit_drainer");
+        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()
