@@ -2797,11 +2797,13 @@ impl Bank {
 
         // After storing genesis accounts, the bank stakes cache will be warmed
         // up and can be used to set the leader id to the highest staked
-        // node. If no staked nodes exist, allow fallback to an unstaked test
-        // leader during tests.
+        // node.
         let leader = self.stakes_cache.stakes().highest_staked_node();
+        // If a leader is specified for test purposes, use that and if no leader found, use a random one.
         #[cfg(feature = "dev-context-only-utils")]
-        let leader = leader.or(leader_for_tests);
+        let leader = leader_for_tests
+            .or(leader)
+            .or(Some(SlotLeader::new_unique()));
         self.leader = leader.expect("genesis processing failed because no staked nodes exist");
 
         #[cfg(not(feature = "dev-context-only-utils"))]
@@ -6250,7 +6252,7 @@ impl Bank {
             None,
             test_config.accounts_db_config,
             None,
-            Some(SlotLeader::new_unique()),
+            None,
             Arc::default(),
             None,
             None,
