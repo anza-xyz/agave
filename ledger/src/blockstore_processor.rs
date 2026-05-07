@@ -5579,6 +5579,57 @@ pub mod tests {
     }
 
     #[test]
+    fn test_confirm_slot_entries_updates_bank_entry_count() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100 * LAMPORTS_PER_SOL);
+        let genesis_hash = genesis_config.hash();
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = BankWithScheduler::new_without_scheduler(bank);
+        let replay_tx_thread_pool = create_thread_pool(1);
+        let mut timing = ConfirmationTiming::default();
+        let mut progress = ConfirmationProgress::new(genesis_hash);
+        let amount = genesis_config.rent.minimum_balance(0);
+
+        let tx = system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            amount,
+            genesis_hash,
+        );
+        let tx_entry = next_entry(&genesis_hash, 1, vec![tx]);
+        let tick1 = next_entry(&tx_entry.hash, 1, vec![]);
+        let tick2 = next_entry(&tick1.hash, 1, vec![]);
+        let entries = vec![tx_entry, tick1, tick2];
+        let expected = entries.len() as u64;
+
+        confirm_slot_entries(
+            &bank,
+            &replay_tx_thread_pool,
+            (entries, 0, false),
+            &mut timing,
+            &mut progress,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &MigrationStatus::default(),
+        )
+        .unwrap();
+        progress
+            .wait_for_all_verification_results(&mut 0, &mut 0)
+            .unwrap();
+
+        assert_eq!(bank.entry_count(), expected);
+        assert_eq!(progress.num_entries as u64, expected);
+        assert_eq!(bank.entry_count(), progress.num_entries as u64);
+    }
+
+    #[test]
     fn test_confirm_slot_entries_async_sigverify_fail() {
         let GenesisConfigInfo {
             genesis_config,

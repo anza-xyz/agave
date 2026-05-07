@@ -11786,3 +11786,61 @@ fn test_calculate_and_set_block_id_for_dcou() {
         assert_eq!(bank.block_id(), Some(expected_block_id));
     }
 }
+
+#[test]
+fn test_entry_count_starts_at_zero() {
+    let (genesis_config, _) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert_eq!(bank.entry_count(), 0);
+}
+
+#[test]
+fn test_entry_count_increments_on_register_tick() {
+    let (genesis_config, _) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    for i in 1..=3 {
+        bank.register_default_tick_for_test();
+        assert_eq!(bank.entry_count(), i);
+    }
+}
+
+#[test]
+fn test_entry_count_includes_tx_entries_and_ticks() {
+    let (genesis_config, keypair) = create_genesis_config(100 * LAMPORTS_PER_SOL);
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    for i in 1..=5 {
+        let recipient = Pubkey::new_unique();
+        let tx = system_transaction::transfer(
+            &keypair,
+            &recipient,
+            LAMPORTS_PER_SOL,
+            genesis_config.hash(),
+        );
+
+        bank.process_transaction(&tx).unwrap();
+
+        assert_eq!(bank.entry_count(), i);
+    }
+
+    for j in 1..=3 {
+        bank.register_default_tick_for_test();
+        assert_eq!(bank.entry_count(), 5 + j);
+    }
+
+    assert_eq!(bank.entry_count(), 8);
+}
+
+#[test]
+fn test_entry_count_resets_for_child_bank() {
+    let (genesis_config, _) = create_genesis_config(LAMPORTS_PER_SOL);
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    bank.register_default_tick_for_test();
+    bank.register_default_tick_for_test();
+    assert_eq!(bank.entry_count(), 2);
+
+    let child_bank = new_from_parent(bank);
+    assert_eq!(child_bank.entry_count(), 0);
+}
