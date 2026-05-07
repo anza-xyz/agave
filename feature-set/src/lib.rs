@@ -22,7 +22,6 @@ pub struct FeatureSnapshot {
     pub disable_fees_sysvar: bool,
     pub curve25519_syscall_enabled: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
-    pub stake_minimum_delegation_for_rewards: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
     pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
@@ -98,9 +97,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             curve25519_syscall_enabled: is_active(&curve25519_syscall_enabled::ID),
             stake_raise_minimum_delegation_to_1_sol: is_active(
                 &stake_raise_minimum_delegation_to_1_sol::ID,
-            ),
-            stake_minimum_delegation_for_rewards: is_active(
-                &stake_minimum_delegation_for_rewards::ID,
             ),
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
@@ -735,10 +731,6 @@ pub mod require_static_program_ids_in_transaction {
 pub mod stake_raise_minimum_delegation_to_1_sol {
     // This is a feature-proposal *feature id*.  The feature keypair address is `GQXzC7YiSNkje6FFUk6sc2p53XRvKoaZ9VMktYzUMnpL`.
     solana_pubkey::declare_id!("9onWzzvCzNC2jfhxxeqRgs5q7nFAAKpCUvkj6T6GJK9i");
-}
-
-pub mod stake_minimum_delegation_for_rewards {
-    solana_pubkey::declare_id!("MinimumDe1egat1onForRewardsWi11BeDe1eted111");
 }
 
 pub mod add_set_compute_unit_price_ix {
@@ -1853,10 +1845,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             stake_raise_minimum_delegation_to_1_sol::id(),
             "Raise minimum stake delegation to 1.0 SOL #24357",
-        ),
-        (
-            stake_minimum_delegation_for_rewards::id(),
-            "stakes must be at least the minimum delegation to earn rewards",
         ),
         (
             add_set_compute_unit_price_ix::id(),
