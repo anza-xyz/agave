@@ -100,6 +100,20 @@ Alternatively use the Github UI.
     ```
     ci/channel-info.sh
     ```
+   Note: if `ci/channel-overrides` on master has `PINNED_BETA_CHANNEL` / `PINNED_STABLE_CHANNEL` set, those values override auto-detect everywhere.
+
+### Cutting a branch without promoting channels
+
+By default, pushing a new `vX.Y` head auto-promotes it to `BETA_CHANNEL` and demotes the prior beta to stable, because `ci/channel-info.sh` picks the top-2 `vX.Y` heads. To cut a branch without that promotion (e.g. to begin backports while keeping the current beta in place), set the pins in `ci/channel-overrides` on master *before* pushing the new branch:
+
+```
+PINNED_BETA_CHANNEL=vX.Y      # current beta, to be held
+PINNED_STABLE_CHANNEL=vX.Y-1  # current stable, to be held
+```
+
+The file lives only on master; every branch's CI fetches it from there, so no backport is needed.
+
+When ready to promote, open a PR on master that clears or updates the pins. Then proceed with the usual "Miscellaneous Clean up" steps below.
 
 ### Update the Changelog
 
