@@ -2473,7 +2473,7 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
     // Perform the check if we are booting as part of a cluster restart at slot root_slot
     let maybe_cluster_restart_slot = maybe_cluster_restart_with_hard_fork(config, root_slot);
     if maybe_cluster_restart_slot.is_some() {
-        return Ok(Some(root_slot + 1));
+        return Ok(Some(root_slot));
     }
 
     // If there are no hard forks, the shred version cannot have changed
@@ -2500,8 +2500,8 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
         // This is the normal case where the last cluster restart & hard fork was a while ago; we
         // can skip the check for this case
         Ok(None)
-    } else if latest_hard_fork < blockstore_max_slot {
-        // blockstore_min_slot < latest_hard_fork < blockstore_max_slot
+    } else if latest_hard_fork <= blockstore_max_slot {
+        // blockstore_min_slot <= latest_hard_fork <= blockstore_max_slot
         //
         // This could be a case where there was a cluster restart, but this node was not part of
         // the supermajority that actually restarted the cluster. Rather, this node likely
@@ -2510,13 +2510,13 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
         //
         // Note that the downloaded snapshot slot (root_slot) could be greater than the latest hard
         // fork slot. Even though this node will only replay slots after root_slot, start the check
-        // at latest_hard_fork + 1 to check (and possibly purge) any invalid state.
-        Ok(Some(latest_hard_fork + 1))
+        // at latest_hard_fork to check (and possibly purge) any invalid state.
+        Ok(Some(latest_hard_fork))
     } else {
-        // blockstore_min_slot <= blockstore_max_slot <= latest_hard_fork
+        // blockstore_min_slot <= blockstore_max_slot < latest_hard_fork
         //
         // All slots in the blockstore are older than the latest hard fork. The blockstore check
-        // would start from latest_hard_fork + 1; skip the check as there are no slots to check
+        // would start from latest_hard_fork; skip the check as there are no slots to check
         //
         // This is kind of an unusual case to hit, maybe a node has been offline for a long time
         // and just restarted with a new downloaded snapshot but the old blockstore
@@ -2961,7 +2961,7 @@ mod tests {
         let mut hard_forks = HardForks::default();
         let mut root_slot;
 
-        // Do check from root_slot + 1 if wait_for_supermajority (10) == root_slot (10)
+        // Do check from root_slot if wait_for_supermajority (10) == root_slot (10)
         root_slot = 10;
         validator_config.wait_for_supermajority = Some(root_slot);
         assert_eq!(
@@ -2972,7 +2972,7 @@ mod tests {
                 &hard_forks
             )
             .unwrap(),
-            Some(root_slot + 1)
+            Some(root_slot)
         );
 
         // No check if wait_for_supermajority (10) < root_slot (15) (no hard forks)
@@ -3003,8 +3003,34 @@ mod tests {
             None,
         );
 
-        // Insert some shreds at newer slots than hard fork
         let entries = entry::create_ticks(1, 0, Hash::default());
+
+        let exact_hard_fork_ledger_path = get_tmp_ledger_path_auto_delete!();
+        let exact_hard_fork_blockstore =
+            Blockstore::open(exact_hard_fork_ledger_path.path()).unwrap();
+        let exact_hard_fork_slot = 10;
+        let shreds = blockstore::entries_to_test_shreds(
+            &entries,
+            exact_hard_fork_slot,
+            exact_hard_fork_slot - 1,
+            true,
+            1,
+        );
+        exact_hard_fork_blockstore
+            .insert_shreds(shreds, None, true)
+            .unwrap();
+        assert_eq!(
+            should_cleanup_blockstore_incorrect_shred_versions(
+                &validator_config,
+                &exact_hard_fork_blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            Some(exact_hard_fork_slot),
+        );
+
+        // Insert some shreds at newer slots than hard fork
         for i in 20..35 {
             let shreds = blockstore::entries_to_test_shreds(
                 &entries,
@@ -3029,7 +3055,7 @@ mod tests {
         );
 
         // Emulate cluster restart at slot 25
-        // Do check from root_slot + 1 regardless of whether wait_for_supermajority set correctly
+        // Do check from root_slot regardless of whether wait_for_supermajority set correctly
         root_slot = 25;
         hard_forks.register(root_slot);
         validator_config.wait_for_supermajority = Some(root_slot);
@@ -3041,7 +3067,7 @@ mod tests {
                 &hard_forks
             )
             .unwrap(),
-            Some(root_slot + 1),
+            Some(root_slot),
         );
         validator_config.wait_for_supermajority = None;
         assert_eq!(
@@ -3052,11 +3078,11 @@ mod tests {
                 &hard_forks
             )
             .unwrap(),
-            Some(root_slot + 1),
+            Some(root_slot),
         );
 
         // Do check with advanced root slot, even without wait_for_supermajority set correctly
-        // Check starts from latest hard fork + 1
+        // Check starts from latest hard fork
         root_slot = 30;
         let latest_hard_fork = hard_forks.iter().last().unwrap().0;
         assert_eq!(
@@ -3067,7 +3093,7 @@ mod tests {
                 &hard_forks
             )
             .unwrap(),
-            Some(latest_hard_fork + 1),
+            Some(latest_hard_fork),
         );
 
         // Purge blockstore up to latest hard fork
