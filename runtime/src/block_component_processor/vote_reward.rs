@@ -260,6 +260,7 @@ fn update_vote_state(
     final_cert_input: &Option<(&HashSet<Pubkey>, Slot)>,
 ) {
     handle.increment_credits(reward_epoch, reward);
+    assert_eq!(handle.epoch_credits().len(), 1);
     if let Some((signers, slot)) = final_cert_input {
         if signers.contains(&validator_vote_pubkey) {
             handle.set_root_slot(Some(*slot));
@@ -1042,10 +1043,16 @@ mod tests {
             new_bank_for_tests(leader, &genesis_config_info.genesis_config);
         assert_eq!(bank_epoch0.epoch(), 0);
 
-        let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
-        let bank_epoch1 = Arc::new(Bank::new_from_parent(bank_epoch0, leader, epoch1_slot));
-        assert_eq!(bank_epoch1.epoch(), 1);
-        (bank_epoch1, bank_forks, validators)
+        // need to bump epoch by 1 as epoch 0 is migration epoch
+        let first_slot_in_epoch1 = bank_epoch0
+            .epoch_schedule
+            .get_first_slot_in_epoch(bank_epoch0.epoch() + 1);
+        let bank_epoch1 = new_bank(bank_epoch0, first_slot_in_epoch1);
+        // bump slots a bit so that reward slots always land in the same epoch
+        let slot = first_slot_in_epoch1 + 1000;
+        let bank = new_bank(bank_epoch1, slot);
+        // EpochInflationAccountState::create_for_tests(&bank);
+        (bank, bank_forks, validators)
     }
 
     fn reward_validators(
@@ -1088,15 +1095,10 @@ mod tests {
         initial_bank: Arc<Bank>,
         num_reward_slots: u64,
     ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
-        let reward_epoch = initial_bank.epoch() + 1;
-        let reward_epoch_slot = initial_bank
-            .epoch_schedule
-            .get_first_slot_in_epoch(reward_epoch);
-        let reward_bank = new_bank(initial_bank, reward_epoch_slot);
-        assert_eq!(reward_bank.epoch(), reward_epoch);
-
+        let initial_bank_epoch = initial_bank.epoch();
         let (reward_bank, rewarded_validators) =
-            reward_validators(reward_bank, validators, num_reward_slots);
+            reward_validators(initial_bank, validators, num_reward_slots);
+        assert_eq!(reward_bank.epoch(), initial_bank_epoch);
 
         let payout_epoch = reward_bank.epoch() + 1;
         let payout_epoch_slot = reward_bank
@@ -1112,6 +1114,7 @@ mod tests {
             prev_bank = new_bank(prev_bank, slot);
         }
 
+        assert_eq!(prev_bank.epoch(), initial_bank_epoch + 1);
         (prev_bank, rewarded_validators)
     }
 
@@ -1152,7 +1155,9 @@ mod tests {
             );
             assert_eq!(
                 stake_cur - reward_state.stake_prev_lamports,
-                stake_expected_reward
+                stake_expected_reward,
+                "stake_cur={stake_cur} prev={} expected={stake_expected_reward}",
+                reward_state.stake_prev_lamports
             );
 
             // Due to rounding issues, off by 1 errors are possible.
@@ -1260,6 +1265,8 @@ mod tests {
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
         let initial_bank = new_bank(bank_epoch0, epoch1_slot);
+        let slot = initial_bank.slot() + 1000;
+        let initial_bank = new_bank(initial_bank, slot);
         assert_eq!(*initial_bank.leader(), leader);
         assert_eq!(initial_bank.epoch(), 1);
 
@@ -1284,7 +1291,7 @@ mod tests {
         };
 
         let num_reward_slots = 10;
-        let reward_epoch = initial_bank.epoch() + 1;
+        let reward_epoch = initial_bank.epoch();
 
         let prev_state = State::new(
             &initial_bank,
