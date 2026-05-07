@@ -14,7 +14,6 @@ use {
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
-        stake_utils,
         stakes::Stakes,
     },
     log::{debug, info},
@@ -25,7 +24,6 @@ use {
     solana_account::{ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
-    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
@@ -394,16 +392,8 @@ impl Bank {
         &self,
         stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
     ) -> FilteredStakeDelegations<'a> {
-        let feature_snapshot = self.feature_set.snapshot();
-        let min_stake_delegation = if feature_snapshot.stake_minimum_delegation_for_rewards {
-            let min_stake_delegation = stake_utils::get_minimum_delegation(
-                feature_snapshot.upgrade_bpf_stake_program_to_v5,
-            )
-            .max(LAMPORTS_PER_SOL);
-            Some(min_stake_delegation)
-        } else {
-            None
-        };
+        // A future feature would set Some(..) here to enforce a minimum delegation for rewards.
+        let min_stake_delegation = None;
         FilteredStakeDelegations {
             stake_delegations,
             min_stake_delegation,
