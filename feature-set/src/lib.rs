@@ -738,7 +738,7 @@ pub mod stake_raise_minimum_delegation_to_1_sol {
 }
 
 pub mod stake_minimum_delegation_for_rewards {
-    solana_pubkey::declare_id!("G6ANXD6ptCSyNd9znZm7j4dEczAJCfx7Cy43oBx3rKHJ");
+    solana_pubkey::declare_id!("MinimumDe1egat1onForRewardsWi11BeDe1eted111");
 }
 
 pub mod add_set_compute_unit_price_ix {
