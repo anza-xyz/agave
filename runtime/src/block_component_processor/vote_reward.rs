@@ -260,7 +260,6 @@ fn update_vote_state(
     final_cert_input: &Option<(&HashSet<Pubkey>, Slot)>,
 ) {
     handle.increment_credits(reward_epoch, reward);
-    assert_eq!(handle.epoch_credits().len(), 1);
     if let Some((signers, slot)) = final_cert_input {
         if signers.contains(&validator_vote_pubkey) {
             handle.set_root_slot(Some(*slot));
