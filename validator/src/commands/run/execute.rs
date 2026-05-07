@@ -45,7 +45,8 @@ use {
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
             BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
-            ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig, is_snapshot_config_valid,
+            ValidatorConfig, ValidatorLogConfig, ValidatorStartProgress, ValidatorTpuConfig,
+            is_snapshot_config_valid,
         },
     },
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -127,11 +128,20 @@ pub fn execute(
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
     let logfile = run_args.logfile;
-    if let Some(logfile) = logfile.as_ref() {
+    let log_config = if let Some(ref logfile) = logfile {
         println!("log file: {}", logfile.display());
-    }
-    let use_progress_bar = logfile.is_none();
-    agave_logger::initialize_logging(logfile.clone());
+        let logrotate_flag = Validator::register_logrotate_signal_handler()?;
+
+        Some(ValidatorLogConfig {
+            logfile: logfile.clone(),
+            logrotate_flag,
+        })
+    } else {
+        None
+    };
+    let use_progress_bar = log_config.is_none();
+    agave_logger::initialize_logging(logfile);
+
     cli::warn_for_deprecated_arguments(matches);
 
     info!("{} {}", crate_name!(), solana_version);
@@ -787,7 +797,7 @@ pub fn execute(
     );
 
     let mut validator_config = ValidatorConfig {
-        logfile,
+        log_config,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
         vote_history_storage,

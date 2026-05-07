@@ -389,6 +389,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 return Err(InstructionError::InvalidInstructionData);
             }
 
+            instruction_context.check_number_of_instruction_accounts(3)?;
             let new_collector = read_new_collector_account(&instruction_context, &me, 1)?;
 
             let rent = invoke_context
@@ -1854,6 +1855,80 @@ mod tests {
             vote_pubkey
         );
 
+        // Should pass - all three accounts can alias.
+        let aliased_vote_account =
+            create_test_account_with_provided_authorized(&vote_pubkey, &vote_pubkey);
+        let aliased_original_inflation_collector =
+            get_commission_collector(&aliased_vote_account, CommissionKind::InflationRewards);
+        let aliased_original_block_revenue_collector =
+            get_commission_collector(&aliased_vote_account, CommissionKind::BlockRevenue);
+        let aliased_transaction_accounts = vec![
+            (vote_pubkey, aliased_vote_account),
+            (
+                sysvar::rent::id(),
+                account::create_account_shared_data_for_test(&rent),
+            ),
+        ];
+        let aliased_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey, // Vote account
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey, // New collector
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey, // Authorized withdrawer
+                is_signer: true,     // (Signer)
+                is_writable: false,
+            },
+        ];
+
+        // InflationRewards (triple alias)
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::InflationRewards,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            aliased_transaction_accounts.clone(),
+            aliased_instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            vote_pubkey
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            aliased_original_block_revenue_collector, // Unchanged
+        );
+
+        // BlockRevenue (triple alias)
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::BlockRevenue,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            aliased_transaction_accounts,
+            aliased_instruction_accounts,
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            aliased_original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            vote_pubkey
+        );
+
         // Should fail - SIMD-0232 disabled.
         let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
             CommissionKind::InflationRewards,
@@ -1871,7 +1946,29 @@ mod tests {
         );
         assert_eq!(
             get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
-            original_inflation_collector
+            original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - fewer than 3 account inputs (SIMD-0232).
+        let too_few_instruction_accounts = vec![AccountMeta {
+            pubkey: vote_pubkey,
+            is_signer: false,
+            is_writable: true,
+        }];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            too_few_instruction_accounts,
+            Err(InstructionError::MissingAccount),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector, // Unchanged
         );
         assert_eq!(
             get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),

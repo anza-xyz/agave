@@ -54,16 +54,22 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
             if let Some((programdata_account, _slot)) =
                 callbacks.get_account_shared_data(&programdata_address)
             {
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot,
-                    upgrade_authority_address: _,
-                }) = programdata_account.state()
-                {
-                    ProgramAccountLoadResult::ProgramOfLoaderV3(
-                        program_account,
-                        programdata_account,
+                if bpf_loader_upgradeable::check_id(programdata_account.owner()) {
+                    if let Ok(UpgradeableLoaderState::ProgramData {
                         slot,
-                    )
+                        upgrade_authority_address: _,
+                    }) = programdata_account.state()
+                    {
+                        ProgramAccountLoadResult::ProgramOfLoaderV3(
+                            program_account,
+                            programdata_account,
+                            slot,
+                        )
+                    } else {
+                        ProgramAccountLoadResult::InvalidAccountData(
+                            ProgramCacheEntryOwner::LoaderV3,
+                        )
+                    }
                 } else {
                     ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
                 }
@@ -377,6 +383,7 @@ mod tests {
             upgrade_authority_address: None,
         };
         let mut account_data2 = AccountSharedData::default();
+        account_data2.set_owner(bpf_loader_upgradeable::id());
         account_data2.set_data(bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data

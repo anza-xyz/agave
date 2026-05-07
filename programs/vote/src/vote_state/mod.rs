@@ -4168,6 +4168,73 @@ mod tests {
     }
 
     #[test]
+    fn test_update_validator_identity_preserves_custom_block_revenue_collector() {
+        // SIMD-0232 enabled.
+        //
+        // Once a validator has set a custom block_revenue_collector, rotating
+        // the validator identity via UpdateValidatorIdentity must NOT clobber
+        // the custom collector.
+        let custom_commission_collector_enabled = true;
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let mut vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let node_pubkey = *vote_state.node_pubkey();
+        let withdrawer_pubkey = *vote_state.authorized_withdrawer();
+
+        // Seed a custom block_revenue_collector distinct from the node identity.
+        let custom_collector = solana_pubkey::new_rand();
+        vote_state.set_block_revenue_collector(custom_collector);
+
+        let serialized = vote_state.serialize();
+        let serialized_len = serialized.len();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized_len);
+        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
+        vote_account.set_data_from_slice(&serialized);
+
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![(id(), processor_account), (node_pubkey, vote_account)],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let new_node_pubkey = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![withdrawer_pubkey, new_node_pubkey]
+            .into_iter()
+            .collect();
+
+        update_validator_identity(
+            &mut borrowed_account,
+            VoteStateTargetVersion::V4,
+            &new_node_pubkey,
+            &signers,
+            custom_commission_collector_enabled,
+        )
+        .unwrap();
+
+        // node_pubkey updated, but block_revenue_collector preserved.
+        let vote_state =
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
+        assert_eq!(vote_state.node_pubkey, new_node_pubkey);
+        assert_eq!(vote_state.block_revenue_collector, custom_collector);
+        assert_ne!(vote_state.block_revenue_collector, new_node_pubkey);
+    }
+
+    #[test]
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_account_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
@@ -4379,6 +4446,39 @@ mod tests {
                 NewCommissionCollector::NewAccount(borrowed_collector)
                     .validate_and_resolve_key(&borrowed_vote, &rent),
                 Ok(collector_pubkey),
+            );
+        }
+
+        // Success: Incinerator is an accepted collector (SIMD-0232 explicitly
+        // allows it — funds sent to the incinerator are burned at end-of-block).
+        {
+            // Imagine the incinerator is temporarily holding funds at the time
+            // of the invocation.
+            let incinerator_account =
+                AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (solana_sdk_ids::incinerator::id(), incinerator_account),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            let borrowed_collector = instruction_context
+                .try_borrow_instruction_account(1)
+                .unwrap();
+            assert_eq!(
+                NewCommissionCollector::NewAccount(borrowed_collector)
+                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                Ok(solana_sdk_ids::incinerator::id()),
             );
         }
 
@@ -4633,6 +4733,138 @@ mod tests {
                 vote_pubkey,
             );
         }
+
+        // V3 -> V4 auto-conversion side-effect: updating one collector against a
+        // V3-serialized account causes the "other" collector to be written as
+        // its V4 default (inflation_rewards_collector = vote_pubkey,
+        // block_revenue_collector = node_pubkey), per try_convert_to_vote_state_v4.
+        {
+            let v3 = get_max_sized_vote_state_v3();
+            let v3_node_pubkey = v3.node_pubkey;
+            let v3_withdrawer = v3.authorized_withdrawer;
+            let v3_vote_pubkey = solana_pubkey::new_rand();
+
+            let v4_size = VoteStateV4::size_of();
+            let mut account_data = vec![0u8; v4_size];
+            bincode::serialize_into(&mut account_data[..], &VoteStateVersions::V3(Box::new(v3)))
+                .unwrap();
+            let mut v3_vote_account =
+                AccountSharedData::new(rent.minimum_balance(v4_size), v4_size, &id());
+            v3_vote_account.set_data_from_slice(&account_data);
+
+            let v3_signers: HashSet<Pubkey> = vec![v3_withdrawer].into_iter().collect();
+
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (v3_vote_pubkey, v3_vote_account),
+                    (new_collector, collector_account.clone()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            update_commission_collector(
+                &mut borrowed_vote_account,
+                target_version,
+                NewCommissionCollector::NewAccount(
+                    instruction_context
+                        .try_borrow_instruction_account(1)
+                        .unwrap(),
+                ),
+                CommissionKind::InflationRewards,
+                &v3_signers,
+                &rent,
+            )
+            .unwrap();
+
+            // The updated field reflects the caller's new collector.
+            assert_eq!(
+                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                new_collector,
+            );
+            // The *other* field was reset to its V4-conversion default
+            // (block_revenue_collector = node_pubkey from the V3 source).
+            assert_eq!(
+                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                v3_node_pubkey,
+            );
+        }
+
+        // Should fail - deserialization error paths.
+        //
+        // All four variants produce `InvalidAccountData`:
+        // * V0_23_5 is explicitly unsupported
+        // * V1_14_11, V3, and V4 fail if state is bad
+        let run_with_account_data = |bytes: Vec<u8>| -> Result<(), InstructionError> {
+            let mut bad_vote_account =
+                AccountSharedData::new(rent.minimum_balance(bytes.len()), bytes.len(), &id());
+            bad_vote_account.set_data_from_slice(&bytes);
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, bad_vote_account),
+                    (new_collector, collector_account.clone()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            update_commission_collector(
+                &mut borrowed_vote_account,
+                target_version,
+                NewCommissionCollector::NewAccount(
+                    instruction_context
+                        .try_borrow_instruction_account(1)
+                        .unwrap(),
+                ),
+                CommissionKind::InflationRewards,
+                &signers,
+                &rent,
+            )
+        };
+        let variant_with_short_body = |variant: u32| -> Vec<u8> {
+            let mut bytes = vec![0u8; 8];
+            bytes[..4].copy_from_slice(&variant.to_le_bytes());
+            bytes
+        };
+
+        // Should fail - V0_23_5 not supported.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(0)),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Should fail - Invalid V1_14_11 state.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(1)),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Should fail - Invalid V3 state.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(2)),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Should fail - Invalid V4 state.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(3)),
+            Err(InstructionError::InvalidAccountData),
+        );
 
         // Should fail - authorized withdrawer didn't sign.
         {

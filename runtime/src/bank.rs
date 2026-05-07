@@ -2797,11 +2797,13 @@ impl Bank {
 
         // After storing genesis accounts, the bank stakes cache will be warmed
         // up and can be used to set the leader id to the highest staked
-        // node. If no staked nodes exist, allow fallback to an unstaked test
-        // leader during tests.
+        // node.
         let leader = self.stakes_cache.stakes().highest_staked_node();
+        // If a leader is specified for test purposes, use that and if no leader found, use a random one.
         #[cfg(feature = "dev-context-only-utils")]
-        let leader = leader_for_tests.or(leader);
+        let leader = leader_for_tests
+            .or(leader)
+            .or(Some(SlotLeader::new_unique()));
         self.leader = leader.expect("genesis processing failed because no staked nodes exist");
 
         #[cfg(not(feature = "dev-context-only-utils"))]
@@ -3930,11 +3932,9 @@ impl Bank {
             self.update_bank_hash_stats(&to_store);
             // See https://github.com/solana-labs/solana/pull/31455 for discussion
             // on *not* updating the index within a threadpool.
-            self.rc.accounts.store_accounts_seq(
-                to_store,
-                transactions.as_deref(),
-                Some(&self.ancestors),
-            );
+            self.rc
+                .accounts
+                .store_accounts_seq(to_store, transactions.as_deref(), &self.ancestors);
         });
 
         // Cached vote and stake accounts are synchronized with accounts-db
@@ -4309,7 +4309,7 @@ impl Bank {
         self.update_bank_hash_stats(&accounts);
         self.rc
             .accounts
-            .store_accounts_par(accounts, None, Some(&self.ancestors));
+            .store_accounts_par(accounts, None, &self.ancestors);
         m.stop();
         self.rc
             .accounts
@@ -6250,7 +6250,7 @@ impl Bank {
             None,
             test_config.accounts_db_config,
             None,
-            Some(SlotLeader::new_unique()),
+            None,
             Arc::default(),
             None,
             None,

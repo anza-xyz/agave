@@ -33,3 +33,4 @@ workspace = true
 [[bench]]
 name = "bench_main"
 harness = false
+required-features = ["agave-unstable-api"]

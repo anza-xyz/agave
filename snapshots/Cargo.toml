@@ -47,3 +47,4 @@ zstd = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }

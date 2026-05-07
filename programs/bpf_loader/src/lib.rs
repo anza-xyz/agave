@@ -1095,8 +1095,8 @@ mod tests {
         solana_rent::Rent,
         solana_sbpf::program::{BuiltinFunctionDefinition, BuiltinProgram},
         solana_sdk_ids::{system_program, sysvar},
-        solana_svm_type_overrides::sync::atomic::Ordering,
-        std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
+        solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
+        std::{fs::File, io::Read, ops::Range},
     };
 
     fn process_instruction(

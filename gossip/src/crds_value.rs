@@ -63,15 +63,9 @@ impl Signable for CrdsValue {
 /// These are labels for values in a record that is associated with `Pubkey`
 #[derive(PartialEq, Hash, Eq, Clone, Debug)]
 pub enum CrdsValueLabel {
-    LegacyContactInfo(Pubkey),
     Vote(VoteIndex, Pubkey),
     LowestSlot(Pubkey),
-    LegacySnapshotHashes(Pubkey),
     EpochSlots(EpochSlotsIndex, Pubkey),
-    AccountsHashes(Pubkey),
-    LegacyVersion(Pubkey),
-    Version(Pubkey),
-    NodeInstance(Pubkey),
     DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
@@ -82,15 +76,9 @@ pub enum CrdsValueLabel {
 impl CrdsValueLabel {
     pub fn pubkey(&self) -> Pubkey {
         match self {
-            CrdsValueLabel::LegacyContactInfo(p) => *p,
             CrdsValueLabel::Vote(_, p) => *p,
             CrdsValueLabel::LowestSlot(p) => *p,
-            CrdsValueLabel::LegacySnapshotHashes(p) => *p,
             CrdsValueLabel::EpochSlots(_, p) => *p,
-            CrdsValueLabel::AccountsHashes(p) => *p,
-            CrdsValueLabel::LegacyVersion(p) => *p,
-            CrdsValueLabel::Version(p) => *p,
-            CrdsValueLabel::NodeInstance(p) => *p,
             CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
@@ -168,15 +156,9 @@ impl CrdsValue {
     pub fn label(&self) -> CrdsValueLabel {
         let pubkey = self.data.pubkey();
         match self.data {
-            CrdsData::LegacyContactInfo(_) => CrdsValueLabel::LegacyContactInfo(pubkey),
             CrdsData::Vote(ix, _) => CrdsValueLabel::Vote(ix, pubkey),
             CrdsData::LowestSlot(_, _) => CrdsValueLabel::LowestSlot(pubkey),
-            CrdsData::LegacySnapshotHashes(_) => CrdsValueLabel::LegacySnapshotHashes(pubkey),
-            CrdsData::AccountsHashes(_) => CrdsValueLabel::AccountsHashes(pubkey),
             CrdsData::EpochSlots(ix, _) => CrdsValueLabel::EpochSlots(ix, pubkey),
-            CrdsData::LegacyVersion(_) => CrdsValueLabel::LegacyVersion(pubkey),
-            CrdsData::Version(_) => CrdsValueLabel::Version(pubkey),
-            CrdsData::NodeInstance(_) => CrdsValueLabel::NodeInstance(pubkey),
             CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
@@ -184,6 +166,13 @@ impl CrdsValue {
                 CrdsValueLabel::RestartLastVotedForkSlots(pubkey)
             }
             CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
+            // Deprecated: sanitize() rejects these before any caller reaches here.
+            CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::AccountsHashes(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::Version(_)
+            | CrdsData::NodeInstance(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
 

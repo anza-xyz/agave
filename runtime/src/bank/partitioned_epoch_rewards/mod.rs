@@ -604,7 +604,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(SlotLeader::new_unique()),
+            None,
             Arc::default(),
             None,
             None,
