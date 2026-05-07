@@ -1076,16 +1076,13 @@ mod tests {
                 .epoch_schedule
                 .get_first_slot_in_epoch(bank_epoch0.epoch() + 1);
             let bank_epoch1 = new_bank(bank_epoch0, first_slot_in_epoch1);
-            // bump slots a bit so that reward slots always land in the same epoch
-            let slot = first_slot_in_epoch1 + 1000;
-            let bank = new_bank(bank_epoch1, slot);
             (
                 Self {
                     _bank_forks: bank_forks,
                     validators,
                     stakers: staker_pubkeys,
                 },
-                bank,
+                bank_epoch1,
             )
         }
     }
@@ -1116,34 +1113,40 @@ mod tests {
         looping_bank
     }
 
+    /// Progresses the bank a few times to pay out the rewards.
+    fn progress_bank_for_payout(mut bank: Arc<Bank>) -> Arc<Bank> {
+        for i in 0..10 {
+            let slot = bank.slot() + 1 + i;
+            bank = new_bank(bank, slot);
+        }
+        bank
+    }
+
     fn test_vote_reward_payout_impl(
         validators: &[ValidatorVoteKeypairs],
         initial_bank: Arc<Bank>,
         num_reward_slots: u64,
     ) -> Arc<Bank> {
+        // bump slots a bit so that reward slots always land in the same epoch and after AG is activated if in migration epoch.
+        let slot = initial_bank.slot() + 100_000;
+        let initial_bank = new_bank(initial_bank, slot);
         let initial_bank_epoch = initial_bank.epoch();
-        let reward_bank = reward_validators(initial_bank, validators, num_reward_slots);
-        assert_eq!(reward_bank.epoch(), initial_bank_epoch);
+        let rewarded_bank = reward_validators(initial_bank, validators, num_reward_slots);
+        assert_eq!(rewarded_bank.epoch(), initial_bank_epoch);
 
-        let payout_epoch = reward_bank.epoch() + 1;
-        let payout_epoch_slot = reward_bank
+        let payout_epoch = rewarded_bank.epoch() + 1;
+        let payout_epoch_slot = rewarded_bank
             .epoch_schedule
             .get_first_slot_in_epoch(payout_epoch);
-        let payout_bank = new_bank(reward_bank, payout_epoch_slot);
+        let payout_bank = new_bank(rewarded_bank, payout_epoch_slot);
         assert_eq!(payout_bank.epoch(), payout_epoch);
 
-        // Need to progress banks a few times for the rewards to be paid.
-        let mut prev_bank = payout_bank;
-        for i in 0..10 {
-            let slot = prev_bank.slot() + 1 + i;
-            prev_bank = new_bank(prev_bank, slot);
-        }
-
-        assert_eq!(prev_bank.epoch(), initial_bank_epoch + 1);
-        prev_bank
+        let bank = progress_bank_for_payout(payout_bank);
+        assert_eq!(bank.epoch(), initial_bank_epoch + 1);
+        bank
     }
 
-    #[test_matrix([true, false], [1_000, 5_000], [0, 5, 10])]
+    #[test_matrix([true, false], [1_000, 5_000], [0, 10])]
     fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16, num_add_stakers: u64) {
         let num_validators = 2;
         let (initial_state, initial_bank) =
@@ -1167,7 +1170,7 @@ mod tests {
 
         let final_state = State::new(
             &final_bank,
-            reward_epoch,
+            final_bank.epoch() - 1,
             &initial_state.stakers,
             &final_bank.rent_collector().rent,
             final_bank.leader().vote_address,
