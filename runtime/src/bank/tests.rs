@@ -11832,7 +11832,7 @@ fn test_new_for_txn_tests_system_transfer() {
         acct
     };
 
-    let owned_accounts = vec![
+    let owned_accounts = [
         (
             sender.pubkey(),
             AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
