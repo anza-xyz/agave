@@ -828,13 +828,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         genesis_config.creation_time = creation_time;
     }
 
-    if let Some(faucet_pubkey) = faucet_pubkey {
-        let faucet_lamports = u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
-        genesis_config.add_account(
-            faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
-        );
-    }
+    let faucet_account_lamports = faucet_pubkey
+        .map(|faucet_pubkey| {
+            let faucet_lamports =
+                u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
+            genesis_config.add_account(
+                faucet_pubkey,
+                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            );
+            faucet_lamports
+        })
+        .unwrap_or(0);
 
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
@@ -884,7 +888,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_stake_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    add_genesis_stake_accounts(
+        &mut genesis_config,
+        issued_lamports - faucet_account_lamports,
+    );
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {
