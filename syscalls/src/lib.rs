@@ -2326,10 +2326,10 @@ fn big_mod_exp_adjusted_exponent_length(endianness: u64, exponent: &[u8]) -> u64
             .position(|byte| *byte != 0)
             .map(|index| {
                 let byte = exponent[index];
-                let remaining_bytes = exponent.len() - index - 1;
+                let remaining_bytes = exponent.len().saturating_sub(index).saturating_sub(1);
                 (remaining_bytes as u64)
                     .saturating_mul(8)
-                    .saturating_add(u64::from(u8::BITS - byte.leading_zeros()))
+                    .saturating_add(u64::from(u8::BITS.saturating_sub(byte.leading_zeros())))
                     .saturating_sub(1)
             })
             .unwrap_or(0),
@@ -2340,7 +2340,7 @@ fn big_mod_exp_adjusted_exponent_length(endianness: u64, exponent: &[u8]) -> u64
                 let byte = exponent[index];
                 (index as u64)
                     .saturating_mul(8)
-                    .saturating_add(u64::from(u8::BITS - byte.leading_zeros()))
+                    .saturating_add(u64::from(u8::BITS.saturating_sub(byte.leading_zeros())))
                     .saturating_sub(1)
             })
             .unwrap_or(0),
@@ -2365,7 +2365,7 @@ fn big_mod_exp_cost(
 
     let operation_cost = multiplication_complexity
         .checked_mul(iteration_count)?
-        .checked_add(divisor - 1)?
+        .checked_add(divisor.saturating_sub(1))?
         .checked_div(divisor)?;
     let operation_cost = u64::try_from(operation_cost).ok()?;
     let bytes_len = params
