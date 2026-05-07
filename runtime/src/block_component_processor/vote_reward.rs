@@ -927,49 +927,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct RewardState {
-        vote_pubkey: Pubkey,
-        stake_prev_lamports: u64,
-        vote_prev_lamports: u64,
-        expected_reward: u64,
-    }
-
-    impl RewardState {
-        fn new(keypair: &ValidatorVoteKeypairs, bank: &Bank) -> Self {
-            let stake_pubkey = keypair.stake_keypair.pubkey();
-            let vote_pubkey = keypair.vote_keypair.pubkey();
-
-            let stake_account = bank.get_account(&stake_pubkey).unwrap();
-            let vote_account = bank.get_account(&vote_pubkey).unwrap();
-
-            let stake_prev_lamports = stake_account.lamports();
-            let vote_prev_lamports = vote_account.lamports();
-
-            let vote_account = bank.get_account(&vote_pubkey).unwrap();
-            let vote_state = vote_state_from_account(&vote_account);
-            assert_eq!(vote_state.epoch_credits().len(), 1);
-            let (epoch, final_credit, initial_credit) = vote_state.epoch_credits()[0];
-
-            assert_eq!(epoch, bank.epoch());
-            assert_eq!(initial_credit, 0);
-            let expected_reward = final_credit;
-
-            Self {
-                vote_pubkey,
-                stake_prev_lamports,
-                vote_prev_lamports,
-                expected_reward,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    struct ValidatorRewardState {
-        prev_lamports: u64,
-        expected_rewards: u64,
-    }
-
     fn new_bank(parent_bank: Arc<Bank>, slot: Slot) -> Arc<Bank> {
         let leader = *parent_bank.leader();
         Arc::new(Bank::new_from_parent(parent_bank, leader, slot))
@@ -1138,7 +1095,7 @@ mod tests {
         bank: Arc<Bank>,
         validators: &[ValidatorVoteKeypairs],
         num_reward_slots: u64,
-    ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
+    ) -> Arc<Bank> {
         let validators_to_reward = validators
             .iter()
             .map(|k| k.vote_keypair.pubkey())
@@ -1157,26 +1114,16 @@ mod tests {
             let slot = looping_bank.slot() + 1;
             looping_bank = new_bank(looping_bank, slot);
         }
-
-        let map = validators
-            .iter()
-            .map(|keypair| {
-                let stake_pubkey = keypair.stake_keypair.pubkey();
-                let reward_state = RewardState::new(keypair, &looping_bank);
-                (stake_pubkey, reward_state)
-            })
-            .collect::<HashMap<_, _>>();
-        (looping_bank, map)
+        looping_bank
     }
 
     fn test_vote_reward_payout_impl(
         validators: &[ValidatorVoteKeypairs],
         initial_bank: Arc<Bank>,
         num_reward_slots: u64,
-    ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
+    ) -> Arc<Bank> {
         let initial_bank_epoch = initial_bank.epoch();
-        let (reward_bank, rewarded_validators) =
-            reward_validators(initial_bank, validators, num_reward_slots);
+        let reward_bank = reward_validators(initial_bank, validators, num_reward_slots);
         assert_eq!(reward_bank.epoch(), initial_bank_epoch);
 
         let payout_epoch = reward_bank.epoch() + 1;
@@ -1194,75 +1141,12 @@ mod tests {
         }
 
         assert_eq!(prev_bank.epoch(), initial_bank_epoch + 1);
-        (prev_bank, rewarded_validators)
+        prev_bank
     }
 
-    #[test_matrix([true, false], [1_000, 5_000])]
-    fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
-        let num_validators = 3;
-        let num_reward_slots = 10;
-        let (initial_state, initial_bank) =
-            InitialState::new(num_validators, 0, pay_leader, commission_bps);
-
-        let (final_bank, rewarded_validators) =
-            test_vote_reward_payout_impl(&initial_state.validators, initial_bank, num_reward_slots);
-        let mut voter_rewards = HashMap::new();
-
-        for (stake_pubkey, reward_state) in rewarded_validators {
-            let stake_account = final_bank.get_account(&stake_pubkey).unwrap();
-            let stake_cur = stake_account.lamports();
-
-            let (vote_expected_reward, stake_expected_reward, is_split) =
-                commission_split(commission_bps, reward_state.expected_reward);
-
-            let validator_reward_state =
-                voter_rewards
-                    .entry(reward_state.vote_pubkey)
-                    .or_insert(ValidatorRewardState {
-                        prev_lamports: reward_state.vote_prev_lamports,
-                        expected_rewards: 0,
-                    });
-            validator_reward_state.expected_rewards += vote_expected_reward;
-
-            assert!(is_split);
-            assert_ne!(
-                stake_expected_reward, 0,
-                "stake_expected_reward {stake_expected_reward} should not be 0"
-            );
-            assert_ne!(
-                vote_expected_reward, 0,
-                "vote_expected_reward {vote_expected_reward} should not be 0"
-            );
-            assert_eq!(
-                stake_cur - reward_state.stake_prev_lamports,
-                stake_expected_reward,
-                "stake_cur={stake_cur} prev={} expected={stake_expected_reward}",
-                reward_state.stake_prev_lamports
-            );
-
-            // Due to rounding issues, off by 1 errors are possible.
-            let total_reward = stake_expected_reward + vote_expected_reward;
-            assert!(
-                total_reward.max(reward_state.expected_reward)
-                    - total_reward.min(reward_state.expected_reward)
-                    <= 1
-            );
-        }
-
-        for (vote_pubkey, state) in voter_rewards {
-            let vote_account = final_bank.get_account(&vote_pubkey).unwrap();
-            let vote_cur = vote_account.lamports();
-            assert_eq!(
-                vote_cur + VAT_TO_BURN_PER_EPOCH - state.prev_lamports,
-                state.expected_rewards
-            );
-        }
-    }
-
-    #[test_matrix([true, false], [1_000, 5_000])]
-    fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
+    #[test_matrix([true, false], [1_000, 5_000], [0, 5, 10])]
+    fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16, num_add_stakers: u64) {
         let num_validators = 2;
-        let num_add_stakers = 5;
         let (initial_state, initial_bank) =
             InitialState::new(num_validators, num_add_stakers, pay_leader, commission_bps);
 
@@ -1279,7 +1163,7 @@ mod tests {
             num_reward_slots,
         );
 
-        let (final_bank, _) =
+        let final_bank =
             test_vote_reward_payout_impl(&initial_state.validators, initial_bank, num_reward_slots);
 
         let final_state = State::new(
