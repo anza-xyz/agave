@@ -106,31 +106,27 @@ impl StandardBroadcastRun {
     ) {
         debug_assert_ne!(bank.slot(), self.slot);
 
+        let parent_block_id = bank
+            .parent_block_id()
+            .expect("All banks frozen (including snapshot banks) must have a block id");
+
         let chained_merkle_root = if self.slot == bank.parent_slot() {
             self.chained_merkle_root
         } else {
-            broadcast_utils::get_chained_merkle_root_from_parent(
+            match broadcast_utils::get_chained_merkle_root_from_parent(
                 bank.slot(),
                 bank.parent_slot(),
                 blockstore,
-            )
-            .unwrap_or_else(|err: Error| {
-                error!("Unknown chained Merkle root: {err:?}");
-                process_stats.err_unknown_chained_merkle_root += 1;
-                Hash::default()
-            })
+            ) {
+                Ok(chained_merkle_root) => chained_merkle_root,
+                // This is a snapshot slot that we don't have the shreds for. Use the block id from the snapshot
+                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => parent_block_id,
+                Err(e) => panic!(
+                    "Unexpected error while producing leader block for {}: {e:?}",
+                    bank.slot()
+                ),
+            }
         };
-
-        let parent_block_id = bank.parent_block_id().unwrap_or_else(|| {
-            // Once SIMD-0333 is active, we can just hard unwrap here.
-            error!(
-                "Parent block id missing for slot {} parent {}",
-                bank.slot(),
-                bank.parent_slot()
-            );
-            process_stats.err_unknown_parent_block_id += 1;
-            Hash::default()
-        });
 
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
@@ -671,6 +667,8 @@ mod test {
         genesis_config.ticks_per_slot = max_ticks_per_n_shreds(num_shreds_per_slot, None) + 1;
 
         let bank = Bank::new_for_tests(&genesis_config);
+        bank.set_tick_height(bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().root_bank();
         (
@@ -682,6 +680,15 @@ mod test {
             socket,
             bank_forks,
         )
+    }
+
+    fn new_child_bank(parent: &Arc<Bank>, slot: Slot) -> Arc<Bank> {
+        assert!(parent.block_id().is_some());
+        Arc::new(Bank::new_from_parent(
+            parent.clone(),
+            *parent.leader(),
+            slot,
+        ))
     }
 
     #[test]
@@ -728,14 +735,14 @@ mod test {
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1));
+        let bank1 = new_child_bank(&bank0, 1);
 
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
             component: BlockComponent::EntryBatch(ticks0.clone()),
             bank: bank1.clone(),
-            last_tick_height: (ticks0.len() - 1) as u64,
+            last_tick_height: bank1.tick_height() + ticks0.len() as u64,
         };
 
         // Step 1: Make an incomplete transmission for slot 1
@@ -802,7 +809,8 @@ mod test {
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
         // slot 1
-        let bank2 = Arc::new(Bank::new_from_parent(bank1, *bank0.leader(), 2));
+        bank1.set_block_id(Some(Hash::new_unique()));
+        let bank2 = new_child_bank(&bank1, 2);
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset
         let num_shreds = 1;
@@ -814,8 +822,8 @@ mod test {
         );
         let receive_results = ReceiveResults {
             component: BlockComponent::EntryBatch(ticks1.clone()),
-            bank: bank2,
-            last_tick_height: (ticks1.len() - 1) as u64,
+            bank: bank2.clone(),
+            last_tick_height: bank2.tick_height() + ticks1.len() as u64,
         };
         standard_broadcast_run
             .test_process_receive_results(
@@ -878,17 +886,25 @@ mod test {
     #[test]
     fn test_buffer_data_shreds() {
         let num_shreds_per_slot = 2;
-        let (blockstore, genesis_config, _cluster_info, bank, leader_keypair, _socket, _bank_forks) =
-            setup(num_shreds_per_slot);
+        let (
+            blockstore,
+            genesis_config,
+            _cluster_info,
+            parent_bank,
+            leader_keypair,
+            _socket,
+            _bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
         let (bsend, brecv) = unbounded();
         let (ssend, _srecv) = unbounded();
         let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut last_tick_height = 0;
+        let mut last_tick_height = bank.tick_height();
         let mut standard_broadcast_run =
             StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
-            last_tick_height += (ticks.len() - 1) as u64;
+            last_tick_height += ticks.len() as u64;
             let receive_results = ReceiveResults {
                 component: BlockComponent::EntryBatch(ticks),
                 bank: bank.clone(),
@@ -933,15 +949,23 @@ mod test {
     fn test_slot_finish() {
         // Setup
         let num_shreds_per_slot = 2;
-        let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
-            setup(num_shreds_per_slot);
+        let (
+            blockstore,
+            genesis_config,
+            cluster_info,
+            parent_bank,
+            leader_keypair,
+            socket,
+            bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
 
         // Insert complete slot of ticks needed to finish the slot
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
             component: BlockComponent::EntryBatch(ticks.clone()),
-            bank: bank0,
-            last_tick_height: ticks.len() as u64,
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + ticks.len() as u64,
         };
 
         let (votor_event_sender, _votor_event_receiver) = unbounded();
