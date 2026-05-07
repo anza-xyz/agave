@@ -166,8 +166,10 @@ pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHash
 pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
-    /// total lamports across all `accounts_with_rewards`
-    pub(super) total_reward_commission_lamports: u64,
+    /// lamports distributed across all `accounts_with_rewards`
+    pub(super) distributed_lamports: u64,
+    /// lamports burned from undistributed commissions
+    pub(super) burned_lamports: u64,
 }
 
 /// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts
