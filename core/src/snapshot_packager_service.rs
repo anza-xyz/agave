@@ -239,13 +239,13 @@ impl SnapshotPackagerService {
         // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
         // Also, don't use direct I/O, since data is likely going to be re-read soon after.
         let io_setup = IoSetupState::default()
-            .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
-            .with_direct_io(false)
             .with_shared_sqpoll()
             .unwrap_or_else(|error| {
                 warn!("unable to use sqpoll for io-uring: {error}");
                 IoSetupState::default()
-            });
+            })
+            .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+            .with_direct_io(false);
 
         if let Some(bank_snapshot_package) = bank_snapshot_package {
             info!("Serializing bank snapshot...");
