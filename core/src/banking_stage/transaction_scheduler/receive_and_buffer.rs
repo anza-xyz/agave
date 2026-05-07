@@ -328,63 +328,59 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_lock_validation = 0;
         let mut num_dropped_on_compute_budget = 0;
 
-        for packet_batch in packet_batch_message.iter() {
-            for packet in packet_batch.iter() {
-                let Some(packet_data) = packet.data(..) else {
-                    continue;
-                };
+        for packet in packet_batch_message.iter() {
+            let Some(packet_data) = packet.data(..) else {
+                continue;
+            };
 
-                num_received += 1;
-                if !should_parse {
-                    num_dropped_without_parsing += 1;
-                    continue;
-                }
+            num_received += 1;
+            if !should_parse {
+                num_dropped_without_parsing += 1;
+                continue;
+            }
 
-                // Reserve free-space to copy packet into, run sanitization checks, and insert.
-                if let Some(transaction_id) =
-                    container.try_insert_map_only_with_data(packet_data, |bytes| {
-                        match Self::try_handle_packet(
-                            bytes,
-                            root_bank,
-                            working_bank,
-                            transaction_account_lock_limit,
-                            enable_instruction_accounts_limit,
-                            &self.filter_keys,
-                        ) {
-                            Ok(state) => Ok(state),
-                            Err(
-                                PacketHandlingError::Sanitization
-                                | PacketHandlingError::ALTResolution,
-                            ) => {
-                                num_dropped_on_parsing_and_sanitization += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::LockValidation) => {
-                                num_dropped_on_lock_validation += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::ComputeBudget) => {
-                                num_dropped_on_compute_budget += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::FilterKey) => {
-                                num_dropped_on_filter_key += 1;
-                                Err(())
-                            }
+            // Reserve free-space to copy packet into, run sanitization checks, and insert.
+            if let Some(transaction_id) =
+                container.try_insert_map_only_with_data(packet_data, |bytes| {
+                    match Self::try_handle_packet(
+                        bytes,
+                        root_bank,
+                        working_bank,
+                        transaction_account_lock_limit,
+                        enable_instruction_accounts_limit,
+                        &self.filter_keys,
+                    ) {
+                        Ok(state) => Ok(state),
+                        Err(
+                            PacketHandlingError::Sanitization | PacketHandlingError::ALTResolution,
+                        ) => {
+                            num_dropped_on_parsing_and_sanitization += 1;
+                            Err(())
                         }
-                    })
-                {
-                    let priority = container
-                        .get_mut_transaction_state(transaction_id)
-                        .expect("transaction must exist")
-                        .priority();
-                    transaction_priority_ids
-                        .push(TransactionPriorityId::new(priority, transaction_id));
-
-                    // If at capacity, run checks and remove invalid transactions.
-                    if transaction_priority_ids.len() == EXTRA_CAPACITY {
-                        check_and_push_to_queue(container, &mut transaction_priority_ids);
+                        Err(PacketHandlingError::LockValidation) => {
+                            num_dropped_on_lock_validation += 1;
+                            Err(())
+                        }
+                        Err(PacketHandlingError::ComputeBudget) => {
+                            num_dropped_on_compute_budget += 1;
+                            Err(())
+                        }
+                        Err(PacketHandlingError::FilterKey) => {
+                            num_dropped_on_filter_key += 1;
+                            Err(())
+                        }
                     }
+                })
+            {
+                let priority = container
+                    .get_mut_transaction_state(transaction_id)
+                    .expect("transaction must exist")
+                    .priority();
+                transaction_priority_ids.push(TransactionPriorityId::new(priority, transaction_id));
+
+                // If at capacity, run checks and remove invalid transactions.
+                if transaction_priority_ids.len() == EXTRA_CAPACITY {
+                    check_and_push_to_queue(container, &mut transaction_priority_ids);
                 }
             }
         }
@@ -587,15 +583,17 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::{Receiver, unbounded},
+        agave_banking_stage_ingress_types::{
+            banking_packet_batch_from_bytes, banking_packet_batch_from_transaction,
+        },
+        crossbeam_channel::{Receiver, Sender, unbounded},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
             AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage, v0,
         },
-        solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch, to_packet_batches},
+        solana_packet::PACKET_DATA_SIZE,
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
@@ -647,6 +645,17 @@ mod tests {
         };
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)
+    }
+
+    fn send_transaction_packet_batches<T>(sender: &Sender<BankingPacketBatch>, items: &[T])
+    where
+        T: wincode::SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+    {
+        for transaction in items {
+            sender
+                .send(banking_packet_batch_from_transaction(transaction))
+                .unwrap();
+        }
     }
 
     // verify container state makes sense:
@@ -720,7 +729,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let ReceivingStats {
@@ -770,8 +779,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let mut packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        Arc::make_mut(&mut packet_batches)[0]
+        let mut packet_batches = banking_packet_batch_from_transaction(&transaction);
+        Arc::make_mut(&mut packet_batches)
             .first_mut()
             .unwrap()
             .meta_mut()
@@ -817,9 +826,7 @@ mod tests {
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
-        let packet_batches = Arc::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
-            Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
-        ]))]);
+        let packet_batches = banking_packet_batch_from_bytes(vec![1u8; PACKET_DATA_SIZE]);
         sender.send(packet_batches).unwrap();
 
         let ReceivingStats {
@@ -862,7 +869,7 @@ mod tests {
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
         let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let ReceivingStats {
@@ -910,7 +917,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let ReceivingStats {
@@ -973,7 +980,7 @@ mod tests {
             &[&mint_keypair],
         )
         .unwrap();
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let ReceivingStats {
@@ -1021,7 +1028,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let ReceivingStats {
@@ -1073,7 +1080,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let stats = receive_and_buffer
@@ -1104,7 +1111,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let stats = receive_and_buffer
@@ -1134,7 +1141,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        let packet_batches = banking_packet_batch_from_transaction(&transaction);
         sender.send(packet_batches).unwrap();
 
         let stats = receive_and_buffer
@@ -1164,8 +1171,7 @@ mod tests {
             )
         }));
 
-        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
-        sender.send(packet_batches).unwrap();
+        send_transaction_packet_batches(&sender, &transactions);
 
         let ReceivingStats {
             num_received,
@@ -1244,8 +1250,7 @@ mod tests {
         let bad_tx = create_tx_with_n_keys(&mint_keypair, transaction_account_lock_limit + 1);
         let transactions = [bad_tx];
 
-        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
-        sender.send(packet_batches).unwrap();
+        send_transaction_packet_batches(&sender, &transactions);
 
         let ReceivingStats {
             num_received,

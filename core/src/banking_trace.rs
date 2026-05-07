@@ -64,16 +64,54 @@ pub struct BankingTracer {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "DY2zjwewCSNansb5xwtoxkCcNuXbVmWZe3U9nNH2kzNz")
+    frozen_abi(digest = "5jvhDLvSuAMKMHg8nSkmP57J5QitUcSRK2Ykg4FGCLzk")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TracedEvent {
     PacketBatch(ChannelLabel, BankingPacketBatch),
     BlockAndBankHash(Slot, Hash, Hash),
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::abi_example::AbiEnumVisitor for TracedEvent {
+    fn visit_for_abi(
+        &self,
+        digester: &mut solana_frozen_abi::abi_digester::AbiDigester,
+    ) -> solana_frozen_abi::abi_digester::DigestResult {
+        use solana_frozen_abi::abi_example::AbiExample;
+
+        digester.update_with_string("enum TracedEvent (variants = 2)".to_string());
+
+        let label = <ChannelLabel as AbiExample>::example();
+        let packet_batch =
+            BankingPacketBatch::new(<solana_perf::packet::PacketBatch as AbiExample>::example());
+        let mut packet_batch_variant = digester.create_enum_child()?;
+        packet_batch_variant.update_with_string("variant(0) PacketBatch (fields = 2)".to_string());
+        let mut packet_batch_fields = packet_batch_variant.create_child()?;
+        packet_batch_fields.update_with_type::<ChannelLabel>("field");
+        ChannelLabel::visit_for_abi(&label, &mut packet_batch_fields.create_child()?)?;
+        packet_batch_fields.update_with_type::<BankingPacketBatch>("field");
+        solana_perf::packet::PacketBatch::visit_for_abi(
+            packet_batch.as_ref(),
+            &mut packet_batch_fields.create_child()?,
+        )?;
+
+        let sample_variant = TracedEvent::BlockAndBankHash(
+            <Slot as AbiExample>::example(),
+            <Hash as AbiExample>::example(),
+            <Hash as AbiExample>::example(),
+        );
+        <TracedEvent as serde::Serialize>::serialize(
+            &sample_variant,
+            digester.create_enum_child()?,
+        )?;
+
+        digester.create_child()
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
@@ -404,12 +442,19 @@ impl TracedSender {
 pub mod for_test {
     use {
         super::*,
-        solana_perf::{packet::to_packet_batches, test_tx::test_tx},
+        agave_banking_stage_ingress_types::{
+            banking_packet_batch_from_bytes, banking_packet_batch_from_transaction,
+        },
+        solana_perf::test_tx::test_tx,
         tempfile::TempDir,
     };
 
     pub fn sample_packet_batch() -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(&vec![test_tx(); 4], 10))
+        banking_packet_batch_from_transaction(&test_tx())
+    }
+
+    pub fn empty_packet_batch() -> BankingPacketBatch {
+        banking_packet_batch_from_bytes(Vec::new())
     }
 
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
@@ -466,7 +511,7 @@ mod tests {
         });
 
         non_vote_sender
-            .send(BankingPacketBatch::new(vec![]))
+            .send(for_test::empty_packet_batch())
             .unwrap();
         for_test::terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, None);
     }

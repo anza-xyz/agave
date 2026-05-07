@@ -382,14 +382,12 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::BankingTracer,
+        agave_banking_stage_ingress_types::packet_batch_from_transaction,
         crossbeam_channel::unbounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{VersionedMessage, v1},
-        solana_perf::{
-            packet::{BytesPacket, BytesPacketBatch, to_packet_batches},
-            test_tx::test_tx,
-        },
+        solana_perf::test_tx::test_tx,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
         solana_signer::Signer,
@@ -408,17 +406,16 @@ mod tests {
         VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
     }
 
-    fn gen_batches(
-        use_same_tx: bool,
-        packets_per_batch: usize,
-        total_packets: usize,
-    ) -> Vec<PacketBatch> {
+    fn gen_batches(use_same_tx: bool, total_packets: usize) -> Vec<PacketBatch> {
         if use_same_tx {
             let tx = test_tx();
-            to_packet_batches(&vec![tx; total_packets], packets_per_batch)
+            (0..total_packets)
+                .map(|_| packet_batch_from_transaction(&tx))
+                .collect()
         } else {
-            let txs: Vec<_> = (0..total_packets).map(|_| test_tx()).collect();
-            to_packet_batches(&txs, packets_per_batch)
+            (0..total_packets)
+                .map(|_| packet_batch_from_transaction(&test_tx()))
+                .collect()
         }
     }
 
@@ -455,10 +452,9 @@ mod tests {
         );
 
         let now = Instant::now();
-        let packets_per_batch = 128;
         let total_packets = 1920;
 
-        let batches = gen_batches(use_same_tx, packets_per_batch, total_packets);
+        let batches = gen_batches(use_same_tx, total_packets);
         trace!(
             "starting... generation took: {} ms batches: {}",
             now.elapsed().as_millis(),
@@ -468,7 +464,7 @@ mod tests {
         let mut sent_len = 0;
         for batch in batches.into_iter() {
             sent_len += batch.len();
-            assert_eq!(batch.len(), packets_per_batch);
+            assert_eq!(batch.len(), 1);
             packet_s.send(batch).unwrap();
         }
         let mut valid_received = 0;
@@ -476,10 +472,7 @@ mod tests {
         drop(packet_s);
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_secs(30)) {
-                valid_received += verifieds
-                    .iter()
-                    .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
-                    .sum::<usize>();
+                valid_received += verifieds.iter().filter(|p| !p.meta().discard()).count();
             } else {
                 break;
             }
@@ -528,20 +521,16 @@ mod tests {
             sharable_banks,
         );
 
-        let mut bytes_batch = BytesPacketBatch::with_capacity(1);
-        bytes_batch.push(BytesPacket::from_bytes(
-            None,
-            wincode::serialize(&test_tx_v1()).unwrap(),
-        ));
-        packet_s.send(PacketBatch::from(bytes_batch)).unwrap();
+        packet_s
+            .send(packet_batch_from_transaction(&test_tx_v1()))
+            .unwrap();
         drop(packet_s);
         drop(vote_packet_s);
 
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
-        assert_eq!(verified_batch[0].len(), 1);
         assert_eq!(
-            !verified_batch[0].get(0).unwrap().meta().discard(),
+            !verified_batch.get(0).unwrap().meta().discard(),
             expected_valid
         );
 

@@ -448,7 +448,9 @@ mod tests {
             tests::create_slow_genesis_config,
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
-        agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, BankingPacketReceiver, banking_packet_batch_from_transaction,
+        },
         crossbeam_channel::{Receiver, Sender, unbounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -457,7 +459,6 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{NUM_PACKETS, PacketBatch, to_packet_batches},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -479,7 +480,7 @@ mod tests {
         #[allow(dead_code)]
         bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
-        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
+        banking_packet_sender: Sender<BankingPacketBatch>,
         shared_leader_state: SharedLeaderState,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
@@ -578,8 +579,15 @@ mod tests {
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
     }
 
-    fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
+    fn send_banking_packet_batches(
+        sender: &Sender<BankingPacketBatch>,
+        transactions: &[Transaction],
+    ) {
+        for transaction in transactions {
+            sender
+                .send(banking_packet_batch_from_transaction(transaction))
+                .unwrap();
+        }
     }
 
     // Helper function to let test receive and then schedule packets.
@@ -698,9 +706,7 @@ mod tests {
         let tx2_hash = tx2.message().hash();
 
         let txs = vec![tx1, tx2];
-        banking_packet_sender
-            .send(to_banking_packet_batch(&txs))
-            .unwrap();
+        send_banking_packet_batches(banking_packet_sender, &txs);
 
         test_receive_then_schedule(&mut scheduler_controller);
         let consume_work = consume_work_receivers[0].try_recv().unwrap();
@@ -757,9 +763,7 @@ mod tests {
         let tx2_hash = tx2.message().hash();
 
         let txs = vec![tx1, tx2];
-        banking_packet_sender
-            .send(to_banking_packet_batch(&txs))
-            .unwrap();
+        send_banking_packet_batches(banking_packet_sender, &txs);
 
         // We expect 2 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
@@ -824,12 +828,8 @@ mod tests {
             })
             .collect_vec();
 
-        banking_packet_sender
-            .send(to_banking_packet_batch(&txs1))
-            .unwrap();
-        banking_packet_sender
-            .send(to_banking_packet_batch(&txs2))
-            .unwrap();
+        send_banking_packet_batches(banking_packet_sender, &txs1);
+        send_banking_packet_batches(banking_packet_sender, &txs2);
 
         // We expect 4 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
@@ -877,9 +877,7 @@ mod tests {
                 )
             })
             .collect_vec();
-        banking_packet_sender
-            .send(to_banking_packet_batch(&txs))
-            .unwrap();
+        send_banking_packet_batches(banking_packet_sender, &txs);
 
         // Priority Expectation:
         // Thread 0: [3, 1]
@@ -957,9 +955,7 @@ mod tests {
         let tx2_hash = tx2.message().hash();
 
         let txs = vec![tx1, tx2];
-        banking_packet_sender
-            .send(to_banking_packet_batch(&txs))
-            .unwrap();
+        send_banking_packet_batches(banking_packet_sender, &txs);
 
         test_receive_then_schedule(&mut scheduler_controller);
         let consume_work = consume_work_receivers[0].try_recv().unwrap();

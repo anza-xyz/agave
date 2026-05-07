@@ -2,12 +2,11 @@
 //!
 
 use {
-    agave_banking_stage_ingress_types::BankingPacketReceiver,
+    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage, tpu_message_flags},
     agave_scheduling_utils::handshake::AgaveTpuToPackSession,
     rts_alloc::Allocator,
     solana_packet::PacketFlags,
-    solana_perf::packet::PacketBatch,
     std::{
         net::IpAddr,
         ptr::NonNull,
@@ -63,13 +62,13 @@ fn tpu_to_pack(
         .unwrap_or_else(crossbeam_channel::never);
 
     while !exit.load(Ordering::Relaxed) {
-        let packet_batches = match crossbeam_channel::select! {
+        let packet_batch = match crossbeam_channel::select! {
             recv(non_vote_receiver) -> msg => msg,
             recv(gossip_vote_receiver) -> msg => msg,
             recv(tpu_vote_receiver) -> msg => msg,
             default(Duration::from_secs(1)) => continue,
         } {
-            Ok(packet_batches) => packet_batches,
+            Ok(packet_batch) => packet_batch,
             Err(crossbeam_channel::RecvError) => {
                 // Senders have been dropped, signal shutdown and exit.
                 shutdown_signal.cancel();
@@ -77,14 +76,14 @@ fn tpu_to_pack(
                 break;
             }
         };
-        handle_packet_batches(&allocator, &mut producer, packet_batches);
+        handle_packet_batch(&allocator, &mut producer, packet_batch);
     }
 }
 
-fn handle_packet_batches(
+fn handle_packet_batch(
     allocator: &Allocator,
     producer: &mut shaq::spsc::Producer<TpuToPackMessage>,
-    packet_batches: Arc<Vec<PacketBatch>>,
+    packet_batch: BankingPacketBatch,
 ) {
     // Clean all remote frees in allocator so we have as much
     // room as possible.
@@ -93,39 +92,37 @@ fn handle_packet_batches(
     // Sync producer queue with reader so we have as much room as possible.
     producer.sync();
 
-    'batch_loop: for batch in packet_batches.iter() {
-        for packet in batch.iter() {
-            // Check if the packet is valid and get the bytes.
-            let Some(packet_bytes) = packet.data(..) else {
-                continue;
-            };
-            let packet_size = packet_bytes.len();
+    for packet in packet_batch.iter() {
+        // Check if the packet is valid and get the bytes.
+        let Some(packet_bytes) = packet.data(..) else {
+            continue;
+        };
+        let packet_size = packet_bytes.len();
 
-            // Allocate space for the packet to be copied into.
-            let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
-                warn!("Failed to allocate. Dropping the rest of the batch.");
-                break 'batch_loop;
-            };
-            // Get the offset of the allocated pointer in the allocator.
-            // SAFETY: `allocated_ptr` was allocated from `allocator`.
-            let allocated_ptr_offset_in_allocator = unsafe { allocator.offset(allocated_ptr) };
+        // Allocate space for the packet to be copied into.
+        let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
+            warn!("Failed to allocate. Dropping the rest of the batch.");
+            break;
+        };
+        // Get the offset of the allocated pointer in the allocator.
+        // SAFETY: `allocated_ptr` was allocated from `allocator`.
+        let allocated_ptr_offset_in_allocator = unsafe { allocator.offset(allocated_ptr) };
 
-            // SAFETY:
-            // - `allocated_ptr` is valid for `packet_size` bytes.
-            let message = unsafe {
-                copy_packet_and_populate_message(
-                    packet_bytes,
-                    packet.meta(),
-                    allocated_ptr,
-                    allocated_ptr_offset_in_allocator,
-                )
-            };
+        // SAFETY:
+        // - `allocated_ptr` is valid for `packet_size` bytes.
+        let message = unsafe {
+            copy_packet_and_populate_message(
+                packet_bytes,
+                packet.meta(),
+                allocated_ptr,
+                allocated_ptr_offset_in_allocator,
+            )
+        };
 
-            if producer.try_write(message).is_err() {
-                // SAFETY: `allocated_ptr` was allocated by `allocator`
-                //         and not previously freed.
-                unsafe { allocator.free(allocated_ptr) };
-            }
+        if producer.try_write(message).is_err() {
+            // SAFETY: `allocated_ptr` was allocated by `allocator`
+            //         and not previously freed.
+            unsafe { allocator.free(allocated_ptr) };
         }
     }
 
