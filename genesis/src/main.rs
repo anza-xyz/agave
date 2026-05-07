@@ -414,6 +414,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("faucet-lamports")
                 .value_name("LAMPORTS")
                 .takes_value(true)
+                .requires("faucet_pubkey")
                 .validator(is_non_zero)
                 .help("Number of lamports to assign to the faucet"),
         )
