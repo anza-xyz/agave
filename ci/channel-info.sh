@@ -62,6 +62,19 @@ for head in "${heads[@]}"; do
   stable=$head
 done
 
+# Apply channel pin overrides fetched from master. Single source of truth:
+# every branch's CI honors the same file. Hard-fail on transport errors so
+# misconfiguration surfaces immediately.
+overrides_url="https://raw.githubusercontent.com/anza-xyz/agave/master/ci/channel-overrides?ts=$(date +%s)"
+overrides=$(curl -fsSL "$overrides_url") || {
+  echo "error: failed to fetch channel overrides from $overrides_url" >&2
+  exit 1
+}
+# shellcheck disable=SC1090
+source <(echo "$overrides")
+[[ -n $PINNED_BETA_CHANNEL ]]   && beta=${PINNED_BETA_CHANNEL#v}
+[[ -n $PINNED_STABLE_CHANNEL ]] && stable=${PINNED_STABLE_CHANNEL#v}
+
 for tag in "${tags[@]}"; do
   if [[ -n $beta && $tag = $beta* ]]; then
     if [[ -n $beta_tag ]]; then
