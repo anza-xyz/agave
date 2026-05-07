@@ -1273,8 +1273,7 @@ mod tests {
             &initial_bank,
             reward_epoch,
             &initial_state.stakers,
-            // TODO
-            &Rent::default(),
+            &initial_bank.rent_collector().rent,
             initial_bank.leader().vote_address,
             commission_bps,
             num_reward_slots,
@@ -1287,7 +1286,7 @@ mod tests {
             &final_bank,
             reward_epoch,
             &initial_state.stakers,
-            &Rent::default(),
+            &final_bank.rent_collector().rent,
             final_bank.leader().vote_address,
             commission_bps,
             num_reward_slots,
