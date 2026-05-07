@@ -735,7 +735,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_stake_authorized_pubkey =
         pubkey_of(&matches, "bootstrap_stake_authorized_pubkey");
-    let faucet_lamports = u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
     let faucet_pubkey = pubkey_of(&matches, "faucet_pubkey");
 
     let ticks_per_slot = value_t_or_exit!(matches, "ticks_per_slot", u64);
@@ -829,6 +828,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     if let Some(faucet_pubkey) = faucet_pubkey {
+        let faucet_lamports = u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
         genesis_config.add_account(
             faucet_pubkey,
             AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
