@@ -1154,7 +1154,7 @@ fn test_shrink_zero_lamport_single_ref_account() {
             .storage
             .get_slot_storage_entry(slot)
             .unwrap()
-            .alive_bytes
+            .num_alive_bytes
             .fetch_sub(AppendVec::calculate_stored_size(0), Ordering::Release);
 
         if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
@@ -2242,7 +2242,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
-    store1.alive_bytes.store(0, Ordering::Release);
+    store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -2256,7 +2256,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
@@ -2271,7 +2271,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
@@ -2309,7 +2309,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
-    store1.alive_bytes.store(0, Ordering::Release);
+    store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -2323,7 +2323,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
@@ -2338,7 +2338,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
@@ -2374,7 +2374,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
     ));
     db.storage.insert(Arc::clone(&store1));
     store1
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 4, Ordering::Release);
     candidates.insert(store1_slot);
 
@@ -2389,7 +2389,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
@@ -4336,18 +4336,18 @@ fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
     }
 
     entry
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize - 1, Ordering::Release);
     assert!(accounts.is_candidate_for_shrink(&entry));
     entry
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize, Ordering::Release);
     assert!(!accounts.is_candidate_for_shrink(&entry));
 
     let shrink_ratio = 0.3;
     let file_size_shrink_limit = (store_file_size as f64 * shrink_ratio) as usize;
     entry
-        .alive_bytes
+        .num_alive_bytes
         .store(file_size_shrink_limit + 1, Ordering::Release);
     accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio };
     assert!(accounts.is_candidate_for_shrink(&entry));
@@ -4529,8 +4529,8 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
 
     // fake out the store count to avoid the assert
     for (_, store) in accounts.storage.iter() {
-        store.alive_bytes.store(0, Ordering::Release);
-        store.count.store(0, Ordering::Release);
+        store.num_alive_bytes.store(0, Ordering::Release);
+        store.num_alive_accounts.store(0, Ordering::Release);
     }
 
     // count needs to be <= approx stored count in store.
