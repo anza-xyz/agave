@@ -11866,7 +11866,8 @@ fn test_new_for_txn_tests_system_transfer() {
     ];
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
-    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, None);
+    let ancestors = Ancestors::from(vec![parent_slot]);
+    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
@@ -12039,14 +12040,15 @@ fn test_new_for_block_tests_with_vote_account() {
         }),
     ];
 
-    let accounts_data_size: u64 = owned_accounts
+    let accounts_data_size = owned_accounts
         .iter()
         .map(|(_, a)| a.data().len() as u64)
         .sum();
-    let total_lamports: u64 = owned_accounts.iter().map(|(_, a)| a.lamports()).sum();
+    let total_lamports = owned_accounts.iter().map(|(_, a)| a.lamports()).sum();
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
-    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, None);
+    let ancestors = Ancestors::from(vec![parent_slot]);
+    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
