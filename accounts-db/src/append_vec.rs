@@ -1075,7 +1075,7 @@ impl AppendVec {
 
     /// Returns the way to access this accounts file when archiving
     pub(crate) fn internals_for_archive(&self) -> InternalsForArchive<'_> {
-        InternalsForArchive { path: self.path() }
+        InternalsForArchive { file: &self.file }
     }
 }
 

@@ -6,8 +6,10 @@ use {
     agave_fs::{buffered_writer::large_file_buf_writer, io_setup::IoSetupState},
     log::info,
     solana_accounts_db::{
-        account_storage::AccountStoragesOrderer, account_storage_entry::AccountStorageEntry,
-        account_storage_reader::AccountStorageReader, accounts_file::AccountsFile,
+        account_storage::AccountStoragesOrderer,
+        account_storage_entry::AccountStorageEntry,
+        account_storage_reader::{AccountStorageReader, storage_file_buf_reader},
+        accounts_file::AccountsFile,
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -19,6 +21,9 @@ use {
 // such that during unpacking large writes are mixed with file metadata operations
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
+
+// Buffer size capacity for read-ahead using default io-uring reader.
+const ACCOUNT_STORAGE_MAX_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 /// Archives a snapshot into `archive_path`
 pub fn archive_snapshot(
@@ -116,14 +121,17 @@ pub fn archive_snapshot(
                 snapshot_storages,
                 INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );
+            let mut buf_reader = storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, io_setup)
+                .map_err(E::StorageFileBufReaderError)?;
             for storage in storages_orderer.iter() {
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
                 let reader =
-                    AccountStorageReader::new(storage, Some(snapshot_slot)).map_err(|err| {
-                        E::AccountStorageReaderError(err, storage.path().to_path_buf())
-                    })?;
+                    AccountStorageReader::new(storage, Some(snapshot_slot), &mut buf_reader)
+                        .map_err(|err| {
+                            E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                        })?;
                 let mut header = tar::Header::new_gnu();
                 header.set_path(path_in_archive).map_err(|err| {
                     E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())

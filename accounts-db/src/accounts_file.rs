@@ -11,6 +11,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
+        fs::File,
         mem,
         path::{Path, PathBuf},
     },
@@ -273,8 +274,8 @@ impl AccountsFileProvider {
 /// The access method to use when archiving an AccountsFile
 #[derive(Debug)]
 pub struct InternalsForArchive<'a> {
-    /// Path to the backing file used to archive the contents
-    pub path: &'a Path,
+    /// File handle of the backing file used to archive the contents
+    pub file: &'a File,
 }
 
 /// Information after storing accounts

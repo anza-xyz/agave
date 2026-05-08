@@ -1,26 +1,54 @@
 use {
     crate::{account_info::Offset, account_storage_entry::AccountStorageEntry},
+    agave_fs::{
+        buffered_reader::{self, FileBufRead},
+        io_setup::IoSetupState,
+    },
     solana_clock::Slot,
     std::{
         fs::File,
-        io::{self, Read, Seek, SeekFrom},
+        io::{self, Read},
+        marker::PhantomData,
     },
 };
 
-/// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
-/// This type skips over the data in accounts contained in the obsolete accounts structure
-pub struct AccountStorageReader {
-    sorted_obsolete_accounts: Vec<(Offset, usize)>,
-    current_offset: usize,
-    file: File,
-    num_alive_bytes: usize,
-    num_total_bytes: usize,
+pub fn storage_file_buf_reader<'a>(
+    max_buf_size: usize,
+    io_setup: &IoSetupState,
+) -> io::Result<impl FileBufRead<'a> + use<'a>> {
+    #[cfg(target_os = "linux")]
+    let reader = buffered_reader::new_io_uring_file_buf_reader(max_buf_size, io_setup)?;
+    #[cfg(not(target_os = "linux"))]
+    let reader = {
+        let _ = (max_buf_size, io_setup);
+        const READER_STACK_BUFFER_SIZE: usize = 64 * 1024;
+        buffered_reader::BufferedReader::<READER_STACK_BUFFER_SIZE>::new()
+    };
+    Ok(reader)
 }
 
-impl AccountStorageReader {
+/// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
+/// This type skips over the data in accounts contained in the obsolete accounts structure
+pub struct AccountStorageReader<'a, 'r, R: FileBufRead<'a>> {
+    sorted_obsolete_accounts: Vec<(Offset, usize)>,
+    current_offset: usize,
+    reader: &'r mut R,
+    num_alive_bytes: usize,
+    num_total_bytes: usize,
+    _file: PhantomData<&'a File>,
+}
+
+impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'a, 'r, R> {
     /// Creates a new `AccountStorageReader` from an `AccountStorageEntry`.
     /// The obsolete accounts structure is sorted during initialization.
-    pub fn new(storage: &AccountStorageEntry, snapshot_slot: Option<Slot>) -> io::Result<Self> {
+    ///
+    /// `file_reader` is a buffered reader supplied by the caller. It is reset and
+    /// associated with the storage's file.
+    pub fn new(
+        storage: &'a AccountStorageEntry,
+        snapshot_slot: Option<Slot>,
+        file_reader: &'r mut R,
+    ) -> io::Result<Self> {
         let internals = storage.accounts.internals_for_archive();
         let num_total_bytes = storage.accounts.len();
         let num_alive_bytes = num_total_bytes - storage.get_obsolete_bytes(snapshot_slot);
@@ -40,14 +68,15 @@ impl AccountStorageReader {
         sorted_obsolete_accounts
             .sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
 
-        let file = File::open(internals.path)?;
+        file_reader.set_file(internals.file, num_total_bytes as u64)?;
 
         Ok(Self {
             sorted_obsolete_accounts,
             current_offset: 0,
-            file,
+            reader: file_reader,
             num_alive_bytes,
             num_total_bytes,
+            _file: PhantomData,
         })
     }
 
@@ -60,7 +89,7 @@ impl AccountStorageReader {
     }
 }
 
-impl Read for AccountStorageReader {
+impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'a, '_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut total_read = 0;
         let buf_len = buf.len();
@@ -69,7 +98,9 @@ impl Read for AccountStorageReader {
             let next_obsolete_account = self.sorted_obsolete_accounts.last();
             if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account {
                 if self.current_offset == obsolete_start {
-                    self.current_offset += obsolete_size.min(self.num_total_bytes - obsolete_start);
+                    let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
+                    self.reader.consume_or_skip(skip_len);
+                    self.current_offset += skip_len;
                     self.sorted_obsolete_accounts.pop();
                     continue;
                 }
@@ -87,9 +118,7 @@ impl Read for AccountStorageReader {
 
             let bytes_to_read = bytes_left_in_buffer.min(bytes_to_read_from_file);
 
-            self.file
-                .seek(SeekFrom::Start(self.current_offset as u64))?;
-            let read_size = self.file.read(&mut buf[total_read..][..bytes_to_read])?;
+            let read_size = self.reader.read(&mut buf[total_read..][..bytes_to_read])?;
 
             if read_size == 0 {
                 break; // EOF
@@ -113,6 +142,7 @@ mod tests {
             accounts_db::get_temp_accounts_paths,
             accounts_file::{AccountsFile, AccountsFileProvider},
         },
+        agave_fs::io_setup::IoSetupState,
         log::*,
         rand::{
             SeedableRng,
@@ -121,9 +151,11 @@ mod tests {
         },
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,
-        std::iter,
+        std::{fs::File, iter},
         test_case::test_case,
     };
+
+    const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
     fn create_storage_for_storage_reader(
         slot: Slot,
@@ -153,7 +185,9 @@ mod tests {
 
         storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
-        let reader = AccountStorageReader::new(&storage, None).unwrap();
+        let mut buf_reader =
+            storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default()).unwrap();
+        let reader = AccountStorageReader::new(&storage, None, &mut buf_reader).unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
     }
 
@@ -220,7 +254,9 @@ mod tests {
         let storage = storage.reopen_as_readonly().unwrap_or(storage);
 
         // Create the reader and check the length
-        let mut reader = AccountStorageReader::new(&storage, None).unwrap();
+        let mut file_reader =
+            storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default()).unwrap();
+        let mut reader = AccountStorageReader::new(&storage, None, &mut file_reader).unwrap();
         let current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
         assert_eq!(reader.len(), current_len);
 
@@ -332,8 +368,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Now iterate through all the possible snapshot slots and verify correctness
+        let mut file_reader =
+            storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default()).unwrap();
         for snapshot_slot in 0..slot_marked_dead {
-            let mut reader = AccountStorageReader::new(&storage, Some(snapshot_slot)).unwrap();
+            let mut reader =
+                AccountStorageReader::new(&storage, Some(snapshot_slot), &mut file_reader).unwrap();
             let current_len =
                 storage.accounts.len() - storage.get_obsolete_bytes(Some(snapshot_slot));
             assert_eq!(reader.len(), current_len);

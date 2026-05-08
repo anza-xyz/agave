@@ -271,6 +271,9 @@ pub enum ArchiveSnapshotPackageError {
 
     #[error("failed to create account storage reader '{1}': {0}")]
     AccountStorageReaderError(#[source] io::Error, PathBuf),
+
+    #[error("failed to initialize file buffered reader: {0}")]
+    StorageFileBufReaderError(#[source] io::Error),
 }
 
 /// Errors that can happen in `hard_link_storages_to_snapshot()`
