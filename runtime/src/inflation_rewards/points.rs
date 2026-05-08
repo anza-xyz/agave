@@ -13,6 +13,8 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     std::{cmp::Ordering, collections::HashMap},
 };
+#[cfg(test)]
+use {solana_vote::vote_account::VoteAccount, std::sync::LazyLock};
 
 /// captures a rewards round as lamports to be awarded
 ///  and the total points over which those lamports
@@ -133,7 +135,7 @@ fn calculate_stake_points(
 }
 
 /// State needed to compute rewards for alpenglow.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct AlpenglowStakeState<'a> {
     /// `epoch_stakes` from the current bank.
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
@@ -179,6 +181,31 @@ impl<'a> AlpenglowStakeState<'a> {
             },
         )?;
         Ok(entry.stake)
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_for_tests() -> (Self, u64) {
+        static STATE: LazyLock<(HashMap<Epoch, VersionedEpochStakes>, u64)> = LazyLock::new(|| {
+            let total_stake = 1_000;
+            let vote_account = VoteAccount::new_random();
+            let vote_account_hash_map = [(Pubkey::default(), (total_stake, vote_account))]
+                .into_iter()
+                .collect();
+            let versioned_epoch_stakes =
+                VersionedEpochStakes::new_for_tests(vote_account_hash_map, 0);
+            (
+                (0..10)
+                    .map(|epoch| (epoch, versioned_epoch_stakes.clone()))
+                    .collect(),
+                total_stake,
+            )
+        });
+        (
+            Self {
+                epoch_stakes: &STATE.0,
+            },
+            STATE.1,
+        )
     }
 }
 

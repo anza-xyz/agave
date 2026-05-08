@@ -297,7 +297,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     fn new_stake(
@@ -383,8 +383,8 @@ mod tests {
         assert_eq!(stake.credits_observed, 2);
     }
 
-    #[test]
-    fn test_stake_state_calculate_rewards() {
+    #[test_matrix([true, false])]
+    fn test_stake_state_calculate_rewards(ag_enabled: bool) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -393,6 +393,14 @@ mod tests {
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
+
+        // epoch credits work differently in AG, so we need a multiplier to account for that.
+        let (ag_stake_state, ag_total_stake_multiplier) = if ag_enabled {
+            let (state, stake) = AlpenglowStakeState::new_for_tests();
+            (Some(state), stake)
+        } else {
+            (None, 1)
+        };
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
@@ -412,20 +420,19 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
         // put 2 credits in at epoch 0
-        vote_state.increment_credits(0, 1);
-        vote_state.increment_credits(0, 1);
+        vote_state.increment_credits(0, 2 * ag_total_stake_multiplier);
 
         // this one should be able to collect exactly 2
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake * 2,
                 voter_rewards: 0,
-                new_credits_observed: 2,
+                new_credits_observed: 2 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -442,17 +449,17 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
-        stake.credits_observed = 1;
+        stake.credits_observed = ag_total_stake_multiplier;
         // this one should be able to collect exactly 1 (already observed one)
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake,
                 voter_rewards: 0,
-                new_credits_observed: 2,
+                new_credits_observed: 2 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -469,20 +476,20 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
         // put 1 credit in epoch 1
-        vote_state.increment_credits(1, 1);
+        vote_state.increment_credits(1, ag_total_stake_multiplier);
 
-        stake.credits_observed = 2;
+        stake.credits_observed = 2 * ag_total_stake_multiplier;
         // this one should be able to collect the one just added
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake,
                 voter_rewards: 0,
-                new_credits_observed: 3,
+                new_credits_observed: 3 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -499,18 +506,18 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
         // put 1 credit in epoch 2
-        vote_state.increment_credits(2, 1);
+        vote_state.increment_credits(2, ag_total_stake_multiplier);
         // this one should be able to collect 2 now
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake * 2,
                 voter_rewards: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -527,7 +534,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
@@ -540,7 +547,7 @@ mod tests {
                     + stake.delegation.stake // epoch 1
                     + stake.delegation.stake, // epoch 2
                 voter_rewards: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -557,7 +564,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
@@ -581,7 +588,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
         vote_state.set_inflation_rewards_commission_bps(9900);
@@ -602,7 +609,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
@@ -613,7 +620,7 @@ mod tests {
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
                 voter_rewards: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -630,18 +637,18 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
         // credits_observed remains at previous level when vote_state credits are
         // not advancing and inflation is disabled
-        stake.credits_observed = 4;
+        stake.credits_observed = 4 * ag_total_stake_multiplier;
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
                 voter_rewards: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -658,14 +665,14 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
         assert_eq!(
             CalculatedStakePoints {
                 points: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
                 force_credits_update_with_skipped_reward: false,
             },
             calculate_stake_points_and_credits(
@@ -674,18 +681,18 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &None
+                &ag_stake_state,
             )
         );
 
         // credits_observed is auto-rewound when vote_state credits are assumed to have been
         // recreated
-        stake.credits_observed = 1000;
+        stake.credits_observed = 1000 * ag_total_stake_multiplier;
         // this is new behavior 1; return the post-recreation rewound credits from the vote account
         assert_eq!(
             CalculatedStakePoints {
                 points: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
                 force_credits_update_with_skipped_reward: true,
             },
             calculate_stake_points_and_credits(
@@ -694,15 +701,15 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &None
+                &ag_stake_state,
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
-        stake.credits_observed = 4;
+        stake.credits_observed = 4 * ag_total_stake_multiplier;
         assert_eq!(
             CalculatedStakePoints {
                 points: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
                 force_credits_update_with_skipped_reward: false,
             },
             calculate_stake_points_and_credits(
@@ -711,19 +718,19 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &None,
+                &ag_stake_state,
             )
         );
 
         // get rewards and credits observed when not the activation epoch
         vote_state.set_inflation_rewards_commission_bps(0);
-        stake.credits_observed = 3;
+        stake.credits_observed = 3 * ag_total_stake_multiplier;
         stake.delegation.activation_epoch = 1;
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake, // epoch 2
                 voter_rewards: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -740,19 +747,19 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
 
         // credits_observed is moved forward for the stake's activation epoch,
         // and no rewards are perceived
         stake.delegation.activation_epoch = 2;
-        stake.credits_observed = 3;
+        stake.credits_observed = 3 * ag_total_stake_multiplier;
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
                 voter_rewards: 0,
-                new_credits_observed: 4,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(
                 &stake,
@@ -769,7 +776,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone(),
             )
         );
     }
