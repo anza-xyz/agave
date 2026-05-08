@@ -20,9 +20,16 @@ name = "solana_svm"
 default = ["metrics"]
 agave-unstable-api = []
 conformance = [
+    "dep:agave-feature-set",
+    "dep:bincode",
+    "dep:prost",
+    "dep:protosol",
     "dep:solana-compute-budget",
+    "dep:solana-instruction-error",
     "dep:solana-syscalls",
+    "solana-instruction-error/serde",
     "solana-program-runtime/dev-context-only-utils",
+    "solana-pubkey/default",
 ]
 dummy-for-ci-check = ["conformance", "metrics"]
 dev-context-only-utils = ["dep:qualifier_attr", "solana-program-runtime/dev-context-only-utils"]
@@ -43,9 +50,13 @@ shuttle-test = [
 svm-internal = ["dep:qualifier_attr"]
 
 [dependencies]
+agave-feature-set = { workspace = true, optional = true }
 ahash = { workspace = true }
+bincode = { workspace = true, optional = true }
 log = { workspace = true }
 percentage = { workspace = true }
+prost = { version = "0.11", optional = true }
+protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true }
@@ -60,6 +71,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
+solana-instruction-error = { workspace = true, optional = true }
 solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }

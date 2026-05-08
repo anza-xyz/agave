@@ -1,10 +1,10 @@
 //! Conformance harness.
 
 use {
+    super::context::{InstrContext, InstrEffects},
     crate::message_processor::process_message,
-    solana_account::Account,
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::error::InstructionError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
         loaded_programs::{
@@ -14,7 +14,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
-    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
@@ -23,23 +22,6 @@ use {
     solana_transaction_error::TransactionError,
     std::rc::Rc,
 };
-
-/// Inputs to a single instruction.
-pub struct InstrContext {
-    pub feature_set: SVMFeatureSet,
-    pub accounts: Vec<(Pubkey, Account)>,
-    pub instruction: Instruction,
-}
-
-/// Effects of a single instruction.
-pub struct InstrEffects {
-    pub result: Option<InstructionError>,
-    pub custom_err: Option<u32>,
-    pub resulting_accounts: Vec<(Pubkey, Account)>,
-    pub cu_avail: u64,
-    pub return_data: Vec<u8>,
-    pub logs: Vec<String>,
-}
 
 /// Execute a single instruction against the Solana VM with a custom callback.
 pub fn execute_instr_with_callback<C: InvokeContextCallback>(

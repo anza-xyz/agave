@@ -10597,6 +10597,7 @@ dependencies = [
 name = "solana-svm"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "ahash 0.8.12",
  "assert_matches",
  "bincode",
@@ -10605,6 +10606,8 @@ dependencies = [
  "log",
  "openssl",
  "percentage",
+ "prost 0.11.9",
+ "protosol",
  "qualifier_attr",
  "rand 0.9.4",
  "serde",
@@ -10623,6 +10626,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash 4.3.0",
  "solana-instruction",
+ "solana-instruction-error",
  "solana-instructions-sysvar",
  "solana-keypair",
  "solana-loader-v3-interface",
