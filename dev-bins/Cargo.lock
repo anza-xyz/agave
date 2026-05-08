@@ -9266,6 +9266,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
  "solana-sysvar",
+ "solana-sysvar-id",
  "solana-transaction-context",
  "thiserror 2.0.18",
 ]

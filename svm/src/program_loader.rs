@@ -426,7 +426,7 @@ mod tests {
         };
         let mut account_data2 = AccountSharedData::default();
         account_data2.set_owner(bpf_loader_upgradeable::id());
-        account_data2.set_data(bincode::serialize(&state).unwrap());
+        account_data2.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()

@@ -1864,7 +1864,7 @@ mod tests {
             (vote_pubkey, aliased_vote_account),
             (
                 sysvar::rent::id(),
-                account::create_account_shared_data_for_test(&rent),
+                create_account_shared_data_for_test(&rent),
             ),
         ];
         let aliased_instruction_accounts = vec![

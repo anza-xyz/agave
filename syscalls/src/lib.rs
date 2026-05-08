@@ -4655,7 +4655,7 @@ mod tests {
         let mut got_clock_buf_rw = vec![0; Clock::SIZE];
         let got_clock_buf_rw_va = 0x400000000;
 
-        let got_clock_buf_ro = vec![0; Clock::SIZE];
+        let got_clock_buf_ro = [0; Clock::SIZE];
         let got_clock_buf_ro_va = 0x500000000;
 
         let access_violation_err =

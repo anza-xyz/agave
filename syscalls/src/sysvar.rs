@@ -1,7 +1,7 @@
-use solana_sysvar_id::SysvarId;
 use {
     super::*, crate::translate_mut,
     solana_program_runtime::execution_budget::SVMTransactionExecutionCost, solana_sbpf::ebpf,
+    solana_sysvar_id::SysvarId,
 };
 
 fn get_sysvar<T: std::fmt::Debug + Clone + SysvarId>(

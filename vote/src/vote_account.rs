@@ -139,11 +139,13 @@ impl VoteAccount {
             &Pubkey::new_unique(),
             &clock,
         );
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let data = bincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap();
+        let mut account = AccountSharedData::new(
             rng.random(), // lamports
             data.len(),
             &solana_sdk_ids::vote::id(), // owner
         );
+        account.set_data_from_slice(&data);
         VoteAccount::try_from(account).unwrap()
     }
 }
