@@ -11391,6 +11391,7 @@ dependencies = [
  "serde",
  "solana-account 4.3.0",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
