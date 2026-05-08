@@ -2469,7 +2469,7 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: SysvarAccountSize,
+        T: Serialize + SysvarAccountSize,
     {
         self.update_sysvar_account(&T::id(), |account| {
             create_account(

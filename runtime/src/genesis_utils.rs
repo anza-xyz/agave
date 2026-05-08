@@ -12,7 +12,7 @@ use {
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
-    bincode::{serialize, serialized_size},
+    bincode::serialize,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
@@ -28,6 +28,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_program_runtime::sysvar_account::SysvarAccountSize,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{stake as stake_program, sysvar},
@@ -556,7 +557,7 @@ pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u
 }
 
 pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> u64 {
-    let data = vec![0; serialized_size(&EpochRewards::default()).unwrap() as usize];
+    let data = vec![0; EpochRewards::SIZE];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
     let account = AccountSharedData::create_from_existing_shared_data(

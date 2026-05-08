@@ -365,11 +365,7 @@ pub mod get_sysvar_with_account_check {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::sysvar_account::{SysvarAccountSize, sysvar_account_data_len},
-        test_case::test_case,
-    };
+    use {super::*, crate::sysvar_account::SysvarAccountSize, test_case::test_case};
 
     // sysvar cache provides the full account data of a sysvar
     // the setters MUST NOT be changed to serialize an object representation
@@ -385,9 +381,9 @@ mod tests {
     #[test_case(SlotHashes::default(); "slot_hashes")]
     #[test_case(StakeHistory::default(); "stake_history")]
     #[test_case(LastRestartSlot::default(); "last_restart_slot")]
-    fn test_sysvar_cache_preserves_bytes<T: SysvarAccountSize>(sysvar: T) {
+    fn test_sysvar_cache_preserves_bytes<T: SysvarAccountSize>(_sysvar: T) {
         let id = T::id();
-        let size = sysvar_account_data_len(&sysvar).saturating_mul(2);
+        let size = T::SIZE.saturating_mul(2);
         let in_buf = vec![0; size];
 
         let mut sysvar_cache = SysvarCache::default();

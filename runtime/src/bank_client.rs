@@ -1,6 +1,7 @@
 use {
     crate::bank::Bank,
     crossbeam_channel::{Receiver, Sender, unbounded},
+    serde::Serialize,
     solana_account::Account,
     solana_client_traits::{AsyncClient, Client, SyncClient},
     solana_commitment_config::CommitmentConfig,
@@ -274,7 +275,7 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: SysvarAccountSize>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: Serialize + SysvarAccountSize>(&self, sysvar: &T) {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 

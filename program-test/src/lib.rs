@@ -40,9 +40,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         serialization::serialize_parameters,
         stable_log,
-        sysvar_account::{
-            SysvarAccountSize, create_account_shared_data_for_test, sysvar_account_data_len,
-        },
+        sysvar_account::{SysvarAccountSize, create_account_shared_data_for_test},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -252,12 +250,12 @@ macro_rules! processor {
     }};
 }
 
-fn get_sysvar<T: Default + SysvarAccountSize + Clone>(
+fn get_sysvar<T: SysvarAccountSize + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: *mut u8,
 ) -> u64 {
     let invoke_context = get_invoke_context();
-    let sysvar_size = sysvar_account_data_len(&T::default()) as u64;
+    let sysvar_size = T::SIZE as u64;
     if invoke_context
         .compute_meter
         .consume_checked(
@@ -283,7 +281,7 @@ fn get_sysvar<T: Default + SysvarAccountSize + Clone>(
 struct SyscallStubs {}
 
 impl SyscallStubs {
-    fn fetch_and_write_sysvar<T: Serialize>(
+    fn fetch_and_write_sysvar<T: Serialize + SysvarAccountSize>(
         &self,
         var_addr: *mut u8,
         offset: u64,
@@ -319,11 +317,8 @@ impl SyscallStubs {
             return UNSUPPORTED_SYSVAR;
         };
 
-        // Check that the requested length is not greater than
-        // the actual serialized length of the sysvar data.
-        let Ok(expected_length) = bincode::serialized_size(&sysvar) else {
-            return UNSUPPORTED_SYSVAR;
-        };
+        // Check that the requested range fits in the sysvar account data.
+        let expected_length = T::SIZE as u64;
 
         if offset.saturating_add(length) > expected_length {
             return UNSUPPORTED_SYSVAR;
@@ -774,7 +769,11 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarAccountSize>(&mut self, address: Pubkey, sysvar: &S) {
+    pub fn add_sysvar_account<S: Serialize + SysvarAccountSize>(
+        &mut self,
+        address: Pubkey,
+        sysvar: &S,
+    ) {
         let account = create_account_shared_data_for_test(sysvar);
         self.add_account(address, account.into());
     }
@@ -1336,7 +1335,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarAccountSize>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: Serialize + SysvarAccountSize>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);
