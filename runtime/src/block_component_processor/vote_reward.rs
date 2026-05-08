@@ -1045,8 +1045,8 @@ mod tests {
 
     /// Progresses the bank a few times to pay out the rewards.
     fn progress_bank_for_payout(mut bank: Arc<Bank>) -> Arc<Bank> {
-        for i in 0..10 {
-            let slot = bank.slot() + 1 + i;
+        for _ in 0..10 {
+            let slot = bank.slot() + 1;
             bank = new_bank_from_parent(bank, slot);
         }
         bank
