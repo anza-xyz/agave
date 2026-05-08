@@ -158,7 +158,7 @@ pub enum GetTotalStakeError {
 }
 
 impl<'a> AlpenglowStakeState<'a> {
-    /// Returns the total stake delegated to `self.vote_pubkey` in the given epoch.
+    /// Returns the total stake delegated to `vote_pubkey` in the given `epoch`.
     fn get_total_stake(
         &self,
         epoch: Epoch,
