@@ -77,7 +77,8 @@ while keeping the current beta in place), set the pins in
 `ci/channel-overrides` on master *before* pushing the new branch:
 
 ```
-PINNED_BETA_CHANNEL=vX.Y      # current beta, to be held
+# current beta, to be held
+PINNED_BETA_CHANNEL=vX.Y
 PINNED_STABLE_CHANNEL=vX.Y-1  # current stable, to be held
 ```
 
