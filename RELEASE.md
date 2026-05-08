@@ -79,7 +79,8 @@ while keeping the current beta in place), set the pins in
 ```
 # current beta, to be held
 PINNED_BETA_CHANNEL=vX.Y
-PINNED_STABLE_CHANNEL=vX.Y-1  # current stable, to be held
+# current stable, to be held
+PINNED_STABLE_CHANNEL=vX.Y-1 
 ```
 
 The file lives only on master; every branch's CI fetches it from there, so no
