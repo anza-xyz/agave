@@ -113,12 +113,11 @@ impl ConsensusPoolService {
         certificates_to_send: Vec<Arc<Certificate>>,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), AddVoteError> {
-        for (i, certificate) in certificates_to_send.iter().enumerate() {
+        let num_certs = certificates_to_send.len();
+        for (i, certificate) in certificates_to_send.into_iter().enumerate() {
             // The buffer should normally be large enough, so we don't handle
             // certificate re-send here.
-            match bls_sender.try_send(BLSOp::PushCertificate {
-                certificate: certificate.clone(),
-            }) {
+            match bls_sender.try_send(BLSOp::PushCertificate { certificate }) {
                 Ok(_) => {
                     stats.certificates_sent += 1;
                 }
@@ -128,7 +127,7 @@ impl ConsensusPoolService {
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
-                    stats.certificates_dropped += certificates_to_send.len().saturating_sub(i);
+                    stats.certificates_dropped += num_certs.saturating_sub(i);
                     return Err(AddVoteError::VotingServiceQueueFull);
                 }
             }
