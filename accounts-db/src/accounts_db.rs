@@ -6651,6 +6651,11 @@ impl AccountsDb {
         self.flush_slot_cache(slot, None::<&mut fn(&_) -> bool>, None);
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn read_only_accounts_cache_len_for_tests(&self) -> usize {
+        self.read_only_accounts_cache.cache_len()
+    }
+
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn add_root_and_flush_write_cache(&self, slot: Slot) {

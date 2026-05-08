@@ -4516,6 +4516,21 @@ impl Bank {
             .map(|(acc, _slot)| acc)
     }
 
+    pub fn get_account_with_cache_option(
+        &self,
+        pubkey: &Pubkey,
+        populate_read_cache: solana_accounts_db::accounts_db::PopulateReadCache,
+    ) -> Option<AccountSharedData> {
+        self.rc
+            .accounts
+            .load_without_fixed_root_with_populate_option(
+                &self.ancestors,
+                pubkey,
+                populate_read_cache,
+            )
+            .map(|(acc, _slot)| acc)
+    }
+
     // Hi! leaky abstraction here....
     // try to use get_account_with_fixed_root() if it's called ONLY from on-chain runtime account
     // processing. That alternative fn provides more safety.

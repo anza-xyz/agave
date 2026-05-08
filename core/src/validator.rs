@@ -1282,6 +1282,7 @@ impl Validator {
                 optimistically_confirmed_bank.clone(),
                 &config.pubsub_config,
                 None,
+                config.rpc_config.rpc_populate_read_only_accounts_cache,
             ));
             let pubsub_service = if !config.rpc_config.full_api {
                 None

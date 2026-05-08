@@ -175,6 +175,10 @@ pub struct JsonRpcConfig {
     pub scan_results_limit_bytes: Option<usize>,
     /// Disable the health check, used for tests and TestValidator
     pub disable_health_check: bool,
+    /// Populate the AccountsDb read-only cache for `getAccountInfo` and
+    /// `getMultipleAccounts` loads. Disabled by default; enable with
+    /// `--rpc-populate-read-cache`.
+    pub rpc_populate_read_only_accounts_cache: bool,
 }
 
 impl Default for JsonRpcConfig {
@@ -196,6 +200,7 @@ impl Default for JsonRpcConfig {
             max_request_body_size: Option::default(),
             scan_results_limit_bytes: Option::default(),
             disable_health_check: Default::default(),
+            rpc_populate_read_only_accounts_cache: Default::default(),
         }
     }
 }
@@ -547,7 +552,18 @@ impl JsonRpcRequestProcessor {
             .runtime
             .spawn_blocking({
                 let bank = Arc::clone(&bank);
-                move || get_encoded_account(&bank, &pubkey, encoding, data_slice, None)
+                let rpc_populate_read_only_accounts_cache =
+                    self.config.rpc_populate_read_only_accounts_cache;
+                move || {
+                    get_encoded_account(
+                        &bank,
+                        &pubkey,
+                        encoding,
+                        data_slice,
+                        None,
+                        rpc_populate_read_only_accounts_cache,
+                    )
+                }
             })
             .await
             .expect("rpc: get_encoded_account panicked")?;
@@ -574,10 +590,19 @@ impl JsonRpcRequestProcessor {
         let mut accounts = Vec::with_capacity(pubkeys.len());
         for pubkey in pubkeys {
             let bank = Arc::clone(&bank);
+            let rpc_populate_read_only_accounts_cache =
+                self.config.rpc_populate_read_only_accounts_cache;
             accounts.push(
                 self.runtime
                     .spawn_blocking(move || {
-                        get_encoded_account(&bank, &pubkey, encoding, data_slice, None)
+                        get_encoded_account(
+                            &bank,
+                            &pubkey,
+                            encoding,
+                            data_slice,
+                            None,
+                            rpc_populate_read_only_accounts_cache,
+                        )
                     })
                     .await
                     .expect("rpc: get_encoded_account panicked")?,
@@ -2538,13 +2563,25 @@ fn get_encoded_account(
     data_slice: Option<UiDataSliceConfig>,
     // only used for simulation results
     overwrite_accounts: Option<&HashMap<Pubkey, AccountSharedData>>,
+    rpc_populate_read_only_accounts_cache: bool,
 ) -> Result<Option<UiAccount>> {
-    match account_resolver::get_account_from_overwrites_or_bank(pubkey, bank, overwrite_accounts) {
+    match account_resolver::get_account_from_overwrites_or_bank(
+        pubkey,
+        bank,
+        overwrite_accounts,
+        rpc_populate_read_only_accounts_cache,
+    ) {
         Some(account) => {
             let response = if is_known_spl_token_id(account.owner())
                 && encoding == UiAccountEncoding::JsonParsed
             {
-                get_parsed_token_account(bank, pubkey, account, overwrite_accounts)
+                get_parsed_token_account(
+                    bank,
+                    pubkey,
+                    account,
+                    overwrite_accounts,
+                    rpc_populate_read_only_accounts_cache,
+                )
             } else {
                 encode_account(&account, pubkey, encoding, data_slice)?
             };
@@ -4107,6 +4144,7 @@ pub mod rpc_full {
                                     accounts_encoding,
                                     None,
                                     Some(&post_simulation_accounts_map),
+                                    meta.config.rpc_populate_read_only_accounts_cache,
                                 )
                             })
                             .collect::<Result<Vec<_>>>()?,
@@ -5630,6 +5668,46 @@ pub mod tests {
         );
     }
 
+    fn create_storage_backed_bank_account_for_cache_test(
+        lamports: u64,
+    ) -> (Bank, Pubkey, AccountSharedData) {
+        let bank = Bank::default_for_tests();
+        let pubkey = Pubkey::new_unique();
+        let account = AccountSharedData::new(lamports, 0, AccountSharedData::default().owner());
+        let accounts_db = &bank.rc.accounts.accounts_db;
+
+        accounts_db.store_for_tests((0, &[(&pubkey, &account)][..]));
+        accounts_db.add_root(0);
+        accounts_db.clean_accounts_for_tests();
+        accounts_db.flush_accounts_cache_slot_for_tests(0);
+        accounts_db.clean_accounts_for_tests();
+
+        (bank, pubkey, account)
+    }
+
+    #[test]
+    fn test_get_encoded_account_read_only_cache_populate() {
+        let (bank, pubkey, _) = create_storage_backed_bank_account_for_cache_test(42);
+        let accounts_db = &bank.rc.accounts.accounts_db;
+
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+        let account =
+            get_encoded_account(&bank, &pubkey, UiAccountEncoding::Base64, None, None, false)
+                .unwrap();
+        assert!(account.is_some());
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+
+        let (bank, pubkey, _) = create_storage_backed_bank_account_for_cache_test(84);
+        let accounts_db = &bank.rc.accounts.accounts_db;
+
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+        let account =
+            get_encoded_account(&bank, &pubkey, UiAccountEncoding::Base64, None, None, true)
+                .unwrap();
+        assert!(account.is_some());
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 1);
+    }
+
     #[test]
     fn test_encode_account_does_not_throw_when_slice_larger_than_account() {
         let data = vec![42; 5];
@@ -5857,6 +5935,53 @@ pub mod tests {
             result.value, expected,
             "should use data slice if parsing fails"
         );
+    }
+
+    #[test]
+    fn test_get_multiple_encoded_accounts_read_only_cache_populate() {
+        let bank = Bank::default_for_tests();
+        let accounts_db = &bank.rc.accounts.accounts_db;
+        let pubkey1 = Pubkey::new_unique();
+        let pubkey2 = Pubkey::new_unique();
+        let account1 = AccountSharedData::new(11, 0, AccountSharedData::default().owner());
+        let account2 = AccountSharedData::new(22, 0, AccountSharedData::default().owner());
+
+        accounts_db.store_for_tests((0, &[(&pubkey1, &account1), (&pubkey2, &account2)][..]));
+        accounts_db.add_root(0);
+        accounts_db.clean_accounts_for_tests();
+        accounts_db.flush_accounts_cache_slot_for_tests(0);
+        accounts_db.clean_accounts_for_tests();
+
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+        for pubkey in [pubkey1, pubkey2] {
+            let account =
+                get_encoded_account(&bank, &pubkey, UiAccountEncoding::Base64, None, None, false)
+                    .unwrap();
+            assert!(account.is_some());
+        }
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+
+        let bank = Bank::default_for_tests();
+        let accounts_db = &bank.rc.accounts.accounts_db;
+        let pubkey1 = Pubkey::new_unique();
+        let pubkey2 = Pubkey::new_unique();
+        let account1 = AccountSharedData::new(33, 0, AccountSharedData::default().owner());
+        let account2 = AccountSharedData::new(44, 0, AccountSharedData::default().owner());
+
+        accounts_db.store_for_tests((0, &[(&pubkey1, &account1), (&pubkey2, &account2)][..]));
+        accounts_db.add_root(0);
+        accounts_db.clean_accounts_for_tests();
+        accounts_db.flush_accounts_cache_slot_for_tests(0);
+        accounts_db.clean_accounts_for_tests();
+
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+        for pubkey in [pubkey1, pubkey2] {
+            let account =
+                get_encoded_account(&bank, &pubkey, UiAccountEncoding::Base64, None, None, true)
+                    .unwrap();
+            assert!(account.is_some());
+        }
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 2);
     }
 
     #[test]
