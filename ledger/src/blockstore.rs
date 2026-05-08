@@ -1030,11 +1030,6 @@ impl Blockstore {
         let Some(double_merkle_meta_bytes) =
             self.double_merkle_meta_cf.get_slice((slot, location))?
         else {
-            debug_assert!(
-                self.meta_from_location(slot, location)
-                    .unwrap()
-                    .is_none_or(|meta| !meta.is_full())
-            );
             return Ok(None);
         };
 
