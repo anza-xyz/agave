@@ -90,11 +90,11 @@ pub fn create_account_shared_data_for_test<T: SysvarAccountSize>(
     AccountSharedData::from(create_account_for_test(sysvar_data))
 }
 
-pub fn from_account<T: DeserializeOwned, U: ReadableAccount>(account: &U) -> Option<T> {
+pub fn from_account<T: DeserializeOwned + SysvarId, U: ReadableAccount>(account: &U) -> Option<T> {
     bincode::deserialize(account.data()).ok()
 }
 
-pub fn to_account<T: Serialize, U: WritableAccount>(
+pub fn to_account<T: Serialize + SysvarId, U: WritableAccount>(
     sysvar_data: &T,
     account: &mut U,
 ) -> Option<()> {
