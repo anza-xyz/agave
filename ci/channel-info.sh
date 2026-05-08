@@ -66,7 +66,7 @@ done
 # every branch's CI honors the same file. Hard-fail on transport errors so
 # misconfiguration surfaces immediately.
 overrides_url="https://raw.githubusercontent.com/anza-xyz/agave/master/ci/channel-overrides?ts=$(date +%s)"
-overrides=$(curl -fsSL "$overrides_url") || {
+overrides=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "$overrides_url") || {
   echo "error: failed to fetch channel overrides from $overrides_url" >&2
   exit 1
 }
