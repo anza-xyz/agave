@@ -71,7 +71,6 @@ pub enum SkippedReason {
     ZeroCreditsAndReturnZero,
     ZeroCreditsAndReturnCurrent,
     ZeroCreditsAndReturnRewound,
-    GetTotalStakeFailed(GetTotalStakeError),
 }
 
 impl From<SkippedReason> for InflationPointCalculationEvent {
@@ -300,13 +299,6 @@ pub(crate) fn calculate_stake_points_and_credits(
                                     "PER-total-stake-calculation-failure",
                                     ("error", message, String)
                                 );
-                                if let Some(inflation_point_calc_tracer) =
-                                    inflation_point_calc_tracer.as_ref()
-                                {
-                                    inflation_point_calc_tracer(
-                                        &SkippedReason::GetTotalStakeFailed(e).into(),
-                                    );
-                                }
                                 return CalculatedStakePoints {
                                     points: 0,
                                     new_credits_observed,
