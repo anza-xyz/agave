@@ -83,7 +83,7 @@ PINNED_BETA_CHANNEL=vX.Y
 PINNED_STABLE_CHANNEL=vX.Y-1 
 ```
 
-The file lives only on master; every branch's CI fetches it from there, so no
+Only the file that lives on master is used; every branch's CI fetches it from there, so no
 backport is needed.
 
 When ready to promote, open a PR on master that clears or updates the pins.
