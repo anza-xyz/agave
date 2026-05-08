@@ -4,6 +4,8 @@
 
 pub mod account_loader;
 pub mod account_overrides;
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod message_processor;
 pub mod nonce_info;
 pub mod program_loader;

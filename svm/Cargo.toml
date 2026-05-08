@@ -19,7 +19,12 @@ name = "solana_svm"
 [features]
 default = ["metrics"]
 agave-unstable-api = []
-dummy-for-ci-check = ["metrics"]
+conformance = [
+    "dep:solana-compute-budget",
+    "dep:solana-syscalls",
+    "solana-program-runtime/dev-context-only-utils",
+]
+dummy-for-ci-check = ["conformance", "metrics"]
 dev-context-only-utils = ["dep:qualifier_attr", "solana-program-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -45,6 +50,7 @@ qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
+solana-compute-budget = { workspace = true, optional = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -73,6 +79,7 @@ solana-svm-measure = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
+solana-syscalls = { workspace = true, optional = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
