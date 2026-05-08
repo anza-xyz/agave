@@ -9435,6 +9435,7 @@ dependencies = [
  "qualifier_attr",
  "serde",
  "solana-account 4.3.0",
+ "solana-bpf-loader-program",
  "solana-clock",
  "solana-fee-structure",
  "solana-hash 4.3.0",
