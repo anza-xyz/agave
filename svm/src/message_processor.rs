@@ -1,9 +1,16 @@
 use {
-    solana_program_runtime::invoke_context::InvokeContext,
+    solana_program_runtime::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+        invoke_context::{EnvironmentConfig, InvokeContext},
+        loaded_programs::ProgramCacheForTxBatch,
+    },
+    solana_svm_log_collector::LogCollector,
     solana_svm_measure::measure_us,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_context::transaction::TransactionContext,
     solana_transaction_error::TransactionError,
+    std::{cell::RefCell, rc::Rc},
 };
 
 /// Process a message.
@@ -13,10 +20,24 @@ use {
 /// The accounts are committed back to the bank only if every instruction succeeds.
 pub(crate) fn process_message<'ix_data>(
     message: &'ix_data impl SVMMessage,
-    invoke_context: &mut InvokeContext<'_, 'ix_data>,
+    transaction_context: &mut TransactionContext<'ix_data>,
+    program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+    environment_config: EnvironmentConfig,
+    log_collector: Option<Rc<RefCell<LogCollector>>>,
+    compute_budget: SVMTransactionExecutionBudget,
+    execution_cost: SVMTransactionExecutionCost,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
 ) -> Result<(), TransactionError> {
+    let mut invoke_context = InvokeContext::new(
+        transaction_context,
+        program_cache_for_tx_batch,
+        environment_config,
+        log_collector.clone(),
+        compute_budget,
+        execution_cost,
+    );
+
     invoke_context
         .prepare_top_level_instructions(message)
         .map_err(|(ix_idx, err)| TransactionError::InstructionError(ix_idx, err))?;
@@ -84,12 +105,8 @@ mod tests {
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_precompile_error::PrecompileError,
         solana_program_runtime::{
-            declare_process_instruction,
-            execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-            invoke_context::EnvironmentConfig,
-            loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-            program_cache_entry::ProgramCacheEntry,
-            sysvar_cache::SysvarCache,
+            declare_process_instruction, loaded_programs::ProgramRuntimeEnvironments,
+            program_cache_entry::ProgramCacheEntry, sysvar_cache::SysvarCache,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -102,7 +119,6 @@ mod tests {
         solana_signer::Signer,
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
-        solana_transaction_context::transaction::TransactionContext,
         std::{
             collections::{HashMap, HashSet},
             sync::Arc,
@@ -227,17 +243,14 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );
@@ -285,17 +298,14 @@ mod tests {
         );
         let mut transaction_context =
             TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );
@@ -332,17 +342,14 @@ mod tests {
             &sysvar_cache,
         );
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 1);
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );
@@ -467,17 +474,14 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );
@@ -510,17 +514,14 @@ mod tests {
         );
         let mut transaction_context =
             TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );
@@ -549,17 +550,14 @@ mod tests {
             &sysvar_cache,
         );
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 1);
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );
@@ -709,17 +707,14 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
-        let mut invoke_context = InvokeContext::new(
+        let result = process_message(
+            &message,
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
-        );
-        let result = process_message(
-            &message,
-            &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
         );

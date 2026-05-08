@@ -40,7 +40,7 @@ use {
         execution_budget::{
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
         },
-        invoke_context::{EnvironmentConfig, InvokeContext},
+        invoke_context::EnvironmentConfig,
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
@@ -979,34 +979,29 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
-
-        let mut invoke_context = InvokeContext::new(
-            &mut transaction_context,
-            program_cache_for_tx_batch,
-            EnvironmentConfig::new(
-                environment.blockhash,
-                environment.blockhash_lamports_per_signature,
-                environment.alpenglow_migration_succeeded,
-                callback,
-                &environment.feature_set,
-                &environment.program_runtime_environments,
-                sysvar_cache,
-            ),
-            log_collector.clone(),
-            compute_budget,
-            self.execution_cost,
+        let environment_config = EnvironmentConfig::new(
+            environment.blockhash,
+            environment.blockhash_lamports_per_signature,
+            environment.alpenglow_migration_succeeded,
+            callback,
+            &environment.feature_set,
+            &environment.program_runtime_environments,
+            sysvar_cache,
         );
 
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = process_message(
             tx,
-            &mut invoke_context,
+            &mut transaction_context,
+            program_cache_for_tx_batch,
+            environment_config,
+            log_collector.clone(),
+            compute_budget,
+            self.execution_cost,
             execute_timings,
             &mut executed_units,
         );
         process_message_time.stop();
-
-        drop(invoke_context);
 
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
