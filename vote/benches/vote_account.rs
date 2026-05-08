@@ -27,13 +27,13 @@ fn new_rand_vote_account<R: Rng>(
         unix_timestamp: rng.random(),
     };
     let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
-    let account = AccountSharedData::create_from_existing_shared_data(
+    let data = bincode::serialize(&VoteStateVersions::new_v4(vote_state.clone())).unwrap();
+    let mut account = AccountSharedData::new(
         rng.random(), // lamports
-        Arc::new(bincode::serialize(&VoteStateVersions::new_v4(vote_state.clone())).unwrap()),
-        solana_sdk_ids::vote::id(), // owner
-        false,
-        Default::default(),
+        data.len(),
+        &solana_sdk_ids::vote::id(), // owner
     );
+    account.set_data_from_slice(&data);
     (account, vote_state)
 }
 

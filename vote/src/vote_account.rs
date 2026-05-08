@@ -141,10 +141,8 @@ impl VoteAccount {
         );
         let account = AccountSharedData::create_from_existing_shared_data(
             rng.random(), // lamports
-            Arc::new(bincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap()),
-            solana_sdk_ids::vote::id(), // owner
-            false,
-            Default::default(),
+            data.len(),
+            &solana_sdk_ids::vote::id(), // owner
         );
         VoteAccount::try_from(account).unwrap()
     }
