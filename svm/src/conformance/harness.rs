@@ -23,6 +23,27 @@ use {
     std::rc::Rc,
 };
 
+/// Default no-op callback. No precompile support.
+struct MockCallback;
+impl InvokeContextCallback for MockCallback {}
+
+/// Execute a single instruction against the Solana VM with the default
+/// (no-precompile) callback.
+pub fn execute_instr(
+    input: &InstrContext,
+    compute_budget: &ComputeBudget,
+    program_cache: &mut ProgramCacheForTxBatch,
+    sysvar_cache: &SysvarCache,
+) -> Option<InstrEffects> {
+    execute_instr_with_callback(
+        input,
+        &MockCallback,
+        compute_budget,
+        program_cache,
+        sysvar_cache,
+    )
+}
+
 /// Execute a single instruction against the Solana VM with a custom callback.
 pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     input: &InstrContext,
@@ -159,9 +180,6 @@ mod tests {
         solana_svm_feature_set::SVMFeatureSet,
         solana_sysvar_id::SysvarId,
     };
-
-    struct MockCallback;
-    impl InvokeContextCallback for MockCallback {}
 
     #[test]
     fn test_system_program_exec() {
