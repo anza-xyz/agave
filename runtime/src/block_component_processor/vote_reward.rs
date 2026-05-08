@@ -297,7 +297,22 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_signer_store::encode_base2,
+        std::sync::{Arc, RwLock},
     };
+
+    fn new_bank_for_tests(
+        leader: SlotLeader,
+        genesis_config: &GenesisConfig,
+    ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let bank = Bank::new_with_paths_for_tests(genesis_config, None, vec![], Some(leader));
+        assert_eq!(*bank.leader(), leader);
+        bank.wrap_with_bank_forks_for_tests()
+    }
+
+    fn new_bank_from_parent(parent_bank: Arc<Bank>, slot: Slot) -> Arc<Bank> {
+        let leader = *parent_bank.leader();
+        Arc::new(Bank::new_from_parent(parent_bank, leader, slot))
+    }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
         let versions = bincode::deserialize(account.data()).unwrap();
@@ -340,8 +355,8 @@ mod tests {
         // it is staked by a single validator.
         let circulating_supply = 566_000_000 * LAMPORTS_PER_SOL;
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
-        let bank = bank_forks.read().unwrap().root_bank();
+        let (bank, _bank_forks) =
+            new_bank_for_tests(SlotLeader::new_unique(), &GenesisConfig::default());
         let validator_rewards_lamports =
             bank.calculate_epoch_inflation_rewards(circulating_supply, 1);
 
@@ -426,13 +441,12 @@ mod tests {
             vote_address: leader_vote_pubkey,
         };
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let prev_bank = bank_forks.read().unwrap().root_bank();
+        let (prev_bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
         let current_slot = prev_bank
             .epoch_schedule
             .get_first_slot_in_epoch(prev_bank.epoch() + 1)
             + NUM_SLOTS_FOR_REWARD;
-        let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
+        let bank = new_bank_from_parent(prev_bank.clone(), current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
         calc_vote_rewards_update_vote_states(
@@ -494,13 +508,12 @@ mod tests {
         };
         let target_vote_pubkey = validator_keypairs[1].vote_keypair.pubkey();
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let prev_bank = bank_forks.read().unwrap().root_bank();
+        let (prev_bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
         let current_slot = prev_bank
             .epoch_schedule
             .get_first_slot_in_epoch(prev_bank.epoch() + 1)
             + NUM_SLOTS_FOR_REWARD;
-        let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
+        let bank = new_bank_from_parent(prev_bank.clone(), current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
         let cert_rank = {
@@ -562,13 +575,12 @@ mod tests {
         };
         let non_target_vote_pubkey = validator_keypairs[2].vote_keypair.pubkey();
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let prev_bank = bank_forks.read().unwrap().root_bank();
+        let (prev_bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
         let current_slot = prev_bank
             .epoch_schedule
             .get_first_slot_in_epoch(prev_bank.epoch() + 1)
             + NUM_SLOTS_FOR_REWARD;
-        let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
+        let bank = new_bank_from_parent(prev_bank.clone(), current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
         let cert_rank = {
@@ -629,12 +641,6 @@ mod tests {
         .genesis_config;
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         genesis_config.rent = Rent::default();
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let prev_bank = bank_forks.read().unwrap().root_bank();
-        let current_slot = prev_bank
-            .epoch_schedule
-            .get_first_slot_in_epoch(prev_bank.epoch() + 1)
-            + NUM_SLOTS_FOR_REWARD;
 
         let node_pubkey = node_keypair.pubkey();
         let vote_pubkey = validator_keypairs[0].vote_keypair.pubkey();
@@ -642,7 +648,14 @@ mod tests {
             id: node_pubkey,
             vote_address: vote_pubkey,
         };
-        let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
+
+        let (prev_bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
+        let current_slot = prev_bank
+            .epoch_schedule
+            .get_first_slot_in_epoch(prev_bank.epoch() + 1)
+            + NUM_SLOTS_FOR_REWARD;
+
+        let bank = new_bank_from_parent(prev_bank.clone(), current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
         calc_vote_rewards_update_vote_states(

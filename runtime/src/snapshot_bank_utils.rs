@@ -1506,13 +1506,9 @@ mod tests {
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
-        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
-            &genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            BankTestConfig::default(),
-            vec![accounts_dir.clone()],
-        )
-        .wrap_with_bank_forks_for_tests();
+        let (bank0, bank_forks) =
+            Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
+                .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1952,7 +1948,8 @@ mod tests {
             },
         };
 
-        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        let bank0 =
+            Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None);
 
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
         let leader = *bank0.leader();

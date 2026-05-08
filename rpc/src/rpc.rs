@@ -7116,7 +7116,7 @@ pub mod tests {
             EpochSchedule::custom(TEST_SLOTS_PER_EPOCH, TEST_SLOTS_PER_EPOCH, false);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(TEST_SIGNATURE_FEE, 0);
 
-        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
+        let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
 
         // Add the test builtin.
         bank.add_builtin(

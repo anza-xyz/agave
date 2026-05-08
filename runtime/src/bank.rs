@@ -6212,7 +6212,7 @@ impl Bank {
     }
 
     pub fn new_for_tests(genesis_config: &GenesisConfig) -> Self {
-        Self::new_with_config_for_tests(genesis_config, BankTestConfig::default())
+        Self::new_with_paths_for_tests(genesis_config, None, vec![], None)
     }
 
     pub fn new_with_mockup_builtin_for_tests(
@@ -6225,32 +6225,21 @@ impl Bank {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    pub fn new_with_config_for_tests(
-        genesis_config: &GenesisConfig,
-        test_config: BankTestConfig,
-    ) -> Self {
-        Self::new_with_paths_for_tests(
-            genesis_config,
-            Arc::new(RuntimeConfig::default()),
-            test_config,
-            Vec::new(),
-        )
-    }
-
     pub fn new_with_paths_for_tests(
         genesis_config: &GenesisConfig,
-        runtime_config: Arc<RuntimeConfig>,
-        test_config: BankTestConfig,
+        test_config: Option<BankTestConfig>,
         paths: Vec<PathBuf>,
+        leader: Option<SlotLeader>,
     ) -> Self {
+        let test_config = test_config.unwrap_or_default();
         let mut bank = Self::new_from_genesis(
             genesis_config,
-            runtime_config,
+            Arc::new(RuntimeConfig::default()),
             paths,
             None,
             test_config.accounts_db_config,
             None,
-            None,
+            leader,
             Arc::default(),
             None,
             None,

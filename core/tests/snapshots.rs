@@ -22,7 +22,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
             PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
         },
-        bank::{Bank, BankTestConfig},
+        bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         runtime_config::RuntimeConfig,
@@ -81,9 +81,9 @@ impl SnapshotTestConfig {
         );
         let bank0 = Bank::new_with_paths_for_tests(
             &genesis_config_info.genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            BankTestConfig::default(),
+            None,
             vec![accounts_dir.clone()],
+            None,
         );
         bank0.freeze();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);

@@ -1185,7 +1185,7 @@ mod tests {
             ..
         } = create_genesis_config(1_000_000_000);
 
-        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
+        let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
         (BankForks::new_rw_arc(bank), Arc::new(voting_keypair))
     }
 
