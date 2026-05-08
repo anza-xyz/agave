@@ -85,9 +85,9 @@ struct LocalContext {
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
     pub(crate) stats: EventHandlerStats,
-    /// When in standstill, tracks the highest parent ready slot at the time standstill was detected.
+    /// When in standstill, tracks the highest finalized slot at the time standstill was detected.
     /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
-    /// Reset to None when a finalization event is received.
+    /// Reset to `None` when a new finalization event is received.
     pub(crate) standstill_slot: Option<Slot>,
 }
 
@@ -426,12 +426,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = standstill_slot.take() {
-                    info!(
-                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
-                         slot={}. Ending timeout extension",
-                        block.0
-                    );
+                if let Some(slot) = *standstill_slot {
+                    if block.0 > slot {
+                        *standstill_slot = None;
+                        info!(
+                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
+                             at slot={}. Ending timeout extension",
+                            block.0
+                        );
+                    }
                 }
 
                 if let Some(parent_block) =
@@ -458,13 +461,24 @@ impl EventHandler {
             // We have not observed a finalization certificate in a while, refresh our votes
             VotorEvent::Standstill(highest_finalized_slot) => {
                 info!("{my_pubkey}: Standstill {highest_finalized_slot}");
-                // Record the highest parent ready slot for dynamic timeout extension.
-                if standstill_slot.is_none() {
-                    let (highest_parent_ready, _) = *ctx.highest_parent_ready.read().unwrap();
-                    *standstill_slot = Some(highest_parent_ready);
-                    info!(
-                        "{my_pubkey}: Extending timeouts starting at slot {highest_parent_ready}"
-                    );
+                // Record the highest finalized slot for dynamic timeout extension.
+                match *standstill_slot {
+                    Some(old_slot) => {
+                        debug_assert_eq!(highest_finalized_slot, old_slot);
+                        if highest_finalized_slot != old_slot {
+                            warn!(
+                                "{my_pubkey}: Standstill for slot {highest_finalized_slot}
+                                 issued while standstill for slot {old_slot} active."
+                            );
+                        }
+                    }
+                    None => {
+                        *standstill_slot = Some(highest_finalized_slot);
+                        info!(
+                            "{my_pubkey}: Extending timeouts starting at slot \
+                             {highest_finalized_slot}"
+                        );
+                    }
                 }
                 // certs refresh happens in ConsensusPoolService
                 Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
@@ -1618,7 +1632,7 @@ mod tests {
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
 
-        // Send a standstill event with highest parent ready at 0, we should refresh all the votes
+        // Send a standstill event with highest finalized at 0, we should refresh all the votes
         test_context.send_standstill_event(0);
 
         test_context.check_for_votes(&[
@@ -1627,7 +1641,11 @@ mod tests {
             Vote::new_skip_vote(3),
         ]);
 
-        // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
+        // Finalize block 1, should deactivate standstill
+        test_context.send_finalized_event((1, block_id_1), true);
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Send another standstill event with highest finalized at 1, we should refresh votes for 2 and 3 only
         test_context.send_standstill_event(1);
 
         test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
@@ -1700,15 +1718,15 @@ mod tests {
         // Send standstill event - should record the standstill slot
         test_context.send_standstill_event(0);
 
-        // The standstill_slot should now be set to the highest parent ready
+        // The standstill_slot should now be set to the highest finalized
         assert!(test_context.local_context.standstill_slot.is_some());
         let standstill_slot = test_context.local_context.standstill_slot.unwrap();
-        // The highest parent ready should be 1 since we sent parent_ready for slot 1
-        assert_eq!(standstill_slot, 1);
+        // The highest finalized should be 0 since we haven't finalized a slot after genesis
+        assert_eq!(standstill_slot, 0);
 
-        // Send another standstill event - should not overwrite the existing standstill_slot
+        // Send another standstill event - should not change the existing standstill_slot
         test_context.send_standstill_event(0);
-        assert_eq!(test_context.local_context.standstill_slot, Some(1));
+        assert_eq!(test_context.local_context.standstill_slot, Some(0));
 
         // Send a finalized event - should reset standstill_slot
         test_context.send_finalized_event((1, block_id_1), false);
