@@ -16,7 +16,7 @@ pub mod epoch_inflation_account_state;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
 #[derive(Debug, PartialEq, Eq, Error)]
-pub(super) enum Error {
+pub enum CalcVoteRewardUpdateVoteStatesError {
     #[error("missing EpochInflationAccountState for current slot {current_slot}")]
     MissingEpochInflationAccountState { current_slot: Slot },
     #[error("missing epoch stakes for reward_slot {reward_slot} in current_slot {current_slot}")]
@@ -48,7 +48,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
     final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
-) -> Result<(), Error> {
+) -> Result<(), CalcVoteRewardUpdateVoteStatesError> {
     let (reward_slot, validators_to_reward) = if let Some(reward_cert) = reward_cert {
         reward_cert.into_parts()
     } else {
@@ -57,12 +57,12 @@ pub(super) fn calc_vote_rewards_update_vote_states(
 
     let current_slot = bank.slot();
     let (reward_slot_accounts, reward_slot_total_stake) = {
-        let epoch_stakes =
-            bank.epoch_stakes_from_slot(reward_slot)
-                .ok_or(Error::MissingEpochStakes {
-                    reward_slot,
-                    current_slot,
-                })?;
+        let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot).ok_or(
+            CalcVoteRewardUpdateVoteStatesError::MissingEpochStakes {
+                reward_slot,
+                current_slot,
+            },
+        )?;
         (
             epoch_stakes.stakes().vote_accounts().as_ref(),
             epoch_stakes.total_stake(),
@@ -78,9 +78,13 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         // that activated Alpenglow should have created the account.
         debug_assert!(epoch_inflation_account_state.is_some());
         epoch_inflation_account_state
-            .ok_or(Error::MissingEpochInflationAccountState { current_slot })?
+            .ok_or(
+                CalcVoteRewardUpdateVoteStatesError::MissingEpochInflationAccountState {
+                    current_slot,
+                },
+            )?
             .get_epoch_state(reward_epoch)
-            .ok_or(Error::NoEpochValidatorStake {
+            .ok_or(CalcVoteRewardUpdateVoteStatesError::NoEpochValidatorStake {
                 reward_epoch,
                 current_slot,
             })?
@@ -94,13 +98,14 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     let mut total_leader_reward = 0u64;
     let current_epoch = bank.epoch();
     for validator_to_reward in validators_to_reward {
-        let (reward_slot_validator_stake, _) = reward_slot_accounts
-            .get(&validator_to_reward)
-            .ok_or(Error::MissingRewardSlotValidator {
-                pubkey: validator_to_reward,
-                reward_slot,
-                current_slot,
-            })?;
+        let (reward_slot_validator_stake, _) =
+            reward_slot_accounts.get(&validator_to_reward).ok_or(
+                CalcVoteRewardUpdateVoteStatesError::MissingRewardSlotValidator {
+                    pubkey: validator_to_reward,
+                    reward_slot,
+                    current_slot,
+                },
+            )?;
         let (validator_reward, add_leader_reward) = calculate_reward(
             &epoch_state,
             reward_slot_total_stake,

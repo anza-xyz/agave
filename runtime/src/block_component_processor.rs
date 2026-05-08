@@ -1,7 +1,9 @@
 use {
     crate::{
         bank::Bank,
-        block_component_processor::vote_reward::calc_vote_rewards_update_vote_states,
+        block_component_processor::vote_reward::{
+            CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
+        },
         validated_block_finalization::{
             BlockFinalizationCertError, ValidatedBlockFinalizationCert,
         },
@@ -26,6 +28,12 @@ use {
 };
 
 pub(crate) mod vote_reward;
+
+#[derive(Debug, PartialEq, Eq, Error)]
+pub enum BankFooterError {
+    #[error("calc vote rewards updating vote states failed with \"{0}\"")]
+    CalcVoteRewardUpdateVoteStates(#[from] CalcVoteRewardUpdateVoteStatesError),
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BlockComponentProcessorError {
@@ -66,6 +74,8 @@ pub enum BlockComponentProcessorError {
     AbandonedBank(VersionedUpdateParent),
     #[error("invalid reward certs {0}")]
     InvalidRewardCerts(#[from] ValidatedRewardCertError),
+    #[error("updating bank footer failed with \"{0}\"")]
+    UpdateBankFooter(#[from] BankFooterError),
 }
 
 #[derive(Default)]
@@ -314,7 +324,7 @@ impl BlockComponentProcessor {
             footer_input
                 .as_ref()
                 .map(|(validators, slot)| (validators, *slot)),
-        );
+        )?;
 
         // Send finalization cert(s) to consensus pool
         if let Some((finalize_cert, notarize_cert)) = pool_input {
@@ -439,13 +449,12 @@ impl BlockComponentProcessor {
         bank_hash: Hash,
         reward_cert: Option<ValidatedRewardCert>,
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
-    ) {
-        // Update clock sysvar
+    ) -> Result<(), BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
-
-        calc_vote_rewards_update_vote_states(bank, reward_cert, final_cert_input).unwrap();
+        calc_vote_rewards_update_vote_states(bank, reward_cert, final_cert_input)?;
         // Record expected bank hash from footer for later verification when the bank is frozen.
         bank.set_expected_bank_hash(bank_hash);
+        Ok(())
     }
 }
 
