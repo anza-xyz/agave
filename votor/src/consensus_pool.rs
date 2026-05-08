@@ -146,7 +146,7 @@ impl ConsensusPool {
         generated_cert_types: Arc<GeneratedCertTypes>,
     ) -> Self {
         // To account for genesis and snapshots we allow default block id until
-        // block id can be serialized  as part of the snapshot
+        // block id can be serialized as part of the snapshot
         let root_block = (bank.slot(), bank.block_id().unwrap_or_default());
         let parent_ready_tracker = ParentReadyTracker::new(cluster_info.clone(), root_block);
 
@@ -197,13 +197,13 @@ impl ConsensusPool {
         }
     }
 
-    /// For a new vote `slot` , `vote_type` checks if any
-    /// of the related certificates are newly complete.
-    /// For each newly constructed certificate
-    /// - Insert it into `self.certificates`
-    /// - Potentially update `self.highest_finalized_slot_cert`,
-    /// - If we have a new highest finalized slot, return it
-    /// - update any newly created events
+    /// For a new `vote`, checks if any of the related certificates are newly complete.
+    ///
+    /// For each newly constructed certificate:
+    /// - Insert it into `self.certificates`,
+    /// - potentially update `self.highest_finalized_slot_cert`,
+    /// - if we have a new highest finalized slot, return it, and
+    /// - update any newly created events.
     fn update_certificates(
         &mut self,
         root_bank: &Bank,
@@ -279,8 +279,6 @@ impl ConsensusPool {
                     }
                     // In a duplicate block vote pool, because some conflicts between things like Notarize and NotarizeFallback
                     // for different blocks are allowed, we need a more specific check.
-                    // TODO: This can be made much cleaner/safer if VoteType carried the bank hash, block id so we
-                    // could check which exact VoteType(blockid, bankhash) was the source of the conflict.
                     VotePool::DuplicateBlockVotePool(pool) => {
                         if let Some(block_id) = &block_id {
                             // Reject votes for the same block with a conflicting type, i.e.

@@ -101,7 +101,7 @@ impl TimerState {
                     return None;
                 }
                 let slot = *window.front().unwrap();
-                let new_timeout = now.checked_add(*scaled_delta_block).unwrap();
+                let new_timeout = timeout.checked_add(*scaled_delta_block).unwrap();
                 *self = Self::WaitDeltaBlock {
                     window: window.to_owned(),
                     timeout: new_timeout,
@@ -123,7 +123,7 @@ impl TimerState {
                 match window.front() {
                     None => *self = Self::Done,
                     Some(_next_slot) => {
-                        *timeout = now.checked_add(*scaled_delta_block).unwrap();
+                        *timeout = timeout.checked_add(*scaled_delta_block).unwrap();
                     }
                 }
                 ret

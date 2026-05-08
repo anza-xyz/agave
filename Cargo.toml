@@ -11,7 +11,6 @@ members = [
     "banks-server",
     "bloom",
     "bls-cert-verify",
-    "bls12-381-syscall",
     "bucket_map",
     "builtins",
     "builtins-default-costs",
@@ -368,7 +367,7 @@ solana-bincode = "3.1.0"
 solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "3.3.0", features = ["serde"] }
-solana-bls12-381-syscall = { path = "bls12-381-syscall", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
+solana-bls12-381-syscall = "0.1.0"
 solana-bn254 = "3.2.1"
 solana-borsh = "3.0.2"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
@@ -563,7 +562,7 @@ tokio-serde = "0.8"
 tokio-stream = "0.1.18"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.18"
-tonic = "0.14.5"
+tonic = "0.14.6"
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
 tracing = "0.1"

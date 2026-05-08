@@ -301,7 +301,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Pop a stack frame from the invocation stack
-    pub(crate) fn pop(&mut self) -> Result<(), InstructionError> {
+    pub fn pop(&mut self) -> Result<(), InstructionError> {
         self.memory_contexts.pop();
         self.transaction_context.pop()
     }

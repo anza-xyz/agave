@@ -90,8 +90,8 @@ impl VotorEvent {
                 slot: s,
                 parent_block: _,
             } => s <= &root,
-            VotorEvent::ProduceWindow(_) => false,
-            VotorEvent::Standstill(_) => false,
+            VotorEvent::Standstill(s) => s < &root,
+            VotorEvent::ProduceWindow(info) => info.start_slot <= root,
             VotorEvent::SetIdentity => false,
         }
     }
