@@ -15,7 +15,7 @@ use {
 pub mod epoch_inflation_account_state;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
-#[derive(Debug, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum CalcVoteRewardUpdateVoteStatesError {
     #[error("missing EpochInflationAccountState for current slot {current_slot}")]
     MissingEpochInflationAccountState { current_slot: Slot },

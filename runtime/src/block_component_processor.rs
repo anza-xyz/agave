@@ -29,13 +29,13 @@ use {
 
 pub(crate) mod vote_reward;
 
-#[derive(Debug, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum BankFooterError {
     #[error("calc vote rewards updating vote states failed with \"{0}\"")]
     CalcVoteRewardUpdateVoteStates(#[from] CalcVoteRewardUpdateVoteStatesError),
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum BlockComponentProcessorError {
     #[error("BlockComponent detected pre-migration")]
     BlockComponentPreMigration,
@@ -508,10 +508,10 @@ mod tests {
 
         // Try to process entry batch without header - should fail
         let result = processor.on_entry_batch(&migration_status, 1);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
-        );
+        ));
     }
 
     #[test]
@@ -524,10 +524,10 @@ mod tests {
 
         // Try to mark slot as full without footer - should fail
         let result = processor.on_final(&migration_status, 1);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingBlockFooter)
-        );
+        ));
     }
 
     #[test]
@@ -543,10 +543,10 @@ mod tests {
 
         // Second header should fail
         let result = processor.on_header(&header, 0);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MultipleBlockHeaders)
-        );
+        ));
     }
 
     #[test]
@@ -581,10 +581,10 @@ mod tests {
 
         // Second footer should fail
         let result = processor.on_footer(bank, parent, footer, None);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MultipleBlockFooters)
-        );
+        ));
     }
 
     #[test]
@@ -641,13 +641,13 @@ mod tests {
             parent_block_id: Hash::default(),
         });
 
-        assert_eq!(
+        assert!(matches!(
             processor.on_header(&header, 0),
             Err(BlockComponentProcessorError::HeaderParentSlotMismatch {
                 header_parent_slot: 2,
                 bank_parent_slot: 0,
             })
-        );
+        ));
     }
 
     #[test]
@@ -680,13 +680,13 @@ mod tests {
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
-        assert_eq!(
+        assert!(matches!(
             processor.on_marker(bank, parent, marker, None, &migration_status),
             Err(BlockComponentProcessorError::HeaderParentSlotMismatch {
                 header_parent_slot: 7,
                 bank_parent_slot: 0,
             })
-        );
+        ));
     }
 
     #[test]
@@ -780,10 +780,10 @@ mod tests {
         });
 
         let result = processor.on_marker(bank, parent, marker, None, &migration_status);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
-        );
+        ));
     }
 
     #[test]
@@ -803,7 +803,7 @@ mod tests {
         });
 
         let mut processor = BlockComponentProcessor::default();
-        assert_eq!(
+        assert!(matches!(
             processor.on_marker(
                 bank.clone(),
                 parent.clone(),
@@ -812,7 +812,7 @@ mod tests {
                 &migration_status
             ),
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
-        );
+        ));
 
         let update_parent_marker = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
             new_parent_slot: 0,
@@ -820,10 +820,10 @@ mod tests {
         });
 
         let mut processor = BlockComponentProcessor::default();
-        assert_eq!(
+        assert!(matches!(
             processor.on_marker(bank, parent, update_parent_marker, None, &migration_status),
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
-        );
+        ));
     }
 
     #[test]
@@ -908,10 +908,10 @@ mod tests {
 
         // Try to process footer without header - should fail
         let result = processor.on_footer(bank, parent, footer, None);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
-        );
+        ));
     }
 
     #[test]
@@ -1068,10 +1068,10 @@ mod tests {
         if should_pass {
             assert!(result.is_ok());
         } else {
-            assert_eq!(
+            assert!(matches!(
                 result,
                 Err(BlockComponentProcessorError::NanosecondClockOutOfBounds)
-            );
+            ));
         }
     }
 
@@ -1221,10 +1221,10 @@ mod tests {
         processor.on_update_parent(&update_parent).unwrap();
 
         // Second should fail
-        assert_eq!(
+        assert!(matches!(
             processor.on_update_parent(&update_parent),
             Err(BlockComponentProcessorError::MultipleUpdateParents)
-        );
+        ));
     }
 
     #[test]
@@ -1242,10 +1242,10 @@ mod tests {
             parent_block_id: Hash::default(),
         });
 
-        assert_eq!(
+        assert!(matches!(
             processor.on_header(&header, 0),
             Err(BlockComponentProcessorError::SpuriousUpdateParent)
-        );
+        ));
     }
 
     #[test]
