@@ -703,6 +703,28 @@ impl SystemMonitorService {
         }
     }
 
+    #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+    fn report_jemalloc_stats() {
+        use jemalloc_ctl::{epoch, stats};
+        // Advance the epoch so jemalloc refreshes its cached stat values.
+        if let Ok(e) = epoch::mib() {
+            let _ = e.advance();
+            let allocated = stats::allocated::mib().and_then(|m| m.read()).unwrap_or(0);
+            let active = stats::active::mib().and_then(|m| m.read()).unwrap_or(0);
+            let resident = stats::resident::mib().and_then(|m| m.read()).unwrap_or(0);
+            let retained = stats::retained::mib().and_then(|m| m.read()).unwrap_or(0);
+            datapoint_info!(
+                "jemalloc_stats",
+                ("allocated_bytes", allocated as i64, i64),
+                ("active_bytes", active as i64, i64),
+                ("resident_bytes", resident as i64, i64),
+                ("retained_bytes", retained as i64, i64),
+                // Freed memory jemalloc is holding but hasn't returned to the OS yet.
+                ("dirty_bytes", resident.saturating_sub(active) as i64, i64),
+            );
+        }
+    }
+
     fn cpu_info() -> Result<CpuInfo, Error> {
         let cpu_num = sys_info::cpu_num()?;
         let cpu_freq_mhz = sys_info::cpu_speed()?;
@@ -981,7 +1003,10 @@ impl SystemMonitorService {
             }
             if config.report_os_memory_stats && mem_timer.should_update(SAMPLE_INTERVAL_MEM_MS) {
                 Self::report_mem_stats();
+                #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+                Self::report_jemalloc_stats();
             }
+
             if config.report_os_cpu_stats {
                 if cpu_timer.should_update(SAMPLE_INTERVAL_CPU_MS) {
                     Self::report_cpu_stats();
