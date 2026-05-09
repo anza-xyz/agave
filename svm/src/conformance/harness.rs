@@ -1,10 +1,19 @@
 //! Conformance harness.
 
 use {
-    super::context::{InstrContext, InstrEffects},
+    super::{
+        context::{InstrContext, InstrEffects},
+        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+        sysvar::fill_sysvar_cache_from_accounts,
+    },
     crate::message_processor::process_message,
+    agave_feature_set::FeatureSet,
+    agave_precompiles::{get_precompile, is_precompile},
+    prost::Message,
+    protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
+    solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
         loaded_programs::{
@@ -20,12 +29,30 @@ use {
     solana_syscalls::create_program_runtime_environment,
     solana_transaction_context::transaction::TransactionContext,
     solana_transaction_error::TransactionError,
-    std::rc::Rc,
+    std::{ffi::c_int, rc::Rc},
 };
 
-/// Default no-op callback. No precompile support.
-struct MockCallback;
-impl InvokeContextCallback for MockCallback {}
+/// Default callback. Full precompile support.
+struct DefaultCallback;
+
+impl InvokeContextCallback for DefaultCallback {
+    fn is_precompile(&self, program_id: &Pubkey) -> bool {
+        is_precompile(program_id, |_| true)
+    }
+
+    fn process_precompile(
+        &self,
+        program_id: &Pubkey,
+        data: &[u8],
+        instruction_datas: Vec<&[u8]>,
+    ) -> Result<(), PrecompileError> {
+        if let Some(precompile) = get_precompile(program_id, |_| true) {
+            precompile.verify(data, &instruction_datas, &FeatureSet::all_enabled())
+        } else {
+            Err(PrecompileError::InvalidPublicKey)
+        }
+    }
+}
 
 /// Execute a single instruction against the Solana VM with the default
 /// (no-precompile) callback.
@@ -37,7 +64,7 @@ pub fn execute_instr(
 ) -> Option<InstrEffects> {
     execute_instr_with_callback(
         input,
-        &MockCallback,
+        &DefaultCallback,
         compute_budget,
         program_cache,
         sysvar_cache,
@@ -165,16 +192,88 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     })
 }
 
+pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
+    let cu_avail = input.cu_avail;
+    let instr_context = InstrContext::from(input);
+
+    let feature_set = &instr_context.feature_set;
+    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
+
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active);
+        budget.compute_unit_limit = cu_avail;
+        budget
+    };
+
+    // When testing with protobuf, we fill the sysvar cache from input accounts.
+    let sysvar_cache = {
+        let mut cache = SysvarCache::default();
+        fill_sysvar_cache_from_accounts(&mut cache, &instr_context.accounts);
+        cache
+    };
+
+    // When testing with protobuf, we fill the program cache from input accounts.
+    let mut program_cache = {
+        let slot = sysvar_cache.get_clock().unwrap().slot;
+        let environment = create_program_runtime_environment(
+            &instr_context.feature_set,
+            &compute_budget.to_budget(),
+            false, /* deployment */
+            false, /* debugging_features */
+        )
+        .unwrap();
+
+        let mut cache = new_program_cache_with_builtins(slot);
+        fill_program_cache_from_accounts(&mut cache, &environment, &instr_context.accounts, slot)
+            .unwrap();
+
+        cache
+    };
+
+    let instr_effects = execute_instr(
+        &instr_context,
+        &compute_budget,
+        &mut program_cache,
+        &sysvar_cache,
+    );
+    instr_effects.map(Into::into)
+}
+
+/// # Safety
+///
+/// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
+/// to a writable buffer of at least `*out_psz` bytes. On return, `*out_psz`
+/// is updated to the number of bytes written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sol_compat_instr_execute_v1(
+    out_ptr: *mut u8,
+    out_psz: *mut u64,
+    in_ptr: *mut u8,
+    in_sz: u64,
+) -> c_int {
+    let in_slice = unsafe { std::slice::from_raw_parts(in_ptr, in_sz as usize) };
+    let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
+        return 0;
+    };
+    let Some(instr_effects) = execute_instr_proto(instr_context) else {
+        return 0;
+    };
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
+    let out_vec = instr_effects.encode_to_vec();
+    if out_vec.len() > out_slice.len() {
+        return 0;
+    }
+    out_slice[..out_vec.len()].copy_from_slice(&out_vec);
+    unsafe {
+        *out_psz = out_vec.len() as u64;
+    }
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use {
-        super::{
-            super::{
-                programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-                sysvar::fill_sysvar_cache_from_accounts,
-            },
-            *,
-        },
+        super::*,
         solana_account::Account,
         solana_instruction::{AccountMeta, Instruction},
         solana_svm_feature_set::SVMFeatureSet,
@@ -313,14 +412,8 @@ mod tests {
         .unwrap();
 
         // Execute the instruction.
-        let effects = execute_instr_with_callback(
-            &context,
-            &MockCallback,
-            &compute_budget,
-            &mut program_cache,
-            &sysvar_cache,
-        )
-        .expect("Instruction execution should succeed");
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .expect("Instruction execution should succeed");
 
         // Verify the results.
         assert_eq!(effects.result, None);
