@@ -141,9 +141,8 @@ solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.1.1"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-stake-interface = { version = "=3.1.0", features = ["bincode"] }
-solana-svm = { path = "../../svm", version = "=4.2.0-alpha.0" }
+solana-svm = { path = "../../svm", version = "=4.2.0-alpha.0", features = ["conformance"] }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.2.0-alpha.0" }
-solana-svm-test-harness-instr = { path = "../../svm-test-harness/instr", version = "=4.2.0-alpha.0" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.2.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.2.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.2.0-alpha.0" }
@@ -204,7 +203,6 @@ solana-signer = "3.0.0"
 solana-stake-interface = "3.0.0"
 solana-svm = { workspace = true }
 solana-svm-feature-set = { workspace = true }
-solana-svm-test-harness-instr = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
