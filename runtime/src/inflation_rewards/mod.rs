@@ -312,8 +312,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_stake_state_redeem_rewards() {
+    #[test_matrix([true, false])]
+    fn test_stake_state_redeem_rewards(ag_enabled: bool) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -327,6 +327,14 @@ mod tests {
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
+
+        // epoch credits work differently in AG, so we need a multiplier to account for that.
+        let (ag_stake_state, ag_total_stake_multiplier) = if ag_enabled {
+            let (state, stake) = AlpenglowStakeState::new_for_tests();
+            (Some(state), stake)
+        } else {
+            (None, 1)
+        };
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
@@ -346,13 +354,13 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone()
             )
         );
 
         // put 2 credits in at epoch 0
-        vote_state.increment_credits(0, 1);
-        vote_state.increment_credits(0, 1);
+        vote_state.increment_credits(0, ag_total_stake_multiplier);
+        vote_state.increment_credits(0, ag_total_stake_multiplier);
 
         // this one should be able to collect exactly 2
         assert_eq!(
@@ -372,7 +380,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state.clone()
             )
         );
 
@@ -380,7 +388,7 @@ mod tests {
             stake.delegation.stake,
             stake_lamports + (stake_lamports * 2)
         );
-        assert_eq!(stake.credits_observed, 2);
+        assert_eq!(stake.credits_observed, 2 * ag_total_stake_multiplier);
     }
 
     #[test_matrix([true, false])]
@@ -810,8 +818,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_stake_state_calculate_points_with_typical_values() {
+    #[test_matrix([true, false])]
+    fn test_stake_state_calculate_points_with_typical_values(ag_enabled: bool) {
         let vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
         // bootstrap means fully-vested stake at epoch 0 with
@@ -825,6 +833,13 @@ mod tests {
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
+
+        let ag_stake_state = if ag_enabled {
+            let (state, _stake) = AlpenglowStakeState::new_for_tests();
+            Some(state)
+        } else {
+            None
+        };
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
@@ -844,7 +859,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                ag_stake_state
             )
         );
     }
