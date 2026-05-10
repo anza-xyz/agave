@@ -16,7 +16,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::assert_matches,
     bincode::deserialize_from,
-    crossbeam_channel::{Sender, bounded, unbounded},
+    crossbeam_channel::{bounded, unbounded},
     itertools::Itertools,
     log::*,
     solana_clock::{DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET, Slot},
@@ -422,7 +422,6 @@ struct SimulatorLoop {
     bank_forks: Arc<RwLock<BankForks>>,
     blockstore: Arc<Blockstore>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    retransmit_slots_sender: Sender<Slot>,
     retracer: Arc<BankingTracer>,
 }
 
@@ -431,7 +430,7 @@ impl SimulatorLoop {
         self,
         base_simulation_time: SystemTime,
         sender_thread: EventSenderThread,
-    ) -> (EventSenderThread, Sender<Slot>) {
+    ) -> EventSenderThread {
         sleep(WARMUP_DURATION);
         info!("warmup done!");
         self.start(base_simulation_time, sender_thread)
@@ -441,7 +440,7 @@ impl SimulatorLoop {
         mut self,
         base_simulation_time: SystemTime,
         sender_thread: EventSenderThread,
-    ) -> (EventSenderThread, Sender<Slot>) {
+    ) -> EventSenderThread {
         let logger = SimulatorLoopLogger {
             simulated_leader: self.simulated_leader,
             base_event_time: self.base_event_time,
@@ -498,7 +497,6 @@ impl SimulatorLoop {
                 if *bank.leader_id() == self.simulated_leader {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
-                self.retransmit_slots_sender.send(bank.slot()).unwrap();
                 update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                     &self.bank_forks,
                     &mut self.poh_controller,
@@ -525,7 +523,7 @@ impl SimulatorLoop {
             sleep(Duration::from_millis(10));
         }
 
-        (sender_thread, self.retransmit_slots_sender)
+        sender_thread
     }
 }
 
@@ -538,7 +536,7 @@ struct SimulatorThreads {
 }
 
 impl SimulatorThreads {
-    fn finish(self, sender_thread: EventSenderThread, retransmit_slots_sender: Sender<Slot>) {
+    fn finish(self, sender_thread: EventSenderThread) {
         info!("Sleeping a bit before signaling exit");
         sleep(Duration::from_millis(100));
         self.exit.store(true, Ordering::Relaxed);
@@ -553,7 +551,6 @@ impl SimulatorThreads {
         }
 
         info!("Joining broadcast stage...");
-        drop(retransmit_slots_sender);
         self.broadcast_stage.join().unwrap();
     }
 }
@@ -800,7 +797,6 @@ impl BankingSimulator {
         } = banking_tracer_channels;
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
         let (completed_block_sender, _completed_block_receiver) = unbounded();
         let shred_version = compute_shred_version(
             &genesis_config.hash(),
@@ -828,7 +824,6 @@ impl BankingSimulator {
             vec![socket],
             cluster_info_for_broadcast,
             entry_receiver,
-            retransmit_slots_receiver,
             exit.clone(),
             blockstore.clone(),
             bank_forks.clone(),
@@ -907,7 +902,6 @@ impl BankingSimulator {
             bank_forks,
             blockstore,
             leader_schedule_cache,
-            retransmit_slots_sender,
             retracer,
         };
 
@@ -941,10 +935,9 @@ impl BankingSimulator {
         // Spawning and entering these two loops must be done at the same time as they're timed.
         // So, all the mundane setup must be done in advance.
         let sender_thread = sender_loop.spawn(base_simulation_time)?;
-        let (sender_thread, retransmit_slots_sender) =
-            simulator_loop.enter(base_simulation_time, sender_thread);
+        let sender_thread = simulator_loop.enter(base_simulation_time, sender_thread);
 
-        simulator_threads.finish(sender_thread, retransmit_slots_sender);
+        simulator_threads.finish(sender_thread);
 
         Ok(())
     }
