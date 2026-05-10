@@ -23,6 +23,7 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
+    agave_tpu_plugin::{AccountFilter, BankingHooks},
     agave_votor::event::VotorEventSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
@@ -59,7 +60,7 @@ use {
         broadcast_stage::{BroadcastStage, BroadcastStageType},
     },
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
@@ -104,7 +105,7 @@ pub struct Tpu {
 
 impl Tpu {
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_client(
+    pub fn new_with_client<F: AccountFilter + 'static>(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
@@ -142,7 +143,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
-        filter_keys: Arc<HashSet<Pubkey>>,
+        hooks: BankingHooks<F>,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
@@ -301,7 +302,7 @@ impl Tpu {
             log_messages_bytes_limit,
             bank_forks.clone(),
             prioritization_fee_cache,
-            filter_keys,
+            hooks,
         );
 
         #[cfg(unix)]

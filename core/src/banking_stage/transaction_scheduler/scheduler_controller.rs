@@ -20,6 +20,7 @@ use {
         },
         validator::SchedulerPacing,
     },
+    agave_tpu_plugin::{TipConfig, TipContext, TipProcessor, TipProcessorError},
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -88,6 +89,9 @@ where
     recheck_cursor: Option<TransactionPriorityId>,
     /// Recheck IDs scratch space.
     recheck_chunk: Vec<TransactionPriorityId>,
+    // Tip hook — called once per leader-slot transition to initialize PDAs.
+    tip_processor: Arc<dyn TipProcessor>,
+    tip_config: TipConfig,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -103,6 +107,8 @@ where
         sharable_banks: SharableBanks,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+        tip_processor: Arc<dyn TipProcessor>,
+        tip_config: TipConfig,
     ) -> Self {
         Self {
             exit,
@@ -118,6 +124,8 @@ where
             scheduling_details: SchedulingDetails::default(),
             recheck_cursor: None,
             recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
+            tip_processor,
+            tip_config,
         }
     }
 
@@ -142,7 +150,8 @@ where
             self.timing_metrics.update(|timing_metrics| {
                 timing_metrics.decision_time_us += decision_time_us;
             });
-            let new_leader_slot = decision.bank().map(|b| b.slot());
+            let new_leader_bank = decision.bank();
+            let new_leader_slot = new_leader_bank.map(|b| b.slot());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
@@ -151,7 +160,26 @@ where
             if most_recent_leader_slot != new_leader_slot {
                 self.container.flush_held_transactions();
                 most_recent_leader_slot = new_leader_slot;
-                cost_pacer = decision.bank().map(|b| {
+
+                // AlreadyInitialized is non-fatal; TipProcessor impls must be idempotent
+                // because a re-elected leader for the same epoch will hit this path again.
+                if let Some(bank) = new_leader_bank {
+                    let ctx = TipContext::new(
+                        bank.slot(),
+                        bank.epoch(),
+                        &self.tip_config.validator_identity,
+                        self.tip_config.block_builder_pubkey,
+                        self.tip_config.block_builder_commission_bps,
+                    );
+                    match self.tip_processor.process(&ctx) {
+                        Ok(()) | Err(TipProcessorError::AlreadyInitialized(_)) => {}
+                        Err(TipProcessorError::InitializationFailed { slot, reason }) => {
+                            warn!("tip PDA init failed for slot {slot}: {reason}");
+                        }
+                    }
+                }
+
+                cost_pacer = new_leader_bank.map(|b| {
                     let cost_tracker = b.read_cost_tracker().unwrap();
                     let block_limit = cost_tracker.get_block_limit();
                     let shared_block_cost = cost_tracker.shared_block_cost();
@@ -380,6 +408,7 @@ where
                 num_dropped_on_already_processed,
                 num_dropped_on_fee_payer,
                 num_dropped_on_filter_key,
+                num_dropped_on_bundle_lock,
                 num_dropped_on_capacity,
                 num_buffered,
                 receive_time_us: _,
@@ -397,6 +426,7 @@ where
                 *num_dropped_on_already_processed;
             count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
             count_metrics.num_dropped_on_filter_key += *num_dropped_on_filter_key;
+            count_metrics.num_dropped_on_bundle_lock += *num_dropped_on_bundle_lock;
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
             count_metrics.num_buffered += *num_buffered;
         });
@@ -449,6 +479,7 @@ mod tests {
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+        agave_tpu_plugin::{BankingHooks, NoTip},
         crossbeam_channel::{Receiver, Sender, unbounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -492,7 +523,7 @@ mod tests {
         TransactionViewReceiveAndBuffer {
             receiver,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            filter_keys: Arc::default(),
+            hooks: BankingHooks::default(),
         }
     }
 
@@ -547,6 +578,8 @@ mod tests {
             bank_forks.read().unwrap().sharable_banks(),
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
+            Arc::new(NoTip),
+            TipConfig::default(),
         );
 
         (test_frame, scheduler_controller)

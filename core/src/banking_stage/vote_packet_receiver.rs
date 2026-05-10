@@ -10,28 +10,27 @@ use {
     },
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
-    solana_pubkey::Pubkey,
+    agave_tpu_plugin::{AccountFilter, NoFilter},
     std::{
-        collections::HashSet,
         num::Saturating,
         sync::{Arc, atomic::Ordering},
         time::{Duration, Instant},
     },
 };
 
-pub struct VotePacketReceiver {
+pub struct VotePacketReceiver<F: AccountFilter = NoFilter> {
     banking_packet_receiver: BankingPacketReceiver,
-    filter_keys: Arc<HashSet<Pubkey>>,
+    account_filter: Arc<F>,
 }
 
-impl VotePacketReceiver {
+impl<F: AccountFilter> VotePacketReceiver<F> {
     pub fn new(
         banking_packet_receiver: BankingPacketReceiver,
-        filter_keys: Arc<HashSet<Pubkey>>,
+        account_filter: Arc<F>,
     ) -> Self {
         Self {
             banking_packet_receiver,
-            filter_keys,
+            account_filter,
         }
     }
 
@@ -158,11 +157,8 @@ impl VotePacketReceiver {
 
     fn should_filter_packet(&self, packet: &SanitizedTransactionView<SharedBytes>) -> bool {
         // Vote transactions do not use address lookup tables, so static keys cover this path.
-        !self.filter_keys.is_empty()
-            && packet
-                .static_account_keys()
-                .iter()
-                .any(|key| self.filter_keys.contains(key))
+        self.account_filter.is_active()
+            && packet.static_account_keys().iter().any(|key| self.account_filter.is_blocked(key))
     }
 
     fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
@@ -274,6 +270,7 @@ pub struct PacketReceiverStats {
 mod tests {
     use {
         super::*,
+        agave_tpu_plugin::SetAccountFilter,
         crate::banking_stage::{
             BankingStageStats,
             latest_validator_vote_packet::VoteSource,
@@ -282,16 +279,18 @@ mod tests {
         },
         crossbeam_channel::unbounded,
         solana_perf::packet::PacketBatch,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{self, ValidatorVoteKeypairs},
         },
         solana_signer::Signer,
+        std::collections::HashSet,
     };
 
-    fn receive_vote_with_filter_keys(
+    fn receive_vote_with_filter<F: AccountFilter>(
         keypairs: &ValidatorVoteKeypairs,
-        filter_keys: Arc<HashSet<Pubkey>>,
+        account_filter: Arc<F>,
     ) -> VoteStorage {
         let vote_packet = packet_from_slots(vec![(1, 1)], keypairs, None);
         let (sender, receiver) = unbounded();
@@ -299,7 +298,7 @@ mod tests {
             .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
             .unwrap();
 
-        let mut receiver = VotePacketReceiver::new(receiver, filter_keys);
+        let mut receiver = VotePacketReceiver::new(receiver, account_filter);
         let genesis_config =
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[keypairs], vec![200])
                 .genesis_config;
@@ -324,8 +323,10 @@ mod tests {
     fn test_receive_and_buffer_filters_vote_account_key() {
         let keypairs = ValidatorVoteKeypairs::new_rand();
         let vote_pubkey = keypairs.vote_keypair.pubkey();
-        let vote_storage =
-            receive_vote_with_filter_keys(&keypairs, Arc::new(HashSet::from([vote_pubkey])));
+        let vote_storage = receive_vote_with_filter(
+            &keypairs,
+            Arc::new(SetAccountFilter(HashSet::from([vote_pubkey]))),
+        );
 
         assert_eq!(vote_storage.len(), 0);
     }
@@ -333,9 +334,9 @@ mod tests {
     #[test]
     fn test_receive_and_buffer_does_not_filter_unmatched_vote_account_key() {
         let keypairs = ValidatorVoteKeypairs::new_rand();
-        let vote_storage = receive_vote_with_filter_keys(
+        let vote_storage = receive_vote_with_filter(
             &keypairs,
-            Arc::new(HashSet::from([Pubkey::new_unique()])),
+            Arc::new(SetAccountFilter(HashSet::from([Pubkey::new_unique()]))),
         );
 
         assert_eq!(vote_storage.len(), 1);

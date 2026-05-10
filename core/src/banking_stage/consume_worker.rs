@@ -1106,6 +1106,7 @@ pub(crate) mod external {
     mod tests {
         use {
             super::*,
+            agave_tpu_plugin::StandardCommit,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, worker_message_types},
             agave_scheduling_utils::{
@@ -1331,7 +1332,7 @@ pub(crate) mod external {
             let recorder = TransactionRecorder::new(record_sender);
             let (replay_vote_sender, replay_vote_receiver) = unbounded();
             let committer = Committer::new(None, replay_vote_sender, None);
-            let consumer = Consumer::new(committer, recorder, None);
+            let consumer = Consumer::new(committer, recorder, None, Arc::new(StandardCommit));
             let shared_leader_state = SharedLeaderState::new(0, None, None);
             let exit = Arc::new(AtomicBool::new(false));
 
@@ -2777,6 +2778,7 @@ impl ConsumeWorkerTransactionErrorMetrics {
 mod tests {
     use {
         super::*,
+        agave_tpu_plugin::StandardCommit,
         crate::banking_stage::{
             committer::Committer,
             scheduler_messages::{MaxAge, TransactionBatchId},
@@ -2854,7 +2856,7 @@ mod tests {
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None);
+        let consumer = Consumer::new(committer, recorder, None, Arc::new(StandardCommit));
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
         let (consume_sender, consume_receiver) = unbounded();

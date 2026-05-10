@@ -10,6 +10,7 @@ use {
         vote_packet_receiver::VotePacketReceiver,
         vote_storage::VoteStorage,
     },
+    agave_tpu_plugin::{AccountFilter, NoFilter},
     crate::banking_stage::{
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
         transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
@@ -55,24 +56,24 @@ mod transaction {
 // 2. Constrain max entry size for FEC set packing (Smaller is better)
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
-pub struct VoteWorker {
+pub struct VoteWorker<F: AccountFilter = NoFilter> {
     exit: Arc<AtomicBool>,
     shutdown_signal: CancellationToken,
     decision_maker: DecisionMaker,
-    tpu_receiver: VotePacketReceiver,
-    gossip_receiver: VotePacketReceiver,
+    tpu_receiver: VotePacketReceiver<F>,
+    gossip_receiver: VotePacketReceiver<F>,
     storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
 }
 
-impl VoteWorker {
+impl<F: AccountFilter> VoteWorker<F> {
     pub fn new(
         exit: Arc<AtomicBool>,
         shutdown_signal: CancellationToken,
         decision_maker: DecisionMaker,
-        tpu_receiver: VotePacketReceiver,
-        gossip_receiver: VotePacketReceiver,
+        tpu_receiver: VotePacketReceiver<F>,
+        gossip_receiver: VotePacketReceiver<F>,
         storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,
@@ -572,6 +573,7 @@ fn has_reached_end_of_slot(reached_max_poh_height: bool, bank: &Bank) -> bool {
 mod tests {
     use {
         super::*,
+        agave_tpu_plugin::StandardCommit,
         crate::banking_stage::{
             committer::Committer,
             tests::{create_slow_genesis_config, sanitize_transactions},
@@ -605,7 +607,7 @@ mod tests {
     #[test]
     fn test_bank_prepare_filter_for_pending_transaction() {
         assert_eq!(
-            VoteWorker::prepare_filter_for_pending_transactions(6, &[2, 4, 5]),
+            VoteWorker::<NoFilter>::prepare_filter_for_pending_transactions(6, &[2, 4, 5]),
             vec![
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
@@ -617,7 +619,7 @@ mod tests {
         );
 
         assert_eq!(
-            VoteWorker::prepare_filter_for_pending_transactions(6, &[0, 2, 3]),
+            VoteWorker::<NoFilter>::prepare_filter_for_pending_transactions(6, &[0, 2, 3]),
             vec![
                 Ok(()),
                 Err(TransactionError::BlockhashNotFound),
@@ -632,7 +634,7 @@ mod tests {
     #[test]
     fn test_bank_filter_valid_transaction_indexes() {
         assert_eq!(
-            VoteWorker::filter_valid_transaction_indexes(&[
+            VoteWorker::<NoFilter>::filter_valid_transaction_indexes(&[
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
                 Ok(CheckedTransactionDetails::default()),
@@ -644,7 +646,7 @@ mod tests {
         );
 
         assert_eq!(
-            VoteWorker::filter_valid_transaction_indexes(&[
+            VoteWorker::<NoFilter>::filter_valid_transaction_indexes(&[
                 Ok(CheckedTransactionDetails::default()),
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
@@ -668,7 +670,7 @@ mod tests {
 
         // Assert - Able to extract exactly one packet.
         let expected = *packets[0].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected);
         assert!(extracted.next().is_none());
     }
@@ -684,7 +686,7 @@ mod tests {
         let retryable_indices = vec![];
 
         // Assert - Able to extract exactly zero packets.
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert!(extracted.next().is_none());
     }
 
@@ -704,7 +706,7 @@ mod tests {
 
         // Assert - Able to extract exactly one packet.
         let expected = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected);
         assert!(extracted.next().is_none());
     }
@@ -726,7 +728,7 @@ mod tests {
         // Assert - Able to extract exactly one packet.
         let expected0 = *packets[0].message_hash();
         let expected1 = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
         assert!(extracted.next().is_none());
@@ -766,7 +768,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None);
+        let consumer = Consumer::new(committer, recorder, None, Arc::new(StandardCommit));
 
         // Create and process a simple transfer transaction
         let pubkey = solana_pubkey::new_rand();
@@ -778,7 +780,7 @@ mod tests {
         )]);
 
         // Process some transactions on a bank that hasn't finished.
-        let summary = VoteWorker::process_transactions(&consumer, &bank, &transactions);
+        let summary = VoteWorker::<NoFilter>::process_transactions(&consumer, &bank, &transactions);
 
         // Assert - Transaction were prcoessed.
         assert!(summary.transaction_counts.committed_transactions_count.0 > 0);

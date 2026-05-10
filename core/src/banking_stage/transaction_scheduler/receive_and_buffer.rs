@@ -23,7 +23,6 @@ use {
     solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_message::v0::LoadedAddresses,
-    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankPair, SharableBanks},
@@ -37,13 +36,15 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::{collections::HashSet, sync::Arc, time::Instant},
+    agave_tpu_plugin::{AccountFilter, BankingHooks, NoFilter},
+    std::time::Instant,
 };
 
 #[derive(Debug)]
 pub(crate) struct DisconnectedError;
 
 /// Stats/metrics returned by `receive_and_buffer_packets`.
+#[derive(Default)]
 pub(crate) struct ReceivingStats {
     pub num_received: usize,
     /// Count of packets that passed sigverify but were dropped
@@ -58,6 +59,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
     pub num_dropped_on_filter_key: usize,
+    pub num_dropped_on_bundle_lock: usize,
     pub num_dropped_on_capacity: usize,
 
     pub num_buffered: usize,
@@ -78,6 +80,7 @@ impl ReceivingStats {
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
         self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
+        self.num_dropped_on_bundle_lock += other.num_dropped_on_bundle_lock;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_buffered += other.num_buffered;
 
@@ -99,13 +102,13 @@ pub(crate) trait ReceiveAndBuffer {
     ) -> Result<ReceivingStats, DisconnectedError>;
 }
 
-pub(crate) struct TransactionViewReceiveAndBuffer {
+pub(crate) struct TransactionViewReceiveAndBuffer<F: AccountFilter = NoFilter> {
     pub receiver: BankingPacketReceiver,
     pub sharable_banks: SharableBanks,
-    pub filter_keys: Arc<HashSet<Pubkey>>,
+    pub hooks: BankingHooks<F>,
 }
 
-impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
+impl<F: AccountFilter> ReceiveAndBuffer for TransactionViewReceiveAndBuffer<F> {
     type Transaction = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
     type Container = TransactionViewStateContainer;
 
@@ -114,6 +117,12 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
+        // Bundle processor is active — skip buffering this cycle.
+        // Caller retries next scheduling cycle; stall duration is bounded by the bundle processor.
+        if self.hooks.yield_control.should_yield() {
+            return Ok(ReceivingStats::default());
+        }
+
         let BankPair {
             root_bank,
             working_bank,
@@ -125,21 +134,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let start = Instant::now();
 
         let mut received_message = false;
-        let mut stats = ReceivingStats {
-            num_received: 0,
-            num_dropped_without_parsing: 0,
-            num_dropped_on_parsing_and_sanitization: 0,
-            num_dropped_on_lock_validation: 0,
-            num_dropped_on_compute_budget: 0,
-            num_dropped_on_age: 0,
-            num_dropped_on_already_processed: 0,
-            num_dropped_on_fee_payer: 0,
-            num_dropped_on_filter_key: 0,
-            num_dropped_on_capacity: 0,
-            num_buffered: 0,
-            receive_time_us: 0,
-            buffer_time_us: 0,
-        };
+        let mut stats = ReceivingStats::default();
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -203,21 +198,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        Ok(ReceivingStats {
-            num_received: stats.num_received,
-            num_dropped_without_parsing: stats.num_dropped_without_parsing,
-            num_dropped_on_parsing_and_sanitization: stats.num_dropped_on_parsing_and_sanitization,
-            num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
-            num_dropped_on_age: stats.num_dropped_on_age,
-            num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
-            num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
-            num_dropped_on_filter_key: stats.num_dropped_on_filter_key,
-            num_dropped_on_capacity: stats.num_dropped_on_capacity,
-            num_buffered: stats.num_buffered,
-            receive_time_us: stats.receive_time_us,
-            buffer_time_us: stats.buffer_time_us,
-        })
+        Ok(stats)
     }
 }
 
@@ -227,9 +208,10 @@ pub(crate) enum PacketHandlingError {
     ComputeBudget,
     ALTResolution,
     FilterKey,
+    BundleLock,  // account currently write-locked by an in-flight bundle
 }
 
-impl TransactionViewReceiveAndBuffer {
+impl<F: AccountFilter> TransactionViewReceiveAndBuffer<F> {
     /// Return number of received packets.
     fn handle_packet_batch_message(
         &mut self,
@@ -255,6 +237,7 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
         let mut num_dropped_on_filter_key = 0;
+        let mut num_dropped_on_bundle_lock = 0;
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
@@ -349,7 +332,7 @@ impl TransactionViewReceiveAndBuffer {
                             working_bank,
                             transaction_account_lock_limit,
                             enable_instruction_accounts_limit,
-                            &self.filter_keys,
+                            &self.hooks,
                         ) {
                             Ok(state) => Ok(state),
                             Err(
@@ -369,6 +352,10 @@ impl TransactionViewReceiveAndBuffer {
                             }
                             Err(PacketHandlingError::FilterKey) => {
                                 num_dropped_on_filter_key += 1;
+                                Err(())
+                            }
+                            Err(PacketHandlingError::BundleLock) => {
+                                num_dropped_on_bundle_lock += 1;
                                 Err(())
                             }
                         }
@@ -402,6 +389,7 @@ impl TransactionViewReceiveAndBuffer {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key,
+            num_dropped_on_bundle_lock,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: 0, // receive is outside this function
@@ -415,7 +403,7 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         transaction_account_lock_limit: usize,
         enable_instruction_accounts_limit: bool,
-        filter_keys: &HashSet<Pubkey>,
+        hooks: &BankingHooks<F>,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
@@ -424,13 +412,16 @@ impl TransactionViewReceiveAndBuffer {
             enable_instruction_accounts_limit,
         )?;
 
-        if !filter_keys.is_empty()
-            && view
-                .account_keys()
-                .iter()
-                .any(|key| filter_keys.contains(key))
+        // Note: filter checks run downstream of sigverify (pre-existing placement).
+        // Static filter (AccountFilter) blocks permanently; dynamic lock (WriteLockView)
+        // blocks for the duration of an in-flight bundle.
+        if hooks.account_filter.is_active()
+            && view.account_keys().iter().any(|key| hooks.account_filter.is_blocked(key))
         {
             return Err(PacketHandlingError::FilterKey);
+        }
+        if view.account_keys().iter().any(|key| hooks.account_lock_view.is_write_locked(key)) {
+            return Err(PacketHandlingError::BundleLock);
         }
 
         let Ok(transaction_configuration) =
@@ -586,6 +577,7 @@ fn calculate_max_age(
 mod tests {
     use {
         super::*,
+        agave_tpu_plugin::{NoLocks, NoTip, NoYield, SetAccountFilter, StandardCommit, TipConfig},
         crate::banking_stage::tests::create_slow_genesis_config,
         crossbeam_channel::{Receiver, unbounded},
         solana_hash::Hash,
@@ -602,7 +594,10 @@ mod tests {
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction::transfer,
         solana_transaction::versioned::VersionedTransaction,
-        std::sync::{Arc, RwLock},
+        std::{
+            collections::HashSet,
+            sync::{Arc, RwLock},
+        },
     };
 
     fn test_bank_forks() -> (Arc<RwLock<BankForks>>, Keypair) {
@@ -625,25 +620,25 @@ mod tests {
         TransactionViewReceiveAndBuffer,
         TransactionViewStateContainer,
     ) {
-        setup_transaction_view_receive_and_buffer_with_filter_keys(
+        setup_transaction_view_receive_and_buffer_with_filter(
             receiver,
             bank_forks,
-            Arc::default(),
+            BankingHooks::default(),
         )
     }
 
-    fn setup_transaction_view_receive_and_buffer_with_filter_keys(
+    fn setup_transaction_view_receive_and_buffer_with_filter<F: AccountFilter>(
         receiver: Receiver<BankingPacketBatch>,
         bank_forks: Arc<RwLock<BankForks>>,
-        filter_keys: Arc<HashSet<Pubkey>>,
+        hooks: BankingHooks<F>,
     ) -> (
-        TransactionViewReceiveAndBuffer,
+        TransactionViewReceiveAndBuffer<F>,
         TransactionViewStateContainer,
     ) {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            filter_keys,
+            hooks,
         };
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)
@@ -733,6 +728,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -788,6 +784,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -832,6 +829,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -875,6 +873,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -923,6 +922,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -986,6 +986,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1034,6 +1035,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1061,10 +1063,17 @@ mod tests {
         let (sender, receiver) = unbounded();
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
-            setup_transaction_view_receive_and_buffer_with_filter_keys(
+            setup_transaction_view_receive_and_buffer_with_filter(
                 receiver,
                 bank_forks.clone(),
-                Arc::new(HashSet::from([mint_keypair.pubkey()])),
+                BankingHooks::new(
+                    Arc::new(NoYield),
+                    Arc::new(SetAccountFilter(HashSet::from([mint_keypair.pubkey()]))),
+                    Arc::new(NoLocks),
+                    Arc::new(NoTip),
+                    Arc::new(StandardCommit),
+                    TipConfig::default(),
+                ),
             );
 
         let transaction = transfer(
@@ -1092,10 +1101,17 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks();
         let filtered_key = Pubkey::new_unique();
         let (mut receive_and_buffer, mut container) =
-            setup_transaction_view_receive_and_buffer_with_filter_keys(
+            setup_transaction_view_receive_and_buffer_with_filter(
                 receiver,
                 bank_forks.clone(),
-                Arc::new(HashSet::from([filtered_key])),
+                BankingHooks::new(
+                    Arc::new(NoYield),
+                    Arc::new(SetAccountFilter(HashSet::from([filtered_key]))),
+                    Arc::new(NoLocks),
+                    Arc::new(NoTip),
+                    Arc::new(StandardCommit),
+                    TipConfig::default(),
+                ),
             );
 
         let transaction = transfer(
@@ -1122,10 +1138,17 @@ mod tests {
         let (sender, receiver) = unbounded();
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
-            setup_transaction_view_receive_and_buffer_with_filter_keys(
+            setup_transaction_view_receive_and_buffer_with_filter(
                 receiver,
                 bank_forks.clone(),
-                Arc::new(HashSet::from([Pubkey::new_unique()])),
+                BankingHooks::new(
+                    Arc::new(NoYield),
+                    Arc::new(SetAccountFilter(HashSet::from([Pubkey::new_unique()]))),
+                    Arc::new(NoLocks),
+                    Arc::new(NoTip),
+                    Arc::new(StandardCommit),
+                    TipConfig::default(),
+                ),
             );
 
         let transaction = transfer(
@@ -1177,6 +1200,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1257,6 +1281,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_bundle_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
