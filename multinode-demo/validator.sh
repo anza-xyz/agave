@@ -13,9 +13,11 @@ args=(
 )
 airdrops_enabled=1
 node_sol=500 # 500 SOL: number of SOL to airdrop the node for transaction fees and vote account rent exemption (ignored if airdrops_enabled=0)
+stake_sol= # If set, create a stake account funded with this many SOL and delegate it to the validator's vote account
 label=
 identity=
 vote_account=
+stake_account=
 no_restart=0
 gossip_entrypoint=
 ledger_dir=
@@ -29,7 +31,7 @@ usage() {
 
 usage: $0 [OPTIONS] [cluster entry point hostname]
 
-Start a validator with no stake
+Start a validator (optionally staked via --stake-sol)
 
 OPTIONS:
   --ledger PATH             - store ledger under this PATH
@@ -37,6 +39,8 @@ OPTIONS:
   --label LABEL             - Append the given label to the configuration files, useful when running
                               multiple validators in the same workspace
   --node-sol SOL            - Number of SOL this node has been funded from the genesis config (default: $node_sol)
+  --stake-sol SOL           - If set, create a stake account funded with this many SOL and delegate it to the validator's vote account
+  --stake-account PATH      - Path to stake-account keypair file (default: <ledger>/stake-account.json)
   --no-voting               - start node without vote signer
   --rpc-port port           - custom RPC port for this node
   --no-restart              - do not restart the node if it exits
@@ -60,6 +64,12 @@ while [[ -n $1 ]]; do
       shift
     elif [[ $1 = --node-sol ]]; then
       node_sol="$2"
+      shift 2
+    elif [[ $1 = --stake-sol ]]; then
+      stake_sol="$2"
+      shift 2
+    elif [[ $1 = --stake-account ]]; then
+      stake_account=$2
       shift 2
     elif [[ $1 = --no-airdrop ]]; then
       airdrops_enabled=0
@@ -242,6 +252,7 @@ faucet_address="${gossip_entrypoint%:*}":9900
 
 : "${identity:=$ledger_dir/identity.json}"
 : "${vote_account:=$ledger_dir/vote-account.json}"
+: "${stake_account:=$ledger_dir/stake-account.json}"
 : "${authorized_withdrawer:=$ledger_dir/authorized-withdrawer.json}"
 
 default_arg --entrypoint "$gossip_entrypoint"
@@ -314,6 +325,24 @@ setup_validator_accounts() {
 
     echo "Creating validator vote account"
     wallet create-vote-account "$vote_account" "$identity" "$authorized_withdrawer" || return $?
+
+    if [[ -n $stake_sol ]] && (( stake_sol > 0 )); then
+      if ((airdrops_enabled)); then
+        echo "Transferring $stake_sol SOL to fund stake account:"
+        (
+          set -x
+          $solana_cli \
+            --keypair "$SOLANA_CONFIG_DIR/faucet.json" --url "$rpc_url" \
+            transfer --allow-unfunded-recipient "$identity" "$stake_sol"
+        ) || return $?
+      fi
+      echo "Creating stake account"
+      wallet create-stake-account "$stake_account" "$stake_sol" || return $?
+      echo "Delegating stake"
+      declare vote_pubkey
+      vote_pubkey=$($solana_keygen pubkey "$vote_account") || return $?
+      wallet delegate-stake "$stake_account" "$vote_pubkey" || return $?
+    fi
   fi
   echo "Validator vote account configured"
 
@@ -329,6 +358,9 @@ rpc_url=$($solana_gossip --allow-private-addr rpc-url --timeout 180 --entrypoint
 [[ -r "$identity" ]] || $solana_keygen new --no-passphrase -so "$identity"
 [[ -r "$vote_account" ]] || $solana_keygen new --no-passphrase -so "$vote_account"
 [[ -r "$authorized_withdrawer" ]] || $solana_keygen new --no-passphrase -so "$authorized_withdrawer"
+if [[ -n $stake_sol ]] && (( stake_sol > 0 )); then
+  [[ -r "$stake_account" ]] || $solana_keygen new --no-passphrase -so "$stake_account"
+fi
 
 setup_validator_accounts "$node_sol"
 
