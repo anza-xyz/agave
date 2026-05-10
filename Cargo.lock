@@ -311,6 +311,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-tpu-plugin"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "solana-pubkey 4.2.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "agave-transaction-view"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -7817,6 +7825,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
+ "agave-tpu-plugin",
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
