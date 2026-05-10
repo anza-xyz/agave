@@ -32,7 +32,7 @@ use {
 
 pub const DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS: usize = 1_000_000;
 pub const DEFAULT_QUEUE_CAPACITY_ITEMS: usize = 10_000_000;
-pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 100;
+pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 1000;
 pub const DEFAULT_QUEUE_CAPACITY_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_TEST_QUEUE_CAPACITY_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WORKER_THREADS: usize = 1;
@@ -321,7 +321,6 @@ pub fn test_connection(
         PubSubConfig {
             enable_block_subscription: true,
             enable_vote_subscription: true,
-            queue_capacity_items: 100,
             ..PubSubConfig::default_for_tests()
         },
         subscriptions.control().clone(),
