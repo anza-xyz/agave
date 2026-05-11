@@ -9,7 +9,9 @@ use {
     solana_keypair::Keypair,
     solana_message::{
         Message, MessageHeader, VersionedMessage,
+        compiled_instruction::CompiledInstruction,
         v0::{self, MessageAddressTableLookup},
+        v1,
     },
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -188,6 +190,32 @@ fn packed_atls() -> Vec<VersionedTransaction> {
         .collect()
 }
 
+fn max_v1_static_accounts() -> Vec<VersionedTransaction> {
+    (0..NUM_TRANSACTIONS)
+        .map(|_| {
+            let account_keys = (0..64).map(|_| Pubkey::new_unique()).collect();
+            VersionedTransaction {
+                signatures: vec![Default::default()],
+                message: VersionedMessage::V1(v1::Message {
+                    header: MessageHeader {
+                        num_required_signatures: 1,
+                        num_readonly_signed_accounts: 0,
+                        num_readonly_unsigned_accounts: 63,
+                    },
+                    account_keys,
+                    lifetime_specifier: Hash::default(),
+                    instructions: vec![CompiledInstruction {
+                        program_id_index: 1,
+                        accounts: (0..64).collect(),
+                        data: vec![],
+                    }],
+                    config: v1::TransactionConfig::empty(),
+                }),
+            }
+        })
+        .collect()
+}
+
 fn bench_parse_min_sized_transactions(c: &mut Criterion) {
     let serialized_transactions = serialize_transactions(minimum_sized_transactions());
     let mut group = c.benchmark_group("min sized transactions");
@@ -223,12 +251,20 @@ fn bench_parse_packed_atls(c: &mut Criterion) {
     bench_transactions_parsing(&mut group, serialized_transactions);
 }
 
+fn bench_parse_max_v1_static_accounts(c: &mut Criterion) {
+    let serialized_transactions = serialize_transactions(max_v1_static_accounts());
+    let mut group = c.benchmark_group("max v1 static accounts");
+    group.throughput(Throughput::Elements(serialized_transactions.len() as u64));
+    bench_transactions_parsing(&mut group, serialized_transactions);
+}
+
 criterion_group!(
     benches,
     bench_parse_min_sized_transactions,
     bench_parse_simple_transfers,
     bench_parse_packed_transfers,
     bench_parse_packed_noops,
-    bench_parse_packed_atls
+    bench_parse_packed_atls,
+    bench_parse_max_v1_static_accounts
 );
 criterion_main!(benches);
