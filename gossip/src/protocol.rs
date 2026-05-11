@@ -6,7 +6,6 @@ use {
         crds_value::CrdsValue,
         ping_pong::{self, Pong},
     },
-    bincode::serialize,
     serde::{Deserialize, Serialize},
     solana_keypair::signable::Signable,
     solana_perf::packet::PACKET_DATA_SIZE,
@@ -18,6 +17,7 @@ use {
         fmt::Debug,
         result::Result,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
@@ -45,7 +45,7 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 /// Gossip protocol messages base enum
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, SchemaRead, SchemaWrite)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
     PullRequest(CrdsFilter, CrdsValue),
@@ -63,7 +63,7 @@ pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
 pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, SchemaRead, SchemaWrite)]
 pub(crate) struct PruneData {
     /// Pubkey of the node that sent this prune data
     pub(crate) pubkey: Pubkey,
@@ -78,10 +78,10 @@ pub(crate) struct PruneData {
 }
 
 impl Protocol {
-    /// Returns the bincode serialized size (in bytes) of the Protocol.
+    /// Returns the serialized size (in bytes) of the Protocol.
     #[cfg(test)]
-    fn bincode_serialized_size(&self) -> usize {
-        bincode::serialized_size(self)
+    fn serialized_size(&self) -> usize {
+        wincode::serialized_size(self)
             .map(usize::try_from)
             .unwrap()
             .unwrap()
@@ -103,7 +103,7 @@ impl Protocol {
 
 impl PruneData {
     fn signable_data_without_prefix(&self) -> Cow<'static, [u8]> {
-        #[derive(Serialize)]
+        #[derive(Serialize, SchemaWrite)]
         struct SignData<'a> {
             pubkey: &'a Pubkey,
             prunes: &'a [Pubkey],
@@ -116,11 +116,11 @@ impl PruneData {
             destination: &self.destination,
             wallclock: self.wallclock,
         };
-        Cow::Owned(serialize(&data).expect("should serialize PruneData"))
+        Cow::Owned(wincode::serialize(&data).expect("should serialize PruneData"))
     }
 
     fn signable_data_with_prefix(&self) -> Cow<'static, [u8]> {
-        #[derive(Serialize)]
+        #[derive(Serialize, SchemaWrite)]
         struct SignDataWithPrefix<'a> {
             prefix: &'a [u8],
             pubkey: &'a Pubkey,
@@ -135,7 +135,7 @@ impl PruneData {
             destination: &self.destination,
             wallclock: self.wallclock,
         };
-        Cow::Owned(serialize(&data).expect("should serialize PruneDataWithPrefix"))
+        Cow::Owned(wincode::serialize(&data).expect("should serialize PruneDataWithPrefix"))
     }
 
     fn verify_data(&self, use_prefix: bool) -> bool {
@@ -223,7 +223,9 @@ impl Signable for PruneData {
 /// max_chunk_size.
 /// Note: some messages cannot be contained within that size so in the worst case this returns
 /// N nested Vecs with 1 item each.
-pub(crate) fn split_gossip_messages<T: Serialize + Debug>(
+pub(crate) fn split_gossip_messages<
+    T: Serialize + Debug + SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+>(
     max_chunk_size: usize,
     data_feed: impl IntoIterator<Item = T>,
 ) -> impl Iterator<Item = Vec<T>> {
@@ -235,7 +237,7 @@ pub(crate) fn split_gossip_messages<T: Serialize + Debug>(
             let Some(data) = data_feed.next() else {
                 return (!buffer.is_empty()).then(|| std::mem::take(&mut buffer));
             };
-            let data_size = match bincode::serialized_size(&data) {
+            let data_size = match wincode::serialized_size(&data) {
                 Ok(size) => size as usize,
                 Err(err) => {
                     error!("serialized_size failed: {err:?}");
@@ -262,7 +264,6 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects
             crds_data::CrdsData, crds_gossip_pull::CrdsFilter as NativeCrdsFilter,
             crds_value::CrdsValue as NativeCrdsValue, ping_pong::Pong,
         },
-        bincode::Options as _,
         bv::Bits,
         protosol::protos::{
             GossipBloom, GossipCompressedSlots, GossipContactInfo, GossipCrdsData,
@@ -361,7 +362,7 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects
             }
             CrdsData::Vote(idx, vote) => {
                 let tx_bytes =
-                    bincode::serialize(vote.transaction()).expect("vote transaction serialization");
+                    wincode::serialize(vote.transaction()).expect("vote transaction serialization");
                 Some(gossip_crds_data::Data::Vote(GossipVote {
                     index: *idx as u32,
                     from: vote.from().to_bytes().to_vec(),
@@ -499,11 +500,16 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects
         }
     }
 
-    let result = bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
-        .with_fixint_encoding()
-        .reject_trailing_bytes()
-        .deserialize::<Protocol>(input);
+    // Reject over-long inputs upfront so an over-long input whose prefix
+    // encodes a valid Protocol can't slip through; deserialize_exact rejects
+    // any trailing bytes that remain within the packet window.
+    if input.len() > PACKET_DATA_SIZE {
+        return GossipEffects {
+            valid: false,
+            msg: None,
+        };
+    }
+    let result = wincode::deserialize_exact::<Protocol>(input);
 
     match result {
         Ok(proto) if proto.sanitize().is_ok() => {
@@ -654,7 +660,7 @@ pub(crate) mod tests {
         let header = Protocol::PushMessage(Pubkey::default(), Vec::default());
         assert_eq!(
             PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
-            PACKET_DATA_SIZE - header.bincode_serialized_size()
+            PACKET_DATA_SIZE - header.serialized_size()
         );
     }
 
@@ -663,7 +669,7 @@ pub(crate) mod tests {
         let header = Protocol::PullResponse(Pubkey::default(), Vec::default());
         assert_eq!(
             PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PACKET_DATA_SIZE - header.bincode_serialized_size()
+            PACKET_DATA_SIZE - header.serialized_size()
         );
     }
 
@@ -703,9 +709,9 @@ pub(crate) mod tests {
             let data = CrdsData::DuplicateShred(MAX_DUPLICATE_SHREDS - 1, chunk);
             let value = CrdsValue::new(data, &keypair);
             let pull_response = Protocol::PullResponse(keypair.pubkey(), vec![value.clone()]);
-            assert!(pull_response.bincode_serialized_size() < PACKET_DATA_SIZE);
+            assert!(pull_response.serialized_size() < PACKET_DATA_SIZE);
             let push_message = Protocol::PushMessage(keypair.pubkey(), vec![value.clone()]);
-            assert!(push_message.bincode_serialized_size() < PACKET_DATA_SIZE);
+            assert!(push_message.serialized_size() < PACKET_DATA_SIZE);
         }
     }
 
@@ -715,7 +721,7 @@ pub(crate) mod tests {
         for _ in 0..100 {
             let crds_values = vec![CrdsValue::new_rand(&mut rng, None)];
             let pull_response = Protocol::PullResponse(Pubkey::new_unique(), crds_values);
-            let size = pull_response.bincode_serialized_size();
+            let size = pull_response.serialized_size();
             assert!(
                 PULL_RESPONSE_MIN_SERIALIZED_SIZE <= size,
                 "pull-response serialized size: {size}"
@@ -763,13 +769,9 @@ pub(crate) mod tests {
         let header_size = PACKET_DATA_SIZE - PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
         for values in splits {
             // Assert that sum of parts equals the whole.
-            let size = header_size
-                + values
-                    .iter()
-                    .map(CrdsValue::bincode_serialized_size)
-                    .sum::<usize>();
+            let size = header_size + values.iter().map(CrdsValue::serialized_size).sum::<usize>();
             let message = Protocol::PushMessage(self_pubkey, values);
-            assert_eq!(message.bincode_serialized_size(), size);
+            assert_eq!(message.serialized_size(), size);
             // Assert that the message fits into a packet.
             assert!(Packet::from_data(Some(&socket), message).is_ok());
         }
@@ -801,13 +803,9 @@ pub(crate) mod tests {
         let header_size = PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE;
         for values in splits {
             // Assert that sum of parts equals the whole.
-            let size = header_size
-                + values
-                    .iter()
-                    .map(CrdsValue::bincode_serialized_size)
-                    .sum::<usize>();
+            let size = header_size + values.iter().map(CrdsValue::serialized_size).sum::<usize>();
             let message = Protocol::PullResponse(self_pubkey, values);
-            assert_eq!(message.bincode_serialized_size(), size);
+            assert_eq!(message.serialized_size(), size);
             // Assert that the message fits into a packet.
             assert!(Packet::from_data(Some(&socket), message).is_ok());
         }
@@ -824,7 +822,7 @@ pub(crate) mod tests {
             incremental: incremental.clone(),
             wallclock: 0,
         }));
-        while value.bincode_serialized_size() < PUSH_MESSAGE_MAX_PAYLOAD_SIZE {
+        while value.serialized_size() < PUSH_MESSAGE_MAX_PAYLOAD_SIZE {
             incremental.push((0, Hash::default()));
             value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
                 from: Pubkey::default(),
@@ -840,7 +838,7 @@ pub(crate) mod tests {
 
     fn test_split_messages(value: CrdsValue) {
         const NUM_VALUES: usize = 30;
-        let value_size = value.bincode_serialized_size();
+        let value_size = value.serialized_size();
         let num_values_per_payload = (PUSH_MESSAGE_MAX_PAYLOAD_SIZE / value_size).max(1);
 
         // Expected len is the ceiling of the division
@@ -902,7 +900,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let vote = CrdsValue::new(CrdsData::Vote(1, vote), &Keypair::new());
-        assert!(vote.bincode_serialized_size() <= PUSH_MESSAGE_MAX_PAYLOAD_SIZE);
+        assert!(vote.serialized_size() <= PUSH_MESSAGE_MAX_PAYLOAD_SIZE);
     }
 
     #[test]
@@ -930,6 +928,172 @@ pub(crate) mod tests {
 
         let is_valid = prune_data.verify();
         assert!(is_valid, "Signature should be valid with prefix");
+    }
+
+    #[test]
+    fn test_wincode_compatibility_prune_data() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
+
+            let bincode_bytes = bincode::serialize(&prune_data).unwrap();
+            let wincode_decoded: PruneData = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(prune_data, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&prune_data).unwrap();
+            let bincode_decoded: PruneData = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(prune_data, bincode_decoded);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_vote_transaction() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let slots = (0..rng.random_range(1..32)).map(|_| rng.random()).collect();
+            let vote = Vote::new(slots, Hash::new_unique());
+            let vote_ix = vote_instruction::vote_switch(
+                &keypair.pubkey(),
+                &keypair.pubkey(),
+                vote,
+                Hash::new_unique(),
+            );
+            let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
+            vote_tx.partial_sign(&[&keypair], Hash::new_unique());
+
+            let bincode_bytes = bincode::serialize(&vote_tx).unwrap();
+            let wincode_bytes = wincode::serialize(&vote_tx).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_prune_signable_data() {
+        // Signed/verified bytes — any divergence would silently break signatures.
+        #[derive(Serialize)]
+        struct SignDataMirror<'a> {
+            pubkey: &'a Pubkey,
+            prunes: &'a [Pubkey],
+            destination: &'a Pubkey,
+            wallclock: u64,
+        }
+        #[derive(Serialize)]
+        struct SignDataWithPrefixMirror<'a> {
+            prefix: &'a [u8],
+            pubkey: &'a Pubkey,
+            prunes: &'a [Pubkey],
+            destination: &'a Pubkey,
+            wallclock: u64,
+        }
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
+
+            let wincode_no_prefix = prune_data.signable_data_without_prefix();
+            let bincode_no_prefix = bincode::serialize(&SignDataMirror {
+                pubkey: &prune_data.pubkey,
+                prunes: &prune_data.prunes,
+                destination: &prune_data.destination,
+                wallclock: prune_data.wallclock,
+            })
+            .unwrap();
+            assert_eq!(wincode_no_prefix.as_ref(), bincode_no_prefix.as_slice());
+
+            let wincode_with_prefix = prune_data.signable_data_with_prefix();
+            let bincode_with_prefix = bincode::serialize(&SignDataWithPrefixMirror {
+                prefix: PRUNE_DATA_PREFIX,
+                pubkey: &prune_data.pubkey,
+                prunes: &prune_data.prunes,
+                destination: &prune_data.destination,
+                wallclock: prune_data.wallclock,
+            })
+            .unwrap();
+            assert_eq!(wincode_with_prefix.as_ref(), bincode_with_prefix.as_slice());
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_protocol_prune_message() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
+            let protocol = Protocol::PruneMessage(keypair.pubkey(), prune_data);
+
+            let bincode_bytes = bincode::serialize(&protocol).unwrap();
+            let wincode_bytes = wincode::serialize(&protocol).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+
+            let wincode_decoded: Protocol = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(wincode::serialize(&wincode_decoded).unwrap(), bincode_bytes);
+
+            let bincode_decoded: Protocol = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(bincode::serialize(&bincode_decoded).unwrap(), wincode_bytes);
+        }
+    }
+
+    fn new_rand_contact_info_crds_value<R: Rng>(rng: &mut R) -> CrdsValue {
+        let keypair = Keypair::new();
+        let ci = ContactInfo::new_rand(rng, Some(keypair.pubkey()));
+        CrdsValue::new(CrdsData::ContactInfo(ci), &keypair)
+    }
+
+    fn assert_protocol_wincode_compat(protocol: &Protocol) {
+        let bincode_bytes = bincode::serialize(protocol).unwrap();
+        let wincode_bytes = wincode::serialize(protocol).unwrap();
+        assert_eq!(bincode_bytes, wincode_bytes);
+        let wincode_decoded: Protocol = wincode::deserialize(&bincode_bytes).unwrap();
+        assert_eq!(wincode::serialize(&wincode_decoded).unwrap(), bincode_bytes);
+        let bincode_decoded: Protocol = bincode::deserialize(&wincode_bytes).unwrap();
+        assert_eq!(bincode::serialize(&bincode_decoded).unwrap(), wincode_bytes);
+    }
+
+    #[test]
+    fn test_wincode_compatibility_protocol_pull_request() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let filter = CrdsFilter::new_rand(rng.random_range(0..1000), rng.random_range(32..512));
+            let crds_value = new_rand_contact_info_crds_value(&mut rng);
+            assert_protocol_wincode_compat(&Protocol::PullRequest(filter, crds_value));
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_protocol_pull_response() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let values: Vec<_> = (0..rng.random_range(1usize..8))
+                .map(|_| new_rand_contact_info_crds_value(&mut rng))
+                .collect();
+            assert_protocol_wincode_compat(&Protocol::PullResponse(Pubkey::new_unique(), values));
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_protocol_push_message() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let values: Vec<_> = (0..rng.random_range(1usize..8))
+                .map(|_| new_rand_contact_info_crds_value(&mut rng))
+                .collect();
+            assert_protocol_wincode_compat(&Protocol::PushMessage(Pubkey::new_unique(), values));
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_protocol_ping_pong() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let token: [u8; GOSSIP_PING_TOKEN_SIZE] = rng.random();
+            let ping = Ping::new(token, &keypair);
+            let pong = Pong::new(&ping, &keypair);
+            assert_protocol_wincode_compat(&Protocol::PingMessage(ping));
+            assert_protocol_wincode_compat(&Protocol::PongMessage(pong));
+        }
     }
 
     #[test]

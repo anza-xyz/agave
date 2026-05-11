@@ -328,7 +328,7 @@ impl ClusterInfo {
         match File::create(tmp_filename) {
             Ok(file) => {
                 let mut writer = BufWriter::new(file);
-                if let Err(err) = bincode::serialize_into(&mut writer, &nodes) {
+                if let Err(err) = wincode::serialize_into(&mut writer, &nodes) {
                     warn!(
                         "Failed to serialize contact info info {}: {}",
                         tmp_filename.display(),
@@ -376,7 +376,7 @@ impl ClusterInfo {
 
         let nodes: Vec<CrdsValue> = match File::open(&filename) {
             Ok(file) => {
-                bincode::deserialize_from(&mut BufReader::new(file)).unwrap_or_else(|err| {
+                wincode::deserialize_from(&mut BufReader::new(file)).unwrap_or_else(|err| {
                     warn!("Failed to deserialize {}: {}", filename.display(), err);
                     vec![]
                 })
@@ -2530,7 +2530,6 @@ mod tests {
             protocol::tests::new_rand_remote_node,
             socketaddr,
         },
-        bincode::serialize,
         itertools::izip,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
@@ -2727,9 +2726,14 @@ mod tests {
             pongs.into_iter()
         ) {
             assert_eq!(packet.meta().socket_addr(), socket);
-            let bytes = serialize(&pong).unwrap();
+            let bytes = wincode::serialize(&pong).unwrap();
+            assert_eq!(bytes, bincode::serialize(&pong).unwrap());
             match packet.deserialize_slice(..).unwrap() {
-                Protocol::PongMessage(pong) => assert_eq!(serialize(&pong).unwrap(), bytes),
+                Protocol::PongMessage(pong) => {
+                    let pong_bytes = wincode::serialize(&pong).unwrap();
+                    assert_eq!(pong_bytes, bincode::serialize(&pong).unwrap());
+                    assert_eq!(pong_bytes, bytes);
+                }
                 _ => panic!("invalid packet!"),
             }
         }
@@ -2791,6 +2795,46 @@ mod tests {
         cluster_info.insert_info(d);
         let gossip_crds = cluster_info.gossip.crds.read().unwrap();
         assert!(gossip_crds.get::<&CrdsValue>(&label).is_some());
+    }
+
+    #[test]
+    fn test_save_restore_contact_info_round_trip() {
+        let tmpdir = tempfile::tempdir().unwrap();
+
+        let self_keypair = Arc::new(Keypair::new());
+        let self_ci = ContactInfo::new_localhost(&self_keypair.pubkey(), timestamp());
+        let mut cluster_info_a =
+            ClusterInfo::new(self_ci, self_keypair, SocketAddrSpace::Unspecified);
+        // Sets contact_info_path; no file to load yet.
+        cluster_info_a.restore_contact_info(tmpdir.path(), 0);
+
+        let peer1 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let peer2 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let peer1_pubkey = *peer1.pubkey();
+        let peer2_pubkey = *peer2.pubkey();
+        cluster_info_a.insert_info(peer1);
+        cluster_info_a.insert_info(peer2);
+        cluster_info_a.save_contact_info();
+
+        let other_keypair = Arc::new(Keypair::new());
+        let other_ci = ContactInfo::new_localhost(&other_keypair.pubkey(), timestamp());
+        let mut cluster_info_b =
+            ClusterInfo::new(other_ci, other_keypair, SocketAddrSpace::Unspecified);
+        cluster_info_b.restore_contact_info(tmpdir.path(), 0);
+
+        let gossip_crds = cluster_info_b.gossip.crds.read().unwrap();
+        assert!(
+            gossip_crds
+                .get::<&CrdsValue>(&CrdsValueLabel::ContactInfo(peer1_pubkey))
+                .is_some(),
+            "peer1 missing after restore"
+        );
+        assert!(
+            gossip_crds
+                .get::<&CrdsValue>(&CrdsValueLabel::ContactInfo(peer2_pubkey))
+                .is_some(),
+            "peer2 missing after restore"
+        );
     }
 
     fn assert_in_range(x: u16, range: (u16, u16)) {

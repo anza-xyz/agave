@@ -48,6 +48,7 @@ use {
         },
         time::Duration,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
@@ -57,7 +58,7 @@ pub const FALSE_RATE: f64 = 0.1f64;
 pub const KEYS: f64 = 8f64;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct CrdsFilter {
     pub filter: Bloom<Hash>,
     mask: u64,
@@ -606,7 +607,7 @@ impl Index<&Pubkey> for CrdsTimeouts<'_> {
     }
 }
 
-// Returns max_bytes for the bloom filter such that bincode serialized
+// Returns max_bytes for the bloom filter such that the serialized
 // Protocol::PullRequest(CrdsFilter, CrdsValue) fits in a packet.
 pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
     // Maps serialized size of CrdsFilter to max_bytes of bloom filter.
@@ -618,7 +619,7 @@ pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
             let mut iter = Vec::<CrdsFilter>::from(filters)
                 .into_iter()
                 .map(|filter| {
-                    bincode::serialized_size(&filter)
+                    wincode::serialized_size(&filter)
                         .map(usize::try_from)
                         .unwrap()
                         .unwrap()
@@ -638,12 +639,12 @@ pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
         });
         out
     });
-    // Maximum bincode serialized size of CrdsFilter in
+    // Maximum serialized size of CrdsFilter in
     // Protocol::PullRequest(CrdsFilter, CrdsValue)
     let size_of_filter = PACKET_DATA_SIZE
         .checked_sub(
             // 4 bytes for u32 enum variant identifier of Protocol.
-            4 + caller.bincode_serialized_size(),
+            4 + caller.serialized_size(),
         )
         .unwrap();
     MAX_BYTES_CACHE
@@ -1327,11 +1328,15 @@ pub(crate) mod tests {
         let packet_data_size_range = (PACKET_DATA_SIZE - 7)..=PACKET_DATA_SIZE;
         let max_bytes = get_max_bloom_filter_bytes(caller);
         let filters = CrdsFilterSet::new(rng, num_items, max_bytes);
-        let request_bytes = caller.bincode_serialized_size() as u64;
+        let request_bytes = caller.serialized_size() as u64;
         for filter in Vec::<CrdsFilter>::from(filters) {
-            let request_bytes = 4 + request_bytes + bincode::serialized_size(&filter).unwrap();
+            let filter_size = wincode::serialized_size(&filter).unwrap();
+            assert_eq!(filter_size, bincode::serialized_size(&filter).unwrap());
+            let request_bytes = 4 + request_bytes + filter_size;
             let request = Protocol::PullRequest(filter, caller.clone());
-            let request = bincode::serialize(&request).unwrap();
+            let request_wincode = wincode::serialize(&request).unwrap();
+            assert_eq!(request_wincode, bincode::serialize(&request).unwrap());
+            let request = request_wincode;
             assert!(packet_data_size_range.contains(&request.len()));
             assert_eq!(request.len() as u64, request_bytes);
         }
@@ -1480,5 +1485,23 @@ pub(crate) mod tests {
         filter.mask = canonical_mask & !lsb;
         assert!(filter.test_mask(&hash));
         assert!(!filter.test_mask(&bad_hash));
+    }
+
+    #[test]
+    fn test_wincode_compatibility_crds_filter() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let num_items = rng.random_range(0..1000);
+            let max_bytes = rng.random_range(32..512);
+            let filter = CrdsFilter::new_rand(num_items, max_bytes);
+
+            let bincode_bytes = bincode::serialize(&filter).unwrap();
+            let wincode_decoded: CrdsFilter = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(filter, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&filter).unwrap();
+            let bincode_decoded: CrdsFilter = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(filter, bincode_decoded);
+        }
     }
 }

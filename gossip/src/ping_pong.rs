@@ -17,6 +17,7 @@ use {
         net::{IpAddr, SocketAddr},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 const KEY_REFRESH_CADENCE: Duration = Duration::from_secs(60);
@@ -27,7 +28,7 @@ const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
 // should only use N == 8.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, SchemaRead, SchemaWrite)]
 pub struct Ping<const N: usize> {
     from: Pubkey,
     #[serde(with = "BigArray")]
@@ -36,7 +37,9 @@ pub struct Ping<const N: usize> {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, SchemaRead, SchemaWrite)]
+// repr(C) makes this struct zero-copy eligible in wincode.
+#[repr(C)]
 pub struct Pong {
     from: Pubkey,
     hash: Hash, // Hash of received ping token.
@@ -443,6 +446,45 @@ mod tests {
             let (check, ping) = cache.check(&mut rng, &this_node, now, node);
             assert!(!check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_ping() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let ping = Ping::<32>::new(rng.random(), &keypair);
+
+            let bincode_bytes = bincode::serialize(&ping).unwrap();
+            let wincode_decoded: Ping<32> = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(ping, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&ping).unwrap();
+            let bincode_decoded: Ping<32> = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(ping, bincode_decoded);
+
+            assert_eq!(bincode_bytes, wincode_bytes);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_pong() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let ping = Ping::<32>::new(rng.random(), &keypair);
+            let pong = Pong::new(&ping, &keypair);
+
+            let bincode_bytes = bincode::serialize(&pong).unwrap();
+            let wincode_decoded: Pong = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(pong, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&pong).unwrap();
+            let bincode_decoded: Pong = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(pong, bincode_decoded);
+
+            assert_eq!(bincode_bytes, wincode_bytes);
         }
     }
 

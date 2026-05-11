@@ -7174,6 +7174,7 @@ name = "solana-bloom"
 version = "4.2.0-alpha.0"
 dependencies = [
  "bencher",
+ "bincode",
  "bv",
  "fnv",
  "rand 0.9.4",
@@ -7187,6 +7188,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signature",
  "solana-time-utils",
+ "wincode",
 ]
 
 [[package]]
@@ -8509,7 +8511,6 @@ dependencies = [
  "agave-random",
  "anyhow",
  "arc-swap",
- "arrayvec",
  "assert_matches",
  "bincode",
  "bs58",
@@ -8567,7 +8568,9 @@ dependencies = [
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
+ "solana-wincode-varint",
  "static_assertions",
+ "tempfile",
  "test-case",
  "thiserror 2.0.18",
  "wincode",
@@ -11381,6 +11384,8 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-sanitize",
  "solana-serde-varint",
+ "solana-wincode-varint",
+ "wincode",
 ]
 
 [[package]]
@@ -11484,6 +11489,15 @@ dependencies = [
  "solana-vote-interface",
  "solana-vote-program",
  "test-case",
+]
+
+[[package]]
+name = "solana-wincode-varint"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6679e72a01dcfe7ff180f0e9d3a0d165e4e9664426930014f2702e7571c259c7"
+dependencies = [
+ "wincode",
 ]
 
 [[package]]
@@ -13061,6 +13075,7 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37095eb18dd6254c66217edc61a29d83d51f8818de8a2ffe88e4584ad73fb5f9"
 dependencies = [
+ "bv",
  "bytes",
  "pastey",
  "proc-macro2",

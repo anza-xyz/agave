@@ -17,8 +17,12 @@ mod tests {
         Ok(pkt)
     }
 
-    fn serialize<T: Serialize>(pkt: T) -> Vec<u8> {
-        bincode::serialize(&pkt).unwrap()
+    fn serialize<T: Serialize + wincode::SchemaWrite<wincode::config::DefaultConfig, Src = T>>(
+        pkt: T,
+    ) -> Vec<u8> {
+        let wincode_bytes = wincode::serialize(&pkt).unwrap();
+        assert_eq!(wincode_bytes, bincode::serialize(&pkt).unwrap());
+        wincode_bytes
     }
 
     fn find_differences(a: &[u8], b: &[u8]) -> Option<usize> {
