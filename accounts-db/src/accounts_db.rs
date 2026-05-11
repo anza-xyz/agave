@@ -3398,7 +3398,7 @@ impl AccountsDb {
         // pubkey. Hold the Arc<CachedAccount> to keep the data alive even if the cache flushes
         // between now and step 3 (Arc clone is just a refcount bump).
         let cached_pubkeys = self.accounts_cache.cached_pubkeys();
-        let mut cache_versions: HashMap<Pubkey, (Arc<CachedAccount>, Slot), PubkeyHasherBuilder> =
+        let mut cached_versions =
             HashMap::with_capacity_and_hasher(cached_pubkeys.len(), PubkeyHasherBuilder::default());
         for pubkey in cached_pubkeys {
             if config.is_aborted() {
@@ -3408,7 +3408,7 @@ impl AccountsDb {
             if let Some((cached_account, slot, _)) =
                 self.accounts_cache.load_latest(&pubkey, ancestors)
             {
-                cache_versions.insert(pubkey, (cached_account, slot));
+                cached_versions.insert(pubkey, (cached_account, slot));
             }
         }
 
@@ -3425,7 +3425,7 @@ impl AccountsDb {
             ancestors,
             max_root,
             |pubkey, (account_info, slot)| {
-                if let Some((cached_account, cache_slot)) = cache_versions.remove(pubkey) {
+                if let Some((cached_account, cache_slot)) = cached_versions.remove(pubkey) {
                     if cache_slot >= slot {
                         scan_func(Some((pubkey, cached_account.account.clone(), cache_slot)));
                         return;
@@ -3448,7 +3448,7 @@ impl AccountsDb {
 
         // Step 3: Call scan_func on cache-only entries — pubkeys that exist in the cache but not
         // in the accounts index at all.
-        for (pubkey, (cached_account, slot)) in cache_versions {
+        for (pubkey, (cached_account, slot)) in cached_versions {
             if config.is_aborted() {
                 break;
             }
