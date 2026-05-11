@@ -459,7 +459,9 @@ impl<'a> FileBufRead<'a> for SequentialFileReader<'a> {
         // but already partially consumed (so re-prefetching restarts at offset 0,
         // honoring the trait contract).
         while self.state.files.front().is_some_and(|file_state| {
-            !file_state.is_same_file(file) || self.state.current_offset > 0
+            !file_state.is_same_file(file)
+                || file_state.read_limit != read_limit
+                || self.state.current_offset > 0
         }) {
             self.move_to_next_file()?;
         }
@@ -1132,6 +1134,16 @@ mod tests {
         reader.set_file(temp2.as_file(), 4).unwrap();
         assert_eq!(reader.get_file_offset(), 0);
         assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf, 0x10]);
+
+        // Re-setting the same file at offset 0 but with a different `read_limit`
+        // must also re-prefetch the file so the new limit takes effect.
+        reader.set_file(temp2.as_file(), 2).unwrap();
+        assert_eq!(reader.get_file_offset(), 0);
+        // Only `read_limit` differs from the front file (offset is still 0):
+        // this exercises the `read_limit` mismatch branch of `set_file`.
+        reader.set_file(temp2.as_file(), 3).unwrap();
+        assert_eq!(reader.get_file_offset(), 0);
+        assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf]);
     }
 
     #[test]
