@@ -254,7 +254,7 @@ fn calculate_stake_rewards<'a>(
 ///   indicate with false for was_split
 ///
 /// DEVELOPER NOTE:  This function used to be a method on VoteState, but was moved here
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub(crate)))]
+#[cfg_attr(any(test, feature = "dev-context-only-utils"), qualifiers(pub(crate)))]
 fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
     const MAX_BPS: u16 = 10_000;
     const MAX_BPS_U128: u128 = MAX_BPS as u128;
