@@ -3,9 +3,7 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_overrides::AccountOverrides,
-        rent_calculator::{
-            RENT_EXEMPT_RENT_EPOCH, check_rent_state_with_account, get_account_rent_state,
-        },
+        rent_calculator::{RENT_EXEMPT_RENT_EPOCH, check_static_account_rent_state_transition},
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
     },
@@ -356,12 +354,12 @@ pub fn update_rent_exempt_status_for_account(rent: &Rent, account: &mut AccountS
 /// fee, the error_metrics is incremented, and a specific error is
 /// returned.
 pub fn validate_fee_payer(
-    payer_address: &Pubkey,
     payer_account: &mut AccountSharedData,
     payer_index: IndexOfAccount,
     error_metrics: &mut TransactionErrorMetrics,
     rent: &Rent,
     fee: u64,
+    relax_post_exec_min_balance_check: bool,
 ) -> Result<()> {
     if payer_account.lamports() == 0 {
         error_metrics.account_not_found += 1;
@@ -389,25 +387,19 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = get_account_rent_state(
-        payer_account.lamports(),
-        payer_account.data().len(),
-        rent.minimum_balance(payer_account.data().len()),
-    );
+    let pre_balance = payer_account.lamports();
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
+    let post_balance = payer_account.lamports();
 
-    let payer_post_rent_state = get_account_rent_state(
-        payer_account.lamports(),
+    check_static_account_rent_state_transition(
+        pre_balance,
+        post_balance,
         payer_account.data().len(),
-        rent.minimum_balance(payer_account.data().len()),
-    );
-    check_rent_state_with_account(
-        &payer_pre_rent_state,
-        &payer_post_rent_state,
-        payer_address,
+        rent,
         payer_index,
+        relax_post_exec_min_balance_check,
     )
 }
 
@@ -1161,11 +1153,11 @@ mod tests {
         is_nonce: bool,
         payer_init_balance: u64,
         fee: u64,
+        relax_post_exec_min_balance_check: bool,
         expected_result: Result<()>,
         payer_post_balance: u64,
     }
     fn validate_fee_payer_account(test_parameter: ValidateFeePayerTestParameter, rent: &Rent) {
-        let payer_account_keys = Keypair::new();
         let mut account = if test_parameter.is_nonce {
             AccountSharedData::new_data(
                 test_parameter.payer_init_balance,
@@ -1177,12 +1169,12 @@ mod tests {
             AccountSharedData::new(test_parameter.payer_init_balance, 0, &system_program::id())
         };
         let result = validate_fee_payer(
-            &payer_account_keys.pubkey(),
             &mut account,
             0,
             &mut TransactionErrorMetrics::default(),
             rent,
             test_parameter.fee,
+            test_parameter.relax_post_exec_min_balance_check,
         );
 
         assert_eq!(result, test_parameter.expected_result);
@@ -1201,67 +1193,79 @@ mod tests {
         // If payer account has sufficient balance, expect successful fee deduction,
         // regardless feature gate status, or if payer is nonce account.
         {
-            for (is_nonce, min_balance) in [(true, min_balance), (false, 0)] {
-                validate_fee_payer_account(
-                    ValidateFeePayerTestParameter {
-                        is_nonce,
-                        payer_init_balance: min_balance + fee,
-                        fee,
-                        expected_result: Ok(()),
-                        payer_post_balance: min_balance,
-                    },
-                    &rent,
-                );
+            for relax_post_exec_min_balance_check in [false, true] {
+                for (is_nonce, min_balance) in [(true, min_balance), (false, 0)] {
+                    validate_fee_payer_account(
+                        ValidateFeePayerTestParameter {
+                            is_nonce,
+                            payer_init_balance: min_balance + fee,
+                            fee,
+                            relax_post_exec_min_balance_check,
+                            expected_result: Ok(()),
+                            payer_post_balance: min_balance,
+                        },
+                        &rent,
+                    );
+                }
             }
         }
 
-        // If payer account has no balance, expected AccountNotFound Error
+        // If payer account has no balance, expected AccountNotFound error
         // regardless feature gate status, or if payer is nonce account.
         {
-            for is_nonce in [true, false] {
-                validate_fee_payer_account(
-                    ValidateFeePayerTestParameter {
-                        is_nonce,
-                        payer_init_balance: 0,
-                        fee,
-                        expected_result: Err(TransactionError::AccountNotFound),
-                        payer_post_balance: 0,
-                    },
-                    &rent,
-                );
+            for relax_post_exec_min_balance_check in [false, true] {
+                for is_nonce in [true, false] {
+                    validate_fee_payer_account(
+                        ValidateFeePayerTestParameter {
+                            is_nonce,
+                            payer_init_balance: 0,
+                            fee,
+                            relax_post_exec_min_balance_check,
+                            expected_result: Err(TransactionError::AccountNotFound),
+                            payer_post_balance: 0,
+                        },
+                        &rent,
+                    );
+                }
             }
         }
 
         // If payer account has insufficient balance, expect InsufficientFundsForFee error
         // regardless feature gate status, or if payer is nonce account.
         {
-            for (is_nonce, min_balance) in [(true, min_balance), (false, 0)] {
+            for relax_post_exec_min_balance_check in [false, true] {
+                for (is_nonce, min_balance) in [(true, min_balance), (false, 0)] {
+                    validate_fee_payer_account(
+                        ValidateFeePayerTestParameter {
+                            is_nonce,
+                            payer_init_balance: min_balance + fee - 1,
+                            fee,
+                            relax_post_exec_min_balance_check,
+                            expected_result: Err(TransactionError::InsufficientFundsForFee),
+                            payer_post_balance: min_balance + fee - 1,
+                        },
+                        &rent,
+                    );
+                }
+            }
+        }
+
+        // normal payer account has balance of u64::MAX, so does fee; since it does not require
+        // min_balance, expect successful fee deduction, regardless of feature gate status
+        {
+            for relax_post_exec_min_balance_check in [false, true] {
                 validate_fee_payer_account(
                     ValidateFeePayerTestParameter {
-                        is_nonce,
-                        payer_init_balance: min_balance + fee - 1,
-                        fee,
-                        expected_result: Err(TransactionError::InsufficientFundsForFee),
-                        payer_post_balance: min_balance + fee - 1,
+                        is_nonce: false,
+                        payer_init_balance: u64::MAX,
+                        fee: u64::MAX,
+                        relax_post_exec_min_balance_check,
+                        expected_result: Ok(()),
+                        payer_post_balance: 0,
                     },
                     &rent,
                 );
             }
-        }
-
-        // normal payer account has balance of u64::MAX, so does fee; since it does not  require
-        // min_balance, expect successful fee deduction, regardless of feature gate status
-        {
-            validate_fee_payer_account(
-                ValidateFeePayerTestParameter {
-                    is_nonce: false,
-                    payer_init_balance: u64::MAX,
-                    fee: u64::MAX,
-                    expected_result: Ok(()),
-                    payer_post_balance: 0,
-                },
-                &rent,
-            );
         }
     }
 
@@ -1280,6 +1284,7 @@ mod tests {
                 is_nonce: true,
                 payer_init_balance: u64::MAX,
                 fee: u64::MAX,
+                relax_post_exec_min_balance_check: true,
                 expected_result: Err(TransactionError::InsufficientFundsForFee),
                 payer_post_balance: u64::MAX,
             },

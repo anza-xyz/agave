@@ -102,8 +102,9 @@ pub fn check_static_account_rent_state_transition(
     post_exec_balance: u64,
     data_size: usize,
     rent: &Rent,
+    account_index: IndexOfAccount,
     relax_post_exec_min_balance_check: bool,
-) -> bool {
+) -> TransactionResult<()> {
     let rent_min_balance = rent.minimum_balance(data_size);
     let (pre_state, post_state) = if relax_post_exec_min_balance_check {
         let pre_state = if pre_exec_balance == 0 {
@@ -129,7 +130,13 @@ pub fn check_static_account_rent_state_transition(
             get_account_rent_state(post_exec_balance, data_size, rent_min_balance),
         )
     };
-    transition_allowed(&pre_state, &post_state)
+
+    if !transition_allowed(&pre_state, &post_state) {
+        let account_index = account_index as u8;
+        Err(TransactionError::InsufficientFundsForRent { account_index })
+    } else {
+        Ok(())
+    }
 }
 
 /// Check whether a transition from the pre_rent_state to the
