@@ -29,7 +29,7 @@ frozen-abi = [
 bincode = { workspace = true, optional = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
-rand = { version = "0.9.4", optional = true }
+rand = { version = "0.10.1", optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bincode = { workspace = true }
