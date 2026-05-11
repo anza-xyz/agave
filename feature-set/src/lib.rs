@@ -1237,7 +1237,7 @@ pub mod enable_sbpf_v3_deployment_and_execution {
 }
 
 pub mod disable_sbpf_v0_v1_v2_deployment {
-    solana_pubkey::declare_id!("5789pRHRXvzpj5ZmGAjHL2QRCDwFx5CuoUqEB55hunbo");
+    solana_pubkey::declare_id!("B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g");
 }
 
 pub mod remove_accounts_executable_flag_checks {
