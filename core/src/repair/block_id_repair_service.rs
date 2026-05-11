@@ -213,7 +213,7 @@ impl RepairState {
     }
 
     fn prune_expected_ping_responses(&mut self, now: u64) {
-        let ttl_ms = u64::try_from(DELTA.as_millis()).unwrap();
+        let ttl_ms = u64::try_from(2 * DELTA.as_millis()).unwrap();
         self.expected_ping_responses
             .retain(|_, sent_at| now.saturating_sub(*sent_at) <= ttl_ms);
     }
