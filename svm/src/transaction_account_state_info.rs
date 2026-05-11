@@ -175,14 +175,12 @@ mod test {
         super::*,
         solana_account::{AccountSharedData, WritableAccount},
         solana_hash::Hash,
-        solana_keypair::Keypair,
         solana_message::{
             LegacyMessage, Message, MessageHeader, SanitizedMessage,
             compiled_instruction::CompiledInstruction,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_signer::Signer,
         solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
         std::collections::HashSet,
@@ -217,17 +215,16 @@ mod test {
     #[test]
     fn test_pre_exec_basics() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
 
         let transaction_accounts = vec![
-            (account.pubkey(), AccountSharedData::default()),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (account, AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let default_owner = Pubkey::default();
 
@@ -263,23 +260,22 @@ mod test {
     #[test]
     fn test_pre_exec_legacy_rent_paying() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
         let data_len: usize = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(1);
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
         let tx_accounts = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
         let pre =
@@ -298,18 +294,13 @@ mod test {
     #[should_panic(expected = "message and transaction context out of sync, fatal")]
     fn test_new_panic() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
-        let extra_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
+        let extra_account = Pubkey::new_unique();
 
         let message = Message {
-            account_keys: vec![
-                account.pubkey(),
-                program.pubkey(),
-                other_account.pubkey(),
-                extra_account.pubkey(),
-            ],
+            account_keys: vec![account, program, other_account, extra_account],
             header: MessageHeader::default(),
             instructions: vec![
                 CompiledInstruction {
@@ -330,9 +321,9 @@ mod test {
             SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
 
         let transaction_accounts = vec![
-            (account.pubkey(), AccountSharedData::default()),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (account, AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
 
         let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20, 2);
@@ -343,23 +334,22 @@ mod test {
     #[test]
     fn test_post_exec_unchanged_size_allows_pre_balance() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
         let data_len: usize = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5); // less than full rent-exempt, but > 0
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
         let tx_accounts = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
         let pre =
@@ -381,23 +371,22 @@ mod test {
     #[test]
     fn test_post_exec_legacy_ignores_pre_balance() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
         let data_len: usize = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5);
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
         let tx_accounts = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
         let pre =
@@ -423,23 +412,22 @@ mod test {
     #[test]
     fn test_post_exec_unchanged_size_violation() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
         let data_len: usize = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5);
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
         let mut tx_accounts = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts.clone(), rent.clone(), 20, 20, 2);
         let pre = TransactionAccountStateInfo::new_pre_exec(
@@ -481,25 +469,24 @@ mod test {
     #[test]
     fn test_post_exec_size_changed_requires_full_min() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
         let pre_len: usize = 32;
         let post_len: usize = 256; // larger size => larger full min
         let pre_min = rent.minimum_balance(pre_len);
         let pre_balance = pre_min.saturating_sub(1);
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
 
         let tx_accounts_pre = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts_pre, rent.clone(), 20, 20, 2);
         let pre = TransactionAccountStateInfo::new_pre_exec(
@@ -512,11 +499,11 @@ mod test {
         // post: size increased; balance unchanged => should require full min for new size
         let tx_accounts_post = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_post = TransactionContext::new(tx_accounts_post, rent.clone(), 20, 20, 2);
         let post = TransactionAccountStateInfo::new_post_exec(
@@ -549,9 +536,9 @@ mod test {
             ..Rent::default()
         };
 
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
 
         let pre_len: usize = 256;
         let post_len: usize = pre_len / 8; // smaller size, but rent increased after creation
@@ -559,16 +546,15 @@ mod test {
         let post_min = post_rent.minimum_balance(post_len);
         assert!(post_min > pre_balance);
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
 
         let tx_accounts_pre = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts_pre, pre_rent.clone(), 20, 20, 2);
         let pre = TransactionAccountStateInfo::new_pre_exec(
@@ -581,11 +567,11 @@ mod test {
         // post: size decreased; rent increased => should still not require top-up
         let tx_accounts_post = vec![
             (
-                account.pubkey(),
+                account,
                 AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_post = TransactionContext::new(tx_accounts_post, post_rent.clone(), 20, 20, 2);
         let post = TransactionAccountStateInfo::new_post_exec(
@@ -604,26 +590,25 @@ mod test {
     #[test]
     fn test_post_exec_owner_changed_requires_full_min() {
         let rent = Rent::default();
-        let account = Keypair::new();
-        let program = Keypair::new();
-        let other_account = Keypair::new();
-        let owner_pre = Keypair::new();
-        let owner_post = Keypair::new();
+        let account = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
+        let owner_pre = Pubkey::new_unique();
+        let owner_post = Pubkey::new_unique();
 
         let data_len: usize = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5);
 
-        let sanitized_message =
-            sanitized_msg_for(program.pubkey(), account.pubkey(), other_account.pubkey());
+        let sanitized_message = sanitized_msg_for(program, account, other_account);
 
         let tx_accounts_pre = vec![
             (
-                account.pubkey(),
-                AccountSharedData::new(pre_balance, data_len, &owner_pre.pubkey()),
+                account,
+                AccountSharedData::new(pre_balance, data_len, &owner_pre),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts_pre, rent.clone(), 20, 20, 2);
         let pre = TransactionAccountStateInfo::new_pre_exec(
@@ -636,11 +621,11 @@ mod test {
         // post: owner changed; balance/size unchanged => should require full min
         let tx_accounts_post = vec![
             (
-                account.pubkey(),
-                AccountSharedData::new(pre_balance, data_len, &owner_post.pubkey()),
+                account,
+                AccountSharedData::new(pre_balance, data_len, &owner_post),
             ),
-            (program.pubkey(), AccountSharedData::default()),
-            (other_account.pubkey(), AccountSharedData::default()),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
         ];
         let context_post = TransactionContext::new(tx_accounts_post, rent.clone(), 20, 20, 2);
         let post = TransactionAccountStateInfo::new_post_exec(
@@ -669,8 +654,8 @@ mod test {
     fn test_verify_changes() {
         // mostly a sanity check for the plumbing since transitions_allowed enforces
         // the specific transition rules.
-        let key1 = Keypair::new();
-        let key2 = Keypair::new();
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
         let owner = Pubkey::default();
         let pre_state_infos = vec![TransactionAccountStateInfo {
             info: Some(WritableTransactionAccountStateInfo {
@@ -690,8 +675,8 @@ mod test {
         }];
 
         let transaction_accounts = vec![
-            (key1.pubkey(), AccountSharedData::default()),
-            (key2.pubkey(), AccountSharedData::default()),
+            (key1, AccountSharedData::default()),
+            (key2, AccountSharedData::default()),
         ];
 
         let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 2);
@@ -720,8 +705,8 @@ mod test {
         }];
 
         let transaction_accounts = vec![
-            (key1.pubkey(), AccountSharedData::default()),
-            (key2.pubkey(), AccountSharedData::default()),
+            (key1, AccountSharedData::default()),
+            (key2, AccountSharedData::default()),
         ];
 
         let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 2);
@@ -734,7 +719,7 @@ mod test {
 
     #[test]
     fn test_get_uninitialized_accounts_size_with_deleted_accounts() {
-        let post_state_infos = vec![
+        let mut post_state_infos = vec![
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
@@ -746,6 +731,16 @@ mod test {
             .clone();
             3
         ];
+
+        // add non-deleted account to ensure only uninitialized accounts are counted
+        post_state_infos.push(TransactionAccountStateInfo {
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::RentExempt,
+                balance: 100,
+                data_size: 50,
+                owner: Pubkey::new_unique(),
+            }),
+        });
 
         // 3 deleted accounts should contribute 3 * (50) = 150 to the count
         assert_eq!(get_uninitialized_accounts_size(&post_state_infos), 150);

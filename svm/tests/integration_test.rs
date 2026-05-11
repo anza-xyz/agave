@@ -2537,7 +2537,7 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
         let fee_payer_data =
-            mk_system_account(old_min_balance + LAMPORTS_PER_SIGNATURE, target_size);
+            mk_system_account(new_min_balance + LAMPORTS_PER_SIGNATURE - 1, target_size);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
         let target = Pubkey::new_unique();
