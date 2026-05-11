@@ -119,11 +119,24 @@ fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionDat
         return Err(TransactionViewError::SanitizeError);
     }
 
-    // No duplicated accounts
-    // Note: This check is performed downstream in `validate_account_locks()`.
-    // It is skipped here to avoid redundant work on the hot path.
+    if matches!(view.version(), TransactionVersion::V1) && has_duplicate_static_account_keys(view) {
+        return Err(TransactionViewError::SanitizeError);
+    }
 
     Ok(())
+}
+
+fn has_duplicate_static_account_keys(
+    view: &UnsanitizedTransactionView<impl TransactionData>,
+) -> bool {
+    let mut static_account_keys = view.static_account_keys();
+    while let Some((account_key, remaining_account_keys)) = static_account_keys.split_first() {
+        if remaining_account_keys.contains(account_key) {
+            return true;
+        }
+        static_account_keys = remaining_account_keys;
+    }
+    false
 }
 
 /// Instructions Constraints
@@ -211,7 +224,9 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_signature::Signature,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::versioned::VersionedTransaction,
+        solana_transaction::versioned::{
+            VersionedTransaction, sanitized::SanitizedVersionedTransaction,
+        },
     };
 
     fn create_legacy_transaction(
@@ -594,6 +609,32 @@ mod tests {
                 sanitize_account_access(&view),
                 Err(TransactionViewError::SanitizeError)
             );
+        }
+
+        {
+            let account_key = Pubkey::new_unique();
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                vec![account_key, account_key],
+                vec![],
+                TransactionConfig::empty(),
+            );
+            assert!(SanitizedVersionedTransaction::try_new(transaction.clone()).is_err());
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_account_access(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+            assert!(matches!(
+                TransactionView::try_new_sanitized(data.as_ref(), true),
+                Err(TransactionViewError::SanitizeError)
+            ));
         }
     }
 
