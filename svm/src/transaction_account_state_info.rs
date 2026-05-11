@@ -1,12 +1,14 @@
 use {
-    crate::rent_calculator::{RentState, check_rent_state, get_account_rent_state},
+    crate::rent_calculator::{
+        RentState, check_rent_state, get_post_exec_account_rent_state,
+        get_pre_exec_account_rent_state,
+    },
     solana_account::ReadableAccount,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     solana_transaction_error::TransactionResult as Result,
-    std::cmp::min,
 };
 
 #[derive(PartialEq, Debug, Clone)]
@@ -31,17 +33,12 @@ impl TransactionAccountStateInfo {
                     let balance = account.lamports();
                     let data_size = account.data().len();
                     let owner = *account.owner();
-
-                    let rent_state = if relax_post_exec_min_balance_check {
-                        // SIMD-0392 enabled. Assume `RentPaying` is impossible.
-                        if account.lamports() == 0 {
-                            RentState::Uninitialized
-                        } else {
-                            RentState::RentExempt
-                        }
-                    } else {
-                        get_account_rent_state(balance, data_size, rent.minimum_balance(data_size))
-                    };
+                    let rent_state = get_pre_exec_account_rent_state(
+                        balance,
+                        data_size,
+                        rent.minimum_balance(data_size),
+                        !relax_post_exec_min_balance_check, // SIMD-0392 enabled. Assume `RentPaying` is impossible
+                    );
 
                     WritableTransactionAccountStateInfo {
                         rent_state,
@@ -73,33 +70,38 @@ impl TransactionAccountStateInfo {
                         pre_exec_state_info.info.is_some(),
                         "message and pre-exec state out of sync, fatal"
                     );
+                    if pre_exec_state_info.info.is_none() {
+                        // to avoid panicking in release, treat missing pre-exec info as uninitialized
+                        return WritableTransactionAccountStateInfo::default();
+                    }
 
+                    let pre_exec_state_info = pre_exec_state_info.info.as_ref().unwrap();
                     let balance = account.lamports();
                     let data_size = account.data().len();
-                    let mut min_balance = rent.minimum_balance(data_size);
+                    let min_balance = rent.minimum_balance(data_size);
+                    let owner = *account.owner();
+                    let pre_state = &pre_exec_state_info.rent_state;
+                    let pre_balance = pre_exec_state_info.balance;
 
-                    if relax_post_exec_min_balance_check {
-                        // SIMD-0392 enabled.
-                        // Adjust min_balance according to SIMD-0392.
-                        if let Some(pre_exec_info) = pre_exec_state_info.as_ref() {
-                            // if the account size increased, account was created in this transaction,
-                            // or the owner of the account changed, do standard rent exempt check
-                            // otherwise, pre-exec balance can also be used as the minimum balance
-                            if pre_exec_info.rent_state != RentState::Uninitialized
-                                && data_size <= pre_exec_info.data_size
-                                && account.owner() == &pre_exec_info.owner
-                            {
-                                min_balance = min(pre_exec_info.balance, min_balance);
-                            }
-                        }
-                    }
+                    // Criteria for rent-exempt relaxation as specified by SIMD-392
+                    let relax_rent_exempt_criteria = relax_post_exec_min_balance_check
+                        && *pre_state == RentState::RentExempt
+                        && data_size <= pre_exec_state_info.data_size
+                        && pre_exec_state_info.owner == owner;
 
                     // Post-exec owner is currently not consumed by any caller.
                     WritableTransactionAccountStateInfo {
-                        rent_state: get_account_rent_state(balance, data_size, min_balance),
+                        rent_state: get_post_exec_account_rent_state(
+                            balance,
+                            data_size,
+                            min_balance,
+                            pre_state,
+                            pre_balance,
+                            relax_rent_exempt_criteria,
+                        ),
                         balance,
                         data_size,
-                        owner: *account.owner(),
+                        owner,
                     }
                 });
                 Self { info }
@@ -140,7 +142,7 @@ pub(crate) fn get_uninitialized_accounts_size(post: &[TransactionAccountStateInf
         .sum()
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Default)]
 pub(crate) struct WritableTransactionAccountStateInfo {
     rent_state: RentState,
     balance: u64,

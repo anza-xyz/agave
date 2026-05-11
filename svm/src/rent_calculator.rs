@@ -16,9 +16,10 @@ use {
 pub const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 /// Rent state of a Solana account.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum RentState {
     /// account.lamports == 0
+    #[default]
     Uninitialized,
     /// 0 < account.lamports < rent-exempt-minimum
     RentPaying {
@@ -94,7 +95,12 @@ pub fn get_account_rent_state(
     }
 }
 
-fn get_pre_account_rent_state(
+/// Determine the pre-execution rent state of an account.
+///
+/// Equivalent to get_account_rent_state, with the additional option of
+/// disallowing the RentPaying state. If allow_rent_paying is false, accounts
+/// that would previously be designated RentPaying will instead be RentExempt.
+pub fn get_pre_exec_account_rent_state(
     account_lamports: u64,
     account_size: usize,
     min_balance: u64,
@@ -106,15 +112,20 @@ fn get_pre_account_rent_state(
     }
 }
 
-fn get_post_account_rent_state(
+/// Determine the post-execution rent state of an account.
+///
+/// Equivalent to get_account_rent_state, with the additional option of
+/// relaxing the criteria to designate an account as RentExempt. The relaxed
+/// designation follows the rules specified by SIMD-392.
+pub fn get_post_exec_account_rent_state(
     account_lamports: u64,
     account_size: usize,
     min_balance: u64,
     pre_rent_state: &RentState,
     pre_exec_balance: u64,
-    relax_post_exec_min_balance_check: bool,
+    relax_rent_exempt_criteria: bool,
 ) -> RentState {
-    if !relax_post_exec_min_balance_check {
+    if !relax_rent_exempt_criteria {
         return get_account_rent_state(account_lamports, account_size, min_balance);
     };
 
@@ -143,14 +154,14 @@ pub fn check_static_account_rent_state_transition(
     relax_post_exec_min_balance_check: bool,
 ) -> TransactionResult<()> {
     let rent_min_balance = rent.minimum_balance(data_size);
-    let pre_state = get_pre_account_rent_state(
+    let pre_state = get_pre_exec_account_rent_state(
         pre_exec_balance,
         data_size,
         rent_min_balance,
         // post SIMD-392 activation, RentPaying accounts are no longer possible
         !relax_post_exec_min_balance_check,
     );
-    let post_state = get_post_account_rent_state(
+    let post_state = get_post_exec_account_rent_state(
         post_exec_balance,
         data_size,
         rent_min_balance,
