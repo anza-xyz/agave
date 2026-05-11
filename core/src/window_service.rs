@@ -5,8 +5,11 @@
 use {
     crate::{
         completed_data_sets_service::CompletedDataSetsSender,
-        repair::repair_service::{
-            OutstandingShredRepairs, RepairInfo, RepairService, RepairServiceChannels,
+        repair::{
+            block_id_repair_service::{BlockIdRepairChannels, BlockIdRepairService},
+            repair_service::{
+                OutstandingShredRepairs, RepairInfo, RepairService, RepairServiceChannels,
+            },
         },
         result::{Error, Result},
     },
@@ -230,6 +233,7 @@ pub struct WindowServiceChannels {
     pub completed_data_sets_sender: Option<CompletedDataSetsSender>,
     pub duplicate_slots_sender: DuplicateSlotSender,
     pub repair_service_channels: RepairServiceChannels,
+    pub block_id_repair_channels: BlockIdRepairChannels,
 }
 
 impl WindowServiceChannels {
@@ -239,6 +243,7 @@ impl WindowServiceChannels {
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         duplicate_slots_sender: DuplicateSlotSender,
         repair_service_channels: RepairServiceChannels,
+        block_id_repair_channels: BlockIdRepairChannels,
     ) -> Self {
         Self {
             verified_receiver,
@@ -246,6 +251,7 @@ impl WindowServiceChannels {
             completed_data_sets_sender,
             duplicate_slots_sender,
             repair_service_channels,
+            block_id_repair_channels,
         }
     }
 }
@@ -254,13 +260,16 @@ pub(crate) struct WindowService {
     t_insert: JoinHandle<()>,
     t_check_duplicate: JoinHandle<()>,
     repair_service: RepairService,
+    block_id_repair_service: BlockIdRepairService,
 }
 
 impl WindowService {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         blockstore: Arc<Blockstore>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
+        block_id_repair_socket: Arc<UdpSocket>,
         exit: Arc<AtomicBool>,
         repair_info: RepairInfo,
         window_service_channels: WindowServiceChannels,
@@ -277,16 +286,27 @@ impl WindowService {
             completed_data_sets_sender,
             duplicate_slots_sender,
             repair_service_channels,
+            block_id_repair_channels,
         } = window_service_channels;
 
         let repair_service = RepairService::new(
             blockstore.clone(),
             exit.clone(),
-            repair_socket,
+            repair_socket.clone(),
             ancestor_hashes_socket,
+            repair_info.clone(),
+            outstanding_repair_requests.clone(),
+            repair_service_channels,
+        );
+
+        let block_id_repair_service = BlockIdRepairService::new(
+            exit.clone(),
+            blockstore.clone(),
+            block_id_repair_socket,
+            repair_socket,
+            block_id_repair_channels,
             repair_info,
             outstanding_repair_requests,
-            repair_service_channels,
         );
 
         let (duplicate_sender, duplicate_receiver) = unbounded();
@@ -317,6 +337,7 @@ impl WindowService {
             t_insert,
             t_check_duplicate,
             repair_service,
+            block_id_repair_service,
         }
     }
 
@@ -445,7 +466,8 @@ impl WindowService {
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_insert.join()?;
         self.t_check_duplicate.join()?;
-        self.repair_service.join()
+        self.repair_service.join()?;
+        self.block_id_repair_service.join()
     }
 }
 

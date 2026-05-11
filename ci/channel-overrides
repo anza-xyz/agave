@@ -1,5 +1,5 @@
 # Channel override file consumed by ci/channel-info.sh.
 # Single source of truth: edit on master only, no backports.
 # Empty = auto-detect.
-PINNED_BETA_CHANNEL=
-PINNED_STABLE_CHANNEL=
+PINNED_BETA_CHANNEL=v4.0
+PINNED_STABLE_CHANNEL=v3.1

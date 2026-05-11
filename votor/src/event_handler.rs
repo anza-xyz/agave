@@ -5,7 +5,7 @@ use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
         consensus_metrics::ConsensusMetricsEvent,
-        event::{CompletedBlock, VotorEvent, VotorEventReceiver},
+        event::{CompletedBlock, RepairEvent, RepairEventSender, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
@@ -15,7 +15,7 @@ use {
         votor::SharedContext,
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
-    crossbeam_channel::{RecvError, SendError, select},
+    crossbeam_channel::{RecvError, SendError, TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -85,9 +85,9 @@ struct LocalContext {
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
     pub(crate) stats: EventHandlerStats,
-    /// When in standstill, tracks the highest parent ready slot at the time standstill was detected.
+    /// When in standstill, tracks the highest finalized slot at the time standstill was detected.
     /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
-    /// Reset to None when a finalization event is received.
+    /// Reset to `None` when a new finalization event is received.
     pub(crate) standstill_slot: Option<Slot>,
 }
 
@@ -313,10 +313,12 @@ impl EventHandler {
                 info!("{my_pubkey}: Block Notarized {block:?}");
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
             }
 
             VotorEvent::BlockNotarFallback(block) => {
                 info!("{my_pubkey}: Block notar-fallback {block:?}");
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
             }
 
             VotorEvent::FirstShred(slot) => {
@@ -415,6 +417,8 @@ impl EventHandler {
             VotorEvent::Finalized(block, is_fast_finalization) => {
                 info!("{my_pubkey}: Finalized {block:?} fast: {is_fast_finalization}");
                 finalized_blocks.insert(block);
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+
                 Self::check_rootable_blocks(
                     my_pubkey,
                     ctx,
@@ -426,12 +430,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = standstill_slot.take() {
-                    info!(
-                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
-                         slot={}. Ending timeout extension",
-                        block.0
-                    );
+                if let Some(slot) = *standstill_slot {
+                    if block.0 > slot {
+                        *standstill_slot = None;
+                        info!(
+                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
+                             at slot={}. Ending timeout extension",
+                            block.0
+                        );
+                    }
                 }
 
                 if let Some(parent_block) =
@@ -458,13 +465,24 @@ impl EventHandler {
             // We have not observed a finalization certificate in a while, refresh our votes
             VotorEvent::Standstill(highest_finalized_slot) => {
                 info!("{my_pubkey}: Standstill {highest_finalized_slot}");
-                // Record the highest parent ready slot for dynamic timeout extension.
-                if standstill_slot.is_none() {
-                    let (highest_parent_ready, _) = *ctx.highest_parent_ready.read().unwrap();
-                    *standstill_slot = Some(highest_parent_ready);
-                    info!(
-                        "{my_pubkey}: Extending timeouts starting at slot {highest_parent_ready}"
-                    );
+                // Record the highest finalized slot for dynamic timeout extension.
+                match *standstill_slot {
+                    Some(old_slot) => {
+                        debug_assert_eq!(highest_finalized_slot, old_slot);
+                        if highest_finalized_slot != old_slot {
+                            warn!(
+                                "{my_pubkey}: Standstill for slot {highest_finalized_slot}
+                                 issued while standstill for slot {old_slot} active."
+                            );
+                        }
+                    }
+                    None => {
+                        *standstill_slot = Some(highest_finalized_slot);
+                        info!(
+                            "{my_pubkey}: Extending timeouts starting at slot \
+                             {highest_finalized_slot}"
+                        );
+                    }
                 }
                 // certs refresh happens in ConsensusPoolService
                 Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
@@ -820,6 +838,33 @@ impl EventHandler {
     }
 }
 
+/// Sends a repair event to the block ID repair service.
+/// Tries non-blocking send first; if the channel is full, logs an error and blocks.
+/// Returns an error if the channel is disconnected.
+fn request_repair(
+    sender: &RepairEventSender,
+    my_pubkey: Pubkey,
+    block: Block,
+) -> Result<(), EventLoopError> {
+    let (slot, block_id) = block;
+    let event = RepairEvent::FetchBlock { slot, block_id };
+    match sender.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(event)) => {
+            error!(
+                "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
+                 send event for slot {slot}"
+            );
+            sender
+                .send(event)
+                .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            Err(EventLoopError::SenderDisconnected(SendError(())))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -827,7 +872,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             consensus_metrics::ConsensusMetricsEventReceiver,
-            event::LeaderWindowInfo,
+            event::{LeaderWindowInfo, RepairEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
                 VoteHistoryStorage,
@@ -879,6 +924,8 @@ mod tests {
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
+        #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
+        repair_event_receiver: RepairEventReceiver,
         shared_context: SharedContext,
         voting_context: VotingContext,
         root_context: RootContext,
@@ -895,6 +942,7 @@ mod tests {
         let (event_sender, _event_receiver) = unbounded();
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (repair_event_sender, repair_event_receiver) = unbounded();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender,
             exit,
@@ -944,6 +992,7 @@ mod tests {
             blockstore,
             rpc_subscriptions: None,
             highest_parent_ready: highest_parent_ready.clone(),
+            repair_event_sender,
         };
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
@@ -990,6 +1039,7 @@ mod tests {
             drop_bank_receiver,
             cluster_info,
             consensus_metrics_receiver,
+            repair_event_receiver,
             highest_parent_ready,
             shared_context,
             voting_context,
@@ -1618,7 +1668,7 @@ mod tests {
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
 
-        // Send a standstill event with highest parent ready at 0, we should refresh all the votes
+        // Send a standstill event with highest finalized at 0, we should refresh all the votes
         test_context.send_standstill_event(0);
 
         test_context.check_for_votes(&[
@@ -1627,7 +1677,11 @@ mod tests {
             Vote::new_skip_vote(3),
         ]);
 
-        // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
+        // Finalize block 1, should deactivate standstill
+        test_context.send_finalized_event((1, block_id_1), true);
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Send another standstill event with highest finalized at 1, we should refresh votes for 2 and 3 only
         test_context.send_standstill_event(1);
 
         test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
@@ -1700,15 +1754,15 @@ mod tests {
         // Send standstill event - should record the standstill slot
         test_context.send_standstill_event(0);
 
-        // The standstill_slot should now be set to the highest parent ready
+        // The standstill_slot should now be set to the highest finalized
         assert!(test_context.local_context.standstill_slot.is_some());
         let standstill_slot = test_context.local_context.standstill_slot.unwrap();
-        // The highest parent ready should be 1 since we sent parent_ready for slot 1
-        assert_eq!(standstill_slot, 1);
+        // The highest finalized should be 0 since we haven't finalized a slot after genesis
+        assert_eq!(standstill_slot, 0);
 
-        // Send another standstill event - should not overwrite the existing standstill_slot
+        // Send another standstill event - should not change the existing standstill_slot
         test_context.send_standstill_event(0);
-        assert_eq!(test_context.local_context.standstill_slot, Some(1));
+        assert_eq!(test_context.local_context.standstill_slot, Some(0));
 
         // Send a finalized event - should reset standstill_slot
         test_context.send_finalized_event((1, block_id_1), false);

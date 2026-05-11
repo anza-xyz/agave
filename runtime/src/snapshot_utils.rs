@@ -15,6 +15,7 @@ use {
     },
     agave_fs::{
         FileInfo,
+        buffered_reader::large_file_buf_reader,
         buffered_writer::{SizeLimitedWriter, large_file_buf_writer},
         io_setup::IoSetupState,
     },
@@ -60,6 +61,7 @@ use {
         thread,
     },
     tempfile::TempDir,
+    wincode::io::std_read::ReadAdapter,
 };
 
 pub mod snapshot_storage_rebuilder;
@@ -71,6 +73,8 @@ pub mod snapshot_storage_rebuilder;
 pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 GB
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
+/// Buffer size that allows several concurrent reads using default io-uring reader read size (1MiB)
+const OBSOLETE_ACCOUNTS_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 
 // Snapshot Fastboot Version History
 // Legacy - No fastboot version file, storages flushed file presence determines if snapshot is loadable
@@ -769,7 +773,11 @@ fn deserialize_obsolete_accounts(
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
-    let obsolete_accounts_file = fs::File::open(&obsolete_accounts_path)?;
+    let obsolete_accounts_reader = ReadAdapter::new(large_file_buf_reader(
+        &obsolete_accounts_path,
+        OBSOLETE_ACCOUNTS_READ_BUF_SIZE,
+        &IoSetupState::default(),
+    )?);
     // If the file is too large return error
     let obsolete_accounts_file_metadata = fs::metadata(&obsolete_accounts_path)?;
     if obsolete_accounts_file_metadata.len() > maximum_obsolete_accounts_file_size {
@@ -783,7 +791,7 @@ fn deserialize_obsolete_accounts(
     }
 
     Ok(serde_snapshot::deserialize_wincode_from(
-        obsolete_accounts_file,
+        obsolete_accounts_reader,
     )?)
 }
 

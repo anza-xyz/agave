@@ -557,8 +557,12 @@ impl AccountsDb {
         write_ancient_accounts: &mut WriteAncientAccounts<'b>,
     ) {
         let target_slot = accounts_to_write.target_slot();
+        let old_store = self
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(target_slot)
+            .expect("ancient shrink target slot must already have a storage");
         let (shrink_in_progress, create_and_insert_store_elapsed_us) =
-            measure_us!(self.get_store_for_shrink(target_slot, bytes));
+            measure_us!(self.get_store_for_shrink(target_slot, old_store, bytes));
         let (store_accounts_timing, rewrite_elapsed_us) = measure_us!(self.store_accounts_frozen(
             accounts_to_write,
             shrink_in_progress.new_storage(),
@@ -1584,9 +1588,13 @@ mod tests {
                         if all_slots_shrunk {
                             // make it look like each of the slots was shrunk
                             slots.clone().for_each(|slot| {
+                                let old_store = db
+                                    .storage
+                                    .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+                                    .unwrap();
                                 write_ancient_accounts
                                     .shrinks_in_progress
-                                    .insert(slot, db.get_store_for_shrink(slot, 1));
+                                    .insert(slot, db.get_store_for_shrink(slot, old_store, 1));
                             });
                         }
 

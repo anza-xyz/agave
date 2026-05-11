@@ -2886,8 +2886,11 @@ impl AccountsDb {
 
         let mut stats_sub = ShrinkStatsSub::default();
         let mut rewrite_elapsed = Measure::start("rewrite_elapsed");
-        let (shrink_in_progress, time_us) =
-            measure_us!(self.get_store_for_shrink(slot, shrink_collect.alive_total_bytes as u64));
+        let (shrink_in_progress, time_us) = measure_us!(self.get_store_for_shrink(
+            slot,
+            Arc::clone(&store),
+            shrink_collect.alive_total_bytes as u64
+        ));
         stats_sub.create_and_insert_store_elapsed_us = Saturating(time_us);
 
         // here, we're writing back alive_accounts. That should be an atomic operation
@@ -3015,9 +3018,15 @@ impl AccountsDb {
     }
 
     /// return a store that can contain 'size' bytes
-    pub fn get_store_for_shrink(&self, slot: Slot, size: u64) -> ShrinkInProgress<'_> {
+    pub fn get_store_for_shrink(
+        &self,
+        slot: Slot,
+        old_store: Arc<AccountStorageEntry>,
+        size: u64,
+    ) -> ShrinkInProgress<'_> {
         let shrunken_store = self.create_store(slot, size, "shrink", self.shrink_paths.as_slice());
-        self.storage.shrinking_in_progress(slot, shrunken_store)
+        self.storage
+            .shrinking_in_progress(slot, old_store, shrunken_store)
     }
 
     // Reads all accounts in given slot's AppendVecs and filter only to alive,

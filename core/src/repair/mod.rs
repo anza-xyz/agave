@@ -1,4 +1,5 @@
 pub mod ancestor_hashes_service;
+pub mod block_id_repair_service;
 pub mod cluster_slot_state_verifier;
 pub mod duplicate_repair_status;
 pub(crate) mod malicious_repair_handler;

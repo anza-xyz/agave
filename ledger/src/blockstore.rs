@@ -886,7 +886,7 @@ impl Blockstore {
             BlockLocation::Alternate { block_id } => {
                 let (slot, fec_set_index) = erasure_set.store_key();
                 self.alt_merkle_root_meta_cf
-                    .get((slot, fec_set_index, block_id))
+                    .get((slot, block_id, fec_set_index))
             }
         }
     }
@@ -908,7 +908,7 @@ impl Blockstore {
             ),
             BlockLocation::Alternate { block_id } => self.alt_merkle_root_meta_cf.put_in_batch(
                 write_batch,
-                (slot, fec_set_index, block_id),
+                (slot, block_id, fec_set_index),
                 merkle_root_meta,
             ),
         }
@@ -3327,7 +3327,7 @@ impl Blockstore {
         match location {
             BlockLocation::Original => self.get_data_shred(slot, index),
             BlockLocation::Alternate { block_id } => {
-                self.alt_data_shred_cf.get_bytes((slot, index, block_id))
+                self.alt_data_shred_cf.get_bytes((slot, block_id, index))
             }
         }
     }
@@ -3363,10 +3363,10 @@ impl Blockstore {
                 let iter = self
                     .alt_data_shred_cf
                     .iter(IteratorMode::From(
-                        (slot, start_index, block_id),
+                        (slot, block_id, start_index),
                         IteratorDirection::Forward,
                     ))?
-                    .take_while(move |((shred_slot, _, shred_block_id), _)| {
+                    .take_while(move |((shred_slot, shred_block_id, _), _)| {
                         *shred_slot == slot && *shred_block_id == block_id
                     })
                     .map(|(_, bytes)| bytes);
@@ -3403,7 +3403,7 @@ impl Blockstore {
             BlockLocation::Alternate { block_id } => {
                 self.alt_data_shred_cf.put_bytes_in_batch(
                     write_batch,
-                    (slot, index, block_id),
+                    (slot, block_id, index),
                     shred,
                 );
             }
@@ -13057,6 +13057,67 @@ pub mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn test_get_data_shreds_for_slot() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let parent_slot = 990;
+        let slot = 1000;
+        let num_entries = 200;
+        let locations = [
+            BlockLocation::Original,
+            BlockLocation::Alternate {
+                block_id: Hash::new_from_array([1u8; HASH_BYTES]),
+            },
+            BlockLocation::Alternate {
+                block_id: Hash::new_from_array([2u8; HASH_BYTES]),
+            },
+            BlockLocation::Alternate {
+                block_id: Hash::new_from_array([3u8; HASH_BYTES]),
+            },
+        ];
+
+        // Setup and insert shreds from 4 blocks into the columns for `slot`
+        let data_shreds: [Vec<Shred>; 4] = std::array::from_fn(|i| {
+            let (data_shreds, _coding_shreds, leader_schedule_cache) =
+                setup_erasure_shreds(slot, parent_slot, num_entries);
+            let location = locations[i];
+            let is_repaired = location != BlockLocation::Original;
+            let shreds = data_shreds
+                .iter()
+                .map(|shred| (Cow::Borrowed(shred), is_repaired, location));
+            let insert_results = blockstore
+                .do_insert_shreds(
+                    shreds,
+                    Some(&leader_schedule_cache),
+                    false,
+                    None,
+                    &mut BlockstoreInsertionMetrics::default(),
+                )
+                .unwrap();
+            assert!(insert_results.duplicate_shreds.is_empty());
+            data_shreds
+        });
+
+        // Verify that each block is able to be fetched
+        for (i, location) in locations.iter().enumerate() {
+            let shreds = &data_shreds[i];
+            let len = shreds.len();
+            let start_indices = [0, len / 2, len - 1];
+            for start_index in start_indices {
+                let expected_shreds = &shreds[start_index..];
+                let fetched_shreds = blockstore
+                    .get_data_shreds_for_slot_from_location(slot, start_index as u64, *location)
+                    .unwrap();
+                assert_eq!(fetched_shreds.len(), expected_shreds.len());
+                for (fetched, expected) in fetched_shreds.iter().zip(expected_shreds.iter()) {
+                    assert_eq!(fetched.index(), expected.index());
+                    assert_eq!(fetched.payload(), expected.payload());
+                }
+            }
+        }
     }
 
     #[test_matrix([true, false], [

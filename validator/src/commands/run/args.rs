@@ -1312,6 +1312,8 @@ mod tests {
                     notification_threads: None,
                     queue_capacity_items:
                         solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
+                    queue_capacity_bytes:
+                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_BYTES,
                     ..PubSubConfig::default_for_tests()
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),

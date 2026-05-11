@@ -208,7 +208,8 @@ pub fn program_address(program_name: &str) -> Pubkey {
 }
 
 pub fn program_data_size(program_name: &str) -> usize {
-    load_program(program_name.to_string()).len()
+    UpgradeableLoaderState::size_of_programdata_metadata()
+        .saturating_add(load_program(program_name.to_string()).len())
 }
 
 pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankCallback) -> Pubkey {

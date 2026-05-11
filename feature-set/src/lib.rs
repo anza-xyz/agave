@@ -87,6 +87,7 @@ pub struct FeatureSnapshot {
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub enable_tx_v1: bool,
+    pub define_ltds_fee_only_semantics: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -202,6 +203,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             enable_tx_v1: is_active(&enable_tx_v1::ID),
+            define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
         }
     }
 }
@@ -367,6 +369,7 @@ impl FeatureSet {
             loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
+            define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
         }
     }
 }
@@ -1540,6 +1543,10 @@ pub mod enable_tx_v1 {
     solana_pubkey::declare_id!("txv1hPU76QFBVeq3942jJ65e9Em2xbdbCJrzX8sM4U4");
 }
 
+pub mod define_ltds_fee_only_semantics {
+    solana_pubkey::declare_id!("LTDSzjZKFJMKHYpNycG1FrWwGGTaFFwqEFjB5GGLNVD");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2594,6 +2601,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0392: Relaxation of post-execution min_balance check",
         ),
         (enable_tx_v1::id(), "SIMD-0385: Transaction V1"),
+        (
+            define_ltds_fee_only_semantics::id(),
+            "SIMD-0186 Amendment: Define fee-only semantics",
+        ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]

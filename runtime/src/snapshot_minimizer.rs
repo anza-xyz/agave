@@ -306,10 +306,11 @@ impl<'a> SnapshotMinimizer<'a> {
 
         let mut shrink_in_progress = None;
         if total_bytes > 0 {
-            shrink_in_progress = Some(
-                self.accounts_db()
-                    .get_store_for_shrink(slot, total_bytes as u64),
-            );
+            shrink_in_progress = Some(self.accounts_db().get_store_for_shrink(
+                slot,
+                Arc::clone(storage),
+                total_bytes as u64,
+            ));
             let new_storage = shrink_in_progress.as_ref().unwrap().new_storage();
 
             let accounts = [(slot, &keep_accounts[..])];
