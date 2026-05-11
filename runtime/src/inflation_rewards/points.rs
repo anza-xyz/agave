@@ -158,7 +158,8 @@ impl<'a> AlpenglowStakeState<'a> {
         };
         let Some(entry) = rank_map.get_pubkey_stake_entry(*rank as usize) else {
             return Err(
-                "get_pubkey_stake_entry(rank={rank}) for vote_pubkey={vote_pubkey} in epoch={epoch} failed",
+                "get_pubkey_stake_entry(rank={rank}) for vote_pubkey={vote_pubkey} in \
+                 epoch={epoch} failed",
             );
         };
         Ok(entry.stake)
