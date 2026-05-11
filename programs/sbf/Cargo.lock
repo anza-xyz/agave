@@ -5870,7 +5870,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-slot-history",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-sysvar",
  "solana-vote-interface",
  "spl-generic-token",
@@ -5957,7 +5957,7 @@ dependencies = [
  "solana-reward-info",
  "solana-signer",
  "solana-slot-hashes",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-svm-transaction",
  "solana-system-interface 3.2.0",
  "solana-sysvar",
@@ -6354,7 +6354,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-sdk-ids",
  "solana-signature",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-system-interface 3.2.0",
  "solana-transaction",
  "solana-transaction-status",
@@ -7342,7 +7342,7 @@ dependencies = [
  "solana-shred-version",
  "solana-signature",
  "solana-signer",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-storage-bigtable",
  "solana-storage-proto",
  "solana-streamer",
@@ -7807,7 +7807,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-stable-layout",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
@@ -7868,7 +7868,7 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-svm-log-collector",
  "solana-svm-timings",
  "solana-system-interface 3.2.0",
@@ -8275,7 +8275,7 @@ dependencies = [
  "solana-signer-store",
  "solana-slot-hashes",
  "solana-slot-history",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-timings",
@@ -8368,7 +8368,7 @@ dependencies = [
  "solana-sbf-rust-realloc-invoke-dep",
  "solana-sdk-ids",
  "solana-signer",
- "solana-stake-interface",
+ "solana-stake-interface 3.1.0",
  "solana-svm",
  "solana-svm-feature-set",
  "solana-svm-test-harness-instr",
@@ -9020,7 +9020,7 @@ dependencies = [
  "solana-program-error",
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-sysvar",
 ]
 
@@ -9325,6 +9325,20 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-interface"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f49eb5c77484214c3484921e2cdda79d185373118b5458c1b2df0f1a04c3bc30"
+dependencies = [
+ "num-traits",
+ "solana-clock",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey 4.2.0",
+ "solana-system-interface 3.2.0",
+]
+
+[[package]]
+name = "solana-stake-interface"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fe88e0de7883b9e9f0405f7214a7d14f86e83ddd1a239bf002903d2df4ba14a"
@@ -9605,7 +9619,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-sha512-hasher",
  "solana-stable-layout",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
@@ -9928,7 +9942,7 @@ dependencies = [
  "solana-reward-info",
  "solana-sdk-ids",
  "solana-signature",
- "solana-stake-interface",
+ "solana-stake-interface 4.0.0",
  "solana-system-interface 3.2.0",
  "solana-transaction",
  "solana-transaction-error",
