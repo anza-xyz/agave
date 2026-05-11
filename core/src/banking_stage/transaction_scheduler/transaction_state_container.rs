@@ -85,9 +85,11 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         }
     }
 
-    /// Pushes transaction ids into the priority queue. If the queue if full,
-    /// the lowest priority transactions will be dropped (removed from the
-    /// queue and map) **after** all ids have been pushed.
+    /// Pushes transaction ids into the priority queue. If the buffer is
+    /// full, the lowest-priority transactions are dropped (removed from
+    /// the queue and the map). A newcomer that would be the new
+    /// queue-min is dropped immediately rather than inserted and then
+    /// evicted, which saves the priority-queue insert/pop dance.
     /// To avoid allocating, the caller should not push more than
     /// [`EXTRA_CAPACITY`] ids in a call.
     /// Returns the number of dropped transactions.
@@ -159,24 +161,52 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     fn push_ids_into_queue(
         &mut self,
-        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+        mut priority_ids: impl Iterator<Item = TransactionPriorityId>,
     ) -> usize {
-        for id in priority_ids {
-            self.priority_queue.insert(id);
-        }
-
-        // The number of items in the `id_to_transaction_state` map is
-        // greater than or equal to the number of elements in the queue.
-        // To avoid the map going over capacity, we use the length of the
-        // map here instead of the queue.
-        let num_dropped = self
+        // `id_to_transaction_state` already holds every newcomer. Capacity is
+        // enforced on the map, not the queue (scheduled/in-flight transactions
+        // stay in the map but are popped from the queue). The map's `len()`
+        // only shrinks during this function, by exactly 1 per slow-path
+        // iteration, so the number of drops is known upfront.
+        let mut num_dropped = 0;
+        let overshoot = self
             .id_to_transaction_state
             .len()
             .saturating_sub(self.capacity);
 
-        for _ in 0..num_dropped {
-            let priority_id = self.priority_queue.pop_first().expect("queue is not empty");
-            self.id_to_transaction_state.remove(priority_id.id);
+        // Slow path: for each overshoot item, drop either the current
+        // queue-min or the newcomer (whichever is lower priority).
+        // `BTreeSet::first` is O(log n), so we cache the queue-min and
+        // refresh only after an eviction.
+        if overshoot > 0 {
+            let mut queue_min = self.priority_queue.first().copied();
+            for _ in 0..overshoot {
+                let Some(priority_id) = priority_ids.next() else {
+                    break;
+                };
+                match queue_min {
+                    Some(min) if min < priority_id => {
+                        // Existing min is lower priority — evict it, accept newcomer.
+                        self.priority_queue.pop_first();
+                        self.priority_queue.insert(priority_id);
+                        self.id_to_transaction_state.remove(min.id);
+                        queue_min = self.priority_queue.first().copied();
+                    }
+                    _ => {
+                        // Newcomer is the new min OR the queue is empty (all
+                        // retained transactions are in-flight, popped from the
+                        // queue but still in the map). Either way, drop the
+                        // newcomer without touching the priority queue.
+                        self.id_to_transaction_state.remove(priority_id.id);
+                    }
+                }
+                num_dropped += 1;
+            }
+        }
+
+        // Fast path: any remaining newcomers fit without eviction.
+        for priority_id in priority_ids {
+            self.priority_queue.insert(priority_id);
         }
 
         num_dropped
