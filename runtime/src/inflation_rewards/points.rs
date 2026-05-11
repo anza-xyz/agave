@@ -141,45 +141,26 @@ pub(crate) struct AlpenglowStakeState<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
 }
 
-/// Different errors possible in `AlpenglowStakeState::get_total_stake()`.
-#[derive(Debug)]
-pub enum GetTotalStakeError {
-    NoEpochStakes {
-        epoch: Epoch,
-    },
-    RankForVotePubkeyNotFound {
-        epoch: Epoch,
-        vote_pubkey: Pubkey,
-    },
-    EntryForRankNotFound {
-        epoch: Epoch,
-        vote_pubkey: Pubkey,
-        rank: u16,
-    },
-}
-
 impl<'a> AlpenglowStakeState<'a> {
     /// Returns the total stake delegated to `vote_pubkey` in the given `epoch`.
-    fn get_total_stake(
-        &self,
-        epoch: Epoch,
-        vote_pubkey: Pubkey,
-    ) -> Result<u64, GetTotalStakeError> {
-        let rank_map = self
+    fn get_total_stake(&self, epoch: Epoch, vote_pubkey: Pubkey) -> Result<u64, &'static str> {
+        let Some(rank_map) = self
             .epoch_stakes
             .get(&epoch)
-            .ok_or(GetTotalStakeError::NoEpochStakes { epoch })?
-            .bls_pubkey_to_rank_map();
-        let rank = *rank_map
-            .get_rank_for_vote_pubkey(&vote_pubkey)
-            .ok_or(GetTotalStakeError::RankForVotePubkeyNotFound { epoch, vote_pubkey })?;
-        let entry = rank_map.get_pubkey_stake_entry(rank as usize).ok_or(
-            GetTotalStakeError::EntryForRankNotFound {
-                epoch,
-                vote_pubkey,
-                rank,
-            },
-        )?;
+            .map(|e| e.bls_pubkey_to_rank_map())
+        else {
+            return Err("epoch_stakes.get(epoch={epoch}) for vote_pubkey={vote_pubkey} failed");
+        };
+        let Some(rank) = rank_map.get_rank_for_vote_pubkey(&vote_pubkey) else {
+            return Err(
+                "get_rank_for_vote_pubkey(vote_pubkey={vote_pubkey}) in epoch={epoch} failed",
+            );
+        };
+        let Some(entry) = rank_map.get_pubkey_stake_entry(*rank as usize) else {
+            return Err(
+                "get_pubkey_stake_entry(rank={rank}) for vote_pubkey={vote_pubkey} in epoch={epoch} failed",
+            );
+        };
         Ok(entry.stake)
     }
 
@@ -313,18 +294,13 @@ pub(crate) fn calculate_stake_points_and_credits(
                     let total_stake =
                         match state.get_total_stake(epoch, stake.delegation.voter_pubkey) {
                             Ok(t) => t,
-                            Err(e) => {
+                            Err(msg) => {
                                 // assuming that we only do the calculations for the latest epoch, this
                                 // failure should be unlikely.
-                                let message = format!(
-                                    "get_total_stake(epoch={epoch}, voter={}) failed with {e:?}. \
-                                     Rewards payout will be skipped",
-                                    stake.delegation.voter_pubkey
-                                );
-                                error!("{message}");
+                                error!("{msg}");
                                 datapoint_error!(
                                     "PER-total-stake-calculation-failure",
-                                    ("error", message, String)
+                                    ("error", msg, String)
                                 );
                                 return CalculatedStakePoints {
                                     points: 0,
