@@ -15,6 +15,7 @@ use {
     },
     agave_fs::{
         FileInfo,
+        buffered_reader::large_file_buf_reader,
         buffered_writer::{SizeLimitedWriter, large_file_buf_writer},
         io_setup::IoSetupState,
     },
@@ -60,6 +61,7 @@ use {
         thread,
     },
     tempfile::TempDir,
+    wincode::io::std_read::ReadAdapter,
 };
 
 pub mod snapshot_storage_rebuilder;
@@ -71,6 +73,8 @@ pub mod snapshot_storage_rebuilder;
 pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 GB
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
+/// Buffer size that allows several concurrent reads using default io-uring reader read size (1MiB)
+const OBSOLETE_ACCOUNTS_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 
 // Snapshot Fastboot Version History
 // Legacy - No fastboot version file, storages flushed file presence determines if snapshot is loadable
@@ -486,6 +490,7 @@ pub fn archive_snapshot_package(
     bank_snapshot_dir: impl AsRef<Path>,
     mut snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     snapshot_config: &SnapshotConfig,
+    io_setup: &IoSetupState,
 ) -> Result<SnapshotArchiveInfo> {
     let snapshot_archive_path = match snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
@@ -516,6 +521,7 @@ pub fn archive_snapshot_package(
         &bank_snapshot_dir,
         snapshot_archive_path,
         snapshot_config.archive_format,
+        io_setup,
     )?;
 
     Ok(snapshot_archive_info)
@@ -528,6 +534,7 @@ pub fn serialize_snapshot(
     bank_snapshot_package: BankSnapshotPackage,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     should_flush_and_hard_link_storages: bool,
+    io_setup: &IoSetupState,
 ) -> Result<BankSnapshotInfo> {
     let BankSnapshotPackage {
         mut bank_fields,
@@ -579,7 +586,7 @@ pub fn serialize_snapshot(
             Ok(())
         };
         let (bank_snapshot_consumed_size, bank_serialize) = measure_time!(
-            serialize_snapshot_data_file(&bank_snapshot_path, bank_snapshot_serializer)
+            serialize_snapshot_data_file(&bank_snapshot_path, io_setup, bank_snapshot_serializer)
                 .map_err(|err| AddBankSnapshotError::SerializeBank(Box::new(err)))?,
             "bank serialize"
         );
@@ -612,10 +619,13 @@ pub fn serialize_snapshot(
                 );
 
                 let (_, serialize_obsolete_accounts_us) = measure_us!({
-                    write_obsolete_accounts_to_snapshot(&bank_snapshot_dir, snapshot_storages, slot)
-                        .map_err(|err| {
-                            AddBankSnapshotError::SerializeObsoleteAccounts(Box::new(err))
-                        })?
+                    write_obsolete_accounts_to_snapshot(
+                        &bank_snapshot_dir,
+                        snapshot_storages,
+                        slot,
+                        io_setup,
+                    )
+                    .map_err(|err| AddBankSnapshotError::SerializeObsoleteAccounts(Box::new(err)))?
                 });
 
                 mark_bank_snapshot_as_loadable(&bank_snapshot_dir)
@@ -720,6 +730,7 @@ pub fn write_obsolete_accounts_to_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     snapshot_slot: Slot,
+    io_setup: &IoSetupState,
 ) -> Result<u64> {
     let obsolete_accounts =
         SerdeObsoleteAccountsMap::new_from_storages(snapshot_storages, snapshot_slot);
@@ -727,6 +738,7 @@ pub fn write_obsolete_accounts_to_snapshot(
         bank_snapshot_dir,
         &obsolete_accounts,
         MAX_OBSOLETE_ACCOUNTS_FILE_SIZE,
+        io_setup,
     )
 }
 
@@ -734,12 +746,13 @@ fn serialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
     obsolete_accounts_map: &SerdeObsoleteAccountsMap,
     maximum_obsolete_accounts_file_size: u64,
+    io_setup: &IoSetupState,
 ) -> Result<u64> {
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
     let mut file_stream = SizeLimitedWriter::new(
-        large_file_buf_writer(&obsolete_accounts_path, &IoSetupState::default())?,
+        large_file_buf_writer(&obsolete_accounts_path, io_setup)?,
         maximum_obsolete_accounts_file_size,
     );
 
@@ -760,7 +773,11 @@ fn deserialize_obsolete_accounts(
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
-    let obsolete_accounts_file = fs::File::open(&obsolete_accounts_path)?;
+    let obsolete_accounts_reader = ReadAdapter::new(large_file_buf_reader(
+        &obsolete_accounts_path,
+        OBSOLETE_ACCOUNTS_READ_BUF_SIZE,
+        &IoSetupState::default(),
+    )?);
     // If the file is too large return error
     let obsolete_accounts_file_metadata = fs::metadata(&obsolete_accounts_path)?;
     if obsolete_accounts_file_metadata.len() > maximum_obsolete_accounts_file_size {
@@ -774,17 +791,22 @@ fn deserialize_obsolete_accounts(
     }
 
     Ok(serde_snapshot::deserialize_wincode_from(
-        obsolete_accounts_file,
+        obsolete_accounts_reader,
     )?)
 }
 
-pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
+pub fn serialize_snapshot_data_file<F>(
+    data_file_path: &Path,
+    io_setup: &IoSetupState,
+    serializer: F,
+) -> Result<u64>
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
         MAX_SNAPSHOT_DATA_FILE_SIZE,
+        io_setup,
         serializer,
     )
 }
@@ -823,13 +845,14 @@ pub fn deserialize_snapshot_data_files<T: Sized>(
 fn serialize_snapshot_data_file_capped<F>(
     data_file_path: &Path,
     maximum_file_size: u64,
+    io_setup: &IoSetupState,
     serializer: F,
 ) -> Result<u64>
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
 {
     let mut data_file_stream = SizeLimitedWriter::new(
-        large_file_buf_writer(data_file_path, &IoSetupState::default())?,
+        large_file_buf_writer(data_file_path, io_setup)?,
         maximum_file_size,
     );
     serializer(&mut data_file_stream).map_err(|err| {
@@ -1849,6 +1872,7 @@ mod tests {
         let consumed_size = serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &2323_u32)?;
                 Ok(())
@@ -1865,6 +1889,7 @@ mod tests {
         let result = serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size - 1,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &2323_u32)?;
                 Ok(())
@@ -1882,6 +1907,7 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &expected_data)?;
                 Ok(())
@@ -1916,6 +1942,7 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &expected_data)?;
                 Ok(())
@@ -1949,6 +1976,7 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size * 2,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(&mut *stream, &expected_data)?;
                 serialize_into(&mut *stream, &expected_data)?;
@@ -2686,8 +2714,13 @@ mod tests {
         }
 
         // write obsolete accounts to snapshot
-        write_obsolete_accounts_to_snapshot(bank_snapshot_dir, &snapshot_storages, snapshot_slot)
-            .unwrap();
+        write_obsolete_accounts_to_snapshot(
+            bank_snapshot_dir,
+            &snapshot_storages,
+            snapshot_slot,
+            &IoSetupState::default(),
+        )
+        .unwrap();
 
         // Deserialize
         let deserialized_accounts =
@@ -2729,7 +2762,13 @@ mod tests {
             SerdeObsoleteAccountsMap::new_from_storages(&snapshot_storages, snapshot_slot);
 
         // Limit the file size to something low for the test
-        serialize_obsolete_accounts(bank_snapshot_dir, &obsolete_accounts, 100).unwrap();
+        serialize_obsolete_accounts(
+            bank_snapshot_dir,
+            &obsolete_accounts,
+            100,
+            &IoSetupState::default(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2755,8 +2794,13 @@ mod tests {
         }
 
         // Write obsolete accounts to snapshot
-        write_obsolete_accounts_to_snapshot(bank_snapshot_dir, &snapshot_storages, snapshot_slot)
-            .unwrap();
+        write_obsolete_accounts_to_snapshot(
+            bank_snapshot_dir,
+            &snapshot_storages,
+            snapshot_slot,
+            &IoSetupState::default(),
+        )
+        .unwrap();
 
         // Set a very low maximum file size for deserialization
         // This should panic

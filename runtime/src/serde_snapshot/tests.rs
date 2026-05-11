@@ -211,9 +211,11 @@ mod serde_snapshot_tests {
         let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(100)
             .collect();
+        let ancestors = Ancestors::from(vec![slot]);
+
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None, None);
+            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None, &ancestors);
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);

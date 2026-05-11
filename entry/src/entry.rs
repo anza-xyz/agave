@@ -185,6 +185,7 @@ struct TxVerificationData {
     is_simple_vote: bool,
     signatures: SmallVec<[Signature; 2]>,
     signer_pubkeys: SmallVec<[Address; 2]>,
+    message_hash: Hash,
     serialized_message: Vec<u8>,
 }
 
@@ -244,11 +245,16 @@ impl UnverifiedSignatures {
         })
     }
 
-    pub fn vote_transaction_signatures(&self) -> Vec<Signature> {
+    pub fn vote_transaction_message_hashes(&self) -> Vec<Hash> {
         self.signatures
             .iter()
             .filter(|tx_signatures| tx_signatures.is_simple_vote)
-            .filter_map(|tx_signatures| tx_signatures.signatures.first().copied())
+            .filter_map(|tx_signatures| {
+                tx_signatures
+                    .signatures
+                    .first()
+                    .map(|_| tx_signatures.message_hash)
+            })
             .collect()
     }
 }
@@ -400,9 +406,11 @@ where
             let signer_pubkeys = static_account_keys[..num_signers].iter().copied().collect();
             let serialized_message = versioned_tx.message.serialize();
             let verified_transaction = verify(versioned_tx, &serialized_message)?;
+            let message_hash = *verified_transaction.message_hash();
             unverified_signatures.signatures.push(TxVerificationData {
                 is_simple_vote: verified_transaction.is_simple_vote_transaction(),
                 signatures,
+                message_hash,
                 serialized_message,
                 signer_pubkeys,
             });

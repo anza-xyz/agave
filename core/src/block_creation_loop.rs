@@ -525,7 +525,7 @@ fn record_and_complete_block(
             Hash::default(), // Banks we produce do not need the bank hash mismatch check
             reward_cert,
             final_cert_input,
-        );
+        )?;
         footer
     };
 

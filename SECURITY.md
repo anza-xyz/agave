@@ -189,6 +189,12 @@ being removed from the codebase and its feature ID has been stubbed out. Bugs
 relating to Loader V4 functionality are disqualified from reports and bounties.
 
 ### Eligibility:
+* Vulnerabilities must have been committed to the master branch for at least
+one week in order to be eligible for a bounty
+  * In the master branch, vulnerabilities that have been resolved or
+  acknowledged within one week are ineligible for bounty
+  * In the stable and beta branches, vulnerabilities are eligible for bounty
+  upon merge
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
 * The participant submitting the bug report shall follow the process outlined within this document
 * Valid exploits can be eligible even if they are not successfully executed on a public cluster

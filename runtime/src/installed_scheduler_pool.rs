@@ -604,7 +604,9 @@ impl BankWithSchedulerInner {
                 pool.register_timeout_listener(self.do_create_timeout_listener());
                 f(scheduler.active_scheduler())
             }
-            SchedulerStatus::Unavailable => unreachable!("no installed scheduler"),
+            SchedulerStatus::Unavailable => {
+                unreachable!("no installed scheduler for slot {}", self.bank.slot())
+            }
         }
     }
 

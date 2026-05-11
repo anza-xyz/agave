@@ -24,7 +24,6 @@ use {
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
-    agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
@@ -1810,19 +1809,18 @@ fn test_interleaving_locks() {
     );
 }
 
-#[test]
-fn test_load_and_execute_commit_transactions_fees_only() {
+#[test_case(false; "old_fee_only")]
+#[test_case(true; "simd186_fee_only")]
+fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_semantics: bool) {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
     genesis_config.rent = Rent::default();
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let bank = Bank::new_from_parent(
-        bank,
-        SlotLeader::new_unique(),
-        genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
-    );
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !define_ltds_fee_only_semantics {
+        bank.deactivate_feature(&agave_feature_set::define_ltds_fee_only_semantics::id());
+    }
 
     let fee_payer = Pubkey::new_unique();
     let fee_payer_initial_balance = 10 * genesis_config.rent.minimum_balance(0);
@@ -1859,6 +1857,20 @@ fn test_load_and_execute_commit_transactions_fees_only() {
         &nonce_data.blockhash(),
     ));
 
+    let mut loaded_accounts_data_size = 0;
+    if define_ltds_fee_only_semantics {
+        for key in &transaction.message.account_keys {
+            if let Some(n) = bank
+                .get_account_shared_data(key)
+                .map(|(account, _)| account.data().len())
+            {
+                loaded_accounts_data_size += (n + TRANSACTION_ACCOUNT_BASE_SIZE) as u32
+            }
+        }
+    } else {
+        loaded_accounts_data_size = nonce_size as u32;
+    }
+
     let batch = bank.prepare_batch_for_tests(vec![transaction]);
     let commit_results = bank
         .load_execute_and_commit_transactions(
@@ -1880,7 +1892,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
             fee_details: FeeDetails::new(5000, 0),
             loaded_account_stats: TransactionLoadedAccountsStats {
                 loaded_accounts_count: 2,
-                loaded_accounts_data_size: nonce_size as u32,
+                loaded_accounts_data_size,
             },
             fee_payer_post_balance: fee_payer_initial_balance - 5000,
         })]
@@ -3356,9 +3368,11 @@ fn test_get_filtered_indexed_accounts_limit_exceeded() {
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         },
     };
-    let bank = Arc::new(Bank::new_with_config_for_tests(
+    let bank = Arc::new(Bank::new_with_paths_for_tests(
         &genesis_config,
-        bank_config,
+        Some(bank_config),
+        vec![],
+        None,
     ));
 
     let address = Pubkey::new_unique();
@@ -3388,8 +3402,9 @@ fn test_get_filtered_indexed_accounts() {
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         },
     };
-    let (bank, bank_forks) = Bank::new_with_config_for_tests(&genesis_config, bank_config)
-        .wrap_with_bank_forks_for_tests();
+    let (bank, bank_forks) =
+        Bank::new_with_paths_for_tests(&genesis_config, Some(bank_config), vec![], None)
+            .wrap_with_bank_forks_for_tests();
 
     let address = Pubkey::new_unique();
     let program_id = Pubkey::new_unique();
@@ -5022,7 +5037,7 @@ fn test_fuzz_instructions() {
         })
         .collect();
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let max_keys = MAX_STATIC_ACCOUNTS_PER_PACKET;
+    let max_keys = 64;
     let keys: Vec<_> = (0..max_keys)
         .enumerate()
         .map(|_| {
@@ -5297,9 +5312,7 @@ fn test_shrink_candidate_slots_cached() {
     let pubkey2 = solana_pubkey::new_rand();
 
     // Set root for bank 0, with caching enabled
-    let (bank0, bank_forks) =
-        Bank::new_with_config_for_tests(&genesis_config, BankTestConfig::default())
-            .wrap_with_bank_forks_for_tests();
+    let (bank0, bank_forks) = Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
     // Make pubkey0 large so any slot containing it is a candidate for shrinking
     let pubkey0_size = 100_000;
@@ -6706,7 +6719,7 @@ fn test_store_scan_consistency<F>(
         create_genesis_config_with_leader(10, &solana_pubkey::new_rand(), 374_999_998_287_840)
             .genesis_config;
     genesis_config.rent = Rent::free();
-    let bank0 = Bank::new_with_config_for_tests(&genesis_config, BankTestConfig::default());
+    let bank0 = Bank::new_for_tests(&genesis_config);
     bank0.set_callback(drop_callback);
 
     // Set up pubkeys to write to
@@ -8502,6 +8515,44 @@ fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
     let v1_tx = oversized_but_tx_v1_sized(&make_v1_transaction);
     assert!(
         bank.verify_transaction(v1_tx, TransactionVerificationMode::FullVerification)
+            .is_ok()
+    );
+}
+
+#[test]
+fn test_verify_transactions_tx_v1_precompile_program_id_index_above_packet_limit() {
+    let GenesisConfigInfo { genesis_config, .. } =
+        create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::enable_tx_v1::id());
+
+    let recent_blockhash = Hash::new_unique();
+    let keypair = Keypair::new();
+    let pubkey = keypair.pubkey();
+    let mut account_keys = vec![pubkey];
+    account_keys.extend((1..38).map(|_| Pubkey::new_unique()));
+    account_keys.push(ed25519_program::id());
+    assert_eq!(account_keys.len(), 39);
+
+    let message = v1::Message::new(
+        MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 38,
+        },
+        v1::TransactionConfig::empty(),
+        recent_blockhash,
+        account_keys,
+        vec![CompiledInstruction {
+            program_id_index: 38,
+            accounts: vec![],
+            data: vec![],
+        }],
+    );
+    let tx = VersionedTransaction::try_new(VersionedMessage::V1(message), &[&keypair]).unwrap();
+
+    assert!(
+        bank.verify_transaction(tx, TransactionVerificationMode::FullVerification)
             .is_ok()
     );
 }

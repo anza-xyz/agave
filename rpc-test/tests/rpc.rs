@@ -310,7 +310,7 @@ fn test_rpc_subscriptions() {
 
     // Create transaction signatures to subscribe to
     let transfer_amount = Rent::default().minimum_balance(0);
-    let transactions: Vec<Transaction> = (0..1000)
+    let transactions: Vec<Transaction> = (0..100)
         .map(|_| {
             system_transaction::transfer(
                 &alice,

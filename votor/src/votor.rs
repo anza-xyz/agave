@@ -30,8 +30,10 @@
 //!   │   │ │ └────────────────────┘   │ ◄─────────┼  Event Handler  ┼─────────────│─►  Block creation loop │
 //!   │   │ └──────────────────────────┘ │         │                 │             │ └──────────────────────┘
 //!   │   │                              │         └─▲───────────┬───┘             │
-//!   │   └──────────────────────────────┘           │           │                 │
-//!   │                                     Timeout  │           │                 │
+//!   │   └──────────────────────────────┘           │           │ \               │
+//!   │                                     Timeout  │           │  \  RepairEvent │ ┌───────────────────────┐
+//!   │                                              │           │   \─────────────│─► BlockID Repair Service│
+//!   │                                              │           │                 │ └───────────────────────┘
 //!   │                                              │           │ Set Timeouts    │
 //!   │                                              │           │                 │
 //!   │                          ┌───────────────────┴┐     ┌────▼───────────────┐ │
@@ -49,7 +51,7 @@ use {
         },
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
         consensus_rewards::ConsensusRewardsService,
-        event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+        event::{LeaderWindowInfo, RepairEventSender, VotorEventReceiver, VotorEventSender},
         event_handler::{EventHandler, EventHandlerContext},
         generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
@@ -119,6 +121,7 @@ pub struct VotorConfig {
     pub event_sender: VotorEventSender,
     pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
     pub reward_certs_sender: Sender<BuildRewardCertsResponse>,
+    pub repair_event_sender: RepairEventSender,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
@@ -137,6 +140,7 @@ pub(crate) struct SharedContext {
     pub(crate) leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub(crate) highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub(crate) repair_event_sender: RepairEventSender,
 }
 
 pub struct Votor {
@@ -170,6 +174,7 @@ impl Votor {
             highest_parent_ready,
             event_sender,
             own_vote_sender,
+            repair_event_sender,
             event_receiver,
             consensus_message_receiver,
             consensus_metrics_sender,
@@ -195,6 +200,7 @@ impl Votor {
             highest_parent_ready,
             leader_window_info_sender,
             vote_history_storage,
+            repair_event_sender,
         };
 
         let voting_context = VotingContext {

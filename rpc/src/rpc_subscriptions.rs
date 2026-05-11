@@ -531,26 +531,6 @@ impl Drop for RpcSubscriptions {
 }
 
 impl RpcSubscriptions {
-    pub fn new(
-        exit: Arc<AtomicBool>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
-        blockstore: Arc<Blockstore>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
-    ) -> Self {
-        Self::new_with_config(
-            exit,
-            max_complete_transaction_status_slot,
-            blockstore,
-            bank_forks,
-            block_commitment_cache,
-            optimistically_confirmed_bank,
-            &PubSubConfig::default(),
-            None,
-        )
-    }
-
     pub fn new_for_tests(
         exit: Arc<AtomicBool>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -684,13 +664,15 @@ impl RpcSubscriptions {
         let blockstore = Arc::new(blockstore);
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        Self::new(
+        Self::new_with_config(
             Arc::new(AtomicBool::new(false)),
             max_complete_transaction_status_slot,
             blockstore,
             bank_forks,
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
+            &PubSubConfig::default_for_tests(),
+            None,
         )
     }
 

@@ -2,12 +2,11 @@ use {
     solana_builtins_default_costs::{
         BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY, get_builtin_migration_feature_index,
     },
-    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
 };
 
 // The maximum number of pubkeys that a packet can contain.
-pub(crate) const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
+pub(crate) const FILTER_SIZE: usize = u8::MAX as usize + 1;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ProgramKind {
@@ -25,13 +24,13 @@ pub(crate) struct BuiltinProgramsFilter {
     // array of slots for all possible static and sanitized program_id_index,
     // each slot indicates if a program_id_index has not been checked (eg, None),
     // or already checked with result (eg, Some(ProgramKind)) that can be reused.
-    program_kind: [Option<ProgramKind>; FILTER_SIZE as usize],
+    program_kind: [Option<ProgramKind>; FILTER_SIZE],
 }
 
 impl BuiltinProgramsFilter {
     pub(crate) fn new() -> Self {
         BuiltinProgramsFilter {
-            program_kind: [None; FILTER_SIZE as usize],
+            program_kind: [None; FILTER_SIZE],
         }
     }
 
@@ -142,8 +141,7 @@ mod test {
     fn test_get_program_kind_out_of_bound_index() {
         let mut test_store = BuiltinProgramsFilter::new();
         assert_eq!(
-            test_store
-                .get_program_kind(FILTER_SIZE as usize + 1, &DUMMY_PROGRAM_ID.parse().unwrap(),),
+            test_store.get_program_kind(FILTER_SIZE + 1, &DUMMY_PROGRAM_ID.parse().unwrap(),),
             ProgramKind::NotBuiltin
         );
     }

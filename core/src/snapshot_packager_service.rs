@@ -1,5 +1,6 @@
 mod snapshot_gossip_manager;
 use {
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
         SnapshotKind, paths as snapshot_paths, snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
@@ -63,10 +64,8 @@ impl SnapshotPackagerService {
                     if exit.load(Ordering::Relaxed) {
                         if let Some(teardown_state) = teardown_state {
                             info!("Received exit request, tearing down...");
-                            let (_, dur) = meas_dur!(Self::teardown(
-                                teardown_state,
-                                snapshot_controller.snapshot_config(),
-                            ));
+                            let (_, dur) =
+                                meas_dur!(Self::teardown(teardown_state, snapshot_config));
                             info!("Teardown completed in {dur:?}.");
                         }
                         break;
@@ -119,6 +118,11 @@ impl SnapshotPackagerService {
                     }
 
                     let archive_time = Instant::now();
+                    // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
+                    let io_setup = IoSetupState::default()
+                        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+                        .with_direct_io(snapshot_config.use_direct_io);
+
                     // Serializing the snapshot package is not allowed to fail, as archiving is
                     // not allowed to fail (see comment on archive_snapshot_package below
                     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
@@ -127,6 +131,7 @@ impl SnapshotPackagerService {
                         snapshot_package.bank_snapshot_package,
                         snapshot_package.snapshot_storages.as_slice(),
                         exit_backpressure.is_none(),
+                        &io_setup,
                     );
 
                     let Ok(bank_snapshot_info) = bank_snapshot_info else {
@@ -151,6 +156,7 @@ impl SnapshotPackagerService {
                             &bank_snapshot_info.snapshot_dir,
                             snapshot_package.snapshot_storages,
                             snapshot_config,
+                            &io_setup,
                         ) {
                             error!(
                                 "Stopping {}! Fatal error while archiving snapshot package: {err}",
@@ -230,6 +236,17 @@ impl SnapshotPackagerService {
             bank_snapshot_package,
         } = state;
 
+        // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
+        // Also, don't use direct I/O, since data is likely going to be re-read soon after.
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap_or_else(|error| {
+                warn!("unable to use sqpoll for io-uring: {error}");
+                IoSetupState::default()
+            })
+            .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+            .with_direct_io(false);
+
         if let Some(bank_snapshot_package) = bank_snapshot_package {
             info!("Serializing bank snapshot...");
             let start = Instant::now();
@@ -239,6 +256,7 @@ impl SnapshotPackagerService {
                 bank_snapshot_package,
                 snapshot_storages.as_slice(),
                 false,
+                &io_setup,
             );
             if let Err(err) = result {
                 warn!(
@@ -297,6 +315,7 @@ impl SnapshotPackagerService {
             &bank_snapshot_dir,
             &snapshot_storages,
             snapshot_slot,
+            &io_setup,
         );
         if let Err(err) = result {
             warn!("Failed to serialize obsolete accounts: {err}");

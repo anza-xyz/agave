@@ -162,7 +162,7 @@ pub mod columns {
     /// Similar to [`ShredData`], however this column is only populated for alternate
     /// versions fetched via block_id based repair.
     ///
-    /// * index type: `(slot: u64, shred_index: u64, block_id: Hash)`
+    /// * index type: `(slot: u64, block_id: Hash, shred_index: u64)`
     /// * value type: [`Vec<u8>`]
     pub struct AlternateShredData;
 
@@ -241,7 +241,7 @@ pub mod columns {
     /// Similar to [`MerkleRootMeta`], however this column is only populated for alternate
     /// versions fetched via block_id based repair.
     ///
-    /// * index type: `(slot: u64, fec_set_index: u32, block_id: Hash)`
+    /// * index type: `(slot: u64, block_id: Hash, fec_set_index: u32)`
     /// * value type: [`blockstore_meta::MerkleRootMeta`]
     pub struct AlternateMerkleRootMeta;
 
@@ -569,23 +569,23 @@ impl ColumnName for columns::ShredData {
 }
 
 impl Column for columns::AlternateShredData {
-    type Index = (Slot, /*shred index:*/ u64, /* block id*/ Hash);
+    type Index = (Slot, /* block_id */ Hash, /* shred index: */ u64);
     type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u64>() + HASH_BYTES];
 
     #[inline]
-    fn key((slot, index, hash): &Self::Index) -> Self::Key {
+    fn key((slot, block_id, index): &Self::Index) -> Self::Key {
         convert_column_index_to_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
-            8..16 => &index.to_be_bytes(),
-            16.. => &hash.to_bytes(),
+            8..40 => &block_id.to_bytes(),
+            40.. => &index.to_be_bytes(),
         )
     }
 
     fn index(key: &[u8]) -> Self::Index {
         convert_column_key_bytes_to_index!(key,
             0..8  => Slot::from_be_bytes,
-            8..16 => u64::from_be_bytes,  // shred index
-            16..48 => Hash::new_from_array,
+            8..40 => Hash::new_from_array, // block_id
+            40..48 => u64::from_be_bytes,  // shred index
         )
     }
 
@@ -594,7 +594,7 @@ impl Column for columns::AlternateShredData {
     }
 
     fn as_index(slot: Slot) -> Self::Index {
-        (slot, 0, Hash::default())
+        (slot, Hash::default(), 0)
     }
 }
 impl ColumnName for columns::AlternateShredData {
@@ -807,32 +807,32 @@ impl TypedColumn for columns::MerkleRootMeta {
 }
 
 impl Column for columns::AlternateMerkleRootMeta {
-    type Index = (Slot, /*fec_set_index:*/ u32, /* block_id */ Hash);
+    type Index = (Slot, /* block_id */ Hash, /*fec_set_index:*/ u32);
     type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u32>() + HASH_BYTES];
 
     #[inline]
-    fn key((slot, fec_set_index, block_id): &Self::Index) -> Self::Key {
+    fn key((slot, block_id, fec_set_index): &Self::Index) -> Self::Key {
         convert_column_index_to_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
-            8..12 => &fec_set_index.to_be_bytes(),
-            12.. => &block_id.to_bytes(),
+            8..40 => &block_id.to_bytes(),
+            40.. => &fec_set_index.to_be_bytes(),
         )
     }
 
     fn index(key: &[u8]) -> Self::Index {
         convert_column_key_bytes_to_index!(key,
             0..8  => Slot::from_be_bytes,
-            8..12 => u32::from_be_bytes,  // fec_set_index
-            12..44 => Hash::new_from_array, // block_id
+            8..40 => Hash::new_from_array, // block_id
+            40..44 => u32::from_be_bytes,  // fec_set_index
         )
     }
 
-    fn slot((slot, _fec_set_index, _block_id): Self::Index) -> Slot {
+    fn slot((slot, _block_id, _fec_set_index): Self::Index) -> Slot {
         slot
     }
 
     fn as_index(slot: Slot) -> Self::Index {
-        (slot, 0, Hash::default())
+        (slot, Hash::default(), 0)
     }
 }
 

@@ -34,7 +34,9 @@ use {
     },
     solana_signer::Signer,
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
+        account_loader::{
+            CheckedTransactionDetails, TRANSACTION_ACCOUNT_BASE_SIZE, TransactionCheckResult,
+        },
         nonce_info::NonceInfo,
         transaction_execution_result::TransactionExecutionDetails,
         transaction_processing_result::{
@@ -3408,6 +3410,154 @@ fn svm_inspect_account() {
         num_expected_inspected_accounts,
         num_actual_inspected_accounts,
     );
+}
+
+#[test_case(false; "old_fee_only")]
+#[test_case(true; "simd186_fee_only")]
+fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
+    let mut common_test_entry = SvmTestEntry::default();
+    common_test_entry.feature_set.define_ltds_fee_only_semantics = define_ltds_fee_only_semantics;
+
+    let program_name = "hello-solana";
+    let program_id = program_address(program_name);
+    let loaded_program_size = (UpgradeableLoaderState::size_of_program()
+        + program_data_size(program_name)
+        + TRANSACTION_ACCOUNT_BASE_SIZE * 2) as u32;
+
+    common_test_entry.add_initial_program(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+    let loaded_fee_payer_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32;
+
+    let fee_payer_data =
+        AccountSharedData::new_rent_epoch(LAMPORTS_PER_SOL, 0, &Pubkey::default(), u64::MAX);
+
+    common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    let mut loaded_account_sizes = vec![];
+
+    // make accounts of base size 512..=8192
+    for i in 9..=13 {
+        let base_size = 2_usize.pow(i);
+
+        let pubkey = Pubkey::new_unique();
+        let account_data = AccountSharedData::new_rent_epoch(
+            LAMPORTS_PER_SOL,
+            base_size,
+            &Pubkey::default(),
+            u64::MAX,
+        );
+
+        common_test_entry.add_initial_account(pubkey, &account_data);
+        loaded_account_sizes.push((pubkey, base_size + TRANSACTION_ACCOUNT_BASE_SIZE));
+    }
+
+    let common_test_entry = common_test_entry;
+
+    let transaction = |program_id: Pubkey, accounts: &[Pubkey], loaded_data_limit: Option<u32>| {
+        let account_metas = accounts
+            .iter()
+            .map(|pubkey| AccountMeta {
+                pubkey: *pubkey,
+                ..AccountMeta::default()
+            })
+            .collect::<Vec<_>>();
+
+        let mut instructions = vec![];
+
+        if let Some(size) = loaded_data_limit {
+            instructions.push(ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(size));
+        }
+
+        instructions.push(Instruction::new_with_bytes(program_id, &[], account_metas));
+
+        Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        )
+    };
+
+    // for increasing sets of accounts, run:
+    // * success: loaded size is total size
+    // * fail due to limit: loaded size is limit with feature, 0 without
+    // * fail due to program id: loaded size is total size with feature, 0 without
+    for count in 0..loaded_account_sizes.len() {
+        let mut test_entry = common_test_entry.clone();
+
+        let (account_keys, other_accounts_size) =
+            &loaded_account_sizes[..count]
+                .iter()
+                .fold((vec![], 0), |mut acc, (pubkey, size)| {
+                    acc.0.push(*pubkey);
+                    acc.1 += *size as u32;
+                    acc
+                });
+
+        let success_transaction = transaction(program_id, account_keys, None);
+        test_entry.push_transaction_with_status(success_transaction, ExecutionStatus::Succeeded);
+
+        let size_limit = (other_accounts_size / 2).max(1);
+        let fail_limit_transaction = transaction(program_id, account_keys, Some(size_limit));
+        test_entry
+            .push_transaction_with_status(fail_limit_transaction, ExecutionStatus::ProcessedFailed);
+
+        let fail_program_id_transaction = transaction(Pubkey::new_unique(), account_keys, None);
+        test_entry.push_transaction_with_status(
+            fail_program_id_transaction,
+            ExecutionStatus::ProcessedFailed,
+        );
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 3);
+
+        let env = SvmTestEnvironment::create(test_entry);
+        let output = env.execute();
+
+        let success_loaded_size = output.processing_results[0]
+            .as_ref()
+            .unwrap()
+            .loaded_accounts_data_size();
+
+        // success is always computed size
+        assert_eq!(
+            loaded_fee_payer_size + loaded_program_size + other_accounts_size,
+            success_loaded_size,
+        );
+
+        let fail_limit_loaded_size = output.processing_results[1]
+            .as_ref()
+            .unwrap()
+            .loaded_accounts_data_size();
+
+        // blowing limit with define_ltds_fee_only_semantics sets the size to the limit
+        // otherwise it is the raw sum of rollback sizes which here is zero
+        assert_eq!(
+            if define_ltds_fee_only_semantics {
+                size_limit
+            } else {
+                0
+            },
+            fail_limit_loaded_size,
+        );
+
+        let fail_program_id_loaded_size = output.processing_results[2]
+            .as_ref()
+            .unwrap()
+            .loaded_accounts_data_size();
+
+        // violating constraints *after* passing size with define_ltds_fee_only_semantics uses the size
+        // otherwise as above it is the raw sum of rollback sizes which here is zero
+        assert_eq!(
+            if define_ltds_fee_only_semantics {
+                loaded_fee_payer_size + other_accounts_size
+            } else {
+                0
+            },
+            fail_program_id_loaded_size,
+        );
+    }
 }
 
 // Tests for proper accumulation of metrics across loaded programs in a batch.

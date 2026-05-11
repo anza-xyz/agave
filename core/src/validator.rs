@@ -409,7 +409,7 @@ impl ValidatorConfig {
             on_start_geyser_plugin_config_files: None,
             geyser_plugin_always_enabled: false,
             rpc_addrs: None,
-            pubsub_config: PubSubConfig::default(),
+            pubsub_config: PubSubConfig::default_for_tests(),
             snapshot_config: SnapshotConfig::new_load_only(),
             broadcast_stage_type: BroadcastStageType::Standard,
             turbine_mode: TurbineMode::default(),
@@ -1566,6 +1566,7 @@ impl Validator {
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
                 alpenglow: alpenglow_socket,
+                block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
             ledger_signal_receiver,
@@ -2860,8 +2861,15 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {
     validate_account_paths_for_direct_io(
         config.snapshot_config.use_direct_io,
-        &config.account_paths,
-        &config.account_snapshot_paths,
+        config
+            .account_paths
+            .iter()
+            .chain(&config.account_snapshot_paths)
+            .chain([
+                &config.snapshot_config.full_snapshot_archives_dir,
+                &config.snapshot_config.incremental_snapshot_archives_dir,
+                &config.snapshot_config.bank_snapshots_dir,
+            ]),
     )
 }
 

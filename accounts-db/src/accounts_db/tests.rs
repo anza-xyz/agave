@@ -1154,7 +1154,7 @@ fn test_shrink_zero_lamport_single_ref_account() {
             .storage
             .get_slot_storage_entry(slot)
             .unwrap()
-            .alive_bytes
+            .num_alive_bytes
             .fetch_sub(AppendVec::calculate_stored_size(0), Ordering::Release);
 
         if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
@@ -2242,7 +2242,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
-    store1.alive_bytes.store(0, Ordering::Release);
+    store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -2256,7 +2256,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
@@ -2271,7 +2271,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
@@ -2309,7 +2309,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
-    store1.alive_bytes.store(0, Ordering::Release);
+    store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -2323,7 +2323,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
@@ -2338,7 +2338,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
@@ -2374,7 +2374,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
     ));
     db.storage.insert(Arc::clone(&store1));
     store1
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 4, Ordering::Release);
     candidates.insert(store1_slot);
 
@@ -2389,7 +2389,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
@@ -4336,18 +4336,18 @@ fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
     }
 
     entry
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize - 1, Ordering::Release);
     assert!(accounts.is_candidate_for_shrink(&entry));
     entry
-        .alive_bytes
+        .num_alive_bytes
         .store(store_file_size as usize, Ordering::Release);
     assert!(!accounts.is_candidate_for_shrink(&entry));
 
     let shrink_ratio = 0.3;
     let file_size_shrink_limit = (store_file_size as f64 * shrink_ratio) as usize;
     entry
-        .alive_bytes
+        .num_alive_bytes
         .store(file_size_shrink_limit + 1, Ordering::Release);
     accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio };
     assert!(accounts.is_candidate_for_shrink(&entry));
@@ -4529,8 +4529,8 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
 
     // fake out the store count to avoid the assert
     for (_, store) in accounts.storage.iter() {
-        store.alive_bytes.store(0, Ordering::Release);
-        store.count.store(0, Ordering::Release);
+        store.num_alive_bytes.store(0, Ordering::Release);
+        store.num_alive_accounts.store(0, Ordering::Release);
     }
 
     // count needs to be <= approx stored count in store.
@@ -5027,7 +5027,7 @@ fn test_mark_dirty_dead_stores() {
         let size = 1;
         let old_store = db.create_and_insert_store(slot, size, "test");
         let old_id = old_store.id();
-        let shrink_in_progress = db.get_store_for_shrink(slot, 100);
+        let shrink_in_progress = db.get_store_for_shrink(slot, old_store, 100);
         let dead_storages =
             db.mark_dirty_dead_stores(slot, add_dirty_stores, Some(shrink_in_progress), false);
         assert!(db.storage.get_slot_storage_entry(slot).is_some());
@@ -6079,6 +6079,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
     let account = AccountSharedData::new(100, 0, &Pubkey::default());
     let slot = 0;
+    let mut ancestors = Ancestors::from(vec![slot]);
 
     // 1. Insert a single zero-lamport account and verify it is not added to the index or the
     //    write cache. Since this is the first write to this slot, the slot cache should not be
@@ -6086,7 +6087,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &zero_account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
-        None,
+        &ancestors,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
@@ -6105,7 +6106,7 @@ fn test_new_zero_lamport_accounts_skipped() {
             .as_slice(),
         ),
         UpdateIndexThreadSelection::Inline,
-        None,
+        &ancestors,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(
@@ -6137,7 +6138,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey2, &zero_account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
-        None,
+        &ancestors,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey2));
     assert!(accounts_db.accounts_cache.contains_pubkey(&pubkey2));
@@ -6158,10 +6159,11 @@ fn test_new_zero_lamport_accounts_skipped() {
     // 5. Add a non-zero lamport account for a pubkey that was previously only written as zero
     //    (pubkey1) and verify the pubkey is added to the index.
     let slot = slot + 1;
+    ancestors.insert(slot);
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
-        None,
+        &ancestors,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey1));
 
@@ -6170,7 +6172,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey3, &zero_account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
-        None,
+        &ancestors,
     );
     accounts_db.add_root_and_flush_write_cache(slot);
 
@@ -6227,7 +6229,7 @@ fn test_write_accounts_to_cache_scenarios(
     let db = AccountsDb::new_single_for_tests();
     let slot: Slot = 1;
     let key = solana_pubkey::new_rand();
-    let ancestors = Ancestors::from(vec![1, 2]);
+    let mut ancestors = Ancestors::from(vec![slot]);
 
     // Setup initial state
     match initial_state {
@@ -6239,7 +6241,7 @@ fn test_write_accounts_to_cache_scenarios(
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
                 UpdateIndexThreadSelection::Inline,
-                None,
+                &ancestors,
             );
         }
         InitialState::WithoutLamports => {
@@ -6249,18 +6251,19 @@ fn test_write_accounts_to_cache_scenarios(
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
                 UpdateIndexThreadSelection::Inline,
-                None,
+                &ancestors,
             );
             // Overwrite with a zero-lamport account to simulate ephemeral setup
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account_zero)].as_slice()),
                 UpdateIndexThreadSelection::Inline,
-                None,
+                &ancestors,
             );
         }
     }
 
     let slot = 2;
+    ancestors.insert(slot);
     // Store batch accounts
     let accounts: Vec<_> = batch_accounts
         .iter()
@@ -6271,7 +6274,7 @@ fn test_write_accounts_to_cache_scenarios(
     db.store_accounts_unfrozen(
         (slot, batch.as_slice()),
         UpdateIndexThreadSelection::Inline,
-        Some(&ancestors),
+        &ancestors,
     );
 
     // Verify results

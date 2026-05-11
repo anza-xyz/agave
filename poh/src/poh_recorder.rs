@@ -37,7 +37,8 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, installed_scheduler_pool::BankWithScheduler,
+        bank::Bank, block_component_processor::BankFooterError,
+        installed_scheduler_pool::BankWithScheduler,
         validated_reward_certificate::Error as ValidatedRewardCertError,
     },
     solana_transaction::versioned::VersionedTransaction,
@@ -77,6 +78,9 @@ pub enum PohRecorderError {
 
     #[error("constructing validated reward cert failed with {0}")]
     ValidatedRewardCert(#[from] ValidatedRewardCertError),
+
+    #[error("updating bank footer failed with \"{0}\"")]
+    UpdateBankFooter(#[from] BankFooterError),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;

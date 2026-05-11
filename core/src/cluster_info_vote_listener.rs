@@ -224,7 +224,7 @@ impl BufferedVote {
         action: ReplayVoteAction,
         ready_votes: &mut Vec<ParsedVote>,
         replay_bank_id: BankId,
-        signature: Signature,
+        message_hash: Hash,
     ) -> Option<Self> {
         match (self, action) {
             (Self::Executed(parsed_vote), ReplayVoteAction::Verified)
@@ -236,8 +236,8 @@ impl BufferedVote {
             (Self::Executed(parsed_vote), ReplayVoteAction::Executed(_)) => {
                 debug_assert!(
                     false,
-                    "duplicate Executed replay vote for same bank {replay_bank_id} signature \
-                     {signature}"
+                    "duplicate Executed replay vote for same bank {replay_bank_id} message hash \
+                     {message_hash}"
                 );
                 Some(Self::Executed(parsed_vote))
             }
@@ -250,7 +250,7 @@ enum BankVoteBuffer {
     /// The bank is active and we are buffering votes for it.
     Active {
         slot: Slot,
-        votes: HashMap<Signature, BufferedVote>,
+        votes: HashMap<Hash, BufferedVote>,
     },
     /// The bank is invalid and we are discarding votes.
     Invalid { slot: Slot },
@@ -287,15 +287,15 @@ impl VoteBuffer {
                 ReplayVoteMessage::Executed {
                     replay_bank_id,
                     replay_slot,
+                    message_hash,
                     parsed_vote,
                 } => {
-                    let signature = parsed_vote.3;
                     match self.bank_votes.entry(replay_bank_id) {
                         Entry::Vacant(entry) => {
                             entry.insert(BankVoteBuffer::Active {
                                 slot: replay_slot,
                                 votes: HashMap::from([(
-                                    signature,
+                                    message_hash,
                                     BufferedVote::Executed(parsed_vote),
                                 )]),
                             });
@@ -310,9 +310,9 @@ impl VoteBuffer {
                                 continue;
                             };
                             debug_assert_eq!(*stored_replay_slot, replay_slot);
-                            Self::apply_action_for_signature(
+                            Self::apply_action_for_message_hash(
                                 votes,
-                                signature,
+                                message_hash,
                                 ReplayVoteAction::Executed(parsed_vote),
                                 &mut ready_votes,
                                 replay_bank_id,
@@ -327,10 +327,10 @@ impl VoteBuffer {
                 ReplayVoteMessage::Verified {
                     replay_bank_id,
                     replay_slot,
-                    verified_signatures,
+                    message_hashes,
                 } => {
                     debug_assert!(
-                        !verified_signatures.is_empty(),
+                        !message_hashes.is_empty(),
                         "empty replay Verified message for bank {replay_bank_id}, slot \
                          {replay_slot}"
                     );
@@ -338,9 +338,9 @@ impl VoteBuffer {
                         Entry::Vacant(entry) => {
                             entry.insert(BankVoteBuffer::Active {
                                 slot: replay_slot,
-                                votes: verified_signatures
+                                votes: message_hashes
                                     .into_iter()
-                                    .map(|signature| (signature, BufferedVote::Verified))
+                                    .map(|message_hash| (message_hash, BufferedVote::Verified))
                                     .collect(),
                             });
                         }
@@ -354,10 +354,10 @@ impl VoteBuffer {
                                 continue;
                             };
                             debug_assert_eq!(*stored_replay_slot, replay_slot);
-                            for signature in verified_signatures.into_iter() {
-                                Self::apply_action_for_signature(
+                            for message_hash in message_hashes.into_iter() {
+                                Self::apply_action_for_message_hash(
                                     votes,
-                                    signature,
+                                    message_hash,
                                     ReplayVoteAction::Verified,
                                     &mut ready_votes,
                                     replay_bank_id,
@@ -388,23 +388,23 @@ impl VoteBuffer {
     }
 
     #[inline]
-    fn apply_action_for_signature(
-        votes: &mut HashMap<Signature, BufferedVote>,
-        signature: Signature,
+    fn apply_action_for_message_hash(
+        votes: &mut HashMap<Hash, BufferedVote>,
+        message_hash: Hash,
         action: ReplayVoteAction,
         ready_votes: &mut Vec<ParsedVote>,
         replay_bank_id: BankId,
     ) {
-        match votes.entry(signature) {
+        match votes.entry(message_hash) {
             Entry::Vacant(entry) => {
                 entry.insert(action.into());
             }
             Entry::Occupied(entry) => {
-                let (_signature, current_state) = entry.remove_entry();
+                let (_message_hash, current_state) = entry.remove_entry();
                 if let Some(next_state) =
-                    current_state.apply(action, ready_votes, replay_bank_id, signature)
+                    current_state.apply(action, ready_votes, replay_bank_id, message_hash)
                 {
-                    votes.insert(signature, next_state);
+                    votes.insert(message_hash, next_state);
                 }
             }
         }
@@ -1618,13 +1618,14 @@ mod tests {
         let replay_bank_id = 1;
         let replay_slot = 42;
         let parsed_vote = sample_parsed_vote(replay_slot);
-        let signature = parsed_vote.3;
+        let message_hash = Hash::default();
         let mut replay_vote_buffer = VoteBuffer::new();
 
         let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
             vec![ReplayVoteMessage::Executed {
                 replay_bank_id,
                 replay_slot,
+                message_hash,
                 parsed_vote: parsed_vote.clone(),
             }]
             .into_iter(),
@@ -1640,7 +1641,7 @@ mod tests {
             vec![ReplayVoteMessage::Verified {
                 replay_bank_id,
                 replay_slot,
-                verified_signatures: vec![signature],
+                message_hashes: vec![message_hash],
             }]
             .into_iter(),
         );
@@ -1653,14 +1654,14 @@ mod tests {
         let replay_bank_id = 3;
         let replay_slot = 77;
         let parsed_vote = sample_parsed_vote(replay_slot);
-        let signature = parsed_vote.3;
+        let message_hash = Hash::default();
         let mut replay_vote_buffer = VoteBuffer::new();
 
         let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
             vec![ReplayVoteMessage::Verified {
                 replay_bank_id,
                 replay_slot,
-                verified_signatures: vec![signature],
+                message_hashes: vec![message_hash],
             }]
             .into_iter(),
         );
@@ -1675,6 +1676,7 @@ mod tests {
             vec![ReplayVoteMessage::Executed {
                 replay_bank_id,
                 replay_slot,
+                message_hash,
                 parsed_vote: parsed_vote.clone(),
             }]
             .into_iter(),
@@ -1684,18 +1686,64 @@ mod tests {
     }
 
     #[test]
+    fn test_replay_vote_buffer_same_signature_different_tx() {
+        let replay_bank_id = 4;
+        let replay_slot = 88;
+        let valid_vote = sample_parsed_vote(replay_slot);
+        let spoofed_vote = sample_parsed_vote(replay_slot + 1);
+        assert_eq!(valid_vote.3, spoofed_vote.3);
+
+        let valid_message_hash = Hash::new_from_array([1; 32]);
+        let spoofed_message_hash = Hash::new_from_array([2; 32]);
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![
+                ReplayVoteMessage::Executed {
+                    replay_bank_id,
+                    replay_slot,
+                    message_hash: spoofed_message_hash,
+                    parsed_vote: spoofed_vote,
+                },
+                ReplayVoteMessage::Verified {
+                    replay_bank_id,
+                    replay_slot,
+                    message_hashes: vec![valid_message_hash],
+                },
+            ]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { votes, .. }) if votes.len() == 2
+        );
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash: valid_message_hash,
+                parsed_vote: valid_vote.clone(),
+            }]
+            .into_iter(),
+        );
+        assert_eq!(ready_votes, vec![valid_vote]);
+    }
+
+    #[test]
     fn test_replay_vote_buffer_invalid_bank_drops_late_messages() {
         let replay_bank_id = 2;
         let replay_slot = 100;
         let parsed_vote = sample_parsed_vote(replay_slot);
-        let signature = parsed_vote.3;
+        let message_hash = Hash::default();
         let mut replay_vote_buffer = VoteBuffer::new();
 
         let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
             vec![ReplayVoteMessage::Verified {
                 replay_bank_id,
                 replay_slot,
-                verified_signatures: vec![signature],
+                message_hashes: vec![message_hash],
             }]
             .into_iter(),
         );
@@ -1726,6 +1774,7 @@ mod tests {
             vec![ReplayVoteMessage::Executed {
                 replay_bank_id,
                 replay_slot,
+                message_hash,
                 parsed_vote: parsed_vote.clone(),
             }]
             .into_iter(),
@@ -1745,12 +1794,14 @@ mod tests {
         let replay_bank_id = 5;
         let replay_slot = 123;
         let parsed_vote = sample_parsed_vote(replay_slot);
+        let message_hash = Hash::default();
         let mut replay_vote_buffer = VoteBuffer::new();
 
         let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
             vec![ReplayVoteMessage::Executed {
                 replay_bank_id,
                 replay_slot,
+                message_hash,
                 parsed_vote,
             }]
             .into_iter(),
@@ -1774,17 +1825,18 @@ mod tests {
     }
 
     #[test]
-    fn test_replay_vote_buffer_processes_verified_signature() {
+    fn test_replay_vote_buffer_processes_verified_message_hash() {
         let replay_bank_id = 6;
         let replay_slot = 124;
         let parsed_vote = sample_parsed_vote(replay_slot);
-        let signature = parsed_vote.3;
+        let message_hash = Hash::default();
         let mut replay_vote_buffer = VoteBuffer::new();
 
         let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
             vec![ReplayVoteMessage::Executed {
                 replay_bank_id,
                 replay_slot,
+                message_hash,
                 parsed_vote: parsed_vote.clone(),
             }]
             .into_iter(),
@@ -1800,7 +1852,7 @@ mod tests {
             vec![ReplayVoteMessage::Verified {
                 replay_bank_id,
                 replay_slot,
-                verified_signatures: vec![signature],
+                message_hashes: vec![message_hash],
             }]
             .into_iter(),
         );

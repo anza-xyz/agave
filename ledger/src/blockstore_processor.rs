@@ -1998,12 +1998,12 @@ fn confirm_slot_entries(
     let bank_id = bank.bank_id();
     if skip_verification {
         if let Some(replay_vote_sender) = replay_vote_sender {
-            let verified_vote_signatures = unverified_signatures.vote_transaction_signatures();
-            if !verified_vote_signatures.is_empty() {
+            let message_hashes = unverified_signatures.vote_transaction_message_hashes();
+            if !message_hashes.is_empty() {
                 let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
                     replay_bank_id: bank_id,
                     replay_slot: slot,
-                    verified_signatures: verified_vote_signatures,
+                    message_hashes,
                 });
             }
         }
@@ -2028,13 +2028,12 @@ fn confirm_slot_entries(
                         });
                     }
                 } else if let Some(replay_vote_sender) = &replay_vote_sender {
-                    let verified_vote_signatures =
-                        unverified_signatures.vote_transaction_signatures();
-                    if !verified_vote_signatures.is_empty() {
+                    let message_hashes = unverified_signatures.vote_transaction_message_hashes();
+                    if !message_hashes.is_empty() {
                         let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
                             replay_bank_id: bank_id,
                             replay_slot: slot,
-                            verified_signatures: verified_vote_signatures,
+                            message_hashes,
                         });
                     }
                 }
@@ -2135,6 +2134,11 @@ fn process_bank_0(
         err @ BlockstoreProcessorError::InvalidTransaction(_) => panic!("{err}"),
         _ => BlockstoreProcessorError::FailedToReplayBank0,
     })?;
+    bank0.set_block_id(Some(
+        blockstore
+            .get_block_id(bank0.slot(), migration_status)?
+            .expect("block id for a full slot must exist"),
+    ));
     bank0.freeze();
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
