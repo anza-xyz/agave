@@ -7,16 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
-Release channels have their own copy of this changelog:
-* [edge - v4.1](#edge-channel)
-* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
-* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
-
-<a name="edge-channel"></a>
-## 4.1.0-Unreleased
-### RPC
-#### Breaking
-#### Changes
+## 4.1.0
 ### Validator
 #### Breaking
 * `--block-production-method central-scheduler` is no longer supported. If passed, a warning is emitted and behavior
@@ -30,7 +21,6 @@ Release channels have their own copy of this changelog:
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 * XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
   `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
-#### Changes
 
 ## 4.0.0
 ### RPC
