@@ -19,7 +19,7 @@ use {
         vm::execute,
     },
     solana_pubkey::Pubkey,
-    solana_sbpf::declare_builtin_function,
+    solana_sbpf::{declare_builtin_function, elf::get_sbpf_version, program::SBPFVersion},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
@@ -576,6 +576,15 @@ fn process_loader_upgradeable_instruction(
                     if !instruction_context.is_instruction_account_signer(1)? {
                         ic_logger_msg!(log_collector, "Upgrade authority did not sign");
                         return Err(InstructionError::MissingRequiredSignature);
+                    }
+                    if new_authority.is_none()
+                        && let Some(program) = account
+                            .get_data()
+                            .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+                        && let Ok(sbpf_version) = get_sbpf_version(program)
+                        && sbpf_version < SBPFVersion::V3
+                    {
+                        return Err(InstructionError::InvalidAccountData);
                     }
                     account.set_state(&UpgradeableLoaderState::ProgramData {
                         slot,
