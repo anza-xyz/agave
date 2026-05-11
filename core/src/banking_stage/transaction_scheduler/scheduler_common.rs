@@ -3,8 +3,11 @@ use {
         in_flight_tracker::InFlightTracker, scheduler_error::SchedulerError,
         transaction_state_container::StateContainer,
     },
-    crate::banking_stage::scheduler_messages::{
-        ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+    crate::banking_stage::{
+        consumer::ENTRY_OVERHEAD_BYTES,
+        scheduler_messages::{
+            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+        },
     },
     agave_scheduling_utils::thread_aware_account_locks::{
         MAX_THREADS, ThreadAwareAccountLocks, ThreadId, ThreadSet,
@@ -19,6 +22,7 @@ pub struct Batches<Tx> {
     transactions: Vec<Vec<Tx>>,
     max_ages: Vec<Vec<MaxAge>>,
     total_cus: Vec<u64>,
+    entry_bytes: Vec<u64>,
     target_num_transactions_per_batch: usize,
 }
 
@@ -38,6 +42,7 @@ impl<Tx> Batches<Tx> {
             transactions: make_vecs(num_threads, target_num_transactions_per_batch),
             max_ages: make_vecs(num_threads, target_num_transactions_per_batch),
             total_cus: vec![0; num_threads],
+            entry_bytes: vec![ENTRY_OVERHEAD_BYTES; num_threads],
             target_num_transactions_per_batch,
         }
     }
@@ -48,6 +53,10 @@ impl<Tx> Batches<Tx> {
             && self.transactions.iter().all(|txs| txs.is_empty())
             && self.max_ages.iter().all(|max_ages| max_ages.is_empty())
             && self.total_cus.iter().all(|&cus| cus == 0)
+            && self
+                .entry_bytes
+                .iter()
+                .all(|&bytes| bytes == ENTRY_OVERHEAD_BYTES)
     }
 
     pub fn total_cus(&self) -> &[u64] {
@@ -58,6 +67,10 @@ impl<Tx> Batches<Tx> {
         &self.transactions
     }
 
+    pub fn entry_bytes(&self) -> &[u64] {
+        &self.entry_bytes
+    }
+
     pub fn add_transaction_to_batch(
         &mut self,
         thread_id: ThreadId,
@@ -65,17 +78,20 @@ impl<Tx> Batches<Tx> {
         transaction: Tx,
         max_age: MaxAge,
         cus: u64,
+        transaction_bytes: u64,
     ) {
         self.ids[thread_id].push(transaction_id);
         self.transactions[thread_id].push(transaction);
         self.max_ages[thread_id].push(max_age);
         self.total_cus[thread_id] += cus;
+        self.entry_bytes[thread_id] += transaction_bytes;
     }
 
     pub fn take_batch(
         &mut self,
         thread_id: ThreadId,
     ) -> (Vec<TransactionId>, Vec<Tx>, Vec<MaxAge>, u64) {
+        self.entry_bytes[thread_id] = ENTRY_OVERHEAD_BYTES;
         (
             core::mem::replace(
                 &mut self.ids[thread_id],
@@ -363,12 +379,14 @@ mod tests {
                 |_thread_set| thread_id,
             )
             .unwrap();
+        let transaction_bytes = transaction.serialized_size() as u64;
         common.batches.add_transaction_to_batch(
             thread_id,
             tx_id.id,
             transaction,
             max_age,
             DUMMY_COST,
+            transaction_bytes,
         );
     }
 
@@ -455,10 +473,16 @@ mod tests {
             (0..NUM_WORKERS).map(|_| unbounded()).unzip();
         let (_finished_work_sender, finished_work_receiver) = unbounded();
         let mut common = SchedulingCommon::new(work_senders, finished_work_receiver, 10);
+        assert_eq!(
+            common.batches.entry_bytes(),
+            vec![ENTRY_OVERHEAD_BYTES; NUM_WORKERS]
+        );
 
         pop_and_add_transaction(&mut container, &mut common, 0);
+        assert!(common.batches.entry_bytes()[0] > ENTRY_OVERHEAD_BYTES);
         let num_scheduled = common.send_batch(0).unwrap();
         assert_eq!(num_scheduled, 1);
+        assert_eq!(common.batches.entry_bytes()[0], ENTRY_OVERHEAD_BYTES);
         assert_eq!(work_receivers[0].len(), 1);
         assert_eq!(
             common.in_flight_tracker.num_in_flight_per_thread(),
