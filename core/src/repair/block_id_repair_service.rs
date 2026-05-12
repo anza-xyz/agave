@@ -174,11 +174,11 @@ struct RepairState {
 
     /// Repair events that are pending because Turbine/Eager repair hasn't completed yet.
     /// These are re-processed each iteration until Turbine/Eager repair completes or marks the slot dead.
-    /// Only the lowest slots are retained if the queue reaches MAX_PENDING_REPAIR_EVENTS.
+    /// Only the lowest slots are retained if the queue reaches [`MAX_PENDING_REPAIR_EVENTS`].
     pending_repair_events: BTreeSet<RepairEvent>,
 
     /// Requests that have been sent, mapped to the timestamp they were sent.
-    /// Used for retry logic - requests that exceed DELTA
+    /// Used for retry logic - requests that exceed `2 * DELTA`
     /// are moved back to pending_repair_requests. We track this separately from the
     /// outstanding_requests maps as those are used for verifying response validity.
     sent_requests: HashMap<OutgoingMessage, u64>,
@@ -866,7 +866,7 @@ impl BlockIdRepairService {
     /// For shred requests, we check if the shred has been received before retrying
     fn retry_timed_out_requests(blockstore: &Blockstore, state: &mut RepairState, now: u64) {
         state.sent_requests.retain(|request, sent_time| {
-            if now.saturating_sub(*sent_time) >= u64::try_from(DELTA.as_millis()).unwrap() {
+            if now.saturating_sub(*sent_time) >= u64::try_from(2 * DELTA.as_millis()).unwrap() {
                 match request {
                     OutgoingMessage::Metadata(_) => {
                         // Metadata requests: always retry on timeout
@@ -1303,7 +1303,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let now = timestamp();
-        let expired_time = now - (DELTA.as_millis() as u64) - 100;
+        let expired_time = now - (2 * DELTA.as_millis() as u64) - 100;
 
         // 1. Expired metadata request (ParentAndFecSetCount) - should retry
         let expired_metadata = OutgoingMessage::Metadata(BlockIdRepairType::ParentAndFecSetCount {

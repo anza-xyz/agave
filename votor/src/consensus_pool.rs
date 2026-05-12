@@ -76,9 +76,9 @@ fn get_key_and_stakes(
     slot: Slot,
     rank: u16,
 ) -> Result<(Pubkey, Stake, Stake), AddVoteError> {
-    let epoch_stakes = root_bank
-        .epoch_stakes_from_slot(slot)
-        .ok_or(AddVoteError::EpochStakesNotFound(0))?;
+    let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).ok_or_else(|| {
+        AddVoteError::EpochStakesNotFound(root_bank.epoch_schedule().get_epoch(slot))
+    })?;
     let Some(entry) = epoch_stakes
         .bls_pubkey_to_rank_map()
         .get_pubkey_stake_entry(rank as usize)
@@ -227,10 +227,12 @@ impl ConsensusPool {
                     Some(match self.vote_pools.get(&(slot, *vote_type))? {
                         VotePool::SimpleVotePool(pool) => pool.total_stake(),
                         VotePool::DuplicateBlockVotePool(pool) => {
-                            pool.total_stake_by_block_id(block_id.as_ref().expect(
-                                "Duplicate block pool for {vote_type:?} expects a block id for \
-                                 certificate {cert_type:?}",
-                            ))
+                            pool.total_stake_by_block_id(block_id.as_ref().unwrap_or_else(|| {
+                                panic!(
+                                    "Duplicate block pool for {vote_type:?} expects a block id \
+                                     for certificate {cert_type:?}"
+                                )
+                            }))
                         }
                     })
                 })

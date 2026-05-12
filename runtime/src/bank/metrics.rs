@@ -9,7 +9,6 @@ use {
 };
 
 pub(crate) struct NewEpochTimings {
-    pub(crate) thread_pool_time_us: u64,
     pub(crate) apply_feature_activations_time_us: u64,
     pub(crate) calculate_activated_stake_time_us: u64,
     pub(crate) update_epoch_stakes_time_us: u64,
@@ -60,7 +59,6 @@ pub(crate) fn report_new_epoch_metrics(
         ("epoch", epoch, i64),
         ("slot", slot, i64),
         ("parent_slot", parent_slot, i64),
-        ("thread_pool_creation_us", timings.thread_pool_time_us, i64),
         (
             "apply_feature_activations",
             timings.apply_feature_activations_time_us,

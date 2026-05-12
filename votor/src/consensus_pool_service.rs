@@ -51,10 +51,6 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
 
-    // TODO: for now we ingest our own votes into the certificate pool
-    // just like regular votes. However do we need to convert
-    // Vote -> BLSMessage -> Vote?
-    // consider adding a separate pathway in consensus_pool.add_message() for ingesting own votes
     pub(crate) consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
 
     pub(crate) bls_sender: Sender<BLSOp>,

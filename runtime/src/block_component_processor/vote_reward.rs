@@ -134,6 +134,24 @@ impl VoteState {
             }
         }
     }
+
+    /// Sets the slot in `votes` in the vote state to the max of `slot`, vote_state.root_slot, and
+    /// vote_state.last_voted_slot.
+    fn maybe_update_votes(&mut self, slot: Slot) {
+        let latest_voted_slot = slot
+            .max(self.handler.last_voted_slot().unwrap_or(0))
+            .max(self.handler.root_slot().unwrap_or(0));
+        self.handler.set_votes(VecDeque::from([LandedVote {
+            lockout: Lockout::new(latest_voted_slot),
+            latency: 0,
+        }]));
+    }
+
+    /// If `slot` is bigger than vote_state.root_slot, then updates vote_state.root_slot.
+    fn maybe_update_root(&mut self, slot: Slot) {
+        let latest_root = self.handler.root_slot().unwrap_or(slot).max(slot);
+        self.handler.set_root_slot(Some(latest_root));
+    }
 }
 
 /// Common state required to pay rewards.
@@ -227,14 +245,7 @@ impl<'a> RewardState<'a> {
 
     fn update_votes(&self, vote_state: &mut VoteState) {
         debug_assert!(self.reward_validators.contains(&vote_state.vote_pubkey));
-        let latest_voted_slot = self
-            .reward_slot
-            .max(vote_state.handler.last_voted_slot().unwrap_or(0))
-            .max(vote_state.handler.root_slot().unwrap_or(0));
-        vote_state.handler.set_votes(VecDeque::from([LandedVote {
-            lockout: Lockout::new(latest_voted_slot),
-            latency: 0,
-        }]));
+        vote_state.maybe_update_votes(self.reward_slot);
     }
 
     fn update_account(
@@ -285,18 +296,10 @@ impl<'a> FinalCertState<'a> {
     #[must_use]
     fn update_account(&self, vote_state: &mut VoteState) -> bool {
         if self.signers.contains(&vote_state.vote_pubkey) {
-            vote_state.handler.set_root_slot(Some(self.final_slot));
-            let latest_voted_slot = vote_state
-                .handler
-                .last_voted_slot()
-                .unwrap_or(self.final_slot)
-                .max(self.final_slot);
+            vote_state.maybe_update_root(self.final_slot);
             // If a validator is included in the finalization cert, it must have voted for it.
             // So even if the reward cert is absent, we can still update votes.
-            vote_state.handler.set_votes(VecDeque::from([LandedVote {
-                lockout: Lockout::new(latest_voted_slot),
-                latency: 0,
-            }]));
+            vote_state.maybe_update_votes(self.final_slot);
             true
         } else {
             false

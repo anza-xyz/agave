@@ -1605,7 +1605,7 @@ pub fn purge_old_snapshot_archives(
     );
 
     let mut full_snapshot_archives =
-        snapshot_paths::full_snapshot_archives_iter(&full_snapshot_archives_dir)
+        snapshot_paths::full_snapshot_archives_iter(full_snapshot_archives_dir.as_ref())
             .collect::<Vec<_>>();
     full_snapshot_archives.sort_unstable();
     full_snapshot_archives.reverse();
@@ -1653,7 +1653,7 @@ pub fn purge_old_snapshot_archives(
     );
     let mut incremental_snapshot_archives_by_base_slot = HashMap::<Slot, Vec<_>>::new();
     for incremental_snapshot_archive in
-        incremental_snapshot_archives_iter(&incremental_snapshot_archives_dir)
+        incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.as_ref())
     {
         incremental_snapshot_archives_by_base_slot
             .entry(incremental_snapshot_archive.base_slot())
@@ -2449,7 +2449,7 @@ mod tests {
                 NonZeroUsize::new(usize::MAX).unwrap(),
             );
             let mut full_snapshot_archives =
-                full_snapshot_archives_iter(&full_snapshot_archives_dir).collect::<Vec<_>>();
+                full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
             full_snapshot_archives.sort_unstable();
             assert_eq!(
                 full_snapshot_archives.len(),
