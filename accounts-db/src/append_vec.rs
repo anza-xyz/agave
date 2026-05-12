@@ -333,7 +333,7 @@ impl AppendVec {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
-        let file_info = FileInfo::new_from_path_writable(path, false)?;
+        let file_info = FileInfo::new_from_path(path)?;
         let new = Self::new_from_file_info_unchecked(file_info, current_len)?;
 
         let num_accounts = new.sanitize_layout_and_length()?;
@@ -1813,7 +1813,7 @@ mod tests {
 
         // Truncate the AppendVec to PAGESIZE. This will cause get_account* to fail to load the account.
         let truncated_accounts_len: usize = PAGE_SIZE;
-        let file_info = FileInfo::new_from_path_writable(path, false).unwrap();
+        let file_info = FileInfo::new_from_path(path).unwrap();
         let av =
             AppendVec::new_from_file_info_unchecked(file_info, truncated_accounts_len).unwrap();
         let account = av.get_account_shared_data(0);
@@ -1911,7 +1911,7 @@ mod tests {
 
         let total_stored_size = modify_fn(&temp_file.path, total_stored_size);
         // now re-open the append vec and perform the scan and check it is correct
-        let file_info = FileInfo::new_from_path_writable(&temp_file.path, false).unwrap();
+        let file_info = FileInfo::new_from_path(&temp_file.path).unwrap();
         let append_vec = ManuallyDrop::new(
             AppendVec::new_from_file_info_unchecked(file_info, total_stored_size).unwrap(),
         );
