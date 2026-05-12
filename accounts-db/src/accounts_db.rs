@@ -3520,19 +3520,14 @@ impl AccountsDb {
             if config.is_aborted() {
                 break;
             }
-            self.accounts_index.get_with_and_then(
-                &pubkey,
+            if let Some((account, slot)) = self.do_load(
                 ancestors,
-                true,
-                |(slot, account_info)| {
-                    let account_slot = self
-                        .get_account_accessor(slot, &pubkey, &account_info.storage_location())
-                        .get_loaded_account(|loaded_account| {
-                            (&pubkey, loaded_account.take_account(), slot)
-                        });
-                    scan_func(account_slot)
-                },
-            );
+                &pubkey,
+                LoadHint::Unspecified,
+                PopulateReadCache::False,
+            ) {
+                scan_func(Some((&pubkey, account, slot)));
+            }
         }
 
         // Check whether the bank was removed while the scan was in progress.
