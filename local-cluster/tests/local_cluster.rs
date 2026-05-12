@@ -5007,7 +5007,7 @@ fn test_boot_from_local_state() {
             std::thread::yield_now();
         }
         let other_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
-            &other_validator_config.full_snapshot_archives_dir,
+            other_validator_config.full_snapshot_archives_dir.path(),
         )
         .collect::<Vec<_>>();
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
@@ -5034,7 +5034,9 @@ fn test_boot_from_local_state() {
 
         let other_incremental_snapshot_archives =
             snapshot_paths::incremental_snapshot_archives_iter(
-                &other_validator_config.incremental_snapshot_archives_dir,
+                other_validator_config
+                    .incremental_snapshot_archives_dir
+                    .path(),
             )
             .collect::<Vec<_>>();
         debug!(
