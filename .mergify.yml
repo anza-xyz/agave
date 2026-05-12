@@ -123,19 +123,6 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v3.1
-  - name: v3.1 backport warning comment
-    conditions:
-      - label=v3.1
-    actions:
-      comment:
-        message: >
-          Backports to the stable branch are to be avoided unless absolutely
-          necessary for fixing bugs, security issues, and perf regressions.
-          Changes intended for backport should be structured such that a
-          minimum effective diff can be committed separately from any
-          refactoring, plumbing, cleanup, etc that are not strictly
-          necessary to achieve the goal. Any of the latter should go only
-          into master and ride the normal stabilization schedule.
   - name: v4.0 feature-gate backport
     conditions:
       - label=v4.0
@@ -160,21 +147,6 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.0
-  - name: v4.0 backport warning comment
-    conditions:
-      - label=v4.0
-    actions:
-      comment:
-        message: >
-          Backports to the beta branch are to be avoided unless absolutely
-          necessary for fixing bugs, security issues, and perf regressions.
-          Changes intended for backport should be structured such that a
-          minimum effective diff can be committed separately from any
-          refactoring, plumbing, cleanup, etc that are not strictly
-          necessary to achieve the goal. Any of the latter should go only
-          into master and ride the normal stabilization schedule. Exceptions
-          include CI/metrics changes, CLI improvements and documentation
-          updates on a case by case basis.
   - name: v4.1 feature-gate backport
     conditions:
       - label=v4.1
@@ -199,13 +171,16 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.1
-  - name: v4.1 backport warning comment
+  - name: backport warning comment
     conditions:
-      - label=v4.1
+      - or:
+        - label=v3.1
+        - label=v4.0
+        - label=v4.1
     actions:
       comment:
         message: >
-          Backports to the alpha branch are to be avoided unless absolutely
+          Backports to release branches are to be avoided unless absolutely
           necessary for fixing bugs, security issues, and perf regressions.
           Changes intended for backport should be structured such that a
           minimum effective diff can be committed separately from any
