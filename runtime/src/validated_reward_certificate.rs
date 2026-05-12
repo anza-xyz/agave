@@ -67,6 +67,7 @@ fn extract_slot(
 }
 
 /// Struct built by validating incoming reward certs.
+#[derive(Debug, Clone)]
 pub struct ValidatedRewardCert {
     /// List of validators that were present in the reward certs.
     validators: HashSet<Pubkey>,
@@ -131,9 +132,12 @@ impl ValidatedRewardCert {
         }))
     }
 
-    /// Returns the validators that were extracted from the reward certs.
-    pub(crate) fn into_parts(self) -> (Slot, HashSet<Pubkey>) {
-        (self.reward_slot, self.validators)
+    pub(crate) fn slot(&self) -> Slot {
+        self.reward_slot
+    }
+
+    pub(crate) fn validators(&self) -> &HashSet<Pubkey> {
+        &self.validators
     }
 
     #[cfg(test)]

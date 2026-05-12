@@ -300,11 +300,6 @@ impl ValidatedBlockFinalizationCert {
         )
     }
 
-    /// Returns true when the provided vote account pubkey is in the finalization certificate.
-    pub fn was_signed_by(&self, vote_pubkey: &Pubkey) -> bool {
-        self.signers.contains(vote_pubkey)
-    }
-
     /// Returns the data needed to calculating and paying vote rewards.
     pub fn vote_rewards_input(&self) -> (&HashSet<Pubkey>, Slot) {
         (&self.signers, self.slot())
@@ -314,7 +309,7 @@ impl ValidatedBlockFinalizationCert {
     ///
     /// For slow finalization, returns (signers, finalize_cert, Some(notarize_cert)).
     /// For fast finalization, returns (signers, fast_finalize_cert, None).
-    pub fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
+    pub(crate) fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
         let signers = self.signers;
         let (final_cert, notar_cert) = match self.kind {
             ValidatedBlockFinalizationCertKind::Finalize {

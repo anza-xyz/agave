@@ -11,11 +11,12 @@ use {
             serve_repair::{
                 AncestorHashesRepairType, AncestorHashesResponse, RepairProtocol, ServeRepair,
             },
+            serve_repair_service::RESPONSE_CHANNEL_SIZE,
             standard_repair_handler::StandardRepairHandler,
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded},
     dashmap::{DashMap, mapref::entry::Entry::Occupied},
     solana_clock::Slot,
     solana_gossip::{contact_info::Protocol, ping_pong::Pong},
@@ -167,7 +168,7 @@ impl AncestorHashesService {
             return None;
         }
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
-        let (response_sender, response_receiver) = unbounded();
+        let (response_sender, response_receiver) = bounded(RESPONSE_CHANNEL_SIZE);
         let t_receiver = streamer::receiver(
             "solRcvrAncHash".to_string(),
             ancestor_hashes_request_socket.clone(),

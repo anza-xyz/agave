@@ -22,6 +22,7 @@ agave-unstable-api = []
 metrics = ["solana-syscalls/metrics", "solana-program-runtime/metrics"]
 sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
 shuttle-test = [
+    "dep:shuttle",
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",
     "solana-svm-type-overrides/shuttle-test",
@@ -31,6 +32,7 @@ svm-internal = []
 [dependencies]
 bincode = { workspace = true }
 qualifier_attr = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
