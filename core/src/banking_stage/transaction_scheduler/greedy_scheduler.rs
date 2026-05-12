@@ -23,6 +23,9 @@ use {
     std::num::Saturating,
 };
 
+// 15% of a batch is chosen as a target. If all entries are within this bound, the
+// maximum padding in a batch is 15%. 15% is also chosen because it is close to the
+// maximum transaction size (4096 / ~13% batch size).
 const DEFAULT_TARGET_ENTRY_BYTES_PER_BATCH: u64 =
     get_data_shred_bytes_per_batch_typical() * 15 / 100;
 
