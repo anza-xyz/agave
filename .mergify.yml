@@ -205,7 +205,7 @@ pull_request_rules:
     actions:
       comment:
         message: >
-          Backports to the beta branch are to be avoided unless absolutely
+          Backports to the alpha branch are to be avoided unless absolutely
           necessary for fixing bugs, security issues, and perf regressions.
           Changes intended for backport should be structured such that a
           minimum effective diff can be committed separately from any
