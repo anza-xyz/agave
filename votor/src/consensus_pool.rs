@@ -227,10 +227,12 @@ impl ConsensusPool {
                     Some(match self.vote_pools.get(&(slot, *vote_type))? {
                         VotePool::SimpleVotePool(pool) => pool.total_stake(),
                         VotePool::DuplicateBlockVotePool(pool) => {
-                            pool.total_stake_by_block_id(block_id.as_ref().expect(
-                                "Duplicate block pool for {vote_type:?} expects a block id for \
-                                 certificate {cert_type:?}",
-                            ))
+                            pool.total_stake_by_block_id(block_id.as_ref().unwrap_or_else(|| {
+                                panic!(
+                                    "Duplicate block pool for {vote_type:?} expects a block id \
+                                     for certificate {cert_type:?}"
+                                )
+                            }))
                         }
                     })
                 })
