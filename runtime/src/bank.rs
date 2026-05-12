@@ -6333,16 +6333,15 @@ impl Bank {
     }
 
     /// Create a bank for transaction testing. Constructs the bank struct,
-    /// applies activated features, and fills missing sysvar cache entries
-    /// so transactions can execute. Skips block-level setup
-    /// (`prepare_for_block_execution`, partitioned rewards recalc) and
-    /// snapshot fields (stakes loading, debug keys, accounts data size)
-    /// that are irrelevant to individual transaction execution.
+    /// applies activated features, and fills missing sysvar cache entries.
+    /// Skips block-level setup (`prepare_for_block_execution`, partitioned
+    /// rewards recalc) and snapshot fields (stakes loading, debug keys,
+    /// accounts data size) that are irrelevant to individual transaction
+    /// execution.
     ///
-    /// Covers the full transaction processing pipeline including
-    /// transaction age/nonce checks, compute budget and limits
-    /// sanitization, transaction account loading, and instruction
-    /// processing (everything under `load_and_execute_transactions`).
+    /// **Important:** The returned bank must be inserted into a
+    /// [`BankForks`] before calling `load_and_execute_transactions`,
+    /// because the program cache requires a `ForkGraph` to be present.
     pub fn new_for_txn_tests(
         bank_rc: BankRc,
         fields: BankFieldsToDeserialize,
@@ -6376,9 +6375,9 @@ impl Bank {
     /// complete the `_new_from_parent`-equivalent initialization
     /// (epoch processing, sysvar updates, LT hash cache).
     ///
-    /// Covers epoch boundary processing, rewards distribution, LT and
-    /// bank hash calculation, sysvar updates, runtime transaction
-    /// processing, and the votes/stakes caches.
+    /// **Important:** The returned bank must be inserted into a
+    /// [`BankForks`] before calling `load_and_execute_transactions`,
+    /// because the program cache requires a `ForkGraph` to be present.
     pub fn new_for_block_tests(
         bank_rc: BankRc,
         fields: BankFieldsToDeserialize,

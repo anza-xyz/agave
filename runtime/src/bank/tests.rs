@@ -11796,11 +11796,8 @@ fn test_calculate_and_set_block_id_for_dcou() {
 }
 
 /// Exercises `Bank::new_for_txn_tests` by constructing a bank from
-/// deserialized fields and executing a system transfer. Covers the
-/// full transaction processing pipeline including transaction
-/// age/nonce checks, requested compute budget and limits
-/// sanitization, transaction account loading, and instruction
-/// processing (everything under `load_and_execute_transactions`).
+/// deserialized fields, wrapping it in `BankForks` (required for the
+/// program cache's `ForkGraph`), and executing a system transfer.
 #[test]
 fn test_new_for_txn_tests_system_transfer() {
     let slot = 10;
@@ -11944,11 +11941,9 @@ fn test_new_for_txn_tests_system_transfer() {
 }
 
 /// Exercises `Bank::new_for_block_tests` by constructing a bank with
-/// vote/stake accounts, executing a system transfer, and verifying a
-/// deterministic bank hash. Covers epoch boundary processing,
-/// rewards distribution, LT and bank hash calculation, sysvar
-/// updates, runtime transaction processing, and the votes/stakes
-/// caches.
+/// vote/stake accounts, wrapping it in `BankForks` (required for the
+/// program cache's `ForkGraph`), executing a system transfer, and
+/// verifying a deterministic bank hash.
 #[test]
 fn test_new_for_block_tests_with_vote_account() {
     let slot = 10;
