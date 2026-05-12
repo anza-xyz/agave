@@ -3548,7 +3548,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             data: String,
             config: Option<RpcSimulateTransactionConfig>,
-        ) -> Result<RpcResponse<RpcSimulateTransactionResult>>;
+        ) -> BoxFuture<Result<RpcResponse<RpcSimulateTransactionResult>>>;
 
         #[rpc(meta, name = "minimumLedgerSlot")]
         fn minimum_ledger_slot(&self, meta: Self::Metadata) -> Result<Slot>;
@@ -3641,6 +3641,177 @@ pub mod rpc_full {
             meta: Self::Metadata,
             pubkey_strs: Option<Vec<String>>,
         ) -> Result<Vec<RpcPrioritizationFee>>;
+    }
+
+    impl JsonRpcRequestProcessor {
+        pub async fn simulate_transaction(
+            &self,
+            data: String,
+            config: Option<RpcSimulateTransactionConfig>,
+        ) -> Result<RpcResponse<RpcSimulateTransactionResult>> {
+            let RpcSimulateTransactionConfig {
+                sig_verify,
+                replace_recent_blockhash,
+                commitment,
+                encoding,
+                accounts: config_accounts,
+                min_context_slot,
+                inner_instructions: enable_cpi_recording,
+            } = config.unwrap_or_default();
+            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+                Error::invalid_params(format!(
+                    "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+                ))
+            })?;
+            let (_, mut unsanitized_tx) =
+                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+
+            let bank = self.get_bank_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })?;
+            let mut blockhash: Option<RpcBlockhash> = None;
+            if replace_recent_blockhash {
+                if sig_verify {
+                    return Err(Error::invalid_params(
+                        "sigVerify may not be used with replaceRecentBlockhash",
+                    ));
+                }
+                let recent_blockhash = bank.last_blockhash();
+                unsanitized_tx
+                    .message
+                    .set_recent_blockhash(recent_blockhash);
+                let last_valid_block_height = bank
+                    .get_blockhash_last_valid_block_height(&recent_blockhash)
+                    .expect("bank blockhash queue should contain blockhash");
+                blockhash.replace(RpcBlockhash {
+                    blockhash: recent_blockhash.to_string(),
+                    last_valid_block_height,
+                });
+            }
+
+            let transaction = sanitize_transaction(
+                unsanitized_tx,
+                &*bank,
+                bank.get_reserved_account_keys(),
+                bank.feature_set.snapshot().limit_instruction_accounts,
+            )?;
+
+            let verification_error = if sig_verify {
+                transaction.verify().err()
+            } else {
+                None
+            };
+
+            let transaction = Arc::new(transaction);
+            let simulation_result = if let Some(err) = verification_error {
+                TransactionSimulationResult::new_error(err)
+            } else {
+                self.runtime
+                    .spawn_blocking({
+                        let bank = Arc::clone(&bank);
+                        let transaction = Arc::clone(&transaction);
+                        move || bank.simulate_transaction(&*transaction, enable_cpi_recording)
+                    })
+                    .await
+                    .expect("Failed to spawn blocking task for simulate_transaction")
+            };
+
+            let TransactionSimulationResult {
+                result,
+                logs,
+                post_simulation_accounts,
+                units_consumed,
+                loaded_accounts_data_size,
+                return_data,
+                inner_instructions,
+                fee,
+                pre_balances,
+                post_balances,
+                pre_token_balances,
+                post_token_balances,
+            } = simulation_result;
+
+            let account_keys = transaction.message().account_keys();
+            let number_of_accounts = account_keys.len();
+
+            let accounts = if let Some(config_accounts) = config_accounts {
+                let accounts_encoding = config_accounts
+                    .encoding
+                    .unwrap_or(UiAccountEncoding::Base64);
+
+                if accounts_encoding == UiAccountEncoding::Binary
+                    || accounts_encoding == UiAccountEncoding::Base58
+                {
+                    return Err(Error::invalid_params("base58 encoding not supported"));
+                }
+
+                if config_accounts.addresses.len() > number_of_accounts {
+                    return Err(Error::invalid_params(format!(
+                        "Too many accounts provided; max {number_of_accounts}"
+                    )));
+                }
+
+                if result.is_err() {
+                    Some(vec![None; config_accounts.addresses.len()])
+                } else {
+                    let mut post_simulation_accounts_map = HashMap::new();
+                    for (pubkey, data) in post_simulation_accounts {
+                        post_simulation_accounts_map.insert(pubkey, data);
+                    }
+
+                    Some(
+                        config_accounts
+                            .addresses
+                            .iter()
+                            .map(|address_str| {
+                                let pubkey = verify_pubkey(address_str)?;
+                                get_encoded_account(
+                                    &bank,
+                                    &pubkey,
+                                    accounts_encoding,
+                                    None,
+                                    Some(&post_simulation_accounts_map),
+                                )
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    )
+                }
+            } else {
+                None
+            };
+
+            let inner_instructions = inner_instructions.map(|info| {
+                map_inner_instructions(info)
+                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
+                    .collect()
+            });
+
+            Ok(new_response(
+                &bank,
+                RpcSimulateTransactionResult {
+                    err: result.err().map(Into::into),
+                    logs: Some(logs),
+                    accounts,
+                    units_consumed: Some(units_consumed),
+                    loaded_accounts_data_size: Some(loaded_accounts_data_size),
+                    return_data: return_data.map(|return_data| return_data.into()),
+                    inner_instructions,
+                    replacement_blockhash: blockhash,
+                    fee,
+                    pre_balances,
+                    post_balances,
+                    pre_token_balances: pre_token_balances.map(|balances| {
+                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                    }),
+                    post_token_balances: post_token_balances.map(|balances| {
+                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                    }),
+                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
+                },
+            ))
+        }
     }
 
     pub struct FullImpl;
@@ -3989,162 +4160,9 @@ pub mod rpc_full {
             meta: Self::Metadata,
             data: String,
             config: Option<RpcSimulateTransactionConfig>,
-        ) -> Result<RpcResponse<RpcSimulateTransactionResult>> {
+        ) -> BoxFuture<Result<RpcResponse<RpcSimulateTransactionResult>>> {
             debug!("simulate_transaction rpc request received");
-            let RpcSimulateTransactionConfig {
-                sig_verify,
-                replace_recent_blockhash,
-                commitment,
-                encoding,
-                accounts: config_accounts,
-                min_context_slot,
-                inner_instructions: enable_cpi_recording,
-            } = config.unwrap_or_default();
-            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
-            let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
-                Error::invalid_params(format!(
-                    "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
-                ))
-            })?;
-            let (_, mut unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
-
-            let bank = &*meta.get_bank_with_config(RpcContextConfig {
-                commitment,
-                min_context_slot,
-            })?;
-            let mut blockhash: Option<RpcBlockhash> = None;
-            if replace_recent_blockhash {
-                if sig_verify {
-                    return Err(Error::invalid_params(
-                        "sigVerify may not be used with replaceRecentBlockhash",
-                    ));
-                }
-                let recent_blockhash = bank.last_blockhash();
-                unsanitized_tx
-                    .message
-                    .set_recent_blockhash(recent_blockhash);
-                let last_valid_block_height = bank
-                    .get_blockhash_last_valid_block_height(&recent_blockhash)
-                    .expect("bank blockhash queue should contain blockhash");
-                blockhash.replace(RpcBlockhash {
-                    blockhash: recent_blockhash.to_string(),
-                    last_valid_block_height,
-                });
-            }
-
-            let transaction = sanitize_transaction(
-                unsanitized_tx,
-                bank,
-                bank.get_reserved_account_keys(),
-                bank.feature_set.snapshot().limit_instruction_accounts,
-            )?;
-
-            let verification_error = if sig_verify {
-                transaction.verify().err()
-            } else {
-                None
-            };
-
-            let simulation_result = if let Some(err) = verification_error {
-                TransactionSimulationResult::new_error(err)
-            } else {
-                bank.simulate_transaction(&transaction, enable_cpi_recording)
-            };
-
-            let TransactionSimulationResult {
-                result,
-                logs,
-                post_simulation_accounts,
-                units_consumed,
-                loaded_accounts_data_size,
-                return_data,
-                inner_instructions,
-                fee,
-                pre_balances,
-                post_balances,
-                pre_token_balances,
-                post_token_balances,
-            } = simulation_result;
-
-            let account_keys = transaction.message().account_keys();
-            let number_of_accounts = account_keys.len();
-
-            let accounts = if let Some(config_accounts) = config_accounts {
-                let accounts_encoding = config_accounts
-                    .encoding
-                    .unwrap_or(UiAccountEncoding::Base64);
-
-                if accounts_encoding == UiAccountEncoding::Binary
-                    || accounts_encoding == UiAccountEncoding::Base58
-                {
-                    return Err(Error::invalid_params("base58 encoding not supported"));
-                }
-
-                if config_accounts.addresses.len() > number_of_accounts {
-                    return Err(Error::invalid_params(format!(
-                        "Too many accounts provided; max {number_of_accounts}"
-                    )));
-                }
-
-                if result.is_err() {
-                    Some(vec![None; config_accounts.addresses.len()])
-                } else {
-                    let mut post_simulation_accounts_map = HashMap::new();
-                    for (pubkey, data) in post_simulation_accounts {
-                        post_simulation_accounts_map.insert(pubkey, data);
-                    }
-
-                    Some(
-                        config_accounts
-                            .addresses
-                            .iter()
-                            .map(|address_str| {
-                                let pubkey = verify_pubkey(address_str)?;
-                                get_encoded_account(
-                                    bank,
-                                    &pubkey,
-                                    accounts_encoding,
-                                    None,
-                                    Some(&post_simulation_accounts_map),
-                                )
-                            })
-                            .collect::<Result<Vec<_>>>()?,
-                    )
-                }
-            } else {
-                None
-            };
-
-            let inner_instructions = inner_instructions.map(|info| {
-                map_inner_instructions(info)
-                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
-                    .collect()
-            });
-
-            Ok(new_response(
-                bank,
-                RpcSimulateTransactionResult {
-                    err: result.err().map(Into::into),
-                    logs: Some(logs),
-                    accounts,
-                    units_consumed: Some(units_consumed),
-                    loaded_accounts_data_size: Some(loaded_accounts_data_size),
-                    return_data: return_data.map(|return_data| return_data.into()),
-                    inner_instructions,
-                    replacement_blockhash: blockhash,
-                    fee,
-                    pre_balances,
-                    post_balances,
-                    pre_token_balances: pre_token_balances.map(|balances| {
-                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
-                    }),
-                    post_token_balances: post_token_balances.map(|balances| {
-                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
-                    }),
-                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
-                },
-            ))
+            Box::pin(async move { meta.simulate_transaction(data, config).await })
         }
 
         fn minimum_ledger_slot(&self, meta: Self::Metadata) -> Result<Slot> {
@@ -6717,6 +6735,66 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_simulate_transaction_concurrent() {
+        // Fires N concurrent simulate calls through the async dispatch path
+        // and asserts every result is well-formed. Catches deadlocks,
+        // Arc-capture regressions, and future-correctness bugs introduced by
+        // the move to `spawn_blocking` dispatch.
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+        let recent_blockhash = bank.confirmed_last_blockhash();
+
+        let bob_pubkey = solana_pubkey::new_rand();
+        let tx = system_transaction::transfer(
+            &rpc.mint_keypair,
+            &bob_pubkey,
+            rent_exempt_amount,
+            recent_blockhash,
+        );
+        let tx_b64 = BASE64_STANDARD.encode(wincode::serialize(&tx).unwrap());
+
+        bank.freeze();
+
+        let config = RpcSimulateTransactionConfig {
+            encoding: Some(UiTransactionEncoding::Base64),
+            ..Default::default()
+        };
+
+        const N: usize = 8;
+        let runtime = Arc::clone(&rpc.meta.runtime);
+        let meta = rpc.meta.clone();
+
+        let results = runtime.block_on(async move {
+            let mut set = tokio::task::JoinSet::new();
+            for _ in 0..N {
+                let meta = meta.clone();
+                let tx_b64 = tx_b64.clone();
+                let config = config.clone();
+                set.spawn(async move {
+                    meta.simulate_transaction(tx_b64, Some(config)).await
+                });
+            }
+            let mut out = Vec::with_capacity(N);
+            while let Some(joined) = set.join_next().await {
+                out.push(joined.expect("simulate task panicked"));
+            }
+            out
+        });
+
+        assert_eq!(results.len(), N);
+        for r in &results {
+            let resp = r.as_ref().expect("simulate_transaction returned Ok");
+            assert!(
+                resp.value.err.is_none(),
+                "concurrent simulate had err: {:?}",
+                resp.value.err
+            );
+            assert!(resp.value.units_consumed.unwrap_or(0) > 0);
+        }
     }
 
     #[test]
