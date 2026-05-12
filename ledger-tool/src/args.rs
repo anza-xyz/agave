@@ -5,7 +5,6 @@ use {
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_file::StorageAccess,
         accounts_index::{
             AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
             IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -135,7 +134,11 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(&["mmap", "file"])
-            .help("Access account storages using this method"),
+            .help(
+                "[DEPRECATED] Access account storages using this method. This flag is now a \
+                 no-op: storages are always accessed via file I/O. The flag is preserved for \
+                 backward compatibility and will be removed in a future release.",
+            ),
         Arg::with_name("accounts_db_ancient_storage_ideal_size")
             .long("accounts-db-ancient-storage-ideal-size")
             .value_name("BYTES")
@@ -329,21 +332,18 @@ pub fn get_accounts_db_config(
         ..AccountsIndexConfig::default()
     };
 
-    let storage_access = arg_matches
+    // The `--accounts-db-access-storages-method` flag is now a no-op. Storages are
+    // always accessed via file I/O. The flag is preserved for backward compatibility,
+    // but the value is ignored with a warning.
+    if arg_matches
         .value_of("accounts_db_access_storages_method")
-        .map(|method| match method {
-            "mmap" => {
-                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
-                #[allow(deprecated)]
-                StorageAccess::Mmap
-            }
-            "file" => StorageAccess::File,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-access-storages-method")
-            }
-        })
-        .unwrap_or_default();
+        .is_some()
+    {
+        warn!(
+            "`--accounts-db-access-storages-method` is now a no-op; storages are always accessed \
+             via file I/O."
+        );
+    }
 
     let scan_filter_for_shrinking = arg_matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -380,7 +380,6 @@ pub fn get_accounts_db_config(
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
-        storage_access,
         scan_filter_for_shrinking,
         num_background_threads: None,
         num_foreground_threads: None,

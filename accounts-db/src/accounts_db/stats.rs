@@ -399,11 +399,6 @@ impl LatestAccountsIndexRootsStats {
                 i64
             ),
             (
-                "append_vecs_open_as_mmap",
-                APPEND_VEC_STATS.open_as_mmap.load(Ordering::Relaxed),
-                i64
-            ),
-            (
                 "append_vecs_open_as_file_io",
                 APPEND_VEC_STATS.open_as_file_io.load(Ordering::Relaxed),
                 i64

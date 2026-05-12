@@ -6938,7 +6938,6 @@ dependencies = [
  "dashmap",
  "itertools 0.14.0",
  "log",
- "memmap2 0.9.10",
  "memoffset 0.9.1",
  "modular-bitfield",
  "num_cpus",

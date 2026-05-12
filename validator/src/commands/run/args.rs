@@ -954,7 +954,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(&["mmap", "file"])
-            .help("Access account storages using this method"),
+            .help(
+                "[DEPRECATED] Access account storages using this method. This flag is now a \
+                 no-op: storages are always accessed via file I/O. The flag is preserved for \
+                 backward compatibility and will be removed in a future release.",
+            ),
     )
     .arg(
         Arg::with_name("accounts_db_ancient_append_vecs")

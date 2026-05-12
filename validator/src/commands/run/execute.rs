@@ -19,7 +19,6 @@ use {
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_file::StorageAccess,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -683,21 +682,18 @@ pub fn execute(
             }
         });
 
-    let storage_access = matches
+    // The `--accounts-db-access-storages-method` flag is now a no-op. Storages are
+    // always accessed via file I/O. The flag is preserved for backward compatibility,
+    // but the value is ignored with a warning.
+    if matches
         .value_of("accounts_db_access_storages_method")
-        .map(|method| match method {
-            "mmap" => {
-                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
-                #[allow(deprecated)]
-                StorageAccess::Mmap
-            }
-            "file" => StorageAccess::File,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-access-storages-method")
-            }
-        })
-        .unwrap_or_default();
+        .is_some()
+    {
+        warn!(
+            "`--accounts-db-access-storages-method` is now a no-op; storages are always accessed \
+             via file I/O."
+        );
+    }
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -735,7 +731,6 @@ pub fn execute(
         skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
-        storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),

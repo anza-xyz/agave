@@ -24,7 +24,7 @@ mod serde_snapshot_tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
                 get_temp_accounts_paths,
             },
-            accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+            accounts_file::{AccountsFile, AccountsFileError},
             ancestors::Ancestors,
         },
         solana_clock::Slot,
@@ -40,7 +40,7 @@ mod serde_snapshot_tests {
             },
         },
         tempfile::TempDir,
-        test_case::{test_case, test_matrix},
+        test_case::test_case,
     };
 
     fn linear_ancestors(end_slot: u64) -> Ancestors {
@@ -119,7 +119,6 @@ mod serde_snapshot_tests {
     fn copy_append_vecs(
         accounts_db: &AccountsDb,
         output_dir: impl AsRef<Path>,
-        storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
@@ -134,7 +133,7 @@ mod serde_snapshot_tests {
 
             // Read new file into append-vec and build new entry
             let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, reader.len(), storage_access)?;
+                AccountsFile::new_from_file(output_path, reader.len())?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
@@ -154,7 +153,6 @@ mod serde_snapshot_tests {
     fn reconstruct_accounts_db_via_serialization(
         accounts: &AccountsDb,
         slot: Slot,
-        storage_access: StorageAccess,
         accounts_db_config: AccountsDbConfig,
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
@@ -167,7 +165,7 @@ mod serde_snapshot_tests {
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
         let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts, copied_accounts.path(), storage_access).unwrap();
+            copy_append_vecs(accounts, copied_accounts.path()).unwrap();
         let mut accounts_db = accountsdb_from_stream(
             &mut reader,
             &[],
@@ -200,8 +198,8 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    fn test_accounts_serialize(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_serialize() {
         agave_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
         let accounts_db = AccountsDb::new_for_tests(paths);
@@ -234,12 +232,8 @@ mod serde_snapshot_tests {
         let copied_accounts = TempDir::new().unwrap();
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
-        let storage_and_next_append_vec_id = copy_append_vecs(
-            &accounts.accounts_db,
-            copied_accounts.path(),
-            storage_access,
-        )
-        .unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(&accounts.accounts_db, copied_accounts.path()).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -260,9 +254,8 @@ mod serde_snapshot_tests {
         assert_eq!(accounts_hash, daccounts_hash);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_remove_unrooted_slot_snapshot(storage_access: StorageAccess) {
+    #[test]
+    fn test_remove_unrooted_slot_snapshot() {
         agave_logger::setup();
         let unrooted_slot = 9;
         let unrooted_bank_id = 9;
@@ -284,7 +277,6 @@ mod serde_snapshot_tests {
         let db = reconstruct_accounts_db_via_serialization(
             &db,
             new_root,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
@@ -295,10 +287,8 @@ mod serde_snapshot_tests {
         db.assert_not_load_account(unrooted_slot, key);
     }
 
-    #[test_matrix(
-        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap]
-    )]
-    fn test_accounts_db_serialize1(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_db_serialize1() {
         for pass in 0..2 {
             agave_logger::setup();
             let accounts = AccountsDb::new_single_for_tests();
@@ -374,7 +364,6 @@ mod serde_snapshot_tests {
             let daccounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 latest_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
 
@@ -401,9 +390,8 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_db_serialize_zero_and_free(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_db_serialize_zero_and_free() {
         agave_logger::setup();
 
         let some_lamport = 223;
@@ -441,7 +429,6 @@ mod serde_snapshot_tests {
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
@@ -515,9 +502,8 @@ mod serde_snapshot_tests {
         assert_eq!(calculated_capitalization, expected_capitalization);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_purge_chained_purge_before_snapshot_restore() {
         agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
             // If there is no latest full snapshot, zero lamport accounts can be cleaned and
@@ -528,21 +514,18 @@ mod serde_snapshot_tests {
             reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
         });
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_purge_chained_purge_after_snapshot_restore(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_purge_chained_purge_after_snapshot_restore() {
         agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
             let accounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
             accounts.print_accounts_stats("after_reconstruct");
@@ -551,15 +534,13 @@ mod serde_snapshot_tests {
             reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
         });
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_purge_long_chained_after_snapshot_restore(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_purge_long_chained_after_snapshot_restore() {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
@@ -618,7 +599,6 @@ mod serde_snapshot_tests {
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
         accounts.set_latest_full_snapshot_slot(0);
@@ -631,9 +611,8 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, purged_pubkey2, 0);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_clean_after_snapshot_restore_then_old_revives(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_clean_after_snapshot_restore_then_old_revives() {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
@@ -727,7 +706,6 @@ mod serde_snapshot_tests {
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
@@ -762,9 +740,8 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_shrink_stale_slots_processed(storage_access: StorageAccess) {
+    #[test]
+    fn test_shrink_stale_slots_processed() {
         agave_logger::setup();
 
         for startup in &[false, true] {
@@ -823,7 +800,6 @@ mod serde_snapshot_tests {
             let accounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
             let accounts_lt_hash_post =

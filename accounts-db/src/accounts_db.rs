@@ -43,7 +43,7 @@ use {
             StoreAccountsFrozenStats, StoreAccountsTiming, StoreAccountsUnfrozenStats,
             WriteAccountsToCacheStats,
         },
-        accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileProvider},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
@@ -973,9 +973,6 @@ pub struct AccountsDb {
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
 
-    /// method to use for accessing storages
-    storage_access: StorageAccess,
-
     /// index scan filtering for shrinking
     scan_filter_for_shrinking: ScanFilter,
 
@@ -1129,7 +1126,6 @@ impl AccountsDb {
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
-            storage_access: accounts_db_config.storage_access,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             thread_pool_foreground,
             thread_pool_background,
@@ -1193,7 +1189,6 @@ impl AccountsDb {
             self.next_id(),
             size,
             self.accounts_file_provider,
-            self.storage_access,
         )
     }
 
@@ -2513,11 +2508,6 @@ impl AccountsDb {
         }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_storage_access(&mut self, storage_access: StorageAccess) {
-        self.storage_access = storage_access;
-    }
-
     pub(crate) fn get_unique_accounts_from_storage_for_shrink(
         &self,
         store: &AccountStorageEntry,
@@ -3004,7 +2994,7 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
-            if let Some(new_storage) = storage.reopen_as_readonly(self.storage_access) {
+            if let Some(new_storage) = storage.reopen_as_readonly() {
                 // consider here the race condition of tx processing having looked up something in the index,
                 // which could return (slot, append vec id). We want the lookup for the storage to get a storage
                 // that works whether the lookup occurs before or after the replace call here.
@@ -6635,11 +6625,6 @@ impl AccountsDb {
     /// This is useful for testing clean algorithms.
     pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
         self.uncleaned_pubkeys.len()
-    }
-
-    #[cfg(test)]
-    pub fn storage_access(&self) -> StorageAccess {
-        self.storage_access
     }
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
