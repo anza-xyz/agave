@@ -32,6 +32,7 @@ use {
     solana_runtime::{
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
+        bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -80,6 +81,7 @@ pub struct BlockCreationLoopConfig {
 
     // Shared state
     pub bank_forks: Arc<RwLock<BankForks>>,
+    pub bank_forks_controller: Arc<dyn BankForksController>,
     pub blockstore: Arc<Blockstore>,
     pub cluster_info: Arc<ClusterInfo>,
     pub poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -117,6 +119,7 @@ struct LeaderContext {
     poh_recorder: Arc<RwLock<PohRecorder>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     bank_forks: Arc<RwLock<BankForks>>,
+    bank_forks_controller: Arc<dyn BankForksController>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     banking_tracer: Arc<BankingTracer>,
@@ -154,6 +157,10 @@ enum StartLeaderError {
         /* parent ready slot */ Slot,
         /* leader slot */ Slot,
     ),
+
+    /// Failed to insert our leader bank
+    #[error("Failed to insert leader bank: {0}")]
+    InsertBankError(#[from] BankForksControllerError),
 }
 
 /// The block creation loop.
@@ -165,6 +172,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
     let BlockCreationLoopConfig {
         exit,
         bank_forks,
+        bank_forks_controller,
         blockstore,
         cluster_info,
         poh_recorder,
@@ -218,6 +226,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         poh_recorder,
         leader_schedule_cache,
         bank_forks,
+        bank_forks_controller,
         rpc_subscriptions,
         slot_status_notifier,
         banking_tracer,
@@ -668,13 +677,16 @@ fn maybe_start_leader(
     }
 
     // Create and insert the bank
-    create_and_insert_leader_bank(slot, parent_bank, ctx);
-    Ok(())
+    create_and_insert_leader_bank(slot, parent_bank, ctx)
 }
 
 /// Creates and inserts the leader bank `slot` of this window with
 /// parent `parent_bank`
-fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut LeaderContext) {
+fn create_and_insert_leader_bank(
+    slot: Slot,
+    parent_bank: Arc<Bank>,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
     let parent_slot = parent_bank.slot();
     let root_slot = ctx.bank_forks.read().unwrap().root();
     trace!(
@@ -734,7 +746,8 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
     );
 
     // Insert the bank
-    let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
+    let tpu_bank = ctx.bank_forks_controller.insert_bank(tpu_bank)?;
+
     let bank_id = tpu_bank.bank_id();
     ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
 
@@ -749,6 +762,7 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         "{}: new fork:{} parent:{} (leader) root:{}",
         ctx.my_pubkey, slot, parent_slot, root_slot
     );
+    Ok(())
 }
 
 ///  If this the very first alpenglow block, include the genesis certificate
