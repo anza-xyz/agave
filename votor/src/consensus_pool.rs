@@ -76,9 +76,9 @@ fn get_key_and_stakes(
     slot: Slot,
     rank: u16,
 ) -> Result<(Pubkey, Stake, Stake), AddVoteError> {
-    let epoch_stakes = root_bank
-        .epoch_stakes_from_slot(slot)
-        .ok_or(AddVoteError::EpochStakesNotFound(0))?;
+    let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).ok_or_else(|| {
+        AddVoteError::EpochStakesNotFound(root_bank.epoch_schedule().get_epoch(slot))
+    })?;
     let Some(entry) = epoch_stakes
         .bls_pubkey_to_rank_map()
         .get_pubkey_stake_entry(rank as usize)
