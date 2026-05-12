@@ -148,7 +148,7 @@ solana-svm-timings = { path = "../../svm-timings", version = "=4.2.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.2.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.2.0-alpha.0" }
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
-solana-transaction-context = { path = "../../transaction-context", version = "4.1.0-alpha.0" }
+solana-transaction-context = { path = "../../transaction-context", version = "4.2.0-alpha.0" }
 solana-sysvar = "=4.0.0"
 solana-vote = { path = "../../vote", version = "=4.2.0-alpha.0" }
 solana-vote-interface = "6.0.0"
