@@ -77,6 +77,10 @@ pub enum Error {
     UnusedIpAddr(IpAddr),
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    frozen_abi(digest = "D6wJ6cDvcUSPMNGvWrTXkMtaQkXDhzW6WMaCDsQmCPi2")
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ContactInfo {
     pubkey: Pubkey,
@@ -100,7 +104,11 @@ pub struct ContactInfo {
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "9ktSYPRMByRPiunkLa1ZhksMUmMxzJBATjD7hLoJ6ehe")
+)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct SocketEntry {
     pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc

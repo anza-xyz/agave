@@ -14,12 +14,23 @@ use {
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "HzHUezj9LFkaunjAHorq6nq1AS5fh5HoH4tGEGAsQYrr")
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Uncompressed {
     pub first_slot: Slot,
     pub num: usize,
     pub slots: Arc<BitVec<u8>>,
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::abi_example::TransparentAsHelper for Uncompressed {}
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::abi_example::EvenAsOpaque for Uncompressed {
+    const TYPE_NAME_MATCHER: &'static str = "bv::bit_vec::inner::";
 }
 
 impl Sanitize for Uncompressed {
@@ -43,7 +54,11 @@ impl Sanitize for Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "JCRWwJt4Se9WjNrWqkpKYsH1JUTHcWnEVrJ4PqW8ttHg")
+)]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Flate2 {
     pub first_slot: Slot,
@@ -197,7 +212,11 @@ impl Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor),
+    frozen_abi(digest = "A4XJ7PbhSTJdjaxKReJZ4pfE39Z9koYFydreSVGeWcr7")
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CompressedSlots {
     Flate2(Flate2),
@@ -264,7 +283,11 @@ impl CompressedSlots {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "AZuJQRVt99y9rdbH3WebytmoNFEFyR6svgw9z9QF9Bfw")
+)]
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct EpochSlots {
     pub from: Pubkey,

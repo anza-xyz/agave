@@ -12,7 +12,11 @@ use {
     thiserror::Error,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "9U1FzsrvZVycBg55XaVxik7JchV2Qed52nBCQezuT1pe")
+)]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct RestartLastVotedForkSlots {
     pub from: Pubkey,
@@ -29,7 +33,11 @@ pub enum RestartLastVotedForkSlotsError {
     LastVotedForkEmpty,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "ASyQPmgLBNDjSSwJQS5KDHDSwYFqrVxCk2W71ahjxdNi")
+)]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct RestartHeaviestFork {
     pub from: Pubkey,
@@ -40,24 +48,40 @@ pub struct RestartHeaviestFork {
     pub shred_version: u16,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor),
+    frozen_abi(digest = "7ose1Tug6nxnyG6T8ziLqvgiWyvaQuiANjuWoQYXpm9z")
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 enum SlotsOffsets {
     RunLengthEncoding(RunLengthEncoding),
     RawOffsets(RawOffsets),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "Go72hgVkcxUJZ6vHxzLWor4d71rRzh5rBnmaruCvBDJ3")
+)]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 struct U16(#[serde(with = "serde_varint")] u16);
 
 // The vector always starts with 1. Encode number of 1's and 0's consecutively.
 // For example, 110000111 is [2, 4, 3].
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "Ht4UGjj5KZvdbqadXsazGPYjBQ3ZHvXzAjqcaLZAHFuw")
+)]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 struct RunLengthEncoding(Vec<U16>);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "HocdCYoQKBBo2W8e1xwP9DyU7sUJpS9PhQkNZqdUAske")
+)]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 struct RawOffsets(BitVec<u8>);
 

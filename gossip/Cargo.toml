@@ -23,6 +23,8 @@ frozen-abi = [
     "solana-ledger/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-transaction/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",

@@ -4,6 +4,11 @@ use {
 };
 
 /// Type-Length-Value encoding wrapper for bincode
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "ChJyeCz7ijWe5tgnsWgmrbcLho7aj9QoTKmfXNgifyzw")
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct TlvRecord {
     // type

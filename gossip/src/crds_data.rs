@@ -1,7 +1,6 @@
 use {
     crate::{
         contact_info::ContactInfo,
-        deprecated,
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
         legacy_contact_info::LegacyContactInfo,
@@ -35,7 +34,11 @@ pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 /// * Merge Strategy - Latest wallclock is picked
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor),
+    frozen_abi(digest = "J4oSX1sHEinCzaBc5eJFn98DAVQZEbHtdhC4orgEhbG9")
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
@@ -212,13 +215,18 @@ impl From<&ContactInfo> for CrdsData {
     }
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AccountsHashes {}
 reject_deserialize!(AccountsHashes, "AccountsHashes is deprecated");
 
 type LegacySnapshotHashes = AccountsHashes;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "2B7uhWNSS9uAodi1LfyUQ8a9QaANRCp5SBH3ANyLnXtg")
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
@@ -245,14 +253,18 @@ impl Sanitize for SnapshotHashes {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "GCAPHPPkdi6Q6zgabh7F9SkFGkZCs8kPCYG3QHGmufCa")
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct LowestSlot {
     pub(crate) from: Pubkey,
     root: Slot, //deprecated
     pub lowest: Slot,
-    slots: BTreeSet<Slot>,                        //deprecated
-    stash: Vec<deprecated::EpochIncompleteSlots>, //deprecated
+    slots: BTreeSet<Slot>, // deprecated
+    stash: Vec<u8>,        // deprecated
     wallclock: u64,
 }
 
@@ -325,7 +337,11 @@ where
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "64UEyzppSWfHUfdrzXNnS6mziAVFRw4FkZKaNfm83HN1")
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Vote {
     pub(crate) from: Pubkey,
@@ -403,14 +419,17 @@ impl<'de> Deserialize<'de> for Vote {
     }
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LegacyVersion {}
 reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Version {}
 reject_deserialize!(Version, "Version is deprecated");
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct NodeInstance {}
 reject_deserialize!(NodeInstance, "NodeInstance is deprecated");
@@ -468,11 +487,6 @@ mod test {
 
         let mut o = ls.clone();
         o.slots.insert(1);
-        let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(0, o));
-        assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
-
-        let mut o = ls;
-        o.stash.push(deprecated::EpochIncompleteSlots::default());
         let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(0, o));
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
     }

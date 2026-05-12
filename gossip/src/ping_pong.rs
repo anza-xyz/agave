@@ -35,7 +35,11 @@ pub struct Ping<const N: usize> {
     signature: Signature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "4Wuae6kvWno14FwGd2z3yHKVgSgaV3XBeU5xHt27Ttdv")
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Pong {
     from: Pubkey,

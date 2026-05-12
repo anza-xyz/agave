@@ -20,7 +20,11 @@ use {
 };
 
 /// CrdsValue that is replicated across the cluster
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "FSgf27MjbraACii6ZNmAEZzt8jAvDF2LgCwPJgJ5VDtD")
+)]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CrdsValue {
     signature: Signature,
