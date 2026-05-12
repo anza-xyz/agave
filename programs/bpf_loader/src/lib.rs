@@ -577,7 +577,10 @@ fn process_loader_upgradeable_instruction(
                         ic_logger_msg!(log_collector, "Upgrade authority did not sign");
                         return Err(InstructionError::MissingRequiredSignature);
                     }
-                    if new_authority.is_none()
+                    if invoke_context
+                        .get_feature_set()
+                        .disable_sbpf_v0_v1_v2_deployment
+                        && new_authority.is_none()
                         && let Some(program) = account
                             .get_data()
                             .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
