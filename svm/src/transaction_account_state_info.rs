@@ -11,16 +11,12 @@ use {
     solana_transaction_error::TransactionResult as Result,
 };
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug)]
 pub(crate) struct TransactionAccountStateInfo {
     info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
 }
 
 impl TransactionAccountStateInfo {
-    pub(crate) fn as_ref(&self) -> Option<&WritableTransactionAccountStateInfo> {
-        self.info.as_ref()
-    }
-
     pub(crate) fn new_pre_exec(
         transaction_context: &TransactionContext,
         message: &impl SVMMessage,
@@ -37,7 +33,7 @@ impl TransactionAccountStateInfo {
                         balance,
                         data_size,
                         rent.minimum_balance(data_size),
-                        !relax_post_exec_min_balance_check, // SIMD-0392 enabled. Assume `RentPaying` is impossible
+                        relax_post_exec_min_balance_check, // SIMD-0392 enabled. Assume `RentPaying` is impossible
                     );
 
                     WritableTransactionAccountStateInfo {
@@ -64,18 +60,14 @@ impl TransactionAccountStateInfo {
         iter_writable_accounts(transaction_context, message)
             .zip(pre_exec_state_infos)
             .map(|(acct_ref, pre_exec_state_info)| {
-                let info = acct_ref.map(|account| {
+                let info = acct_ref.and_then(|account| {
                     // the same account MUST be present and marked writable in both pre and post exec
                     debug_assert!(
                         pre_exec_state_info.info.is_some(),
                         "message and pre-exec state out of sync, fatal"
                     );
-                    if pre_exec_state_info.info.is_none() {
-                        // to avoid panicking in release, treat missing pre-exec info as uninitialized
-                        return WritableTransactionAccountStateInfo::default();
-                    }
 
-                    let pre_exec_state_info = pre_exec_state_info.info.as_ref().unwrap();
+                    let pre_exec_state_info = pre_exec_state_info.info.as_ref()?;
                     let balance = account.lamports();
                     let data_size = account.data().len();
                     let min_balance = rent.minimum_balance(data_size);
@@ -85,12 +77,12 @@ impl TransactionAccountStateInfo {
 
                     // Criteria for rent-exempt relaxation as specified by SIMD-392
                     let relax_rent_exempt_criteria = relax_post_exec_min_balance_check
-                        && *pre_state == RentState::RentExempt
                         && data_size <= pre_exec_state_info.data_size
+                        && *pre_state == RentState::RentExempt
                         && pre_exec_state_info.owner == owner;
 
                     // Post-exec owner is currently not consumed by any caller.
-                    WritableTransactionAccountStateInfo {
+                    Some(WritableTransactionAccountStateInfo {
                         rent_state: get_post_exec_account_rent_state(
                             balance,
                             data_size,
@@ -102,7 +94,7 @@ impl TransactionAccountStateInfo {
                         balance,
                         data_size,
                         owner,
-                    }
+                    })
                 });
                 Self { info }
             })
@@ -119,7 +111,7 @@ pub(crate) fn verify_changes(
         pre_state_infos.iter().zip(post_state_infos).enumerate()
     {
         if let (Some(pre_state_info), Some(post_state_info)) =
-            (pre_state_info.as_ref(), post_state_info.as_ref())
+            (pre_state_info.info.as_ref(), post_state_info.info.as_ref())
         {
             check_rent_state(
                 &pre_state_info.rent_state,
@@ -135,14 +127,14 @@ pub(crate) fn verify_changes(
 // Returns the cumulative size of all post-exec uninitialized accounts
 pub(crate) fn get_uninitialized_accounts_size(post: &[TransactionAccountStateInfo]) -> u64 {
     post.iter()
-        .filter_map(TransactionAccountStateInfo::as_ref)
+        .filter_map(|state| state.info.as_ref())
         .filter_map(|post| {
             matches!(&post.rent_state, RentState::Uninitialized).then_some(post.data_size as u64)
         })
         .sum()
 }
 
-#[derive(PartialEq, Debug, Clone, Default)]
+#[derive(PartialEq, Debug)]
 pub(crate) struct WritableTransactionAccountStateInfo {
     rent_state: RentState,
     balance: u64,
@@ -185,7 +177,7 @@ mod test {
         solana_rent::Rent,
         solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
-        std::collections::HashSet,
+        std::{collections::HashSet, iter::repeat_with},
     };
 
     // Helpers to reduce duplication in tests
@@ -266,7 +258,7 @@ mod test {
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
-        let data_len: usize = 64;
+        let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(1);
 
@@ -340,7 +332,7 @@ mod test {
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
-        let data_len: usize = 64;
+        let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5); // less than full rent-exempt, but > 0
 
@@ -365,7 +357,7 @@ mod test {
         );
 
         assert_eq!(
-            post[0].as_ref().map(|info| &info.rent_state),
+            post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentExempt)
         );
     }
@@ -377,7 +369,7 @@ mod test {
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
-        let data_len: usize = 64;
+        let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5);
 
@@ -402,13 +394,13 @@ mod test {
         );
 
         assert_eq!(
-            post[0].as_ref().map(|info| &info.rent_state),
+            post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: data_len,
                 lamports: pre_balance
             })
         );
-        assert!(post[1].as_ref().is_none());
+        assert!(post[1].info.as_ref().is_none());
     }
 
     #[test]
@@ -418,7 +410,7 @@ mod test {
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
-        let data_len: usize = 64;
+        let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5);
 
@@ -453,7 +445,7 @@ mod test {
         );
 
         assert_eq!(
-            post[0].as_ref().map(|info| &info.rent_state),
+            post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: data_len,
                 lamports: post_balance
@@ -475,8 +467,8 @@ mod test {
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
-        let pre_len: usize = 32;
-        let post_len: usize = 256; // larger size => larger full min
+        let pre_len = 32;
+        let post_len = 256; // larger size => larger full min
         let pre_min = rent.minimum_balance(pre_len);
         let pre_balance = pre_min.saturating_sub(1);
 
@@ -517,7 +509,7 @@ mod test {
         );
 
         assert_eq!(
-            post[0].as_ref().map(|info| &info.rent_state),
+            post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: post_len,
                 lamports: pre_balance
@@ -542,8 +534,8 @@ mod test {
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
-        let pre_len: usize = 256;
-        let post_len: usize = pre_len / 8; // smaller size, but rent increased after creation
+        let pre_len = 256;
+        let post_len = pre_len / 8; // smaller size, but rent increased after creation
         let pre_balance = pre_rent.minimum_balance(pre_len);
         let post_min = post_rent.minimum_balance(post_len);
         assert!(post_min > pre_balance);
@@ -584,7 +576,10 @@ mod test {
             true,
         );
 
-        assert_eq!(post[0].as_ref().unwrap().rent_state, RentState::RentExempt);
+        assert_eq!(
+            post[0].info.as_ref().unwrap().rent_state,
+            RentState::RentExempt
+        );
         let res = verify_changes(&pre, &post, &context_post);
         assert!(res.is_ok());
     }
@@ -598,7 +593,7 @@ mod test {
         let owner_pre = Pubkey::new_unique();
         let owner_post = Pubkey::new_unique();
 
-        let data_len: usize = 64;
+        let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
         let pre_balance = min_full.saturating_sub(5);
 
@@ -639,7 +634,7 @@ mod test {
         );
 
         assert_eq!(
-            post[0].as_ref().map(|info| &info.rent_state),
+            post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: data_len,
                 lamports: pre_balance
@@ -721,18 +716,17 @@ mod test {
 
     #[test]
     fn test_get_uninitialized_accounts_size_with_deleted_accounts() {
-        let mut post_state_infos = vec![
-            TransactionAccountStateInfo {
+        let mut post_state_infos: Vec<TransactionAccountStateInfo> =
+            repeat_with(|| TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
                     balance: 0,
                     data_size: 50,
                     owner: Pubkey::new_unique(),
                 }),
-            }
-            .clone();
-            3
-        ];
+            })
+            .take(3)
+            .collect();
 
         // add non-deleted account to ensure only uninitialized accounts are counted
         post_state_infos.push(TransactionAccountStateInfo {

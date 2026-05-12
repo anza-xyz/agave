@@ -262,7 +262,7 @@ pub mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
-        agave_feature_set::{self as feature_set, FeatureSet},
+        agave_feature_set::FeatureSet,
         solana_account::state_traits::StateMut,
         solana_pubkey as pubkey,
         solana_rent::Rent,
@@ -620,7 +620,8 @@ pub mod tests {
                     feature_set.deactivate(&agave_feature_set::custom_commission_collector::id());
                 }
                 if !relax_post_exec_min_balance_check {
-                    feature_set.deactivate(&feature_set::relax_post_exec_min_balance_check::id());
+                    feature_set
+                        .deactivate(&agave_feature_set::relax_post_exec_min_balance_check::id());
                 }
                 bank.feature_set = Arc::new(feature_set);
 

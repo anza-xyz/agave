@@ -2380,7 +2380,7 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
         ..base_rent
     };
 
-    let target_size = 8usize;
+    let target_size = 8;
     let old_min_balance = base_rent.minimum_balance(target_size);
     let new_min_balance = bumped_rent.minimum_balance(target_size);
     assert!(new_min_balance > old_min_balance + LAMPORTS_PER_SIGNATURE);

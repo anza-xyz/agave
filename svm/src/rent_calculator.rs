@@ -16,10 +16,9 @@ use {
 pub const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 /// Rent state of a Solana account.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RentState {
     /// account.lamports == 0
-    #[default]
     Uninitialized,
     /// 0 < account.lamports < rent-exempt-minimum
     RentPaying {
@@ -98,16 +97,16 @@ pub fn get_account_rent_state(
 /// Determine the pre-execution rent state of an account.
 ///
 /// Equivalent to get_account_rent_state, with the additional option of
-/// disallowing the RentPaying state. If allow_rent_paying is false, accounts
+/// disallowing the RentPaying state. If disallow_rent_paying is true, accounts
 /// that would previously be designated RentPaying will instead be RentExempt.
 pub fn get_pre_exec_account_rent_state(
     account_lamports: u64,
     account_size: usize,
     min_balance: u64,
-    allow_rent_paying: bool,
+    disallow_rent_paying: bool,
 ) -> RentState {
     match get_account_rent_state(account_lamports, account_size, min_balance) {
-        RentState::RentPaying { .. } if !allow_rent_paying => RentState::RentExempt,
+        RentState::RentPaying { .. } if disallow_rent_paying => RentState::RentExempt,
         rent_state => rent_state,
     }
 }
@@ -159,7 +158,7 @@ pub fn check_static_account_rent_state_transition(
         data_size,
         rent_min_balance,
         // post SIMD-392 activation, RentPaying accounts are no longer possible
-        !relax_post_exec_min_balance_check,
+        relax_post_exec_min_balance_check,
     );
     let post_state = get_post_exec_account_rent_state(
         post_exec_balance,
