@@ -91,7 +91,7 @@ impl SerdeObsoleteAccounts {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "7Hb4XtqaUBY27yyz7V1kVXZ9aTnary8GDroB12JRvGjz")
+    frozen_abi(digest = "FbAP5pg2FLgSkMWiv3eMwEh433qMoNRbaJij9aLtG2NH")
 )]
 #[derive(Serialize, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccountsMap {
