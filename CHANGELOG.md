@@ -21,6 +21,8 @@ Release channels have their own copy of this changelog:
 ### Validator
 #### Breaking
 #### Changes
+* `--accounts-db-access-storages-method` (deprecated in v4.0.0) is now a no-op. The flag is still
+  accepted for backward compatibility, but account storages are always accessed via file I/O.
 
 ## 4.1.0
 ### RPC
