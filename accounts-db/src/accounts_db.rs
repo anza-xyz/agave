@@ -4024,6 +4024,18 @@ impl AccountsDb {
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
+        if let Some((cached_account, cached_slot, _)) = &cache_result {
+            if *cached_slot >= slot {
+                // The write cache holds a version at a slot at least as new as what the
+                // index returned, so it represents the freshest visible value and can be
+                // returned directly without going through the storage accessor.
+                self.load_account_stats
+                    .num_loaded_from_write_cache
+                    .fetch_add(1, Ordering::Relaxed);
+                return Some((cached_account.account.clone(), *cached_slot));
+            }
+        }
+
         let in_write_cache = storage_location.is_cached();
         if !in_write_cache {
             let result = self.read_only_accounts_cache.load(*pubkey, slot);
