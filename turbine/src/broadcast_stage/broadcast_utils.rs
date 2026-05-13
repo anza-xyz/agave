@@ -38,6 +38,13 @@ const fn get_target_batch_pad_bytes() -> u64 {
     get_data_shred_bytes_per_batch_typical() / 20
 }
 
+fn get_max_batch_byte_count(serialized_batch_byte_count: u64) -> u64 {
+    let next_full_batch_byte_count = serialized_batch_byte_count
+        .div_ceil(get_data_shred_bytes_per_batch_typical())
+        .saturating_mul(get_data_shred_bytes_per_batch_typical());
+    next_full_batch_byte_count.max(get_target_batch_bytes_default())
+}
+
 fn keep_coalescing_entries(
     last_tick_height: u64,
     max_tick_height: u64,
@@ -119,10 +126,7 @@ fn recv_slot_components_maybe_empty(
     // this would just be the default target batch size, but if the first entry
     // already exceeded that target, try to build towards the next batch boundary
     // to avoid excessive padding.
-    let next_full_batch_byte_count = serialized_batch_byte_count
-        .div_ceil(get_data_shred_bytes_per_batch_typical())
-        .saturating_mul(get_data_shred_bytes_per_batch_typical());
-    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
+    let mut max_batch_byte_count = get_max_batch_byte_count(serialized_batch_byte_count);
 
     // Coalesce entries until one of the following conditions are hit:
     // 1. We ticked through the entire slot.
@@ -150,6 +154,7 @@ fn recv_slot_components_maybe_empty(
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
             serialized_batch_byte_count = 8; // Vec len
+            max_batch_byte_count = get_max_batch_byte_count(serialized_batch_byte_count);
             last_tick_height = 0;
             bank = try_bank.clone();
             coalesce_start = Instant::now();
