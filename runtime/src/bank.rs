@@ -557,6 +557,7 @@ impl PartialEq for Bank {
             transaction_error_count: _,
             transaction_entries_count: _,
             transactions_per_entry_max: _,
+            entry_count: _,
             entry_bytes_consumed: _,
             tick_height,
             signature_count,
@@ -788,6 +789,9 @@ pub struct Bank {
 
     /// The number of committed transactions since genesis.
     transaction_count: AtomicU64,
+
+    /// The total number of entries in this slot, including ticks
+    entry_count: AtomicU64,
 
     /// The number of non-vote transactions committed since the most
     /// recent boot from snapshot or genesis. This value is only stored in
@@ -1103,6 +1107,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
+            entry_count: AtomicU64::default(),
             entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::default(),
             signature_count: AtomicU64::default(),
@@ -1363,6 +1368,7 @@ impl Bank {
             transaction_error_count: AtomicU64::new(0),
             transaction_entries_count: AtomicU64::new(0),
             transactions_per_entry_max: AtomicU64::new(0),
+            entry_count: AtomicU64::new(0),
             entry_bytes_consumed: EntryBytesBudget::new(parent.entry_bytes_budget().slot_limit()),
             // we will .clone_with_epoch() this soon after stake data update; so just .clone() for now
             stakes_cache,
@@ -1961,6 +1967,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
+            entry_count: AtomicU64::default(),
             entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::new(fields.tick_height),
             signature_count: AtomicU64::new(fields.signature_count),
@@ -3191,6 +3198,7 @@ impl Bank {
         // committed before this tick height is incremented (like the blockhash
         // sysvar above)
         self.tick_height.fetch_add(1, Relaxed);
+        self.entry_count.fetch_add(1, Relaxed);
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -3906,6 +3914,7 @@ impl Bank {
             self.transaction_entries_count.fetch_add(1, Relaxed);
             self.transactions_per_entry_max
                 .fetch_max(processed_transactions_count, Relaxed);
+            self.entry_count.fetch_add(1, Relaxed);
         }
 
         let ((), store_accounts_us) = measure_us!({
@@ -4700,6 +4709,10 @@ impl Bank {
 
     pub fn transactions_per_entry_max(&self) -> u64 {
         self.transactions_per_entry_max.load(Relaxed)
+    }
+
+    pub fn entry_count(&self) -> u64 {
+        self.entry_count.load(Relaxed)
     }
 
     pub fn entry_bytes_budget(&self) -> &EntryBytesBudget {

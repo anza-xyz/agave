@@ -3818,7 +3818,7 @@ impl ReplayStage {
                         Some(bank.clock().unix_timestamp),
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
-                        r_replay_progress.num_entries as u64,
+                        bank.entry_count(),
                         commission_rate_in_basis_points,
                     )
                 }
