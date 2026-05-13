@@ -6143,23 +6143,27 @@ impl Bank {
         self.collector_fee_details.read().unwrap().clone()
     }
 
+    /// Minimum balance a vote account must hold to survive SIMD-0357 filtering
+    /// under the current feature set. When `alpenglow` is active the threshold
+    /// also includes one epoch's worth of VAT burn.
+    fn minimum_vote_account_balance_for_vat(&self) -> u64 {
+        let vote_account_rent_exempt_minimum = self
+            .rent_collector
+            .rent
+            .minimum_balance(VoteStateV4::size_of());
+        if self.feature_set.snapshot().alpenglow {
+            vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+        } else {
+            vote_account_rent_exempt_minimum
+        }
+    }
+
     fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
         if self.feature_set.snapshot().validator_admission_ticket {
-            let vote_account_rent_exempt_minimum = self
-                .rent_collector
-                .rent
-                .minimum_balance(VoteStateV4::size_of());
-            let minimum_vote_account_balance = if self.feature_set.snapshot().alpenglow {
-                // When alpenglow is active the minimum required balance is
-                // VAT + rent-exempt minimum for vote account.
-                vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
-            } else {
-                // If alpenglow is not active, the minimum required balance is
-                // rent-exempt minimum.
-                vote_account_rent_exempt_minimum
-            };
-            vote_accounts
-                .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
+            vote_accounts.clone_and_filter_for_vat(
+                MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                self.minimum_vote_account_balance_for_vat(),
+            )
         } else {
             vote_accounts.clone()
         }
@@ -6170,24 +6174,11 @@ impl Bank {
     ///
     /// If the VAT feature is not active, return all stakes
     pub fn get_top_epoch_stakes(&self) -> Stakes<StakeAccount<Delegation>> {
-        let vote_account_rent_exempt_minimum = self
-            .rent_collector
-            .rent
-            .minimum_balance(VoteStateV4::size_of());
-        let feature_snapshot = self.feature_set.snapshot();
-        let minimum_vote_account_balance = if feature_snapshot.alpenglow {
-            // When alpenglow is active the minimum required balance is
-            // VAT + rent-exempt minimum for vote account.
-            vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
-        } else {
-            // If alpenglow is not active, the minimum required balance is rent-exempt-minimum
-            vote_account_rent_exempt_minimum
-        };
-
-        if feature_snapshot.validator_admission_ticket {
-            self.stakes_cache
-                .stakes()
-                .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
+        if self.feature_set.snapshot().validator_admission_ticket {
+            self.stakes_cache.stakes().clone_and_filter_for_vat(
+                MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                self.minimum_vote_account_balance_for_vat(),
+            )
         } else {
             self.stakes_cache.stakes().clone()
         }
