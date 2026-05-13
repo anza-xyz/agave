@@ -517,8 +517,11 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
 
 /// Calculate priority and cost for a transaction:
 ///
-/// Cost is calculated through the `CostModel`,
-/// and priority is calculated through a formula here that attempts to sell
+/// Cost is calculated through the `CostModel` and additionally adds a
+/// scheduler-local serialized-bytes term (`bytes / INSTRUCTION_DATA_BYTES_COST`)
+/// to deprioritize larger transactions. The byte-cost component does NOT
+/// contribute to block-limit accounting; it only affects scheduling.
+/// Priority is calculated through a formula here that attempts to sell
 /// blockspace to the highest bidder.
 ///
 /// The priority is calculated as:
