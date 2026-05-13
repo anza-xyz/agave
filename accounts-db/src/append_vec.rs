@@ -174,13 +174,11 @@ pub struct AppendVec {
 const PAGE_SIZE: usize = 4 * 1024;
 
 pub struct AppendVecStat {
-    pub open_as_file_io: AtomicU64,
     pub files_open: AtomicU64,
     pub files_dirty: AtomicU64,
 }
 
 pub static APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
-    open_as_file_io: AtomicU64::new(0),
     files_open: AtomicU64::new(0),
     files_dirty: AtomicU64::new(0),
 };
@@ -193,9 +191,6 @@ impl Drop for AppendVec {
             APPEND_VEC_STATS.files_dirty.fetch_sub(1, Ordering::Relaxed);
         }
 
-        APPEND_VEC_STATS
-            .open_as_file_io
-            .fetch_sub(1, Ordering::Relaxed);
         if self.remove_file_on_drop.load(Ordering::Acquire) {
             // If we're reopening in readonly mode, we don't delete the file. See
             // AppendVec::reopen_as_readonly.
@@ -243,9 +238,6 @@ impl AppendVec {
         data.rewind().unwrap();
         data.flush().unwrap();
 
-        APPEND_VEC_STATS
-            .open_as_file_io
-            .fetch_add(1, Ordering::Relaxed);
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
         AppendVec {
@@ -382,9 +374,6 @@ impl AppendVec {
         Self::sanitize_len_and_size(current_len, file_info.size as usize)?;
 
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
-        APPEND_VEC_STATS
-            .open_as_file_io
-            .fetch_add(1, Ordering::Relaxed);
 
         Ok(AppendVec {
             path: file_info.path,
