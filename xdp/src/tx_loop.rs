@@ -198,11 +198,11 @@ pub trait TxPacket {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: TxPacket, R: Fn(&IpAddr) -> Option<NextHop>>(
+    pub fn run<T: TxPacket, R: FnMut(&IpAddr) -> Option<NextHop>>(
         self,
         receiver: Receiver<T>,
         drop_sender: Sender<T>,
-        route_fn: R,
+        mut route_fn: R,
     ) {
         // How long we sleep waiting to receive packets from the channel.
         const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
@@ -318,13 +318,24 @@ impl<U: Umem> TxLoop<U> {
                     };
 
                     if let Some(gre) = &next_hop.gre {
+                        let Some(dest_mac) = gre.underlay_mac_addr else {
+                            log::warn!(
+                                "dropping packet: GRE peer {addr} must be routed through {} on \
+                                 if{} which has no known MAC address",
+                                gre.underlay_ip_addr,
+                                gre.underlay_if_index
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
                         frame.set_len(gre_packet_size(len));
                         let packet = umem.map_frame_mut(&frame);
                         let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
                         if let Err(err) = construct_gre_packet(
                             packet,
                             &src_mac,
-                            &gre.mac_addr,
+                            &dest_mac,
                             inner_src_ip,
                             &dst_ip,
                             src_port,
