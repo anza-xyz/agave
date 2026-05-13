@@ -77,7 +77,7 @@ impl TransactionAccountStateInfo {
 
                     // Criteria for rent-exempt relaxation as specified by SIMD-392
                     let relax_rent_exempt_criteria = relax_post_exec_min_balance_check
-                        && data_size <= pre_exec_state_info.data_size
+                        && pre_exec_state_info.data_size >= data_size
                         && *pre_state == RentState::RentExempt
                         && pre_exec_state_info.owner == owner;
 
@@ -260,7 +260,9 @@ mod test {
 
         let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full.saturating_sub(1);
+        let pre_balance = min_full - 1;
+        // account must be both initialized and have a sub-exempt balance
+        assert!(pre_balance > 0);
 
         let sanitized_message = sanitized_msg_for(program, account, other_account);
         let tx_accounts = vec![
@@ -334,7 +336,9 @@ mod test {
 
         let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full.saturating_sub(5); // less than full rent-exempt, but > 0
+        let pre_balance = min_full - 5;
+        // account must be both initialized and have a sub-exempt balance
+        assert!(pre_balance > 0);
 
         let sanitized_message = sanitized_msg_for(program, account, other_account);
         let tx_accounts = vec![
@@ -371,7 +375,9 @@ mod test {
 
         let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full.saturating_sub(5);
+        let pre_balance = min_full - 5;
+        // account must be both initialized and have a sub-exempt balance
+        assert!(pre_balance > 0);
 
         let sanitized_message = sanitized_msg_for(program, account, other_account);
         let tx_accounts = vec![
@@ -412,7 +418,9 @@ mod test {
 
         let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full.saturating_sub(5);
+        let pre_balance = min_full - 5;
+        // account must be both initialized and have a sub-exempt balance
+        assert!(pre_balance > 0);
 
         let sanitized_message = sanitized_msg_for(program, account, other_account);
         let mut tx_accounts = vec![
@@ -432,7 +440,8 @@ mod test {
         );
 
         // post: drop balance by 1 (below minimum balance)
-        let post_balance = pre_balance.saturating_sub(1);
+        let post_balance = pre_balance - 1;
+        assert!(pre_balance > 0);
         tx_accounts[0].1.set_lamports(post_balance);
 
         let context_post = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
@@ -461,16 +470,21 @@ mod test {
     }
 
     #[test]
-    fn test_post_exec_size_changed_requires_full_min() {
+    fn test_post_exec_size_changed_requires_current_rent_min() {
         let rent = Rent::default();
         let account = Pubkey::new_unique();
         let program = Pubkey::new_unique();
         let other_account = Pubkey::new_unique();
 
         let pre_len = 32;
-        let post_len = 256; // larger size => larger full min
+        // size increase prevents the post-exec rent-exempt relaxation from applying,
+        // so the account will be subject to the full rent-exempt minimum during balance
+        // checks.
+        let post_len = 256;
         let pre_min = rent.minimum_balance(pre_len);
-        let pre_balance = pre_min.saturating_sub(1);
+        let pre_balance = pre_min - 1;
+        // account must be both initialized and have a sub-exempt balance
+        assert!(pre_balance > 0);
 
         let sanitized_message = sanitized_msg_for(program, account, other_account);
 
@@ -595,7 +609,9 @@ mod test {
 
         let data_len = 64;
         let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full.saturating_sub(5);
+        let pre_balance = min_full - 5;
+        // account must be both initialized and have a sub-exempt balance
+        assert!(pre_balance > 0);
 
         let sanitized_message = sanitized_msg_for(program, account, other_account);
 
