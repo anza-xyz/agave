@@ -5,10 +5,7 @@
 //!
 //! Once alpenglow is active, this is the only thread that will touch the [`PohRecorder`].
 use {
-    crate::{
-        banking_trace::BankingTracer,
-        replay_stage::{Finalizer, ReplayStage},
-    },
+    crate::{banking_trace::BankingTracer, replay_stage::Finalizer},
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::reward_certificate::{
         BuildRewardCertsRequest, BuildRewardCertsRespSucc, BuildRewardCertsResponse,
@@ -31,8 +28,9 @@ use {
     solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
     solana_runtime::{
         bank::{Bank, NewBankOptions},
-        bank_forks::BankForks,
+        bank_forks::{BankForks, InsertBankError},
         block_component_processor::BlockComponentProcessor,
+        installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
         validated_reward_certificate::ValidatedRewardCert,
@@ -154,6 +152,10 @@ enum StartLeaderError {
         /* parent ready slot */ Slot,
         /* leader slot */ Slot,
     ),
+
+    /// BankForks changed after leader-bank creation started.
+    #[error("Leader bank {0} became stale before insertion: {1}")]
+    StaleLeaderBank(/* leader slot */ Slot, InsertBankError),
 }
 
 /// The block creation loop.
@@ -646,6 +648,7 @@ fn start_leader_wait_for_parent_replay(
 /// If checks pass we return `Ok(())` and:
 /// - Reset poh to the `parent_slot`
 /// - Create a new bank for `slot` with parent `parent_slot`
+/// - Revalidate the root, slot, and parent under the BankForks write lock
 /// - Insert into bank_forks and poh recorder
 fn maybe_start_leader(
     slot: Slot,
@@ -668,17 +671,27 @@ fn maybe_start_leader(
     }
 
     // Create and insert the bank
-    create_and_insert_leader_bank(slot, parent_bank, ctx);
+    create_and_insert_leader_bank(slot, parent_bank, ctx)
+        .map_err(|err| StartLeaderError::StaleLeaderBank(slot, err))?;
     Ok(())
 }
 
-/// Creates and inserts the leader bank `slot` of this window with
-/// parent `parent_bank`
-fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut LeaderContext) {
+/// Builds the leader bank for `slot`, then commits it into `BankForks`.
+///
+/// The `parent_bank` was selected from an earlier `BankForks` read. Because bank
+/// construction happens outside the `BankForks` write lock, the fork graph can
+/// change before the new leader bank is ready to be published. The final insert
+/// must therefore go through `commit_leader_bank()`, which revalidates the fork
+/// state at the commit point.
+fn create_and_insert_leader_bank(
+    slot: Slot,
+    parent_bank: Arc<Bank>,
+    ctx: &mut LeaderContext,
+) -> Result<(), InsertBankError> {
     let parent_slot = parent_bank.slot();
-    let root_slot = ctx.bank_forks.read().unwrap().root();
+    let root_slot_at_start = ctx.bank_forks.read().unwrap().root();
     trace!(
-        "{}: Creating and inserting leader slot {slot} parent {parent_slot} root {root_slot}",
+        "{}: Creating and inserting leader slot {slot} parent {parent_slot} root {root_slot_at_start}",
         ctx.my_pubkey
     );
 
@@ -716,13 +729,10 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         reset_poh_recorder(&parent_bank, ctx);
     }
 
-    let tpu_bank = ReplayStage::new_bank_from_parent_with_notify(
+    let tpu_bank = Bank::new_from_parent_with_options(
         parent_bank.clone(),
-        slot,
-        root_slot,
         leader,
-        ctx.rpc_subscriptions.as_deref(),
-        &ctx.slot_status_notifier,
+        slot,
         NewBankOptions::default(),
     );
     // make sure parent is frozen for finalized hashes via the above
@@ -733,22 +743,88 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         &parent_bank.hash(),
     );
 
-    // Insert the bank
-    let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
-    let bank_id = tpu_bank.bank_id();
-    ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
-
-    // If this is the first alpenglow block, emit the genesis certificate marker
-    maybe_include_genesis_certificate(parent_slot, ctx);
-
-    // Wakeup banking stage
-    ctx.record_receiver.restart(bank_id);
-    ctx.slot_metrics.reset(slot);
+    let bank_forks = ctx.bank_forks.clone();
+    let root_slot =
+        commit_and_publish_leader_bank(&bank_forks, tpu_bank, |tpu_bank, root_slot| {
+            publish_committed_leader_bank(slot, parent_slot, tpu_bank, root_slot, ctx);
+        })?;
 
     info!(
         "{}: new fork:{} parent:{} (leader) root:{}",
         ctx.my_pubkey, slot, parent_slot, root_slot
     );
+    Ok(())
+}
+
+/// Commits a freshly-created BCL leader bank into `BankForks`.
+///
+/// This is the last correctness gate before BCL publishes side effects for the
+/// leader bank. `BankForks::try_insert()` owns the structural validation while
+/// this helper owns the lock boundary and returns the committed root used for
+/// created-bank notifications.
+///
+/// On success, this function performs the insert and returns the scheduler
+/// wrapper created by `BankForks::insert()`. On failure, it leaves `BankForks`
+/// unchanged so the caller can treat the bank as stale work and avoid notifying
+/// or waking downstream producers for a fork that will be rejected.
+fn commit_leader_bank(
+    bank_forks: &RwLock<BankForks>,
+    tpu_bank: Bank,
+) -> Result<(BankWithScheduler, Slot), InsertBankError> {
+    let mut bank_forks = bank_forks.write().unwrap();
+    let tpu_bank = bank_forks.try_insert(tpu_bank)?;
+    let root_slot = bank_forks.root();
+    Ok((tpu_bank, root_slot))
+}
+
+/// Commits the leader bank, then runs the caller's post-commit publisher.
+///
+/// The publisher owns the side effects that expose the committed leader bank to
+/// PoH, downstream notifications, BankingStage, and per-slot metrics. It must
+/// only run after `BankForks::try_insert()` accepts the bank, so stale work
+/// cannot be published as the active leader bank.
+fn commit_and_publish_leader_bank<F>(
+    bank_forks: &RwLock<BankForks>,
+    tpu_bank: Bank,
+    publish: F,
+) -> Result<Slot, InsertBankError>
+where
+    F: FnOnce(BankWithScheduler, Slot),
+{
+    let (tpu_bank, root_slot) = commit_leader_bank(bank_forks, tpu_bank)?;
+    publish(tpu_bank, root_slot);
+    Ok(root_slot)
+}
+
+fn publish_committed_leader_bank(
+    slot: Slot,
+    parent_slot: Slot,
+    tpu_bank: BankWithScheduler,
+    root_slot: Slot,
+    ctx: &mut LeaderContext,
+) {
+    let bank_id = tpu_bank.bank_id();
+    ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
+    // If this is the first alpenglow block, emit the genesis certificate marker
+    maybe_include_genesis_certificate(parent_slot, ctx);
+
+    notify_created_leader_bank(slot, parent_slot, root_slot, ctx);
+
+    // Wakeup banking stage
+    ctx.record_receiver.restart(bank_id);
+    ctx.slot_metrics.reset(slot);
+}
+
+fn notify_created_leader_bank(slot: Slot, parent_slot: Slot, root_slot: Slot, ctx: &LeaderContext) {
+    if let Some(rpc_subscriptions) = ctx.rpc_subscriptions.as_deref() {
+        rpc_subscriptions.notify_slot(slot, parent_slot, root_slot);
+    }
+    if let Some(slot_status_notifier) = &ctx.slot_status_notifier {
+        slot_status_notifier
+            .read()
+            .unwrap()
+            .notify_created_bank(slot, parent_slot);
+    }
 }
 
 ///  If this the very first alpenglow block, include the genesis certificate
@@ -779,4 +855,189 @@ fn maybe_include_genesis_certificate(parent_slot: Slot, ctx: &LeaderContext) {
             &ctx.bank_forks.read().unwrap().migration_status(),
         )
         .expect("Recording genesis certificate should not fail");
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, solana_clock::BankId, solana_ledger::genesis_utils::create_genesis_config,
+        solana_runtime::bank::SlotLeader,
+    };
+
+    const TEST_GENESIS_LAMPORTS: u64 = 10_000;
+    const GENESIS_SLOT: Slot = 0;
+    const FIRST_LEADER_SLOT: Slot = 1;
+    const COMPETING_LEADER_SLOT: Slot = 2;
+    const CHILD_OF_STALE_PARENT_SLOT: Slot = 3;
+
+    // Test a tiny fork graph where slot 1 and slot 2 compete as children of
+    // genesis. Rooting slot 2 prunes slot 1, making a bank built on slot 1 stale.
+    struct TestForks {
+        bank_forks: Arc<RwLock<BankForks>>,
+    }
+
+    impl TestForks {
+        fn new() -> Self {
+            let genesis = create_genesis_config(TEST_GENESIS_LAMPORTS);
+            let genesis_bank = Bank::new_for_tests(&genesis.genesis_config);
+            Self {
+                bank_forks: BankForks::new_rw_arc(genesis_bank),
+            }
+        }
+
+        fn bank(&self, slot: Slot) -> Option<Arc<Bank>> {
+            self.bank_forks.read().unwrap().get(slot)
+        }
+
+        fn leader_bank(&self, parent_slot: Slot, slot: Slot) -> Bank {
+            Bank::new_from_parent(
+                self.bank(parent_slot)
+                    .expect("test parent slot should exist"),
+                SlotLeader::default(),
+                slot,
+            )
+        }
+
+        fn try_insert_leader_bank(&self, parent_slot: Slot, slot: Slot) -> BankWithScheduler {
+            let bank = self.leader_bank(parent_slot, slot);
+            self.bank_forks.write().unwrap().try_insert(bank).unwrap()
+        }
+
+        fn set_root(&self, slot: Slot) {
+            self.bank_forks.write().unwrap().set_root(slot, None, None);
+        }
+
+        fn working_slot(&self) -> Slot {
+            self.bank_forks.read().unwrap().working_bank().slot()
+        }
+
+        fn fork_state_for(&self, slot: Slot) -> (usize, Option<BankId>) {
+            let bank_forks = self.bank_forks.read().unwrap();
+            (
+                bank_forks.len(),
+                bank_forks.get(slot).map(|bank| bank.bank_id()),
+            )
+        }
+    }
+
+    fn assert_rejected_without_changing_forks(
+        forks: &TestForks,
+        bank: Bank,
+        expected_error: InsertBankError,
+    ) {
+        let slot = bank.slot();
+        let before = forks.fork_state_for(slot);
+        match forks.bank_forks.write().unwrap().try_insert(bank) {
+            Ok(bank) => panic!("unexpectedly inserted leader bank {}", bank.slot()),
+            Err(error) => assert_eq!(error, expected_error),
+        }
+        assert_eq!(forks.fork_state_for(slot), before);
+    }
+
+    #[test]
+    fn test_try_insert_leader_bank_accepts_current_parent() {
+        let forks = TestForks::new();
+
+        // A bank built on the current root is valid and becomes the working bank.
+        let inserted_bank = forks.try_insert_leader_bank(GENESIS_SLOT, FIRST_LEADER_SLOT);
+
+        assert_eq!(inserted_bank.slot(), FIRST_LEADER_SLOT);
+        assert_eq!(forks.working_slot(), FIRST_LEADER_SLOT);
+    }
+
+    #[test]
+    fn test_try_insert_leader_bank_rejects_duplicate_slot() {
+        let forks = TestForks::new();
+        forks.try_insert_leader_bank(GENESIS_SLOT, FIRST_LEADER_SLOT);
+
+        // Another leader bank for the same slot would replace existing fork
+        // state, so the commit gate rejects it.
+        assert_rejected_without_changing_forks(
+            &forks,
+            forks.leader_bank(GENESIS_SLOT, FIRST_LEADER_SLOT),
+            InsertBankError::AlreadyExists(FIRST_LEADER_SLOT),
+        );
+    }
+
+    #[test]
+    fn test_try_insert_leader_bank_rejects_already_rooted_slot() {
+        let forks = TestForks::new();
+        let bank_built_before_root_moved_past_its_slot =
+            forks.leader_bank(GENESIS_SLOT, FIRST_LEADER_SLOT);
+        forks.try_insert_leader_bank(GENESIS_SLOT, COMPETING_LEADER_SLOT);
+        forks.set_root(COMPETING_LEADER_SLOT);
+
+        // The bank was valid when built, but a different fork rooted past its
+        // slot before the final insert. Publishing it would move BankForks
+        // backward.
+        assert_rejected_without_changing_forks(
+            &forks,
+            bank_built_before_root_moved_past_its_slot,
+            InsertBankError::AlreadyRooted {
+                slot: FIRST_LEADER_SLOT,
+                root: COMPETING_LEADER_SLOT,
+            },
+        );
+    }
+
+    #[test]
+    fn test_try_insert_leader_bank_rejects_stale_parent() {
+        let forks = TestForks::new();
+        forks.try_insert_leader_bank(GENESIS_SLOT, FIRST_LEADER_SLOT);
+        forks.try_insert_leader_bank(GENESIS_SLOT, COMPETING_LEADER_SLOT);
+
+        let bank_built_on_pruned_parent =
+            forks.leader_bank(FIRST_LEADER_SLOT, CHILD_OF_STALE_PARENT_SLOT);
+        forks.set_root(COMPETING_LEADER_SLOT);
+
+        // The child bank was built from a parent snapshot that is no longer in
+        // BankForks. The final insert must reject the stale parent, not reattach
+        // the pruned fork.
+        assert_rejected_without_changing_forks(
+            &forks,
+            bank_built_on_pruned_parent,
+            InsertBankError::MissingParent {
+                slot: CHILD_OF_STALE_PARENT_SLOT,
+                parent_slot: FIRST_LEADER_SLOT,
+            },
+        );
+    }
+
+    #[test]
+    fn test_stale_leader_bank_commit_does_not_publish_side_effects() {
+        let forks = TestForks::new();
+        forks.try_insert_leader_bank(GENESIS_SLOT, FIRST_LEADER_SLOT);
+        forks.try_insert_leader_bank(GENESIS_SLOT, COMPETING_LEADER_SLOT);
+
+        // BCL can build a leader bank from a parent snapshot that is valid at
+        // construction time, then lose the parent before the commit point.
+        let bank_built_on_parent_before_it_was_pruned =
+            forks.leader_bank(FIRST_LEADER_SLOT, CHILD_OF_STALE_PARENT_SLOT);
+        forks.set_root(COMPETING_LEADER_SLOT);
+
+        let before = forks.fork_state_for(CHILD_OF_STALE_PARENT_SLOT);
+        let mut publish_side_effects_were_called = false;
+
+        assert_eq!(
+            commit_and_publish_leader_bank(
+                &forks.bank_forks,
+                bank_built_on_parent_before_it_was_pruned,
+                |_bank, _root_slot| {
+                    // This publisher is where BCL assigns PoH, emits created-bank
+                    // notifications, wakes BankingStage, and resets slot metrics.
+                    publish_side_effects_were_called = true;
+                },
+            ),
+            Err(InsertBankError::MissingParent {
+                slot: CHILD_OF_STALE_PARENT_SLOT,
+                parent_slot: FIRST_LEADER_SLOT,
+            })
+        );
+
+        assert_eq!(forks.fork_state_for(CHILD_OF_STALE_PARENT_SLOT), before);
+        assert!(
+            !publish_side_effects_were_called,
+            "stale leader bank must not publish PoH, notification, or record-receiver side effects"
+        );
+    }
 }

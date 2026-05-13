@@ -23,6 +23,7 @@ use {
         sync::{Arc, RwLock},
         time::Instant,
     },
+    thiserror::Error,
 };
 
 /// Convenience type since often root/working banks are fetched together.
@@ -85,6 +86,30 @@ pub struct BankForks {
     /// The status tracker for the Alpenglow migration. Initialized via either
     /// the genesis or snapshot bank and then updated via block replay.
     migration_status: Arc<MigrationStatus>,
+}
+
+/// Errors returned by checked BankForks insertion.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum InsertBankError {
+    /// The bank's slot is at or below the current root.
+    #[error("slot {slot} is already rooted at {root}")]
+    AlreadyRooted { slot: Slot, root: Slot },
+
+    /// BankForks already contains a bank for the bank's slot.
+    #[error("already contains bank for slot {0}")]
+    AlreadyExists(Slot),
+
+    /// The bank's parent is not present in BankForks.
+    #[error("parent slot {parent_slot} for slot {slot} is no longer in BankForks")]
+    MissingParent { slot: Slot, parent_slot: Slot },
+
+    /// The bank's parent is present, but not on the current rooted fork.
+    #[error("parent slot {parent_slot} for slot {slot} is not on rooted fork {root}")]
+    ParentNotOnRootedFork {
+        slot: Slot,
+        parent_slot: Slot,
+        root: Slot,
+    },
 }
 
 impl Index<u64> for BankForks {
@@ -257,6 +282,75 @@ impl BankForks {
 
     pub fn insert(&mut self, bank: Bank) -> BankWithScheduler {
         self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
+    }
+
+    /// Inserts a bank with the same scheduling mode as [`Self::insert`], only
+    /// if the current fork graph still accepts it.
+    ///
+    /// This checked insert is intended for banks built from a `BankForks`
+    /// snapshot outside the write lock. By the time the caller is ready to
+    /// publish the bank, another writer may have rooted past the slot, inserted
+    /// the same slot, or pruned the selected parent. In those cases, returning a
+    /// structured error lets the caller discard stale work without panicking or
+    /// mutating `BankForks`.
+    pub fn try_insert(&mut self, bank: Bank) -> Result<BankWithScheduler, InsertBankError> {
+        self.validate_insert(&bank)?;
+        Ok(self.insert(bank))
+    }
+
+    /// Validates that `bank` is still safe to insert into the current fork graph.
+    ///
+    /// This is structural validation, not full bank or consensus validation. It
+    /// is meant for banks that were built from a `BankForks` snapshot outside the
+    /// write lock. By the time the bank is ready to be committed, the root may
+    /// have moved, another bank for the same slot may have been inserted, or the
+    /// selected parent may no longer be usable.
+    ///
+    /// The accepted shape is:
+    /// - the bank's slot is above the current root,
+    /// - no bank for that slot already exists,
+    /// - the parent is still present, and
+    /// - the parent is the root or a descendant of the root.
+    ///
+    /// The last condition is stricter than parent presence. `BankForks` may
+    /// retain ancestors below the local root for commitment/RPC queries, but
+    /// those retained ancestors are not valid parents for new work.
+    ///
+    /// The caller must hold the `BankForks` write lock from this validation
+    /// through insertion. Otherwise another writer could change the fork graph
+    /// between the check and the insert.
+    fn validate_insert(&self, bank: &Bank) -> Result<(), InsertBankError> {
+        let slot = bank.slot();
+        let parent_slot = bank.parent_slot();
+        let root = self.root();
+        if slot <= root {
+            return Err(InsertBankError::AlreadyRooted { slot, root });
+        }
+        if self.banks.contains_key(&slot) {
+            return Err(InsertBankError::AlreadyExists(slot));
+        }
+        if !self.banks.contains_key(&parent_slot) {
+            return Err(InsertBankError::MissingParent { slot, parent_slot });
+        }
+        // Parent presence alone is not enough. Retained ancestors below root can
+        // remain in `BankForks` for commitment queries, but new work must build
+        // on the root or one of its descendants.
+        if !self.is_on_rooted_fork(parent_slot, root) {
+            return Err(InsertBankError::ParentNotOnRootedFork {
+                slot,
+                parent_slot,
+                root,
+            });
+        }
+        Ok(())
+    }
+
+    fn is_on_rooted_fork(&self, slot: Slot, root: Slot) -> bool {
+        slot == root
+            || self
+                .descendants
+                .get(&root)
+                .is_some_and(|descendants| descendants.contains(&slot))
     }
 
     pub fn insert_with_scheduling_mode(
@@ -1223,6 +1317,62 @@ mod tests {
                 (6, vec![])
             ])
         );
+    }
+
+    #[test]
+    fn test_try_insert_rejects_parent_retained_below_root() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        extend_bank_forks(bank_forks.clone(), &[(0, 1), (1, 2)]);
+        bank_forks.write().unwrap().set_root(
+            2,
+            None,    // snapshot_controller
+            Some(1), // highest confirmed root
+        );
+
+        // Slot 1 is intentionally retained below the local root for commitment
+        // queries, but it is no longer a valid parent for new work.
+        assert!(bank_forks.read().unwrap().get(1).is_some());
+        assert_eq!(bank_forks.read().unwrap().root(), 2);
+
+        let bank_built_on_retained_ancestor = Bank::new_from_parent(
+            bank_forks.read().unwrap().get(1).unwrap(),
+            SlotLeader::default(),
+            3,
+        );
+        let before = {
+            let bank_forks = bank_forks.read().unwrap();
+            (
+                bank_forks.len(),
+                bank_forks.get(3).map(|bank| bank.bank_id()),
+            )
+        };
+
+        match bank_forks
+            .write()
+            .unwrap()
+            .try_insert(bank_built_on_retained_ancestor)
+        {
+            Ok(bank) => panic!("unexpectedly inserted bank {}", bank.slot()),
+            Err(error) => assert_eq!(
+                error,
+                InsertBankError::ParentNotOnRootedFork {
+                    slot: 3,
+                    parent_slot: 1,
+                    root: 2,
+                }
+            ),
+        }
+        let after = {
+            let bank_forks = bank_forks.read().unwrap();
+            (
+                bank_forks.len(),
+                bank_forks.get(3).map(|bank| bank.bank_id()),
+            )
+        };
+        assert_eq!(after, before);
     }
 
     #[test]
