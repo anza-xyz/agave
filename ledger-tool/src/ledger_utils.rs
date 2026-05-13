@@ -48,6 +48,7 @@ use {
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_transaction::versioned::VersionedTransaction,
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         path::{Path, PathBuf},
         process::exit,
@@ -405,6 +406,26 @@ pub fn load_and_process_ledger(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
          {block_production_method}",
     );
+    let unified_scheduler_handler_threads =
+        value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
+    match block_verification_method {
+        BlockVerificationMethod::UnifiedScheduler => {
+            let no_replay_vote_sender = None;
+            let no_prioritization_fee_cache = None;
+
+            let scheduler_pool = DefaultSchedulerPool::new(
+                unified_scheduler_handler_threads,
+                process_options.runtime_config.log_messages_bytes_limit,
+                transaction_status_sender.clone(),
+                no_replay_vote_sender,
+                no_prioritization_fee_cache,
+            );
+            bank_forks
+                .write()
+                .unwrap()
+                .install_scheduler_pool(scheduler_pool);
+        }
+    }
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
 
