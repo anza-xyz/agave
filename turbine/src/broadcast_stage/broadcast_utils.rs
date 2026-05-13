@@ -69,6 +69,42 @@ fn keep_coalescing_entries(
     true
 }
 
+/// Classifies a received channel item relative to the current slot.
+///
+/// When a bank change is detected, the item's entry/marker content is returned
+/// alongside the new bank so the caller can process both the slot interruption
+/// and the item itself.
+enum ReceivedItem {
+    /// A block marker (header/footer/update-parent).
+    Marker(WorkingBankEntryOrMarker),
+    /// A regular entry with its tick height.
+    Entry {
+        bank_changed: Option<Arc<Bank>>,
+        entry: Entry,
+        tick_height: u64,
+    },
+}
+
+fn classify_received(current_slot: Slot, received: WorkingBankEntryOrMarker) -> ReceivedItem {
+    let (try_bank, (entry_or_marker, tick_height)) = received;
+    let bank_changed = if try_bank.slot() != current_slot {
+        warn!("Broadcast for slot: {} interrupted", current_slot);
+        Some(try_bank.clone())
+    } else {
+        None
+    };
+    match entry_or_marker {
+        EntryOrMarker::Marker(_) => {
+            ReceivedItem::Marker((try_bank, (entry_or_marker, tick_height)))
+        }
+        EntryOrMarker::Entry(entry) => ReceivedItem::Entry {
+            bank_changed,
+            entry,
+            tick_height,
+        },
+    }
+}
+
 pub(super) fn recv_slot_components(
     receiver: &Receiver<WorkingBankEntryOrMarker>,
     carryover_entry: &mut Option<WorkingBankEntryOrMarker>,
@@ -90,79 +126,84 @@ fn recv_slot_components_maybe_empty(
 ) -> Result<Option<ReceiveResults>> {
     let recv_start = Instant::now();
 
-    // If there is a carryover entry, use it. Else, see if there is a new entry.
+    // Phase 1: Get first item. If there is a carryover entry, use it.
+    // Else, see if there is a new entry.
     let (mut bank, (entry_or_marker, mut last_tick_height)) = match carryover_entry.take() {
         Some((bank, (entry_or_marker, tick_height))) => (bank, (entry_or_marker, tick_height)),
         None => receiver.recv_timeout(Duration::new(1, 0))?,
     };
     assert!(last_tick_height <= bank.max_tick_height());
 
+    // If the first thing is a block marker, return it immediately.
     let mut entries: Vec<Entry> = match entry_or_marker {
         EntryOrMarker::Marker(marker) => {
-            // If the first thing is a block marker, return it immediately
             process_stats.receive_elapsed = recv_start.elapsed().as_micros() as u64;
-
             return Ok(Some(ReceiveResults {
                 component: BlockComponent::BlockMarker(marker),
                 bank,
                 last_tick_height,
             }));
         }
-        EntryOrMarker::Entry(entry) => {
-            vec![entry]
-        }
+        EntryOrMarker::Entry(entry) => vec![entry],
     };
 
-    // Drain the channel of entries until we hit a marker or the slot ends
+    // Phase 2: Non-blocking drain — pull all immediately available entries
+    // until we hit a marker or the slot ends.
     let mut hit_marker = false;
     while last_tick_height != bank.max_tick_height() {
-        let Ok((try_bank, (next_entry_or_marker, tick_height))) = receiver.try_recv() else {
+        let Ok(received) = receiver.try_recv() else {
             break;
         };
-        // If the bank changed, that implies the previous slot was interrupted and we do not have to
-        // broadcast its entries.
-        if try_bank.slot() != bank.slot() {
-            warn!("Broadcast for slot: {} interrupted", bank.slot());
-            entries.clear();
-            last_tick_height = 0;
-            bank = try_bank.clone();
-        }
-        match next_entry_or_marker {
-            EntryOrMarker::Marker(ref _marker) => {
-                // If we hit a block marker, save it for next time and stop draining
-                *carryover_entry = Some((try_bank, (next_entry_or_marker, tick_height)));
+        match classify_received(bank.slot(), received) {
+            ReceivedItem::Marker(wbem) => {
+                // Bank may or may not have changed — either way, clear stale entries
+                // and stash the marker for the next call.
+                if wbem.0.slot() != bank.slot() {
+                    entries.clear();
+                    bank = wbem.0.clone();
+                }
+                *carryover_entry = Some(wbem);
                 hit_marker = true;
                 break;
             }
-            EntryOrMarker::Entry(entry) => {
-                // Only update after confirming the entry is included in this batch.
+            ReceivedItem::Entry {
+                bank_changed,
+                entry,
+                tick_height,
+            } => {
+                // If the bank changed, the previous slot was interrupted
+                // and we do not have to broadcast its entries.
+                if let Some(new_bank) = bank_changed {
+                    entries.clear();
+                    last_tick_height = 0;
+                    bank = new_bank;
+                }
                 last_tick_height = tick_height;
-
-                // Add the entry to our batch
                 entries.push(entry);
                 assert!(last_tick_height <= bank.max_tick_height());
             }
         }
     }
 
-    let mut serialized_batch_byte_count = serialized_size(&entries)?;
-
-    // Determine the maximum batch size we will allow for coalescing. Normally
-    // this would just be the default target batch size, but if we happened to
-    // pull out a large number of entries from the channel, we might have
-    // already exceeded the default target, and we should try to build towards the
-    // next batch boundary to avoid excessive padding.
-    let next_full_batch_byte_count = serialized_batch_byte_count
-        .div_ceil(get_data_shred_bytes_per_batch_typical())
-        .saturating_mul(get_data_shred_bytes_per_batch_typical());
-    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
-
-    // Coalesce entries until one of the following conditions are hit:
+    // Phase 3: Blocking coalesce — wait for more entries until one of the
+    // following conditions are hit:
     // 1. We ticked through the entire slot.
     // 2. We hit the timeout.
     // 3. We're over the max data target.
     // 4. We hit a block marker.
     // 5. We're "close enough" to tightly packing erasure batches.
+    //
+    // Determine the maximum batch size we will allow for coalescing. Normally
+    // this would just be the default target batch size, but if we happened to
+    // pull out a large number of entries from the channel, we might have
+    // already exceeded the default target, and we should try to build towards
+    // the next batch boundary to avoid excessive padding.
+    let mut serialized_batch_byte_count = serialized_size(&entries)?;
+    let next_full_batch_byte_count = serialized_batch_byte_count
+        .div_ceil(get_data_shred_bytes_per_batch_typical())
+        .saturating_mul(get_data_shred_bytes_per_batch_typical());
+    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
+
     let mut coalesce_start = Instant::now();
     while !hit_marker
         && keep_coalescing_entries(
@@ -173,53 +214,55 @@ fn recv_slot_components_maybe_empty(
             process_stats,
         )
     {
-        let Ok((try_bank, (entry_or_marker, tick_height))) =
+        let Ok(received) =
             receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
         else {
             process_stats.coalesce_exited_rcv_timeout += 1;
             break;
         };
-        // If the bank changed, that implies the previous slot was interrupted and we do not have to
-        // broadcast its entries.
-        if try_bank.slot() != bank.slot() {
-            warn!("Broadcast for slot: {} interrupted", bank.slot());
-            entries.clear();
-            serialized_batch_byte_count = 8; // Vec len
-            last_tick_height = 0;
-            bank = try_bank.clone();
-            coalesce_start = Instant::now();
-            debug_assert!(carryover_entry.is_none());
-        }
-
-        match entry_or_marker {
-            EntryOrMarker::Marker(ref _marker) => {
-                // If we hit a block marker, save it for next time and stop coalescing
-                *carryover_entry = Some((try_bank, (entry_or_marker, tick_height)));
+        match classify_received(bank.slot(), received) {
+            ReceivedItem::Marker(wbem) => {
+                if wbem.0.slot() != bank.slot() {
+                    entries.clear();
+                    serialized_batch_byte_count = 8;
+                    bank = wbem.0.clone();
+                }
+                *carryover_entry = Some(wbem);
                 break;
             }
-            EntryOrMarker::Entry(entry) => {
+            ReceivedItem::Entry {
+                bank_changed,
+                entry,
+                tick_height,
+            } => {
+                // If the bank changed, the previous slot was interrupted
+                // and we do not have to broadcast its entries.
+                if let Some(new_bank) = bank_changed {
+                    entries.clear();
+                    serialized_batch_byte_count = 8; // Vec len
+                    last_tick_height = 0;
+                    bank = new_bank;
+                    coalesce_start = Instant::now();
+                    debug_assert!(carryover_entry.is_none());
+                }
                 let entry_bytes = serialized_size(&entry)?;
-
                 if serialized_batch_byte_count + entry_bytes > max_batch_byte_count {
-                    // This entry will push us over the batch byte limit. Save it for
-                    // the next batch.
-                    *carryover_entry = Some((try_bank, (entry.into(), tick_height)));
+                    // This entry will push us over the batch byte limit.
+                    // Save it for the next batch.
+                    *carryover_entry = Some((bank.clone(), (entry.into(), tick_height)));
                     process_stats.coalesce_exited_hit_max += 1;
                     break;
                 }
-
-                // only update the last tick height after confirming we did
+                // Only update the last tick height after confirming we did
                 // not carry over the entry to the next batch.
                 last_tick_height = tick_height;
-
-                // Add the entry to the batch.
                 serialized_batch_byte_count += entry_bytes;
                 entries.push(entry);
+                assert!(last_tick_height <= bank.max_tick_height());
             }
         }
-
-        assert!(last_tick_height <= bank.max_tick_height());
     }
+
     process_stats.receive_elapsed = recv_start.elapsed().as_micros() as u64;
     process_stats.coalesce_elapsed = coalesce_start.elapsed().as_micros() as u64;
 
