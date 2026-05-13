@@ -682,19 +682,6 @@ pub fn execute(
             }
         });
 
-    // The `--accounts-db-access-storages-method` flag is now a no-op. Storages are
-    // always accessed via file I/O. The flag is preserved for backward compatibility,
-    // but the value is ignored with a warning.
-    if matches
-        .value_of("accounts_db_access_storages_method")
-        .is_some()
-    {
-        warn!(
-            "`--accounts-db-access-storages-method` is now a no-op; storages are always accessed \
-             via file I/O."
-        );
-    }
-
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
         .map(|filter| match filter {

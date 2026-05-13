@@ -139,6 +139,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Path to accounts shrink path which can hold a compacted account set."),
     );
     add_arg!(
+        // deprecated in v4.0.0; mmap mode was removed and the only remaining mode (file) is now
+        // the default and only behavior, so this flag is now a no-op.
+        Arg::with_name("accounts_db_access_storages_method")
+            .long("accounts-db-access-storages-method")
+            .value_name("METHOD")
+            .takes_value(true)
+            .possible_values(&["mmap", "file"])
+            .help("No-op; account storages are always accessed via file I/O"),
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
