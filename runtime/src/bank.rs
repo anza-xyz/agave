@@ -4298,18 +4298,6 @@ impl Bank {
         self.store_accounts((self.slot(), &[(pubkey, account)][..]))
     }
 
-    fn store_account_without_stakes_cache(&self, pubkey: &Pubkey, account: &AccountSharedData) {
-        self.store_accounts_without_stakes_cache((self.slot(), &[(pubkey, account)][..]))
-    }
-
-    fn store_accounts_without_stakes_cache<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        assert!(!self.freeze_started());
-        self.update_bank_hash_stats(&accounts);
-        self.rc
-            .accounts
-            .store_accounts_par(accounts, None, Some(&self.ancestors));
-    }
-
     pub fn store_accounts<'a>(&self, accounts: impl StorableAccounts<'a>) {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
@@ -4335,6 +4323,18 @@ impl Bank {
             .stats
             .stakes_cache_check_and_store_us
             .fetch_add(m.as_us(), Relaxed);
+    }
+
+    fn store_account_without_stakes_cache(&self, pubkey: &Pubkey, account: &AccountSharedData) {
+        self.store_accounts_without_stakes_cache((self.slot(), &[(pubkey, account)][..]))
+    }
+
+    fn store_accounts_without_stakes_cache<'a>(&self, accounts: impl StorableAccounts<'a>) {
+        assert!(!self.freeze_started());
+        self.update_bank_hash_stats(&accounts);
+        self.rc
+            .accounts
+            .store_accounts_par(accounts, None, &self.ancestors);
     }
 
     pub fn force_flush_accounts_cache(&self) {
