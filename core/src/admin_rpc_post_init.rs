@@ -86,7 +86,7 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
-    pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
+    pub banking_control_sender: Option<mpsc::Sender<BankingControlMsg>>,
     pub snapshot_controller: Arc<SnapshotController>,
     pub blockstore: Arc<Blockstore>,
     pub votor_event_sender: VotorEventSender,

@@ -214,6 +214,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Rendezvous with the cluster at this gossip entrypoint"),
     )
     .arg(
+        Arg::with_name("disable_block_production")
+            .long("disable-block-production")
+            .takes_value(false)
+            .help(
+                "Do not run block production ingress or leader pipeline: QUIC TPU and TPU-vote \
+                 servers, UDP fetch/sigverify pipeline, banking stage, forwarding stage, broadcast \
+                 stage, cluster vote listener, and dynamic banking-control RPC wiring are omitted. \
+                 An Alpenglow handoff shim still runs and ignores leader windows. Do not use on a \
+                 validator that can become cluster leader.",
+            ),
+    )
+    .arg(
         Arg::with_name("no_voting")
             .long("no-voting")
             .takes_value(false)
