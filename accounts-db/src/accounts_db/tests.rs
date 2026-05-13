@@ -4133,6 +4133,63 @@ fn test_load_account_and_cache_flush_race() {
     t_do_load.join().map_err(std::panic::resume_unwind).unwrap()
 }
 
+/// Regression test for stale reads during a batched flush.
+#[test]
+fn test_load_during_batched_flush_returns_latest() {
+    agave_logger::setup();
+
+    let db = Arc::new(AccountsDb::new_single_for_tests());
+    let pubkey = Arc::new(Pubkey::new_unique());
+    let exit = Arc::new(AtomicBool::new(false));
+
+    // Slot 0: store `pubkey` and flush so the accounts index references slot 0.
+    db.store_for_tests((
+        0,
+        &[(
+            pubkey.as_ref(),
+            &AccountSharedData::new(1, 0, AccountSharedData::default().owner()),
+        )][..],
+    ));
+    db.add_root(0);
+    db.flush_accounts_cache(true, None);
+
+    // Slot 1: write the newer version into the cache and root the slot,
+    // without flushing.
+    db.store_for_tests((
+        1,
+        &[(
+            pubkey.as_ref(),
+            &AccountSharedData::new(2, 0, AccountSharedData::default().owner()),
+        )][..],
+    ));
+    db.add_root(1);
+
+    // Fill slots 2..=100 with unrelated rooted pubkeys, so the batched flush
+    // has to process ~100 other slots before it reaches slot 1.
+    for slot in 2..=100 {
+        let other = Pubkey::new_unique();
+        let account = AccountSharedData::new(slot, 0, AccountSharedData::default().owner());
+        db.store_for_tests((slot, &[(&other, &account)][..]));
+        db.add_root(slot);
+    }
+
+    let t_flush_accounts_cache = {
+        let db = db.clone();
+        std::thread::Builder::new()
+            .name("account-cache-flush".to_string())
+            .spawn(move || db.flush_accounts_cache(true, None))
+            .unwrap()
+    };
+
+    // The reader must always see slot 1's value; we check lamports == 2 to
+    // catch stale reads of slot 0 (lamports == 1).
+    let t_do_load = start_load_thread(false, Ancestors::default(), db, exit.clone(), pubkey, |_| 2);
+
+    t_flush_accounts_cache.join().unwrap();
+    exit.store(true, Ordering::Relaxed);
+    t_do_load.join().map_err(std::panic::resume_unwind).unwrap();
+}
+
 fn do_test_load_account_and_shrink_race(with_retry: bool) {
     let mut db = AccountsDb::new_single_for_tests();
     let epoch_schedule = EpochSchedule::default();
