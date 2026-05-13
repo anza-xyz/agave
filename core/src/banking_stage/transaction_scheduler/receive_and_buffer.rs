@@ -21,7 +21,7 @@ use {
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::{Epoch, Slot},
-    solana_cost_model::cost_model::CostModel,
+    solana_cost_model::{block_cost_limits::INSTRUCTION_DATA_BYTES_COST, cost_model::CostModel},
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -538,7 +538,10 @@ pub(crate) fn calculate_priority_and_cost(
     transaction_configuration: &TransactionConfiguration,
     bank: &Bank,
 ) -> (u64, u64) {
-    let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
+    // This byte cost is scheduler-local and does not change the consensus cost model.
+    let cost = CostModel::calculate_cost(transaction, &bank.feature_set)
+        .sum()
+        .saturating_add(calculate_transaction_bytes_cost(transaction));
     let reward = bank.calculate_reward_for_transaction(transaction, transaction_configuration);
 
     // We need a multiplier here to avoid rounding down too aggressively.
@@ -553,6 +556,11 @@ pub(crate) fn calculate_priority_and_cost(
             .saturating_div(cost.saturating_add(1)),
         cost,
     )
+}
+
+#[inline]
+fn calculate_transaction_bytes_cost(transaction: &impl TransactionWithMeta) -> u64 {
+    transaction.serialized_size() as u64 / INSTRUCTION_DATA_BYTES_COST
 }
 
 /// Given the epoch, the minimum deactivation slot, and the current slot,
@@ -588,11 +596,13 @@ mod tests {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
         crossbeam_channel::{Receiver, unbounded},
+        solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
-            AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage, v0,
+            AccountMeta, AddressLookupTableAccount, Instruction, MessageHeader, VersionedMessage,
+            compiled_instruction::CompiledInstruction, v0, v1,
         },
         solana_packet::{Meta, PACKET_DATA_SIZE},
         solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch, to_packet_batches},
@@ -606,17 +616,78 @@ mod tests {
     };
 
     fn test_bank_forks() -> (Arc<RwLock<BankForks>>, Keypair) {
+        test_bank_forks_with_lamports_per_signature(0)
+    }
+
+    fn test_bank_forks_with_lamports_per_signature(
+        lamports_per_signature: u64,
+    ) -> (Arc<RwLock<BankForks>>, Keypair) {
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(u64::MAX);
+        genesis_config.fee_rate_governor = FeeRateGovernor::new(lamports_per_signature, 0);
 
         let (_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         (bank_forks, mint_keypair)
     }
 
     const TEST_CONTAINER_CAPACITY: usize = 100;
+
+    fn runtime_transaction_view_from_bytes<'a>(
+        bytes: &'a [u8],
+        bank: &Bank,
+    ) -> RuntimeTransaction<ResolvedTransactionView<&'a [u8]>> {
+        let Ok((transaction, _deactivation_slot)) = translate_to_runtime_view(
+            bytes,
+            bank,
+            bank.get_transaction_account_lock_limit(),
+            bank.feature_set.snapshot().limit_instruction_accounts,
+        ) else {
+            panic!("test transaction must translate to runtime view");
+        };
+        transaction
+    }
+
+    fn v1_transaction_with_extra_readonly_accounts(
+        payer: &Keypair,
+        recent_blockhash: Hash,
+        num_extra_readonly_accounts: usize,
+    ) -> VersionedTransaction {
+        let program_id = Pubkey::new_unique();
+        let extra_readonly_accounts =
+            std::iter::repeat_with(Pubkey::new_unique).take(num_extra_readonly_accounts);
+        let account_keys = std::iter::once(payer.pubkey())
+            .chain(std::iter::once(program_id))
+            .chain(extra_readonly_accounts)
+            .collect::<Vec<_>>();
+
+        VersionedTransaction::try_new(
+            VersionedMessage::V1(v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: (num_extra_readonly_accounts + 1) as u8,
+                },
+                config: v1::TransactionConfig {
+                    priority_fee: Some(1_000),
+                    compute_unit_limit: Some(10),
+                    loaded_accounts_data_size_limit: None,
+                    heap_size: None,
+                },
+                lifetime_specifier: recent_blockhash,
+                account_keys,
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![0],
+                    data: vec![1, 2, 3, 4],
+                }],
+            }),
+            &[payer],
+        )
+        .unwrap()
+    }
 
     fn setup_transaction_view_receive_and_buffer(
         receiver: Receiver<BankingPacketBatch>,
@@ -692,6 +763,80 @@ mod tests {
                 alt_invalidation_slot: current_slot + solana_slot_hashes::get_entries() as u64,
             }
         );
+    }
+
+    #[test]
+    fn test_calculate_priority_and_cost_includes_transaction_bytes_cost() {
+        let (bank_forks, mint_keypair) = test_bank_forks_with_lamports_per_signature(5000);
+        let bank = bank_forks.read().unwrap().root_bank();
+        let transaction =
+            v1_transaction_with_extra_readonly_accounts(&mint_keypair, bank.last_blockhash(), 4);
+        let bytes = wincode::serialize(&transaction).unwrap();
+        let transaction = runtime_transaction_view_from_bytes(&bytes, &bank);
+        let transaction_configuration = transaction
+            .transaction_configuration(&bank.feature_set)
+            .unwrap();
+
+        let cost_model_cost = CostModel::calculate_cost(&transaction, &bank.feature_set).sum();
+        let expected_transaction_bytes_cost =
+            transaction.serialized_size() as u64 / INSTRUCTION_DATA_BYTES_COST;
+        let (priority, cost) =
+            calculate_priority_and_cost(&transaction, &transaction_configuration, &bank);
+        let reward =
+            bank.calculate_reward_for_transaction(&transaction, &transaction_configuration);
+
+        assert_eq!(
+            expected_transaction_bytes_cost,
+            calculate_transaction_bytes_cost(&transaction)
+        );
+        assert_eq!(
+            cost,
+            cost_model_cost.saturating_add(expected_transaction_bytes_cost)
+        );
+        assert_eq!(
+            priority,
+            reward
+                .saturating_mul(1_000_000)
+                .saturating_div(cost.saturating_add(1))
+        );
+    }
+
+    #[test]
+    fn test_calculate_priority_and_cost_deprioritizes_larger_transactions() {
+        let (bank_forks, mint_keypair) = test_bank_forks_with_lamports_per_signature(5000);
+        let bank = bank_forks.read().unwrap().root_bank();
+        let small_transaction =
+            v1_transaction_with_extra_readonly_accounts(&mint_keypair, bank.last_blockhash(), 0);
+        let large_transaction =
+            v1_transaction_with_extra_readonly_accounts(&mint_keypair, bank.last_blockhash(), 62);
+        let small_bytes = wincode::serialize(&small_transaction).unwrap();
+        let large_bytes = wincode::serialize(&large_transaction).unwrap();
+        let small_transaction = runtime_transaction_view_from_bytes(&small_bytes, &bank);
+        let large_transaction = runtime_transaction_view_from_bytes(&large_bytes, &bank);
+        let small_configuration = small_transaction
+            .transaction_configuration(&bank.feature_set)
+            .unwrap();
+        let large_configuration = large_transaction
+            .transaction_configuration(&bank.feature_set)
+            .unwrap();
+
+        assert!(large_transaction.serialized_size() > small_transaction.serialized_size());
+        assert_eq!(
+            CostModel::calculate_cost(&small_transaction, &bank.feature_set).sum(),
+            CostModel::calculate_cost(&large_transaction, &bank.feature_set).sum()
+        );
+        assert_eq!(
+            bank.calculate_reward_for_transaction(&small_transaction, &small_configuration),
+            bank.calculate_reward_for_transaction(&large_transaction, &large_configuration)
+        );
+
+        let (small_priority, small_cost) =
+            calculate_priority_and_cost(&small_transaction, &small_configuration, &bank);
+        let (large_priority, large_cost) =
+            calculate_priority_and_cost(&large_transaction, &large_configuration, &bank);
+
+        assert!(large_cost > small_cost);
+        assert!(large_priority < small_priority);
     }
 
     #[test]
