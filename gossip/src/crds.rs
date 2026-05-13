@@ -786,11 +786,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            crds_data::{
-                AccountsHashes, LegacyVersion, LowestSlot, NodeInstance, SnapshotHashes, Version,
-                new_rand_timestamp,
-            },
-            legacy_contact_info::LegacyContactInfo,
+            crds_data::{Deprecated, LowestSlot, SnapshotHashes, new_rand_timestamp},
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::{Rng, rng},
@@ -1545,12 +1541,12 @@ mod tests {
         // caller reaches insert(). Verify each is rejected, since that is
         // the barrier all real code paths (pull/push handlers) rely on.
         let sanitize_blocked = vec![
-            CrdsData::LegacyContactInfo(LegacyContactInfo {}),
-            CrdsData::LegacySnapshotHashes(AccountsHashes {}),
-            CrdsData::AccountsHashes(AccountsHashes {}),
-            CrdsData::LegacyVersion(LegacyVersion {}),
-            CrdsData::Version(Version {}),
-            CrdsData::NodeInstance(NodeInstance {}),
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::NodeInstance(Deprecated {}),
             CrdsData::LowestSlot(
                 1,
                 LowestSlot::new(solana_pubkey::new_rand(), 0, timestamp()),

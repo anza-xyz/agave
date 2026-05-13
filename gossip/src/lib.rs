@@ -22,7 +22,6 @@ pub mod crds_gossip_pull;
 pub mod crds_gossip_push;
 pub mod crds_shards;
 pub mod crds_value;
-mod deprecated;
 pub mod duplicate_shred;
 pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
@@ -33,8 +32,6 @@ pub mod gossip_service;
 pub mod node;
 #[macro_use]
 mod tlv;
-#[macro_use]
-mod legacy_contact_info;
 pub mod ping_pong;
 mod protocol;
 mod push_active_set;
