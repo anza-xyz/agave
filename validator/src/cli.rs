@@ -139,8 +139,9 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Path to accounts shrink path which can hold a compacted account set."),
     );
     add_arg!(
-        // deprecated in v4.0.0; mmap mode was removed and the only remaining mode (file) is now
-        // the default and only behavior, so this flag is now a no-op.
+        // deprecated in v4.2.0; the `mmap` value was deprecated in v4.0.0, and now mmap mode has
+        // been removed entirely. The only remaining mode (`file`) is the default and only
+        // behavior, so this flag is now a no-op.
         Arg::with_name("accounts_db_access_storages_method")
             .long("accounts-db-access-storages-method")
             .value_name("METHOD")
