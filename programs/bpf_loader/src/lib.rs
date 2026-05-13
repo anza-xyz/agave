@@ -19,7 +19,7 @@ use {
         vm::execute,
     },
     solana_pubkey::Pubkey,
-    solana_sbpf::declare_builtin_function,
+    solana_sbpf::{declare_builtin_function, elf::get_sbpf_version, program::SBPFVersion},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
@@ -576,6 +576,18 @@ fn process_loader_upgradeable_instruction(
                     if !instruction_context.is_instruction_account_signer(1)? {
                         ic_logger_msg!(log_collector, "Upgrade authority did not sign");
                         return Err(InstructionError::MissingRequiredSignature);
+                    }
+                    if invoke_context
+                        .get_feature_set()
+                        .disable_sbpf_v0_v1_v2_deployment
+                        && new_authority.is_none()
+                        && let Some(program) = account
+                            .get_data()
+                            .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+                        && let Ok(sbpf_version) = get_sbpf_version(program)
+                        && sbpf_version < SBPFVersion::V3
+                    {
+                        return Err(InstructionError::InvalidAccountData);
                     }
                     account.set_state(&UpgradeableLoaderState::ProgramData {
                         slot,
@@ -2213,6 +2225,24 @@ mod tests {
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
         );
+
+        // Case: Upgrade to SBPFv0
+        let mut file =
+            File::open("test_elfs/out/sbpfv0_verifier_err.so").expect("file open failed");
+        let mut elf_new = Vec::new();
+        file.read_to_end(&mut elf_new).unwrap();
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InvalidAccountData),
+        );
     }
 
     #[test]
@@ -2704,6 +2734,25 @@ mod tests {
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
         );
+
+        // Case: Deploy SBPFv0
+        let mut file =
+            File::open("test_elfs/out/sbpfv0_verifier_err.so").expect("file open failed");
+        let mut elf = Vec::new();
+        file.read_to_end(&mut elf).unwrap();
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &payer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf,
+        );
+        process_instruction(
+            elf.len(),
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InvalidAccountData),
+        );
     }
 
     #[test]
@@ -2775,7 +2824,7 @@ mod tests {
             }
         );
 
-        // Case: Not upgradeable
+        // Case: Finalize
         let accounts = process_instruction(
             &loader_id,
             &instruction,
@@ -2793,6 +2842,28 @@ mod tests {
                 slot,
                 upgrade_authority_address: None,
             }
+        );
+
+        // Case: Finalize a SBPFv0 program
+        let mut file =
+            File::open("test_elfs/out/sbpfv0_verifier_err.so").expect("file open failed");
+        let mut elf = Vec::new();
+        file.read_to_end(&mut elf).unwrap();
+        programdata_account.resize(UpgradeableLoaderState::size_of_programdata(elf.len()), 0);
+        programdata_account
+            .data_as_mut_slice()
+            .get_mut(UpgradeableLoaderState::size_of_programdata_metadata()..)
+            .unwrap()
+            .copy_from_slice(&elf);
+        process_instruction(
+            &loader_id,
+            &instruction,
+            vec![
+                (programdata_address, programdata_account.clone()),
+                (upgrade_authority_address, upgrade_authority_account.clone()),
+            ],
+            vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+            Err(InstructionError::InvalidAccountData),
         );
 
         // Case: Authority did not sign
