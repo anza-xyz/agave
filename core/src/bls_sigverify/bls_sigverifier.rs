@@ -9,12 +9,12 @@ use {
     },
     crate::cluster_info_vote_listener::VerifiedVoterSlotsSender,
     agave_votor::{
+        completed_cert_types::CompletedCertTypes,
         consensus_metrics::ConsensusMetricsEventSender,
         consensus_rewards::{self},
-        generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
-        consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
+        consensus_message::{ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
     },
@@ -29,7 +29,6 @@ use {
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
     std::{
-        collections::HashSet,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -56,7 +55,7 @@ pub(crate) struct SigVerifierContext {
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
     pub(crate) num_threads: usize,
-    pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
+    pub(crate) completed_cert_types: Arc<CompletedCertTypes>,
 }
 
 pub(crate) struct SigVerifierChannels {
@@ -88,15 +87,13 @@ struct SigVerifier {
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
     stats: SigVerifierStats,
-    /// Set of recently verified certs to avoid duplicate work.
-    verified_certs: HashSet<CertificateType>,
-    /// Tracks when the cache was last pruned.
-    last_checked_root_slot: Slot,
     cluster_info: Arc<ClusterInfo>,
     leader_schedule: Arc<LeaderScheduleCache>,
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
-    generated_cert_types: Arc<GeneratedCertTypes>,
+    /// Cert types already known to the node, shared with the consensus pool. Used to skip
+    /// verifying certs we already have (whether generated locally or previously verified).
+    completed_cert_types: Arc<CompletedCertTypes>,
 }
 
 impl SigVerifier {
@@ -108,7 +105,7 @@ impl SigVerifier {
             cluster_info,
             leader_schedule,
             num_threads,
-            generated_cert_types,
+            completed_cert_types,
         } = context;
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -122,12 +119,10 @@ impl SigVerifier {
             channels,
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
-            verified_certs: HashSet::new(),
-            last_checked_root_slot: 0,
             cluster_info,
             leader_schedule,
             thread_pool,
-            generated_cert_types,
+            completed_cert_types,
         }
     }
 
@@ -157,7 +152,6 @@ impl SigVerifier {
 
     fn verify_and_send_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
-        self.maybe_prune_caches(root_bank.slot());
 
         let ((certs_to_verify, votes_to_verify), extract_msgs_us) =
             measure_us!(self.extract_and_filter_msgs(batches, &root_bank));
@@ -179,7 +173,7 @@ impl SigVerifier {
             },
             || {
                 verify_and_send_certificates(
-                    &mut self.verified_certs,
+                    &self.completed_cert_types,
                     certs_to_verify,
                     &root_bank,
                     &self.channels.channel_to_pool,
@@ -195,13 +189,6 @@ impl SigVerifier {
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
         Ok(())
-    }
-
-    fn maybe_prune_caches(&mut self, root_slot: Slot) {
-        if self.last_checked_root_slot < root_slot {
-            self.last_checked_root_slot = root_slot;
-            self.verified_certs.retain(|cert| cert.slot() > root_slot);
-        }
     }
 
     fn extract_and_filter_msgs(
@@ -245,13 +232,19 @@ impl SigVerifier {
                         self.stats.num_old_certs_received += 1;
                         continue;
                     }
-                    if self.verified_certs.contains(&cert.cert_type) {
-                        self.stats.num_verified_certs_received += 1;
-                        continue;
-                    }
-                    if self.generated_cert_types.has_cert(&cert.cert_type) {
-                        self.stats.num_generated_certs_received += 1;
-                        continue;
+                    match self
+                        .completed_cert_types
+                        .get_generated_status(&cert.cert_type)
+                    {
+                        Some(true) => {
+                            self.stats.num_generated_certs_received += 1;
+                            continue;
+                        }
+                        Some(false) => {
+                            self.stats.num_verified_certs_received += 1;
+                            continue;
+                        }
+                        None => {}
                     }
                     certs.push(CertPayload {
                         cert,
@@ -377,7 +370,7 @@ mod tests {
         _reward_receiver: Receiver<AddVoteMessage>,
         pool_receiver: Receiver<Vec<ConsensusMessage>>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
-        generated_cert_types: Arc<GeneratedCertTypes>,
+        completed_cert_types: Arc<CompletedCertTypes>,
     }
 
     impl TestContext {
@@ -421,7 +414,7 @@ mod tests {
             let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
             let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
 
-            let generated_cert_types = Arc::new(GeneratedCertTypes::default());
+            let completed_cert_types = Arc::new(CompletedCertTypes::default());
             let banlist = new_test_banlist();
             let verifier = SigVerifier::new(
                 SigVerifierContext {
@@ -431,7 +424,7 @@ mod tests {
                     cluster_info,
                     leader_schedule,
                     num_threads: 4,
-                    generated_cert_types: generated_cert_types.clone(),
+                    completed_cert_types: completed_cert_types.clone(),
                 },
                 SigVerifierChannels {
                     packet_receiver,
@@ -450,7 +443,7 @@ mod tests {
                 _reward_receiver: reward_receiver,
                 pool_receiver,
                 _metrics_receiver: metrics_receiver,
-                generated_cert_types,
+                completed_cert_types,
             }
         }
     }
@@ -1290,7 +1283,7 @@ mod tests {
                 cluster_info,
                 leader_schedule,
                 num_threads: 4,
-                generated_cert_types: Arc::new(GeneratedCertTypes::default()),
+                completed_cert_types: Arc::new(CompletedCertTypes::default()),
             },
             SigVerifierChannels {
                 packet_receiver,
@@ -1513,7 +1506,7 @@ mod tests {
         let mut ctx = TestContext::new();
         let slot = 1235;
         let cert_type = CertificateType::Skip(slot);
-        ctx.generated_cert_types.insert_cert(cert_type);
+        ctx.completed_cert_types.insert_generated(cert_type);
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,

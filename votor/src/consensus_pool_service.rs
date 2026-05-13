@@ -7,11 +7,11 @@ use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentType, update_commitment_cache},
         common::DELTA_STANDSTILL,
+        completed_cert_types::CompletedCertTypes,
         consensus_pool::{
             AddVoteError, ConsensusPool, parent_ready_tracker::BlockProductionParent,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
-        generated_cert_types::GeneratedCertTypes,
         voting_service::BLSOp,
     },
     agave_votor_messages::{
@@ -43,7 +43,7 @@ use {
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
     pub(crate) migration_status: Arc<MigrationStatus>,
-    pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
+    pub(crate) completed_cert_types: Arc<CompletedCertTypes>,
 
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) my_vote_pubkey: Pubkey,
@@ -195,13 +195,13 @@ impl ConsensusPoolService {
             ConsensusPool::new_from_root_bank(
                 ctx.cluster_info.clone(),
                 &root_bank,
-                ctx.generated_cert_types.clone(),
+                ctx.completed_cert_types.clone(),
             )
         } else {
             ConsensusPool::new_from_root_bank_pre_migration(
                 ctx.cluster_info.clone(),
                 &root_bank,
-                ctx.generated_cert_types.clone(),
+                ctx.completed_cert_types.clone(),
                 ctx.migration_status.clone(),
             )
         };
@@ -521,7 +521,7 @@ mod tests {
             let consensus_pool = ConsensusPool::new_from_root_bank(
                 cluster_info.clone(),
                 &root_bank,
-                Arc::new(GeneratedCertTypes::default()),
+                Arc::new(CompletedCertTypes::default()),
             );
             let my_vote_pubkey = Pubkey::new_unique();
 
@@ -740,7 +740,7 @@ mod tests {
         let mut pool_ctx = ConsensusPoolContext {
             exit: ctx.exit.clone(),
             migration_status: Arc::new(MigrationStatus::post_migration_status()),
-            generated_cert_types: Arc::new(GeneratedCertTypes::default()),
+            completed_cert_types: Arc::new(CompletedCertTypes::default()),
             cluster_info: ctx.cluster_info.clone(),
             my_vote_pubkey: ctx.my_vote_pubkey,
             blockstore: ctx.blockstore.clone(),

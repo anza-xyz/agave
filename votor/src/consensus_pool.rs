@@ -12,8 +12,8 @@ use {
             stats::ConsensusPoolStats,
             vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
         },
+        completed_cert_types::CompletedCertTypes,
         event::VotorEvent,
-        generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
         consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
@@ -108,9 +108,10 @@ pub(crate) struct ConsensusPool {
     vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
-    /// Set of certs that the pool has generated itself.  Used to inform the bls sigverifier so it
-    /// can drop certs that the pool does not need.
-    generated_cert_types: Arc<GeneratedCertTypes>,
+    /// Set of cert types for which a valid cert is already known to the node, shared with the BLS
+    /// sigverifier so it can drop redundant incoming certs. The boolean records whether the cert
+    /// was generated locally (`true`) or only verified after being received from the network.
+    completed_cert_types: Arc<CompletedCertTypes>,
     /// Tracks slots which have reached the parent ready condition:
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
@@ -132,10 +133,10 @@ impl ConsensusPool {
     pub(crate) fn new_from_root_bank_pre_migration(
         cluster_info: Arc<ClusterInfo>,
         bank: &Bank,
-        generated_cert_types: Arc<GeneratedCertTypes>,
+        completed_cert_types: Arc<CompletedCertTypes>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
-        let mut pool = Self::new_from_root_bank(cluster_info, bank, generated_cert_types);
+        let mut pool = Self::new_from_root_bank(cluster_info, bank, completed_cert_types);
         pool.migration_status = Some(migration_status);
         pool
     }
@@ -143,7 +144,7 @@ impl ConsensusPool {
     pub fn new_from_root_bank(
         cluster_info: Arc<ClusterInfo>,
         bank: &Bank,
-        generated_cert_types: Arc<GeneratedCertTypes>,
+        completed_cert_types: Arc<CompletedCertTypes>,
     ) -> Self {
         // To account for genesis and snapshots we allow default block id until
         // block id can be serialized as part of the snapshot
@@ -159,7 +160,7 @@ impl ConsensusPool {
             stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
             migration_status: None,
-            generated_cert_types,
+            completed_cert_types,
             last_pruned_slot: 0,
         }
     }
@@ -258,7 +259,7 @@ impl ConsensusPool {
             });
             let new_cert = Arc::new(cert_builder.build()?);
             self.insert_certificate(root_bank, cert_type, new_cert.clone(), events);
-            self.generated_cert_types.insert_cert(cert_type);
+            self.completed_cert_types.insert_generated(cert_type);
             self.stats.incr_generated_cert(&new_cert.cert_type);
             new_certificates_to_send.push(new_cert);
         }
@@ -620,7 +621,7 @@ impl ConsensusPool {
         }
         self.completed_certificates
             .retain(|c, _| c.slot() >= root_slot);
-        self.generated_cert_types.prune(root_slot);
+        self.completed_cert_types.prune(root_slot);
         self.vote_pools = self.vote_pools.split_off(&(root_slot, VoteType::Finalize));
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
         self.parent_ready_tracker.set_root(root_slot);
@@ -714,7 +715,7 @@ mod tests {
         validators: Vec<ValidatorVoteKeypairs>,
         bank_forks: Arc<RwLock<BankForks>>,
         pool: ConsensusPool,
-        generated_cert_types: Arc<GeneratedCertTypes>,
+        completed_cert_types: Arc<CompletedCertTypes>,
     }
 
     impl TestContext {
@@ -725,17 +726,17 @@ mod tests {
                 .collect::<Vec<_>>();
             let bank_forks = create_bank_forks(&validator_keypairs);
             let root_bank = bank_forks.read().unwrap().root_bank();
-            let generated_cert_types = Arc::new(GeneratedCertTypes::default());
+            let completed_cert_types = Arc::new(CompletedCertTypes::default());
             let cluster_info = get_cluster_info(Keypair::new());
             Self {
                 validators: validator_keypairs,
                 pool: ConsensusPool::new_from_root_bank(
                     cluster_info,
                     &root_bank,
-                    generated_cert_types.clone(),
+                    completed_cert_types.clone(),
                 ),
                 bank_forks,
-                generated_cert_types,
+                completed_cert_types,
             }
         }
 
@@ -2076,7 +2077,10 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert));
-        assert!(!ctx.generated_cert_types.has_cert(&cert_type));
+        assert_ne!(
+            ctx.completed_cert_types.get_generated_status(&cert_type),
+            Some(true)
+        );
     }
 
     #[test]
@@ -2086,6 +2090,9 @@ mod tests {
         let vote = Vote::new_skip_vote(slot);
         ctx.add_certificate(vote);
         let cert_type = CertificateType::Skip(slot);
-        assert!(ctx.generated_cert_types.has_cert(&cert_type));
+        assert_eq!(
+            ctx.completed_cert_types.get_generated_status(&cert_type),
+            Some(true)
+        );
     }
 }

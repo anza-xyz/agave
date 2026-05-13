@@ -46,6 +46,7 @@
 use {
     crate::{
         commitment::CommitmentAggregationData,
+        completed_cert_types::CompletedCertTypes,
         consensus_metrics::{
             ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
         },
@@ -53,7 +54,6 @@ use {
         consensus_rewards::ConsensusRewardsService,
         event::{LeaderWindowInfo, RepairEventSender, VotorEventReceiver, VotorEventSender},
         event_handler::{EventHandler, EventHandlerContext},
-        generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
@@ -98,7 +98,7 @@ pub struct VotorConfig {
     pub wait_to_vote_slot: Option<Slot>,
     pub vote_history: VoteHistory,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
-    pub generated_cert_types: Arc<GeneratedCertTypes>,
+    pub completed_cert_types: Arc<CompletedCertTypes>,
 
     // Shared state
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -182,7 +182,7 @@ impl Votor {
             reward_votes_receiver,
             build_reward_certs_receiver,
             reward_certs_sender,
-            generated_cert_types,
+            completed_cert_types,
             highest_finalized,
         } = config;
 
@@ -245,7 +245,7 @@ impl Votor {
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
             migration_status,
-            generated_cert_types,
+            completed_cert_types,
             cluster_info: cluster_info.clone(),
             my_vote_pubkey: vote_account,
             blockstore,

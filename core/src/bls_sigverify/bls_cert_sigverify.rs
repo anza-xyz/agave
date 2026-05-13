@@ -2,8 +2,9 @@ use {
     super::{bls_sigverifier::BAN_TIMEOUT, errors::SigVerifyCertError, stats::SigVerifyCertStats},
     crate::bls_sigverify::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
+    agave_votor::completed_cert_types::CompletedCertTypes,
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType, ConsensusMessage},
+        consensus_message::{Certificate, ConsensusMessage},
         fraction::Fraction,
     },
     crossbeam_channel::Sender,
@@ -16,7 +17,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
-    std::{collections::HashSet, num::NonZeroU64},
+    std::num::NonZeroU64,
     thiserror::Error,
 };
 
@@ -42,13 +43,13 @@ enum CertVerifyError {
 
 /// Verifies certificates and sends the verified certificates to the consensus pool.
 ///
-/// Additionally inserts valid [`CertificateType`]s into `verified_certs_set`.
+/// Additionally records valid certs in the shared [`CompletedCertTypes`].
 /// Any certificate that fails verification will have its sender banlisted.
 ///
-/// Function expects that the caller has already deduped the certs to verify i.e.
-/// none of the certs appear in the [`verified_certs_set`].
+/// Function expects that the caller has already deduped the certs to verify, i.e. none of them
+/// are already recorded in `completed_cert_types`.
 pub(super) fn verify_and_send_certificates(
-    verified_certs_set: &mut HashSet<CertificateType>,
+    completed_cert_types: &CompletedCertTypes,
     certs: Vec<CertPayload>,
     root_bank: &Bank,
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
@@ -56,7 +57,11 @@ pub(super) fn verify_and_send_certificates(
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
     for cert in certs.iter().map(|cert_payload| &cert_payload.cert) {
-        debug_assert!(!verified_certs_set.contains(&cert.cert_type));
+        debug_assert!(
+            completed_cert_types
+                .get_generated_status(&cert.cert_type)
+                .is_none()
+        );
     }
     let mut measure = Measure::start("verify_and_send_certificates");
     let mut stats = SigVerifyCertStats::default();
@@ -69,7 +74,7 @@ pub(super) fn verify_and_send_certificates(
     let messages = verify_certs(
         certs,
         root_bank,
-        verified_certs_set,
+        completed_cert_types,
         &mut stats,
         banlist,
         thread_pool,
@@ -84,15 +89,15 @@ pub(super) fn verify_and_send_certificates(
     Ok(stats)
 }
 
-/// Verifies certificates in `certs`, stores a local copy, and prepares them for forwarding.
+/// Verifies certificates in `certs`, records them in the shared [`CompletedCertTypes`], and
+/// prepares them for forwarding.
 ///
-/// The valid certs are inserted into the [`verified_certs_set`].
 /// Invalid cert senders are banlisted.
 /// Returns a Vec of [`ConsensusMessage`] constructed from the valid certs.
 fn verify_certs(
     certs: Vec<CertPayload>,
     root_bank: &Bank,
-    verified_certs_set: &mut HashSet<CertificateType>,
+    completed_cert_types: &CompletedCertTypes,
     stats: &mut SigVerifyCertStats,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
@@ -112,7 +117,7 @@ fn verify_certs(
         .filter_map(|(cert_payload, res)| match res {
             Ok(()) => {
                 let cert = cert_payload.cert;
-                if !verified_certs_set.insert(cert.cert_type) {
+                if completed_cert_types.insert_verified(cert.cert_type) {
                     stats.unnecessary_certs_verified += 1;
                 }
                 Some(ConsensusMessage::Certificate(cert))
