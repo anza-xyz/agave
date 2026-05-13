@@ -216,6 +216,7 @@ impl Bank {
             stake_rewards,
             capitalization,
             point_value,
+            num_filtered_vote_accounts,
             ..
         } = rewards_calculation;
 
@@ -249,15 +250,8 @@ impl Bank {
             total_reward_commissions, point_value.rewards, total_stake_rewards_lamports
         );
 
-        let (num_stake_accounts, num_vote_accounts) = {
-            let stakes = self.stakes_cache.stakes();
-            let filtered_vote_accounts =
-                self.maybe_filter_vote_accounts_for_vat(stakes.vote_accounts());
-            (
-                stakes.stake_delegations().len(),
-                filtered_vote_accounts.len(),
-            )
-        };
+        let num_stake_accounts = self.stakes_cache.stakes().stake_delegations().len();
+        let num_vote_accounts = *num_filtered_vote_accounts;
         self.capitalization
             .fetch_add(total_reward_commissions, Relaxed);
 
@@ -316,6 +310,11 @@ impl Bank {
         let capitalization = self.capitalization();
         let validator_rewards_lamports =
             self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
+        // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
+        // produced upstream of this call (or unfiltered when VAT is off),
+        // so its length is the right value for the `epoch_rewards` metric.
+        let num_filtered_vote_accounts =
+            cached_vote_accounts.distribution_epoch_vote_accounts.len();
 
         let CalculateValidatorRewardsResult {
             reward_commissions,
@@ -344,6 +343,7 @@ impl Bank {
             stake_rewards,
             capitalization,
             point_value,
+            num_filtered_vote_accounts,
         }
     }
 
