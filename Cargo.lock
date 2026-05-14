@@ -10441,7 +10441,6 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-reserved-account-keys",
  "base64 0.22.1",
- "bincode",
  "bzip2",
  "flate2",
  "futures 0.3.32",
@@ -10472,6 +10471,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-prost",
+ "wincode",
  "zstd",
 ]
 

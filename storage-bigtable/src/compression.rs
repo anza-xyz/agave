@@ -1,6 +1,9 @@
-use std::io::{self, BufReader, Read, Write};
+use {
+    std::io::{self, BufReader, Read, Write},
+    wincode::{SchemaRead, SchemaWrite},
+};
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite)]
 pub enum CompressionMethod {
     NoCompression,
     Bzip2,
@@ -23,14 +26,14 @@ fn decompress_reader<'a, R: Read + 'a>(
 }
 
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let method_size = bincode::serialized_size(&CompressionMethod::NoCompression).unwrap();
+    let method_size = wincode::serialized_size(&CompressionMethod::NoCompression).unwrap();
     if (data.len() as u64) < method_size {
         return Err(io::Error::other(format!(
             "data len too small: {}",
             data.len()
         )));
     }
-    let method = bincode::deserialize(&data[..method_size as usize])
+    let method = wincode::deserialize(&data[..method_size as usize])
         .map_err(|err| io::Error::other(format!("method deserialize failed: {err}")))?;
 
     let mut reader = decompress_reader(method, &data[method_size as usize..])?;
@@ -40,7 +43,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, io::Error> {
 }
 
 pub fn compress(method: CompressionMethod, data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let mut compressed_data = bincode::serialize(&method).unwrap();
+    let mut compressed_data = wincode::serialize(&method).unwrap();
     compressed_data.extend(match method {
         CompressionMethod::Bzip2 => {
             let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());

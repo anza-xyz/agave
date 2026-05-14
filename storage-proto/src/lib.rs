@@ -19,7 +19,7 @@ use {
 
 pub mod convert;
 
-mod wincode_compat {
+pub mod wincode_compat {
     use {
         std::{marker::PhantomData, mem::MaybeUninit},
         wincode::{
@@ -32,7 +32,7 @@ mod wincode_compat {
     /// Deserializes using `T` normally, but returns `T::Dst::default()` if the reader is
     /// exhausted (EOF), for backward compatibility when new fields are appended
     /// to a struct. Equivalent to `#[serde(deserialize_with = "default_on_eof")]`.
-    pub(super) struct DefaultOnEmptyRead<T>(PhantomData<T>);
+    pub struct DefaultOnEmptyRead<T>(PhantomData<T>);
 
     // Note: TYPE_META is left dynamic, since during reading both 0-size or non-0-size reads are
     // allowed, so trusted readers can't rely on encoding to be static sized.
