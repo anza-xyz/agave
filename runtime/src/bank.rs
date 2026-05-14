@@ -1698,7 +1698,14 @@ impl Bank {
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.
         let filtered_distribution_vote_accounts =
-            self.maybe_filter_vote_accounts_for_vat(&unfiltered_distribution_vote_accounts);
+            if self.feature_set.snapshot().validator_admission_ticket {
+                unfiltered_distribution_vote_accounts.clone_and_filter_for_vat(
+                    MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                    self.minimum_vote_account_balance_for_vat(),
+                )
+            } else {
+                unfiltered_distribution_vote_accounts.clone()
+            };
         let cached_vote_accounts =
             self.get_cached_vote_accounts(rewarded_epoch, &filtered_distribution_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
@@ -6182,17 +6189,6 @@ impl Bank {
             vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
         } else {
             vote_account_rent_exempt_minimum
-        }
-    }
-
-    fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
-        if self.feature_set.snapshot().validator_admission_ticket {
-            vote_accounts.clone_and_filter_for_vat(
-                MAX_ALPENGLOW_VOTE_ACCOUNTS,
-                self.minimum_vote_account_balance_for_vat(),
-            )
-        } else {
-            vote_accounts.clone()
         }
     }
 
