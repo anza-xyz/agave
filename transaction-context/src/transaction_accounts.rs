@@ -503,14 +503,12 @@ impl TransactionAccounts {
             .zip(self.private_account_fields.iter())
             .zip(accounts_regions.iter_mut())
         {
-            let payload_vm_slice = unsafe { &(*shared_fields.get()).payload };
             unsafe {
                 // We are sharing the payload of all accounts as readonly
-                let host_slice = std::ptr::slice_from_raw_parts(
-                    (*private_fields.get()).payload.as_ptr(),
-                    payload_vm_slice.len() as usize,
+                *region = MemoryRegion::new(
+                    &raw const (*(*private_fields.get()).payload)[..],
+                    (*shared_fields.get()).payload.ptr(),
                 );
-                *region = MemoryRegion::new(host_slice, payload_vm_slice.ptr());
             };
         }
 
@@ -635,8 +633,15 @@ impl DerefMut for AccountRefMut<'_> {
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
     use {
-        crate::transaction_accounts::TransactionAccounts, solana_account::AccountSharedData,
-        solana_instruction::error::InstructionError, solana_pubkey::Pubkey,
+        crate::{
+            transaction_accounts::TransactionAccounts,
+            vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE},
+        },
+        solana_account::AccountSharedData,
+        solana_instruction::error::InstructionError,
+        solana_pubkey::Pubkey,
+        solana_sbpf::memory_region::MemoryRegion,
+        std::sync::Arc,
     };
 
     #[test]
@@ -762,5 +767,76 @@ mod tests {
                 assert_eq!(acc.err(), Some(InstructionError::AccountBorrowFailed));
             }
         }
+    }
+
+    #[test]
+    fn test_account_payload_regions() {
+        let acc_a = (
+            Pubkey::new_unique(),
+            AccountSharedData::create_from_existing_shared_data(
+                20,
+                Arc::new(vec![1, 2, 3]),
+                Pubkey::new_unique(),
+                false,
+                0,
+            ),
+        );
+        let acc_b = (
+            Pubkey::new_unique(),
+            AccountSharedData::create_from_existing_shared_data(
+                30,
+                Arc::new(vec![1, 2, 3, 4]),
+                Pubkey::new_unique(),
+                false,
+                0,
+            ),
+        );
+        let tx_accounts = TransactionAccounts::new(vec![acc_a, acc_b]);
+
+        let mut regions = vec![MemoryRegion::default(); 4];
+
+        tx_accounts.account_payload_regions(&mut regions);
+
+        let r1 = regions.first().unwrap();
+        unsafe {
+            assert_eq!(
+                r1.vm_addr,
+                (*tx_accounts.shared_account_fields.first().unwrap().get())
+                    .payload
+                    .ptr()
+            );
+            let payload = &(*tx_accounts.private_account_fields.first().unwrap().get()).payload;
+            assert_eq!(r1.len, payload.len() as u64);
+            assert_eq!(r1.host_addr, payload.as_ptr() as u64);
+        }
+
+        let r2 = regions.get(1).unwrap();
+        unsafe {
+            assert_eq!(
+                r2.vm_addr,
+                (*tx_accounts.shared_account_fields.get(1).unwrap().get())
+                    .payload
+                    .ptr()
+            );
+            let payload = &(*tx_accounts.private_account_fields.get(1).unwrap().get()).payload;
+            assert_eq!(r2.len, payload.len() as u64);
+            assert_eq!(r2.host_addr, payload.as_ptr() as u64);
+        }
+
+        let r3 = regions.get(2).unwrap();
+        assert_eq!(
+            r3.vm_addr,
+            GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
+        );
+        assert_eq!(r3.len, 0);
+        assert_eq!(r3.host_addr, 0);
+
+        let r4 = regions.get(3).unwrap();
+        assert_eq!(
+            r4.vm_addr,
+            GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+        );
+        assert_eq!(r4.len, 0);
+        assert_eq!(r4.host_addr, 0);
     }
 }

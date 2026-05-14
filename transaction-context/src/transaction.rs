@@ -695,7 +695,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     fn fill_missing_instruction_regions(&self, regions: &mut [MemoryRegion], base_address: u64) {
         // Fill the address for the rest of the regions
-        let num_ixs = self.instruction_trace.len().saturating_sub(1);
+        let num_ixs = self.get_instruction_trace_length();
         for (idx, region) in regions.iter_mut().skip(num_ixs).enumerate() {
             region.vm_addr = base_address.saturating_add(
                 GUEST_REGION_SIZE.saturating_mul(idx.saturating_add(num_ixs) as u64),
@@ -1501,5 +1501,173 @@ mod tests {
             transaction_context.get_current_instruction_index().unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn test_instruction_payload_regions() {
+        let instruction_trace = vec![
+            InstructionFrame {
+                reserved: 0,
+                program_account_index_in_tx: 1,
+                nesting_level: 0,
+                index_of_caller_instruction: 3,
+                instruction_accounts: VmSlice::new(0, 0),
+                instruction_data: VmSlice::new(1, 5),
+            },
+            InstructionFrame {
+                reserved: 0,
+                program_account_index_in_tx: 2,
+                nesting_level: 0,
+                index_of_caller_instruction: 3,
+                instruction_accounts: VmSlice::new(0, 0),
+                instruction_data: VmSlice::new(2, 4),
+            },
+            InstructionFrame::default(), // Placeholder for the next instruction
+        ];
+        let p1 = vec![1u8, 2, 3, 4, 5];
+        let p2 = vec![1u8, 2, 3, 4];
+
+        let tx_ctx = TransactionContext {
+            accounts: Rc::new(TransactionAccounts::new(Vec::new())),
+            instruction_stack_capacity: 0,
+            instruction_trace_capacity: 0,
+            instruction_stack: vec![],
+            instruction_trace,
+            transaction_frame: TransactionFrame {
+                return_data_pubkey: Pubkey::default(),
+                return_data_scratchpad: VmSlice::new(0, 0),
+                cpi_scratchpad: VmSlice::new(0, 0),
+                current_executing_instruction: 0,
+                total_number_of_instructions_in_trace: 0,
+                number_of_cpis_in_trace: 0,
+                number_of_transaction_accounts: 0,
+            },
+            return_data_bytes: vec![],
+            next_top_level_instruction_index: 0,
+            rent: Rent::default(),
+            deduplication_maps: vec![],
+            instruction_accounts: vec![],
+            instruction_data: vec![Cow::Borrowed(&p1), Cow::Borrowed(&p2)],
+        };
+
+        let mut regions = vec![MemoryRegion::default(); 4];
+
+        tx_ctx.instruction_payload_regions(&mut regions);
+
+        let r1 = regions.first().unwrap();
+        assert_eq!(r1.vm_addr, 1);
+        assert_eq!(r1.len, 5);
+        assert_eq!(r1.host_addr, p1.as_ptr() as u64);
+
+        let r2 = regions.get(1).unwrap();
+        assert_eq!(r2.vm_addr, 2);
+        assert_eq!(r2.len, 4);
+        assert_eq!(r2.host_addr, p2.as_ptr() as u64);
+
+        let r3 = regions.get(2).unwrap();
+        assert_eq!(
+            r3.vm_addr,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(2u64))
+        );
+        assert_eq!(r3.len, 0);
+
+        let r4 = regions.get(3).unwrap();
+        assert_eq!(
+            r4.vm_addr,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(3u64))
+        );
+        assert_eq!(r4.len, 0);
+    }
+
+    #[test]
+    fn test_instruction_account_regions() {
+        let instruction_trace = vec![
+            InstructionFrame {
+                reserved: 0,
+                program_account_index_in_tx: 1,
+                nesting_level: 0,
+                index_of_caller_instruction: 3,
+                instruction_accounts: VmSlice::new(3, 4),
+                instruction_data: VmSlice::new(0, 0),
+            },
+            InstructionFrame {
+                reserved: 0,
+                program_account_index_in_tx: 2,
+                nesting_level: 0,
+                index_of_caller_instruction: 3,
+                instruction_accounts: VmSlice::new(1, 2),
+                instruction_data: VmSlice::new(0, 0),
+            },
+            InstructionFrame::default(), // Placeholder for the next instruction
+        ];
+        let acc_1 = vec![InstructionAccount::default(); 4];
+        let acc_2 = vec![InstructionAccount::default(); 2];
+
+        let tx_ctx = TransactionContext {
+            accounts: Rc::new(TransactionAccounts::new(Vec::new())),
+            instruction_stack_capacity: 0,
+            instruction_trace_capacity: 0,
+            instruction_stack: vec![],
+            instruction_trace,
+            transaction_frame: TransactionFrame {
+                return_data_pubkey: Pubkey::default(),
+                return_data_scratchpad: VmSlice::new(0, 0),
+                cpi_scratchpad: VmSlice::new(0, 0),
+                current_executing_instruction: 0,
+                total_number_of_instructions_in_trace: 0,
+                number_of_cpis_in_trace: 0,
+                number_of_transaction_accounts: 0,
+            },
+            return_data_bytes: vec![],
+            next_top_level_instruction_index: 0,
+            rent: Rent::default(),
+            deduplication_maps: vec![],
+            instruction_accounts: vec![acc_1.into_boxed_slice(), acc_2.into_boxed_slice()],
+            instruction_data: vec![],
+        };
+
+        let mut regions = vec![MemoryRegion::default(); 4];
+
+        tx_ctx.instruction_accounts_regions(&mut regions);
+
+        let r1 = regions.first().unwrap();
+        assert_eq!(r1.vm_addr, 3);
+        assert_eq!(
+            r1.len,
+            4usize.saturating_mul(size_of::<InstructionAccount>()) as u64
+        );
+        assert_eq!(
+            r1.host_addr,
+            tx_ctx.instruction_accounts.first().unwrap().as_ptr() as u64
+        );
+
+        let r2 = regions.get(1).unwrap();
+        assert_eq!(r2.vm_addr, 1);
+        assert_eq!(
+            r2.len,
+            2usize.saturating_mul(size_of::<InstructionAccount>()) as u64
+        );
+        assert_eq!(
+            r2.host_addr,
+            tx_ctx.instruction_accounts.get(1).unwrap().as_ptr() as u64
+        );
+
+        let r3 = regions.get(2).unwrap();
+        assert_eq!(
+            r3.vm_addr,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(2u64))
+        );
+        assert_eq!(r3.len, 0);
+
+        let r4 = regions.get(3).unwrap();
+        assert_eq!(
+            r4.vm_addr,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(3u64))
+        );
+        assert_eq!(r4.len, 0);
     }
 }
