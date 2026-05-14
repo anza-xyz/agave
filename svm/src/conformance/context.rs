@@ -1,13 +1,17 @@
 //! Instruction context and effects (input + output).
 
+#[cfg(feature = "conformance")]
 use {
     super::{
         account_state::{account_from_proto, account_to_proto},
         feature_set::feature_set_from_proto,
     },
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+    solana_instruction::AccountMeta,
+};
+use {
     solana_account::Account,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{Instruction, error::InstructionError},
     solana_pubkey::Pubkey,
     solana_svm_feature_set::SVMFeatureSet,
 };
@@ -19,6 +23,7 @@ pub struct InstrContext {
     pub instruction: Instruction,
 }
 
+#[cfg(feature = "conformance")]
 impl From<ProtoInstrContext> for InstrContext {
     fn from(value: ProtoInstrContext) -> Self {
         let program_id = Pubkey::try_from(value.program_id).expect("invalid program_id bytes");
@@ -88,6 +93,7 @@ impl InstrEffects {
     }
 }
 
+#[cfg(feature = "conformance")]
 impl From<InstrEffects> for ProtoInstrEffects {
     fn from(value: InstrEffects) -> Self {
         let InstrEffects {

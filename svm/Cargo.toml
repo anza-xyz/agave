@@ -20,11 +20,17 @@ name = "solana_svm"
 default = ["metrics"]
 agave-unstable-api = []
 conformance = [
-    "dep:agave-feature-set",
-    "dep:agave-precompiles",
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dev-context-only-utils",
+    "solana-instruction-error/serde",
+    "solana-pubkey/default",
+]
+dev-context-only-utils = [
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
+    "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",
     "dep:solana-compute-budget-program",
@@ -32,12 +38,9 @@ conformance = [
     "dep:solana-precompile-error",
     "dep:solana-syscalls",
     "dep:solana-system-program",
-    "solana-instruction-error/serde",
     "solana-program-runtime/dev-context-only-utils",
-    "solana-pubkey/default",
 ]
 dummy-for-ci-check = ["conformance", "metrics"]
-dev-context-only-utils = ["dep:qualifier_attr", "solana-program-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

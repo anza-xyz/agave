@@ -1,16 +1,10 @@
 //! Conformance harness.
 
 use {
-    super::{
-        context::{InstrContext, InstrEffects},
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        sysvar::fill_sysvar_cache_from_accounts,
-    },
+    super::context::{InstrContext, InstrEffects},
     crate::message_processor::process_message,
     agave_feature_set::FeatureSet,
     agave_precompiles::{get_precompile, is_precompile},
-    prost::Message,
-    protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
     solana_precompile_error::PrecompileError,
@@ -29,7 +23,17 @@ use {
     solana_syscalls::create_program_runtime_environment,
     solana_transaction_context::transaction::TransactionContext,
     solana_transaction_error::TransactionError,
-    std::{ffi::c_int, rc::Rc},
+    std::rc::Rc,
+};
+#[cfg(feature = "conformance")]
+use {
+    super::{
+        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+        sysvar::fill_sysvar_cache_from_accounts,
+    },
+    prost::Message,
+    protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+    std::ffi::c_int,
 };
 
 /// Default callback. Full precompile support.
@@ -192,6 +196,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     })
 }
 
+#[cfg(feature = "conformance")]
 pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
     let cu_avail = input.cu_avail;
     let instr_context = InstrContext::from(input);
@@ -244,6 +249,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 /// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
 /// to a writable buffer of at least `*out_psz` bytes. On return, `*out_psz`
 /// is updated to the number of bytes written.
+#[cfg(feature = "conformance")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     out_ptr: *mut u8,
@@ -273,7 +279,13 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
+        super::{
+            super::{
+                programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+                sysvar::fill_sysvar_cache_from_accounts,
+            },
+            *,
+        },
         solana_account::Account,
         solana_instruction::{AccountMeta, Instruction},
         solana_svm_feature_set::SVMFeatureSet,
