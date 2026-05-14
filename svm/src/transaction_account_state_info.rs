@@ -361,6 +361,10 @@ mod test {
         );
 
         assert_eq!(
+            pre[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
+        assert_eq!(
             post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentExempt)
         );
@@ -400,6 +404,13 @@ mod test {
         );
 
         assert_eq!(
+            pre[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentPaying {
+                data_size: data_len,
+                lamports: pre_balance
+            })
+        );
+        assert_eq!(
             post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: data_len,
@@ -410,7 +421,7 @@ mod test {
     }
 
     #[test]
-    fn test_post_exec_unchanged_size_violation() {
+    fn test_basic_rent_transition_violation() {
         let rent = Rent::default();
         let account = Pubkey::new_unique();
         let program = Pubkey::new_unique();
@@ -454,6 +465,10 @@ mod test {
         );
 
         assert_eq!(
+            pre[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
+        assert_eq!(
             post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: data_len,
@@ -467,6 +482,7 @@ mod test {
             res.err(),
             Some(TransactionError::InsufficientFundsForRent { account_index: 0 })
         );
+
     }
 
     #[test]
@@ -523,6 +539,10 @@ mod test {
         );
 
         assert_eq!(
+            pre[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
+        assert_eq!(
             post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
                 data_size: post_len,
@@ -534,6 +554,32 @@ mod test {
             res.err(),
             Some(TransactionError::InsufficientFundsForRent { account_index: 0 })
         );
+
+        // If the account is topped up to the new rent-exempt minimum after the
+        // resize, the same transition becomes valid.
+        let post_min = rent.minimum_balance(post_len);
+        let tx_accounts_post = vec![
+            (
+                account,
+                AccountSharedData::new(post_min, post_len, &Pubkey::default()),
+            ),
+            (program, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
+        ];
+        let context_post = TransactionContext::new(tx_accounts_post, rent.clone(), 20, 20, 2);
+        let post = TransactionAccountStateInfo::new_post_exec(
+            &context_post,
+            &sanitized_message,
+            &pre,
+            &rent,
+            true,
+        );
+
+        assert_eq!(
+            post[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
+        assert!(verify_changes(&pre, &post, &context_post).is_ok());
     }
 
     #[test]
@@ -590,6 +636,10 @@ mod test {
             true,
         );
 
+        assert_eq!(
+            pre[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
         assert_eq!(
             post[0].info.as_ref().unwrap().rent_state,
             RentState::RentExempt
@@ -649,6 +699,10 @@ mod test {
             true,
         );
 
+        assert_eq!(
+            pre[0].info.as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
         assert_eq!(
             post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentPaying {
