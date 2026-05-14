@@ -7,7 +7,6 @@ use {
         result::{Result, TransactionViewError},
     },
     core::fmt::{Debug, Formatter},
-    solana_message::compiled_instruction::CompiledInstruction,
 };
 
 /// A non-owning version of [`CompiledInstruction`] that references
@@ -21,16 +20,6 @@ pub struct InstructionView<'a> {
     pub accounts: &'a [u8],
     /// The program input data.
     pub data: &'a [u8],
-}
-
-impl<'a> From<&'a CompiledInstruction> for InstructionView<'a> {
-    fn from(ix: &'a CompiledInstruction) -> Self {
-        Self {
-            program_id_index: ix.program_id_index,
-            accounts: ix.accounts.as_slice(),
-            data: ix.data.as_slice(),
-        }
-    }
 }
 
 /// Contains metadata about the instructions in a transaction packet.

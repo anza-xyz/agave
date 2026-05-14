@@ -8,7 +8,6 @@ use {
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
-    solana_message::v0,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -24,16 +23,6 @@ pub struct MessageAddressTableLookupView<'a> {
     pub writable_indexes: &'a [u8],
     /// List of indexes used to load readonly account addresses.
     pub readonly_indexes: &'a [u8],
-}
-
-impl<'a> From<&'a v0::MessageAddressTableLookup> for MessageAddressTableLookupView<'a> {
-    fn from(address_table_lookup: &'a v0::MessageAddressTableLookup) -> Self {
-        Self {
-            account_key: &address_table_lookup.account_key,
-            writable_indexes: address_table_lookup.writable_indexes.as_slice(),
-            readonly_indexes: address_table_lookup.readonly_indexes.as_slice(),
-        }
-    }
 }
 
 // Each ATL has at least a Pubkey, one byte for the number of write indexes,
