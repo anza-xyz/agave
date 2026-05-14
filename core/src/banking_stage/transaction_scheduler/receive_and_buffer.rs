@@ -35,7 +35,9 @@ use {
         transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{
+        message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
+    },
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
     std::{collections::HashSet, sync::Arc, time::Instant},
@@ -508,7 +510,10 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
     match view.version() {
         TransactionVersion::Legacy | TransactionVersion::V1 => Ok((None, u64::MAX)),
         TransactionVersion::V0 => bank
-            .load_addresses_from_ref(view.address_table_lookup_iter())
+            .load_addresses_from_ref(
+                view.address_table_lookup_iter()
+                    .map(SVMMessageAddressTableLookup::from),
+            )
             .map(|(loaded_addresses, deactivation_slot)| {
                 (Some(loaded_addresses), deactivation_slot)
             })

@@ -23,6 +23,7 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
+    solana_svm_transaction::instruction::SVMInstruction,
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
         ConnectionWorkersScheduler,
@@ -613,7 +614,9 @@ fn calculate_priority(
 
     let cost = CostModel::estimate_cost(
         transaction,
-        transaction.program_instructions_iter(),
+        transaction
+            .program_instructions_iter()
+            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
         transaction.num_requested_write_locks(),
         &bank.feature_set,
     );

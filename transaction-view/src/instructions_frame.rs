@@ -7,8 +7,41 @@ use {
         result::{Result, TransactionViewError},
     },
     core::fmt::{Debug, Formatter},
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_message::compiled_instruction::CompiledInstruction,
 };
+
+/// A non-owning version of [`CompiledInstruction`] that references
+/// slices of account indexes and data.
+// `program_id_index` is still owned, as it is a simple u8.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct InstructionView<'a> {
+    /// Index into the transaction keys array indicating the program account that executes this instruction.
+    pub program_id_index: u8,
+    /// Ordered indices into the transaction keys array indicating which accounts to pass to the program.
+    pub accounts: &'a [u8],
+    /// The program input data.
+    pub data: &'a [u8],
+}
+
+impl<'a> From<&'a CompiledInstruction> for InstructionView<'a> {
+    fn from(ix: &'a CompiledInstruction) -> Self {
+        Self {
+            program_id_index: ix.program_id_index,
+            accounts: ix.accounts.as_slice(),
+            data: ix.data.as_slice(),
+        }
+    }
+}
+
+impl<'a> From<InstructionView<'a>> for solana_svm_transaction::instruction::SVMInstruction<'a> {
+    fn from(ix: InstructionView<'a>) -> Self {
+        Self {
+            program_id_index: ix.program_id_index,
+            accounts: ix.accounts,
+            data: ix.data,
+        }
+    }
+}
 
 /// Contains metadata about the instructions in a transaction packet.
 #[derive(Debug)]
@@ -227,7 +260,7 @@ pub enum InstructionsIterator<'a> {
 }
 
 impl<'a> Iterator for InstructionsIterator<'a> {
-    type Item = SVMInstruction<'a>;
+    type Item = InstructionView<'a>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -291,7 +324,7 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     }
 }
 
-/// Builds SNVInstruction from legacy/v0 pre-validated frame metadata.
+/// Builds InstructionView from legacy/v0 pre-validated frame metadata.
 ///
 /// # Safety
 /// The caller must ensure that:
@@ -314,7 +347,7 @@ unsafe fn for_legacy_and_v0<'a>(
     num_accounts_len: u8,
     data_len: u16,
     data_len_len: u8,
-) -> SVMInstruction<'a> {
+) -> InstructionView<'a> {
     // Each instruction has 3 pieces:
     // 1. Program ID index (u8)
     // 2. Accounts indexes ([u8])
@@ -346,14 +379,14 @@ unsafe fn for_legacy_and_v0<'a>(
     // - Offset and length checks have been done in the initial parsing.
     let data = unsafe { unchecked_read_slice_data::<u8>(bytes, offset, data_len) };
 
-    SVMInstruction {
+    InstructionView {
         program_id_index,
         accounts,
         data,
     }
 }
 
-/// Builds SMVInstruction from v1 pre-validated frame metadata.
+/// Builds InstructionView from v1 pre-validated frame metadata.
 ///
 /// # Safety
 /// The caller must ensure that:
@@ -381,7 +414,7 @@ unsafe fn for_v1<'a>(
     program_id_index: u8,
     num_accounts: u16,
     data_len: u16,
-) -> SVMInstruction<'a> {
+) -> InstructionView<'a> {
     // SAFETY:
     // - The offset is checked to be valid in the byte slice.
     // - The alignment of u8 is 1.
@@ -397,7 +430,7 @@ unsafe fn for_v1<'a>(
     // - Offset and length checks have been done in the initial parsing.
     let data = unsafe { unchecked_read_slice_data::<u8>(bytes, payloads_offset, data_len) };
 
-    SVMInstruction {
+    InstructionView {
         program_id_index,
         accounts,
         data,
@@ -567,7 +600,7 @@ mod tests {
         let mut iter = instructions_frame.iter(&serialized);
         assert_eq!(
             iter.next(),
-            Some(SVMInstruction {
+            Some(InstructionView {
                 program_id_index: 0,
                 accounts: &[1, 2, 3],
                 data: &[4, 5, 6, 7, 8, 9, 10]
@@ -575,7 +608,7 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(SVMInstruction {
+            Some(InstructionView {
                 program_id_index: 10,
                 accounts: &[11, 12],
                 data: &[13, 14, 15, 16, 17, 18, 19, 20]

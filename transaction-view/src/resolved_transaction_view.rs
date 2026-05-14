@@ -179,18 +179,15 @@ impl<D: TransactionData> SVMStaticMessage for ResolvedTransactionView<D> {
     }
 
     fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
-        self.view.instructions_iter()
+        self.view.instructions_iter().map(SVMInstruction::from)
     }
 
     fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<
-        Item = (
-            &solana_pubkey::Pubkey,
-            solana_svm_transaction::instruction::SVMInstruction<'_>,
-        ),
-    > + Clone {
-        self.view.program_instructions_iter()
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        self.view
+            .program_instructions_iter()
+            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix)))
     }
 
     fn static_account_keys(&self) -> &[Pubkey] {
@@ -208,7 +205,9 @@ impl<D: TransactionData> SVMStaticMessage for ResolvedTransactionView<D> {
     fn message_address_table_lookups(
         &self,
     ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        self.view.address_table_lookup_iter()
+        self.view
+            .address_table_lookup_iter()
+            .map(SVMMessageAddressTableLookup::from)
     }
 }
 

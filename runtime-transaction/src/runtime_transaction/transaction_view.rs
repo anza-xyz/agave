@@ -21,7 +21,7 @@ use {
     },
     solana_program_entrypoint::HEAP_LENGTH,
     solana_pubkey::Pubkey,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
         simple_vote_transaction_checker::is_simple_vote_transaction_impl,
@@ -83,7 +83,11 @@ where
     let InstructionMeta {
         precompile_signature_details,
         instruction_data_len,
-    } = InstructionMeta::try_new(transaction.program_instructions_iter())?;
+    } = InstructionMeta::try_new(
+        transaction
+            .program_instructions_iter()
+            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+    )?;
 
     let signature_details = TransactionSignatureDetails::new(
         u64::from(transaction.num_required_signatures()),
@@ -91,25 +95,28 @@ where
         precompile_signature_details.num_ed25519_instruction_signatures,
         precompile_signature_details.num_secp256r1_instruction_signatures,
     );
-    let versioned_transaction_config =
-        if let Some(transaction_config_view) = transaction.transaction_config() {
-            // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
-            // SanitizedTransactionView.
-            VersionedTransactionConfiguration::V1(TransactionConfiguration {
-                priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
-                compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
-                loaded_accounts_data_size_limit: transaction_config_view
-                    .loaded_accounts_data_size_limit()
-                    .unwrap_or(0),
-                updated_heap_bytes: transaction_config_view
-                    .requested_heap_size()
-                    .unwrap_or(HEAP_LENGTH as u32),
-            })
-        } else {
-            VersionedTransactionConfiguration::LegacyAndV0(
-                ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?,
-            )
-        };
+    let versioned_transaction_config = if let Some(transaction_config_view) =
+        transaction.transaction_config()
+    {
+        // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
+        // SanitizedTransactionView.
+        VersionedTransactionConfiguration::V1(TransactionConfiguration {
+            priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
+            compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
+            loaded_accounts_data_size_limit: transaction_config_view
+                .loaded_accounts_data_size_limit()
+                .unwrap_or(0),
+            updated_heap_bytes: transaction_config_view
+                .requested_heap_size()
+                .unwrap_or(HEAP_LENGTH as u32),
+        })
+    } else {
+        VersionedTransactionConfiguration::LegacyAndV0(ComputeBudgetInstructionDetails::try_from(
+            transaction
+                .program_instructions_iter()
+                .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+        )?)
+    };
 
     Ok(CachedTransactionMeta {
         message_hash,

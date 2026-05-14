@@ -1,9 +1,13 @@
 use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
-        instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
-        transaction_config_frame::TransactionConfigView, transaction_data::TransactionData,
-        transaction_frame::TransactionFrame, transaction_version::TransactionVersion,
+        instructions_frame::{InstructionView, InstructionsIterator},
+        result::Result,
+        sanitize::sanitize,
+        transaction_config_frame::TransactionConfigView,
+        transaction_data::TransactionData,
+        transaction_frame::TransactionFrame,
+        transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
@@ -202,7 +206,7 @@ impl<D: TransactionData> TransactionView<true, D> {
     /// Return an iterator over the instructions paired with their program ids.
     pub fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+    ) -> impl Iterator<Item = (&Pubkey, InstructionView<'_>)> + Clone {
         self.instructions_iter().map(|ix| {
             let program_id_index = usize::from(ix.program_id_index);
             let program_id = &self.static_account_keys()[program_id_index];
@@ -290,13 +294,14 @@ impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
     }
 
     fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
-        self.instructions_iter()
+        TransactionView::instructions_iter(self).map(SVMInstruction::from)
     }
 
     fn program_instructions_iter(
         &self,
     ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        self.program_instructions_iter()
+        TransactionView::program_instructions_iter(self)
+            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix)))
     }
 
     fn static_account_keys(&self) -> &[Pubkey] {
@@ -315,6 +320,7 @@ impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
         &self,
     ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
         self.address_table_lookup_iter()
+            .map(SVMMessageAddressTableLookup::from)
     }
 }
 

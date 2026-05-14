@@ -8,11 +8,45 @@ use {
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
+    solana_message::v0,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
 };
+
+/// A non-owning version of [`v0::MessageAddressTableLookup`] that references
+/// slices of writable and readonly lookup indexes.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct MessageAddressTableLookupView<'a> {
+    /// Address lookup table account key.
+    pub account_key: &'a Pubkey,
+    /// List of indexes used to load writable account addresses.
+    pub writable_indexes: &'a [u8],
+    /// List of indexes used to load readonly account addresses.
+    pub readonly_indexes: &'a [u8],
+}
+
+impl<'a> From<&'a v0::MessageAddressTableLookup> for MessageAddressTableLookupView<'a> {
+    fn from(address_table_lookup: &'a v0::MessageAddressTableLookup) -> Self {
+        Self {
+            account_key: &address_table_lookup.account_key,
+            writable_indexes: address_table_lookup.writable_indexes.as_slice(),
+            readonly_indexes: address_table_lookup.readonly_indexes.as_slice(),
+        }
+    }
+}
+
+impl<'a> From<MessageAddressTableLookupView<'a>>
+    for solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup<'a>
+{
+    fn from(address_table_lookup: MessageAddressTableLookupView<'a>) -> Self {
+        Self {
+            account_key: address_table_lookup.account_key,
+            writable_indexes: address_table_lookup.writable_indexes,
+            readonly_indexes: address_table_lookup.readonly_indexes,
+        }
+    }
+}
 
 // Each ATL has at least a Pubkey, one byte for the number of write indexes,
 // and one byte for the number of read indexes. Additionally, for validity
@@ -141,7 +175,7 @@ pub struct AddressTableLookupIterator<'a> {
 }
 
 impl<'a> Iterator for AddressTableLookupIterator<'a> {
-    type Item = SVMMessageAddressTableLookup<'a>;
+    type Item = MessageAddressTableLookupView<'a>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -189,7 +223,7 @@ impl<'a> Iterator for AddressTableLookupIterator<'a> {
                 unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_read_accounts) }
                     .ok()?;
 
-            Some(SVMMessageAddressTableLookup {
+            Some(MessageAddressTableLookupView {
                 account_key,
                 writable_indexes,
                 readonly_indexes,
