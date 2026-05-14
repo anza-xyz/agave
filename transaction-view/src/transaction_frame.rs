@@ -42,15 +42,16 @@ impl TransactionFrame {
     /// Parse a serialized transaction and verify basic structure.
     /// The `bytes` parameter must have no trailing data.
     pub(crate) fn try_new(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > u16::MAX as usize {
-            return Err(TransactionViewError::ParseError);
-        }
-
         if Self::is_legacy_or_v0(bytes)? {
             Self::try_new_as_legacy_or_v0(bytes)
         } else {
             Self::try_new_as_v1(bytes)
         }
+    }
+
+    #[inline(always)]
+    fn checked_offset(offset: usize) -> Result<u16> {
+        u16::try_from(offset).map_err(|_| TransactionViewError::ParseError)
     }
 
     fn try_new_as_legacy_or_v0(bytes: &[u8]) -> Result<Self> {
@@ -62,7 +63,7 @@ impl TransactionFrame {
         // The recent blockhash is the first account key after the static
         // account keys. The recent blockhash is always present in a valid
         // transaction and has a fixed size of 32 bytes.
-        let recent_blockhash_offset = offset as u16;
+        let recent_blockhash_offset = Self::checked_offset(offset)?;
         advance_offset_for_type::<Hash>(bytes, &mut offset)?;
 
         let instructions = InstructionsFrame::try_new_for_legacy_and_v0(bytes, &mut offset)?;
@@ -90,7 +91,7 @@ impl TransactionFrame {
             instructions,
             address_table_lookup,
             transaction_config_frame: TransactionConfigFrame::not_applicable(),
-            data_len: offset as u16,
+            data_len: Self::checked_offset(offset)?,
         })
     }
 
@@ -128,14 +129,14 @@ impl TransactionFrame {
         let transaction_config_mask: u32 = unsafe { unchecked_copy_value(bytes, offset) };
         offset = offset.wrapping_add(core::mem::size_of::<u32>());
         // Lifetime specifier
-        let recent_blockhash_offset = offset as u16;
+        let recent_blockhash_offset = Self::checked_offset(offset)?;
         offset = offset.wrapping_add(core::mem::size_of::<Hash>());
         // Num instructions and addresses
         let num_instructions = unsafe { unchecked_read_byte(bytes, &mut offset) };
         let num_addresses = unsafe { unchecked_read_byte(bytes, &mut offset) };
 
         // addresses
-        let addresses_offset = offset as u16;
+        let addresses_offset = Self::checked_offset(offset)?;
         advance_offset_for_array::<Pubkey>(bytes, &mut offset, u16::from(num_addresses))?;
         // config value slots: one 4-byte slot per set bit in mask
         let transaction_config_frame = TransactionConfigFrame::try_new(
@@ -147,7 +148,7 @@ impl TransactionFrame {
         // instruction headers and payloads
         let instructions = InstructionsFrame::try_new_for_v1(bytes, &mut offset, num_instructions)?;
         // signatures
-        let signatures_offset = offset as u16;
+        let signatures_offset = Self::checked_offset(offset)?;
         advance_offset_for_array::<Signature>(
             bytes,
             &mut offset,
@@ -184,7 +185,7 @@ impl TransactionFrame {
                 total_readonly_lookup_accounts: 0,
             },
             transaction_config_frame,
-            data_len: offset as u16,
+            data_len: Self::checked_offset(offset)?,
         };
 
         Ok(frame)
