@@ -13,7 +13,7 @@ pub use self::{
 };
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_big_mod_exp::{BigModExpParams, big_mod_exp},
+    solana_big_mod_exp::big_mod_exp,
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
@@ -2295,6 +2295,14 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
+
+        #[repr(C)]
+        struct BigModExpParams {
+            base: VmSlice<u8>,
+            exponent: VmSlice<u8>,
+            modulus: VmSlice<u8>,
+        }
+
         let params = &translate_slice::<BigModExpParams>(
             memory_mapping,
             params,
@@ -2304,12 +2312,12 @@ declare_builtin_function!(
         .first()
         .ok_or(SyscallError::InvalidLength)?;
 
-        if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
+        if params.base.len() > 512 || params.exponent.len() > 512 || params.modulus.len() > 512 {
             return Err(Box::new(SyscallError::InvalidLength));
         }
 
-        let input_len: u64 = std::cmp::max(params.base_len, params.exponent_len);
-        let input_len: u64 = std::cmp::max(input_len, params.modulus_len);
+        let input_len: u64 = std::cmp::max(params.base.len(), params.exponent.len());
+        let input_len: u64 = std::cmp::max(input_len, params.modulus.len());
 
         let execution_cost = invoke_context.get_execution_cost();
         // the compute units are calculated by the quadratic equation `0.5 input_len^2 + 190`
@@ -2324,28 +2332,28 @@ declare_builtin_function!(
 
         let base = translate_slice::<u8>(
             memory_mapping,
-            params.base as *const _ as u64,
-            params.base_len,
+            params.base.ptr(),
+            params.base.len(),
             check_aligned,
         )?;
 
         let exponent = translate_slice::<u8>(
             memory_mapping,
-            params.exponent as *const _ as u64,
-            params.exponent_len,
+            params.exponent.ptr(),
+            params.exponent.len(),
             check_aligned,
         )?;
 
         let modulus = translate_slice::<u8>(
             memory_mapping,
-            params.modulus as *const _ as u64,
-            params.modulus_len,
+            params.modulus.ptr(),
+            params.modulus.len(),
             check_aligned,
         )?;
 
         let value = big_mod_exp(base, exponent, modulus);
 
-        let modulus_len = params.modulus_len;
+        let modulus_len = params.modulus.len();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         translate_mut!(
             memory_mapping,
@@ -2740,7 +2748,7 @@ mod tests {
             aligned_memory::AlignedMemory,
             ebpf::{self, HOST_ALIGN},
             error::EbpfError,
-            memory_region::{MemoryMapping, MemoryRegion},
+            memory_region::{MemoryMapping, MemoryRegion, VmExposable},
             program::SBPFVersion,
             vm::Config,
         },
@@ -5998,6 +6006,18 @@ mod tests {
         );
     }
 
+    #[repr(C)]
+    struct BigModExpTestParams {
+        base_ptr: u64,
+        base_len: u64,
+        exponent_ptr: u64,
+        exponent_len: u64,
+        modulus_ptr: u64,
+        modulus_len: u64,
+    }
+
+    impl VmExposable for BigModExpTestParams {}
+
     #[test]
     fn test_syscall_big_mod_exp() {
         let config = Config::default();
@@ -6014,19 +6034,18 @@ mod tests {
 
         // Test that SyscallBigModExp succeeds with the maximum param size
         {
-            let params_max_len = BigModExpParams {
-                base: VADDR_DATA as *const u8,
+            let params = BigModExpTestParams {
+                base_ptr: VADDR_DATA,
                 base_len: MAX_LEN,
-                exponent: VADDR_DATA as *const u8,
+                exponent_ptr: VADDR_DATA,
                 exponent_len: MAX_LEN,
-                modulus: VADDR_DATA as *const u8,
+                modulus_ptr: VADDR_DATA,
                 modulus_len: MAX_LEN,
             };
-
             let memory_mapping = unsafe {
                 MemoryMapping::new(
                     vec![
-                        MemoryRegion::new(bytes_of(&params_max_len), VADDR_PARAMS),
+                        MemoryRegion::new(&raw const params, VADDR_PARAMS),
                         MemoryRegion::new(&raw const data, VADDR_DATA),
                         MemoryRegion::new(&raw mut data_out, VADDR_OUT),
                     ],
@@ -6054,19 +6073,18 @@ mod tests {
 
         // Test that SyscallBigModExp fails when the maximum param size is exceeded
         {
-            let params_inv_len = BigModExpParams {
-                base: VADDR_DATA as *const u8,
+            let params_inv_len = BigModExpTestParams {
+                base_ptr: VADDR_DATA,
                 base_len: INV_LEN,
-                exponent: VADDR_DATA as *const u8,
+                exponent_ptr: VADDR_DATA,
                 exponent_len: INV_LEN,
-                modulus: VADDR_DATA as *const u8,
+                modulus_ptr: VADDR_DATA,
                 modulus_len: INV_LEN,
             };
-
             let memory_mapping = unsafe {
                 MemoryMapping::new(
                     vec![
-                        MemoryRegion::new(bytes_of(&params_inv_len), VADDR_PARAMS),
+                        MemoryRegion::new(&raw const params_inv_len, VADDR_PARAMS),
                         MemoryRegion::new(&raw const data, VADDR_DATA),
                         MemoryRegion::new(&raw mut data_out, VADDR_OUT),
                     ],
