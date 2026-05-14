@@ -482,7 +482,6 @@ mod test {
             res.err(),
             Some(TransactionError::InsufficientFundsForRent { account_index: 0 })
         );
-
     }
 
     #[test]
