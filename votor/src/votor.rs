@@ -190,7 +190,7 @@ impl Votor {
             highest_parent_ready,
             leader_window_info_sender,
             vote_history_storage,
-            repair_event_sender,
+            repair_event_sender: repair_event_sender.clone(),
         };
 
         let voting_context = VotingContext {
@@ -243,6 +243,7 @@ impl Votor {
             bls_sender,
             event_sender,
             commitment_sender,
+            repair_event_sender,
             highest_finalized,
         };
 
