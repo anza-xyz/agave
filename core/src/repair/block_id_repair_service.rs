@@ -72,6 +72,11 @@ const MAX_REPAIR_REQUESTS_PER_ITERATION: usize = 200;
 const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 11;
 const MAX_PENDING_REPAIR_EVENTS: usize = 10_000;
 
+/// Idle wake-up cadence for `run_repair_iteration`'s `select!`. Bounds the worst-case
+/// latency between a `sent_requests` entry exceeding its `2 * DELTA` TTL and us
+/// re-queueing it, while keeping idle CPU well below the busy-path `REPAIR_MS` rate.
+const IDLE_TICK: Duration = Duration::from_millis(10);
+
 /// Bound to 1/32th the size of shred fetch, as we roughly expect one message per FEC set
 const RESPONSE_CHANNEL_SIZE: usize = SHRED_FETCH_CHANNEL_SIZE / DATA_SHREDS_PER_FEC_BLOCK;
 /// Roughly 1/32th of shred sigverify, amortizes overhead without starving processing
@@ -393,7 +398,7 @@ impl BlockIdRepairService {
                     Ok(response) => pending_response = Some(response),
                     Err(_) => return Ok(false),
                 },
-                default(DELTA) => ()
+                default(IDLE_TICK) => ()
             }
         }
 

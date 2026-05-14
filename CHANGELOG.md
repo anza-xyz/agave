@@ -20,6 +20,10 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+#### Deprecations
+* `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
+  deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
+  backward compatibility, but account storages are always accessed via file I/O.
 #### Changes
 
 ## 4.1.0

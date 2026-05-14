@@ -38,8 +38,8 @@ enum TimerState {
         window: VecDeque<Slot>,
         /// Time when this stage will end.
         timeout: Instant,
-        /// The scaled delta_block duration for this timer.
-        scaled_delta_block: Duration,
+        /// Protocol slot time, used in [`TimerState::WaitDeltaBlock`].
+        delta_block: Duration,
     },
     /// Waiting for the DELTA_BLOCK stage.
     WaitDeltaBlock {
@@ -47,8 +47,8 @@ enum TimerState {
         window: VecDeque<Slot>,
         /// Time when this stage will end.
         timeout: Instant,
-        /// The scaled delta_block duration for this timer.
-        scaled_delta_block: Duration,
+        /// Protocol slot time.
+        delta_block: Duration,
     },
     /// The state machine is done.
     Done,
@@ -57,8 +57,10 @@ enum TimerState {
 impl TimerState {
     /// Creates a new instance of the state machine.
     ///
-    /// The `timeout_multiplier` is used to extend the timeout durations (e.g., 1.05 = 5% longer).
-    /// Also returns the next time the timer should fire.
+    /// The `timeout_multiplier` extends only the network-DELTA-derived timeout
+    /// (`delta_timeout`). `delta_block` is protocol pacing, not a function of
+    /// network delays, so it is not scaled. Also returns the next time the
+    /// timer should fire.
     fn new(
         slot: Slot,
         delta_timeout: Duration,
@@ -68,19 +70,15 @@ impl TimerState {
     ) -> (Self, Instant) {
         let window = (slot..=last_of_consecutive_leader_slots(slot)).collect::<VecDeque<_>>();
         assert!(!window.is_empty());
-        // Scale the timeouts by the multiplier, capping at 1 hour.
         let scaled_delta_timeout = Duration::from_secs_f64(
             (delta_timeout.as_secs_f64() * timeout_multiplier).min(MAX_TIMEOUT_SECS),
-        );
-        let scaled_delta_block = Duration::from_secs_f64(
-            (delta_block.as_secs_f64() * timeout_multiplier).min(MAX_TIMEOUT_SECS),
         );
         let timeout = now.checked_add(scaled_delta_timeout).unwrap();
         (
             Self::WaitDeltaTimeout {
                 window,
                 timeout,
-                scaled_delta_block,
+                delta_block,
             },
             timeout,
         )
@@ -94,25 +92,25 @@ impl TimerState {
             Self::WaitDeltaTimeout {
                 window,
                 timeout,
-                scaled_delta_block,
+                delta_block,
             } => {
                 assert!(!window.is_empty());
                 if &now < timeout {
                     return None;
                 }
                 let slot = *window.front().unwrap();
-                let new_timeout = timeout.checked_add(*scaled_delta_block).unwrap();
+                let new_timeout = timeout.checked_add(*delta_block).unwrap();
                 *self = Self::WaitDeltaBlock {
                     window: window.to_owned(),
                     timeout: new_timeout,
-                    scaled_delta_block: *scaled_delta_block,
+                    delta_block: *delta_block,
                 };
                 Some(VotorEvent::TimeoutCrashedLeader(slot))
             }
             Self::WaitDeltaBlock {
                 window,
                 timeout,
-                scaled_delta_block,
+                delta_block,
             } => {
                 assert!(!window.is_empty());
                 if &now < timeout {
@@ -123,7 +121,7 @@ impl TimerState {
                 match window.front() {
                     None => *self = Self::Done,
                     Some(_next_slot) => {
-                        *timeout = timeout.checked_add(*scaled_delta_block).unwrap();
+                        *timeout = timeout.checked_add(*delta_block).unwrap();
                     }
                 }
                 ret
@@ -347,9 +345,10 @@ mod tests {
             VotorEvent::TimeoutCrashedLeader(0)
         ));
 
-        // The next fire should be at next_fire + (delta_block * 1.5) = next_fire + 75ms
+        // delta_block is protocol pacing and is NOT scaled by the multiplier.
+        // The next fire should be at next_fire + delta_block = next_fire + 50ms.
         let next = timer_state.next_fire().unwrap();
-        let expected_delta = Duration::from_millis(75);
+        let expected_delta = delta_block;
         let actual_delta = next - next_fire;
         assert!(
             actual_delta >= expected_delta - Duration::from_micros(100)
@@ -390,14 +389,10 @@ mod tests {
         let now = Instant::now();
         // Use a large multiplier that would exceed MAX_TIMEOUT
         let multiplier = 1000000.0;
+        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
-        let (mut timer_state, next_fire) = TimerState::new(
-            100,
-            DELTA_TIMEOUT,
-            Duration::from_millis(DEFAULT_MS_PER_SLOT),
-            now,
-            multiplier,
-        );
+        let (mut timer_state, next_fire) =
+            TimerState::new(100, DELTA_TIMEOUT, delta_block, now, multiplier);
 
         // The first timeout should be capped at MAX_TIMEOUT
         let expected_first_fire = now + Duration::from_secs(MAX_TIMEOUT_SECS as u64);
@@ -409,9 +404,10 @@ mod tests {
             VotorEvent::TimeoutCrashedLeader(100)
         ));
 
-        // The delta_block timeout should also be capped at MAX_TIMEOUT
+        // delta_block is not scaled by the multiplier, so the inter-slot gap
+        // stays at the protocol pacing value regardless of standstill state.
         let next = timer_state.next_fire().unwrap();
         let actual_delta = next - next_fire;
-        assert_eq!(actual_delta, Duration::from_secs(MAX_TIMEOUT_SECS as u64));
+        assert_eq!(actual_delta, delta_block);
     }
 }

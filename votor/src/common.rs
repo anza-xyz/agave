@@ -68,8 +68,13 @@ pub const SAFE_TO_SKIP_THRESHOLD: Fraction = Fraction::from_percentage(40);
 /// Time bound assumed on network transmission delays during periods of synchrony.
 pub const DELTA: Duration = Duration::from_millis(250);
 
+/// Time bound for propagation delay in the block propagation sub-protocol. For
+/// Turbine this is a maximum of `3 * DELTA` for the current maximum number of
+/// validators.
+const DELTA_BLOCK_PROPAGATION: Duration = DELTA.checked_mul(3).unwrap();
+
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
-pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
+pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_add(DELTA_BLOCK_PROPAGATION).unwrap();
 
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);

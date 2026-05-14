@@ -831,15 +831,17 @@ mod tests {
             .send(to_banking_packet_batch(&txs2))
             .unwrap();
 
-        // We expect 4 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
-        let consume_works = (0..4)
-            .map(|_| consume_work_receivers[0].try_recv().unwrap())
-            .collect_vec();
+        let consume_works = consume_work_receivers[0].try_iter().collect_vec();
 
         assert_eq!(
-            consume_works.iter().map(|cw| cw.ids.len()).collect_vec(),
-            vec![TARGET_NUM_TRANSACTIONS_PER_BATCH; 4]
+            consume_works.iter().map(|cw| cw.ids.len()).sum::<usize>(),
+            4 * TARGET_NUM_TRANSACTIONS_PER_BATCH
+        );
+        assert!(
+            consume_works
+                .iter()
+                .all(|cw| cw.ids.len() < TARGET_NUM_TRANSACTIONS_PER_BATCH)
         );
     }
 

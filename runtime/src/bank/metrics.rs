@@ -47,6 +47,16 @@ pub(crate) struct NewBankTimings {
     pub(crate) populate_cache_for_accounts_lt_hash_us: u64,
 }
 
+pub(crate) struct PrepareBlockExecutionStats {
+    pub(crate) update_epoch_time_us: u64,
+    pub(crate) distribute_rewards_time_us: u64,
+    pub(crate) cache_preparation_time_us: u64,
+    pub(crate) update_sysvars_time_us: u64,
+    pub(crate) fill_sysvar_cache_time_us: u64,
+    pub(crate) num_accounts_modified_this_slot: usize,
+    pub(crate) populate_cache_for_accounts_lt_hash_us: u64,
+}
+
 pub(crate) fn report_new_epoch_metrics(
     epoch: Epoch,
     slot: Slot,

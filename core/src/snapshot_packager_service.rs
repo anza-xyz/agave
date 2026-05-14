@@ -118,11 +118,12 @@ impl SnapshotPackagerService {
                     }
 
                     let archive_time = Instant::now();
-                    // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
-                    let io_setup = IoSetupState::default()
-                        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
-                        .with_direct_io(snapshot_config.use_direct_io);
 
+                    // Don't use direct IO to serialize snapshot, since it's re-read when creating archive
+                    // a moment later.
+                    let io_setup = IoSetupState::default()
+                        .with_direct_io(false)
+                        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
                     // Serializing the snapshot package is not allowed to fail, as archiving is
                     // not allowed to fail (see comment on archive_snapshot_package below
                     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
@@ -145,6 +146,8 @@ impl SnapshotPackagerService {
                         break;
                     };
 
+                    // Snapshot archive is unlikely to be read back soon, so allow direct-io now.
+                    let io_setup = io_setup.with_direct_io(snapshot_config.use_direct_io);
                     if let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind {
                         // Archiving the snapshot package is not allowed to fail.
                         // AccountsBackgroundService calls `clean_accounts()` with a value for

@@ -43,7 +43,7 @@ use {
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
         accounts_db::AtomicAccountsFileId,
-        accounts_file::{AccountsFile, StorageAccess},
+        accounts_file::AccountsFile,
         utils::{ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
@@ -1072,7 +1072,6 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
-    storage_access: StorageAccess,
     io_setup: &IoSetupState,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
@@ -1097,7 +1096,6 @@ pub fn verify_and_unarchive_snapshots(
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
         None,
-        storage_access,
         io_setup,
     )?;
 
@@ -1125,7 +1123,6 @@ pub fn verify_and_unarchive_snapshots(
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
             Some(incremental_snapshot_archive_info.base_slot()),
-            storage_access,
             io_setup,
         )?;
         (
@@ -1318,7 +1315,6 @@ fn unarchive_snapshot(
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     base_slot: Option<Slot>,
-    storage_access: StorageAccess,
     io_setup: &IoSetupState,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
@@ -1357,7 +1353,6 @@ fn unarchive_snapshot(
                         num_rebuilder_threads,
                         next_append_vec_id,
                         SnapshotFrom::Archive,
-                        storage_access,
                         None,
                     )?,
                     measure_name
@@ -1390,7 +1385,6 @@ fn spawn_streaming_snapshot_dir_files(
     snapshot_file_path: PathBuf,
     snapshot_version_path: PathBuf,
     account_paths: &[PathBuf],
-    writable: bool,
 ) -> (Receiver<FileInfo>, thread::JoinHandle<Result<()>>) {
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let account_paths = account_paths.to_vec();
@@ -1407,7 +1401,7 @@ fn spawn_streaming_snapshot_dir_files(
                 for dir_entry_result in fs::read_dir(account_path)? {
                     let dir_entry = dir_entry_result?;
                     let path = dir_entry.path();
-                    let file_info = FileInfo::new_from_path_writable(path, writable)?;
+                    let file_info = FileInfo::new_from_path(path)?;
                     file_sender.send(file_info)?;
                 }
             }
@@ -1426,7 +1420,6 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-    storage_access: StorageAccess,
 ) -> Result<(
     AccountStorageMap,
     BankFieldsToDeserialize,
@@ -1505,12 +1498,10 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 
     let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    #[expect(deprecated)]
     let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,
         account_paths,
-        storage_access == StorageAccess::Mmap,
     );
 
     let SnapshotFieldsBundle {
@@ -1531,7 +1522,6 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         num_rebuilder_threads,
         next_append_vec_id,
         SnapshotFrom::Dir,
-        storage_access,
         obsolete_accounts,
     )?;
     stream_files_handle
@@ -2708,7 +2698,6 @@ mod tests {
                 i as u32, // Incrementing id
                 1024,
                 AccountsFileProvider::AppendVec,
-                StorageAccess::File,
             ));
             snapshot_storages.push(storage);
         }
@@ -2752,7 +2741,6 @@ mod tests {
                 i as u32, // Incrementing id
                 1024,
                 AccountsFileProvider::AppendVec,
-                StorageAccess::File,
             ));
             snapshot_storages.push(storage);
         }
@@ -2788,7 +2776,6 @@ mod tests {
                 i as u32, // Incrementing id
                 1024,
                 AccountsFileProvider::AppendVec,
-                StorageAccess::File,
             ));
             snapshot_storages.push(storage);
         }

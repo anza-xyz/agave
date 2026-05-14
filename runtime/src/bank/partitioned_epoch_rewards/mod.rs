@@ -9,7 +9,6 @@ use {
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
         stake_account::StakeAccount, stake_history::StakeHistory,
     },
-    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         stake_rewards::StakeReward,
@@ -250,44 +249,6 @@ impl Default for CalculateValidatorRewardsResult {
     }
 }
 
-pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    min_stake_delegation: Option<u64>,
-}
-
-impl<'a> FilteredStakeDelegations<'a> {
-    pub(super) fn len(&self) -> usize {
-        self.stake_delegations.len()
-    }
-
-    pub(super) fn par_iter(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
-    {
-        self.stake_delegations
-            .par_iter()
-            // We yield `None` items instead of filtering them out to
-            // keep the number of elements predictable. It's better to
-            // let the callers deal with `None` elements and even store
-            // them in collections (that are allocated once with the
-            // size of `FilteredStakeDelegations::len`) rather than
-            // `collect` yet another time (which would take ~100ms).
-            .map(|(pubkey, stake_account)| {
-                match self.min_stake_delegation {
-                    Some(min_stake_delegation)
-                        if stake_account.delegation().stake < min_stake_delegation =>
-                    {
-                        None
-                    }
-                    _ => {
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))
-                    }
-                }
-            })
-    }
-}
-
 pub(super) struct CachedVoteAccounts<'a> {
     /// Snapshot of vote account state from the beginning of the epoch prior to
     /// the rewarded epoch. This snapshot state is saved a full epoch before
@@ -307,7 +268,7 @@ pub(super) struct CachedVoteAccounts<'a> {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
+    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
     pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 

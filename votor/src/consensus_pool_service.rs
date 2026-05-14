@@ -10,12 +10,12 @@ use {
         consensus_pool::{
             AddVoteError, ConsensusPool, parent_ready_tracker::BlockProductionParent,
         },
-        event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
+        event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
         generated_cert_types::GeneratedCertTypes,
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{Certificate, ConsensusMessage},
+        consensus_message::{Block, Certificate, ConsensusMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -30,6 +30,7 @@ use {
     },
     stats::ConsensusPoolServiceStats,
     std::{
+        collections::HashSet,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -56,6 +57,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
+    pub(crate) repair_event_sender: RepairEventSender,
 
     /// Used to communicate the highest finalization cert the pool has observed to the block creation loop.
     pub(crate) highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
@@ -216,6 +218,9 @@ impl ConsensusPoolService {
         // Kick off parent ready
         let mut kick_off_parent_ready = false;
 
+        // Track pending safe-to-notar blocks for intrawindow slots.
+        let mut pending_safe_to_notar = HashSet::new();
+
         // Ingest votes into certificate pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
             // Kick off parent ready event, this either happens:
@@ -277,6 +282,15 @@ impl ConsensusPoolService {
                 }
             }
 
+            // Process pending safe-to-notar blocks for intrawindow slots
+            Self::process_pending_safe_to_notar(
+                &ctx,
+                &mut consensus_pool,
+                &mut pending_safe_to_notar,
+                &mut events,
+                &mut stats,
+            )?;
+
             if events
                 .drain(..)
                 .try_for_each(|event| ctx.event_sender.send(event))
@@ -285,6 +299,14 @@ impl ConsensusPoolService {
                 return Self::handle_channel_disconnected(&mut ctx, "event_sender");
             }
 
+            let wait_timeout = if pending_safe_to_notar.is_empty() {
+                Duration::from_secs(1)
+            } else {
+                // If there are pending blocks that are waiting for repair in order to emit
+                // SafeToNotar events, use a shorter timeout
+                Duration::from_millis(20)
+            };
+
             let messages: Vec<ConsensusMessage> = select! {
                 recv(ctx.consensus_message_receiver) -> msg => {
                     let Ok(first) = msg else {
@@ -292,7 +314,7 @@ impl ConsensusPoolService {
                     };
                     std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).flatten().collect()
                 },
-                default(Duration::from_secs(1)) => continue
+                default(wait_timeout) => continue
             };
 
             for message in messages {
@@ -438,6 +460,89 @@ impl ConsensusPoolService {
         }
     }
 
+    /// Process pending safe-to-notar blocks for intrawindow slots.
+    ///
+    /// For each pending block:
+    /// 1. If it's new send a repair request
+    /// 2. If the slot is <= highest_finalized_slot, discard it
+    /// 3. Check if the block has been received in blockstore
+    /// 4. If received, verify the parent has a NotarizeFallback certificate
+    /// 5. If verified, emit SafeToNotar event and remove from pending
+    fn process_pending_safe_to_notar(
+        ctx: &ConsensusPoolContext,
+        consensus_pool: &mut ConsensusPool,
+        pending_safe_to_notar: &mut HashSet<Block>,
+        events: &mut Vec<VotorEvent>,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), ()> {
+        // First, collect new pending blocks from the consensus pool and send them for repair
+        for block @ (slot, block_id) in consensus_pool.take_pending_safe_to_notar() {
+            if pending_safe_to_notar.insert(block) {
+                match ctx
+                    .repair_event_sender
+                    .try_send(RepairEvent::FetchBlock { slot, block_id })
+                {
+                    Ok(()) => (),
+                    Err(TrySendError::Full(event)) => {
+                        error!(
+                            "Repair event channel for event={event:?} is full. Will try event in \
+                             next iteration."
+                        );
+                        consensus_pool.add_to_pending_safe_to_notar(block);
+                    }
+                    Err(TrySendError::Disconnected(_)) => return Err(()),
+                }
+                stats.pending_safe_to_notar_repair_sent += 1;
+            }
+        }
+
+        let highest_finalized = consensus_pool.highest_finalized_slot().unwrap_or(0);
+
+        pending_safe_to_notar.retain(|&(slot, block_id)| {
+            // Discard if slot is at or below highest finalized
+            if slot <= highest_finalized {
+                return false;
+            }
+
+            // Check if we've received the full block in blockstore
+            let Some(location) = ctx
+                .blockstore
+                .get_block_location(slot, block_id)
+                .expect("Blockstore operations must succeed")
+            else {
+                // Block not yet received, keep waiting
+                return true;
+            };
+
+            // Block has been received, get the parent meta
+            let slot_meta = ctx
+                .blockstore
+                .meta_from_location(slot, location)
+                .expect("Blockstore operations must succeed")
+                .expect("SlotMeta must exist if block location is present");
+
+            let parent_block = (
+                slot_meta
+                    .parent_slot
+                    .expect("parent slot must exist for full blocks"),
+                slot_meta.parent_block_id,
+            );
+
+            // Check if the parent has a NotarizeFallback certificate (or stronger)
+            if consensus_pool.block_has_notar_fallback_or_stronger(parent_block) {
+                // All conditions met - emit SafeToNotar event
+                events.push(VotorEvent::SafeToNotar((slot, block_id)));
+                stats.pending_safe_to_notar_resolved += 1;
+                return false;
+            }
+
+            // Parent doesn't have the certificate yet, keep waiting
+            true
+        });
+
+        Ok(())
+    }
+
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_ingest.join()
     }
@@ -452,6 +557,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, CertificateType, VoteMessage},
             vote::Vote,
         },
+        crossbeam_channel::unbounded,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, keypair::Keypair as BLSKeypair,
             signature::Signature as BLSSignature,
@@ -703,6 +809,7 @@ mod tests {
     #[test]
     fn test_send_produce_block_event() {
         let mut ctx = TestContext::default();
+        let (repair_event_sender, _repair_event_receiver) = unbounded();
 
         // Find when is the next leader slot for me (validator 0)
         let next_leader_slot = ctx
@@ -751,6 +858,7 @@ mod tests {
             event_sender: crossbeam_channel::unbounded().0,
             commitment_sender: ctx.commitment_sender.clone(),
             highest_finalized: ctx.highest_finalized.clone(),
+            repair_event_sender,
         };
 
         // Add a ParentReady event for the slot before our leader slot

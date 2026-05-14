@@ -121,6 +121,7 @@ use {
         },
         bank::Bank,
         bank_forks::BankForks,
+        bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -1062,6 +1063,9 @@ impl Validator {
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (poh_controller, poh_service_message_receiver) = PohController::new();
+        let (bank_forks_controller, bank_forks_controller_receiver) =
+            BankForksControllerHandle::new();
+        let bank_forks_controller = Arc::new(bank_forks_controller);
 
         let (banking_tracer, tracer_thread) =
             BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
@@ -1468,6 +1472,7 @@ impl Validator {
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
             bank_forks: bank_forks.clone(),
+            bank_forks_controller: bank_forks_controller.clone(),
             blockstore: blockstore.clone(),
             cluster_info: cluster_info.clone(),
             poh_recorder: poh_recorder.clone(),
@@ -1619,6 +1624,8 @@ impl Validator {
                 leader_window_info_sender,
                 replay_highest_frozen,
                 highest_parent_ready,
+                bank_forks_controller,
+                bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
                 cancel: cancel.clone(),

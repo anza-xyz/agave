@@ -3,7 +3,10 @@
 use {
     crate::{
         device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
-        gre::{construct_gre_packet, gre_packet_size},
+        gre::{
+            construct_gre_packet, gre_packet_size,
+            packet::{GRE_HEADER_BASE_SIZE, INNER_PACKET_HEADER_SIZE},
+        },
         netlink::MacAddress,
         packet::{
             ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE, write_eth_header,
@@ -98,6 +101,9 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
             "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
             dev.name()
         );
+
+        // We don't support MTUs larger than page size due to AF_XDP limitations in single-buffer
+        // mode and a possible workaround might be to use multi-buffer TX.
 
         // some drivers require frame_size=page_size
         let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -227,6 +233,7 @@ impl<U: Umem> TxLoop<U> {
 
         let umem = socket.umem();
         let umem_tx_capacity = umem.available();
+        let umem_frame_size = umem.frame_size();
 
         // Local buffer where we store packets before sending them.
         let mut batched_items = Vec::with_capacity(BATCH_SIZE);
@@ -318,7 +325,38 @@ impl<U: Umem> TxLoop<U> {
                     };
 
                     if let Some(gre) = &next_hop.gre {
-                        frame.set_len(gre_packet_size(len));
+                        let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+                        let l3_outer_gre_packet_len =
+                            IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
+
+                        if l3_inner_packet_len > gre.mtu as usize
+                            || l3_outer_gre_packet_len > next_hop.mtu as usize
+                        {
+                            log::warn!(
+                                "dropping packet: GRE payload exceeds MTU for {addr}: L3 inner \
+                                 packet length {l3_inner_packet_len}, L3 outer GRE packet length \
+                                 {l3_outer_gre_packet_len}, MTU: {mtu}, underlay_mtu: \
+                                 {underlay_mtu}.",
+                                mtu = gre.mtu,
+                                underlay_mtu = next_hop.mtu
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        let packet_len = gre_packet_size(len);
+                        if packet_len > umem_frame_size {
+                            log::warn!(
+                                "dropping packet: GRE packet size {packet_len} exceeds frame size \
+                                 {umem_frame_size} for {addr}"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        frame.set_len(packet_len);
                         let packet = umem.map_frame_mut(&frame);
                         let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
                         if let Err(err) = construct_gre_packet(
@@ -350,9 +388,32 @@ impl<U: Umem> TxLoop<U> {
                             continue;
                         };
 
+                        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+                        if l3_packet_len > next_hop.mtu as usize {
+                            log::warn!(
+                                "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} \
+                                 for {addr}",
+                                mtu = next_hop.mtu
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
                         const PACKET_HEADER_SIZE: usize =
                             ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                        frame.set_len(PACKET_HEADER_SIZE + len);
+                        let packet_len = PACKET_HEADER_SIZE + len;
+                        if packet_len > umem_frame_size {
+                            log::warn!(
+                                "dropping packet: packet size {packet_len} exceeds frame size \
+                                 {umem_frame_size} for {addr}"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        frame.set_len(packet_len);
                         let packet = umem.map_frame_mut(&frame);
 
                         // write the payload first as it's needed for checksum calculation (if enabled)

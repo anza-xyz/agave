@@ -14,6 +14,7 @@ use {
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },
     std::str::FromStr,
+    wincode::ReadError,
 };
 
 pub mod convert;
@@ -180,13 +181,13 @@ struct StoredTransactionError(Vec<u8>);
 impl From<StoredTransactionError> for TransactionError {
     fn from(value: StoredTransactionError) -> Self {
         let bytes = value.0;
-        bincode::deserialize(&bytes).expect("transaction error to deserialize from bytes")
+        wincode::deserialize(&bytes).expect("transaction error to deserialize from bytes")
     }
 }
 
 impl From<TransactionError> for StoredTransactionError {
     fn from(value: TransactionError) -> Self {
-        let bytes = bincode::serialize(&value).expect("transaction error to serialize to bytes");
+        let bytes = wincode::serialize(&value).expect("transaction error to serialize to bytes");
         StoredTransactionError(bytes)
     }
 }
@@ -316,7 +317,7 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
 }
 
 impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
-    type Error = bincode::Error;
+    type Error = ReadError;
     fn try_from(value: TransactionStatusMeta) -> std::result::Result<Self, Self::Error> {
         let TransactionStatusMeta {
             status,
@@ -335,11 +336,9 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
         } = value;
 
         if !loaded_addresses.is_empty() {
-            // Deprecated bincode serialized status metadata doesn't support
-            // loaded addresses.
-            return Err(
-                bincode::ErrorKind::Custom("Bincode serialization is deprecated".into()).into(),
-            );
+            return Err(ReadError::Custom(
+                "deprecated stored transaction status metadata does not support loaded addresses",
+            ));
         }
 
         Ok(Self {

@@ -45,7 +45,7 @@ use {
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
         vote::Vote,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, select},
     rayon::{ThreadPool, prelude::*},
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
@@ -82,6 +82,7 @@ use {
     solana_runtime::{
         bank::{Bank, NewBankOptions, bank_hash_details},
         bank_forks::BankForks,
+        bank_forks_controller::{BankForksCommand, BankForksCommandReceiver},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
@@ -96,7 +97,7 @@ use {
     solana_vote::vote_transaction::VoteTransaction,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeSet, HashMap, HashSet},
         num::{NonZeroUsize, Saturating},
         result,
         sync::{
@@ -220,6 +221,16 @@ struct ProcessActiveBanksContext {
     replay_tx_thread_pool: ThreadPool,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     migration_status: Arc<MigrationStatus>,
+}
+
+struct ProcessBankForksContext {
+    bank_forks: Arc<RwLock<BankForks>>,
+    blockstore: Arc<Blockstore>,
+    snapshot_controller: Option<Arc<SnapshotController>>,
+    bank_notification_sender: Option<BankNotificationSenderConfig>,
+    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
+    drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
 }
 
 #[cfg(test)]
@@ -406,6 +417,7 @@ pub struct ReplayReceivers {
     pub duplicate_confirmed_slots_receiver: Receiver<Vec<(u64, Hash)>>,
     pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
     pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
+    pub bank_forks_controller_receiver: BankForksCommandReceiver,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -717,6 +729,7 @@ impl ReplayStage {
             duplicate_confirmed_slots_receiver,
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
+            bank_forks_controller_receiver,
         } = receivers;
 
         trace!("replay stage");
@@ -845,6 +858,15 @@ impl ReplayStage {
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 migration_status: migration_status.clone(),
             };
+            let process_bank_forks_context = ProcessBankForksContext {
+                bank_forks: bank_forks.clone(),
+                blockstore: blockstore.clone(),
+                snapshot_controller: snapshot_controller.clone(),
+                bank_notification_sender: bank_notification_sender.clone(),
+                rpc_subscriptions: rpc_subscriptions.clone(),
+                drop_bank_sender: drop_bank_sender.clone(),
+                leader_schedule_cache: leader_schedule_cache.clone(),
+            };
 
             let poh_shared_leader_state = poh_recorder.read().unwrap().shared_leader_state();
             if !migration_status.is_alpenglow_enabled() {
@@ -863,6 +885,18 @@ impl ReplayStage {
             loop {
                 // Stop getting entries if we get exit signal
                 if exit.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                if matches!(
+                    Self::process_bank_forks_commands(
+                        &bank_forks_controller_receiver,
+                        &process_bank_forks_context,
+                        &mut progress,
+                        &mut async_verification_freelist,
+                    ),
+                    Err(TryRecvError::Disconnected)
+                ) {
                     break;
                 }
 
@@ -1399,12 +1433,24 @@ impl ReplayStage {
                     // only wait for the signal if we did not just process a bank; maybe there are more slots available
 
                     let timer = Duration::from_millis(100);
-                    let result = ledger_signal_receiver.recv_timeout(timer);
-                    match result {
-                        Err(RecvTimeoutError::Timeout) => (),
-                        Err(_) => break,
-                        Ok(_) => trace!("blockstore signal"),
-                    };
+                    select! {
+                        recv(ledger_signal_receiver) -> result => match result {
+                            Err(_) => break,
+                            Ok(_) => trace!("blockstore signal"),
+                        },
+                        recv(bank_forks_controller_receiver.receiver()) -> result => match result {
+                            Err(_) => break,
+                            Ok(command) => {
+                                Self::process_bank_forks_command(
+                                    command,
+                                    &process_bank_forks_context,
+                                    &mut progress,
+                                    &mut async_verification_freelist,
+                                );
+                            }
+                        },
+                        default(timer) => (),
+                    }
                 }
                 wait_receive_time.stop();
 
@@ -2161,6 +2207,88 @@ impl ReplayStage {
         descendants
             .remove(&slot)
             .expect("must exist based on earlier check");
+    }
+
+    /// For slots to clear, clear the bank from progress, bank forks, and recycle the async verification
+    fn clear_banks(
+        slots_to_clear: &BTreeSet<Slot>,
+        bank_forks: &RwLock<BankForks>,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) {
+        if slots_to_clear.is_empty() {
+            return;
+        }
+
+        // Wait for async verify to complete
+        for slot in slots_to_clear {
+            if let Some(replay_progress) = progress.remove(slot) {
+                let mut w_replay_progress = replay_progress.replay_progress.write().unwrap();
+                let _ = w_replay_progress.wait_for_all_verification_results(&mut 0, &mut 0);
+                Self::recycle_async_verification(
+                    async_verification_freelist,
+                    w_replay_progress.take_async_verification(),
+                );
+            }
+        }
+
+        let banks_to_remove = {
+            let bank_forks = bank_forks.read().unwrap();
+            slots_to_clear
+                .iter()
+                .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
+                .collect::<Vec<_>>()
+        };
+
+        // Wait for any in progress execution
+        for bank in banks_to_remove {
+            let _ = bank.wait_for_completed_scheduler();
+        }
+
+        // Dump the banks from bank forks
+        let (root_bank, slots_to_purge, removed_banks) = {
+            let mut w_bank_forks = bank_forks.write().unwrap();
+            let slots_to_clear = slots_to_clear
+                .iter()
+                .copied()
+                .filter(|slot| w_bank_forks.get(*slot).is_some())
+                .collect::<BTreeSet<_>>();
+            if slots_to_clear.is_empty() {
+                return;
+            }
+
+            let root_bank = w_bank_forks.root_bank();
+            let (slots_to_purge, removed_banks) =
+                w_bank_forks.dump_slots(slots_to_clear.iter(), true);
+            (root_bank, slots_to_purge, removed_banks)
+        };
+
+        // Clear the accounts for these slots so that any ongoing RPC scans fail.
+        // These have to be atomically cleared together in the same batch, in order
+        // to prevent RPC from seeing inconsistent results in scans.
+        root_bank.remove_unrooted_slots(&slots_to_purge);
+
+        // Once the slots above have been purged, now it's safe to remove the banks from
+        // BankForks, allowing the Bank::drop() purging to run and not race with the
+        // `remove_unrooted_slots()` call.
+        drop(removed_banks);
+
+        // Clear slot signatures from status cache and programs from program cache
+        for (slot, _) in slots_to_purge {
+            root_bank.clear_slot_signatures(slot);
+            root_bank.prune_program_cache_by_deployment_slot(slot);
+        }
+    }
+
+    fn recycle_async_verification(
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+        async_verification: Option<AsyncVerificationProgress>,
+    ) {
+        if let Some(async_verification) = async_verification {
+            if async_verification_freelist.len() < ASYNC_VERIFICATION_FREELIST_CAPACITY {
+                async_verification_freelist.push(async_verification);
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3531,12 +3659,10 @@ impl ReplayStage {
                         stats.poh_verify_elapsed += poh_verify_elapsed;
                         stats.transaction_verify_elapsed += tx_verify_elapsed;
                     }
-                    if let Some(async_verification) = async_verification {
-                        if async_verification_freelist.len() < ASYNC_VERIFICATION_FREELIST_CAPACITY
-                        {
-                            async_verification_freelist.push(async_verification);
-                        }
-                    };
+                    Self::recycle_async_verification(
+                        async_verification_freelist,
+                        async_verification,
+                    );
                     res
                 };
                 // we send this whether the block was valid or not. It's only
@@ -4590,6 +4716,102 @@ impl ReplayStage {
                 )
             },
         );
+    }
+
+    /// Process any commands from the bank forks controller
+    fn process_bank_forks_commands(
+        bank_forks_controller_receiver: &BankForksCommandReceiver,
+        context: &ProcessBankForksContext,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) -> Result<(), TryRecvError> {
+        loop {
+            let command = bank_forks_controller_receiver.receiver().try_recv()?;
+            Self::process_bank_forks_command(
+                command,
+                context,
+                progress,
+                async_verification_freelist,
+            );
+        }
+    }
+
+    /// Process a bank forks command
+    fn process_bank_forks_command(
+        command: BankForksCommand,
+        context: &ProcessBankForksContext,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) {
+        debug_assert!(
+            context
+                .bank_forks
+                .read()
+                .unwrap()
+                .migration_status()
+                .is_alpenglow_enabled()
+        );
+        match command {
+            BankForksCommand::InsertBank {
+                bank,
+                response_sender,
+            } => {
+                // Check that the bank is still valid to be inserted
+                let bank = {
+                    let mut bank_forks = context.bank_forks.write().unwrap();
+                    if bank_forks.get(bank.slot()).is_none()
+                        && bank_forks.get(bank.parent_slot()).is_some()
+                    {
+                        Some(bank_forks.insert(*bank))
+                    } else {
+                        None
+                    }
+                };
+
+                response_sender.send(bank).unwrap_or_else(|_| {
+                    warn!("bank forks controller insert-bank response receiver dropped")
+                });
+            }
+            BankForksCommand::SetRoot {
+                my_pubkey,
+                parent_slot,
+                new_root,
+                highest_super_majority_root,
+                response_sender,
+            } => {
+                root_utils::check_and_handle_new_root(
+                    parent_slot,
+                    new_root,
+                    context.snapshot_controller.as_deref(),
+                    highest_super_majority_root,
+                    &context.bank_notification_sender,
+                    &context.drop_bank_sender,
+                    &context.blockstore,
+                    &context.leader_schedule_cache,
+                    &context.bank_forks,
+                    context.rpc_subscriptions.as_deref(),
+                    &my_pubkey,
+                    |_| {},
+                );
+                response_sender.send(()).unwrap_or_else(|_| {
+                    warn!("bank forks controller set-root response receiver dropped")
+                });
+            }
+            BankForksCommand::ClearBank {
+                slot,
+                response_sender,
+            } => {
+                Self::clear_banks(
+                    &BTreeSet::from([slot]),
+                    &context.bank_forks,
+                    progress,
+                    async_verification_freelist,
+                );
+                response_sender.send(()).unwrap_or_else(|_| {
+                    warn!("bank forks controller clear-bank response receiver dropped")
+                });
+            }
+        }
     }
 
     fn generate_new_bank_forks(
