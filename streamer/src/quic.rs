@@ -15,6 +15,7 @@ use {
         Endpoint, IdleTimeout, ServerConfig, VarInt,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     },
+    #[cfg(debug_assertions)]
     rustls::KeyLogFile,
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
@@ -100,7 +101,14 @@ pub(crate) fn configure_server(
     let mut server_tls_config =
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
-    server_tls_config.key_log = Arc::new(KeyLogFile::new());
+    // Only wire the SSLKEYLOGFILE-reading key logger in debug builds. Release
+    // validators should never silently honor SSLKEYLOGFILE: an operator who
+    // accidentally exports it would otherwise leak TPU TLS session secrets to
+    // disk. Developers who need rustls key-log decryption can run a debug build.
+    #[cfg(debug_assertions)]
+    {
+        server_tls_config.key_log = Arc::new(KeyLogFile::new());
+    }
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
