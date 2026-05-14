@@ -191,15 +191,15 @@ fn verify_base3(
                 let agg_pubkey = aggregate_pubkeys(&primary_pubkeys)?;
                 Ok(agg_pubkey.verify_signature(signature, payload)?)
             } else {
-                let mut all_pubkeys = Vec::with_capacity(
-                    primary_pubkeys.len().saturating_add(fallback_pubkeys.len()),
-                );
-                all_pubkeys.extend_from_slice(&primary_pubkeys);
-                all_pubkeys.extend_from_slice(&fallback_pubkeys);
+                let agg_primary = aggregate_pubkeys(&primary_pubkeys)?;
+                let agg_fallback = aggregate_pubkeys(&fallback_pubkeys)?;
 
-                let mut all_messages = Vec::with_capacity(all_pubkeys.len());
-                all_messages.resize(primary_pubkeys.len(), payload);
-                all_messages.resize(all_pubkeys.len(), fallback_payload);
+                let all_pubkeys = [
+                    unsafe { PopVerified::new_unchecked(*agg_primary) },
+                    unsafe { PopVerified::new_unchecked(*agg_fallback) },
+                ];
+
+                let all_messages = [payload, fallback_payload];
 
                 if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
                     Ok(SignatureProjective::verify_distinct_aggregated(
