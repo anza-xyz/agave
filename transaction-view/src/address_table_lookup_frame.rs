@@ -36,18 +36,6 @@ impl<'a> From<&'a v0::MessageAddressTableLookup> for MessageAddressTableLookupVi
     }
 }
 
-impl<'a> From<MessageAddressTableLookupView<'a>>
-    for solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup<'a>
-{
-    fn from(address_table_lookup: MessageAddressTableLookupView<'a>) -> Self {
-        Self {
-            account_key: address_table_lookup.account_key,
-            writable_indexes: address_table_lookup.writable_indexes,
-            readonly_indexes: address_table_lookup.readonly_indexes,
-        }
-    }
-}
-
 // Each ATL has at least a Pubkey, one byte for the number of write indexes,
 // and one byte for the number of read indexes. Additionally, for validity
 // the ATL must have at least one write or read index giving a minimum size

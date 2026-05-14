@@ -239,12 +239,11 @@ dependencies = [
  "solana-hash 4.3.0",
  "solana-message",
  "solana-packet 4.1.0",
- "solana-program-runtime",
+ "solana-program-entrypoint",
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
- "solana-svm-transaction",
  "solana-transaction",
  "solana-transaction-context",
 ]
@@ -9488,6 +9487,7 @@ dependencies = [
 name = "solana-svm-transaction"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-transaction-view",
  "solana-hash 4.3.0",
  "solana-message",
  "solana-pubkey 4.2.0",

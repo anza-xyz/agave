@@ -22,3 +22,13 @@ impl<'a> From<&'a CompiledInstruction> for SVMInstruction<'a> {
         }
     }
 }
+
+impl<'a> From<agave_transaction_view::InstructionView<'a>> for SVMInstruction<'a> {
+    fn from(ix: agave_transaction_view::InstructionView<'a>) -> Self {
+        Self {
+            program_id_index: ix.program_id_index,
+            accounts: ix.accounts,
+            data: ix.data,
+        }
+    }
+}

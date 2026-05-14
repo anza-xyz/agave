@@ -6,8 +6,11 @@ use {
         transaction_version::TransactionVersion,
         transaction_view::UnsanitizedTransactionView,
     },
-    solana_program_runtime::execution_budget::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
+    solana_program_entrypoint::HEAP_LENGTH,
 };
+
+const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
+const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
 pub(crate) fn sanitize(
     view: &UnsanitizedTransactionView<impl TransactionData>,

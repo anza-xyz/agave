@@ -33,16 +33,6 @@ impl<'a> From<&'a CompiledInstruction> for InstructionView<'a> {
     }
 }
 
-impl<'a> From<InstructionView<'a>> for solana_svm_transaction::instruction::SVMInstruction<'a> {
-    fn from(ix: InstructionView<'a>) -> Self {
-        Self {
-            program_id_index: ix.program_id_index,
-            accounts: ix.accounts,
-            data: ix.data,
-        }
-    }
-}
-
 /// Contains metadata about the instructions in a transaction packet.
 #[derive(Debug)]
 pub(crate) enum InstructionsFrame {

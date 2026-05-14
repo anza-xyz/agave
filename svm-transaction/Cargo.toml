@@ -13,6 +13,7 @@ edition = "2024"
 agave-unstable-api = []
 
 [dependencies]
+agave-transaction-view = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true }

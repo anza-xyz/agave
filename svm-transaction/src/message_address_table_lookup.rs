@@ -21,3 +21,15 @@ impl<'a> From<&'a v0::MessageAddressTableLookup> for SVMMessageAddressTableLooku
         }
     }
 }
+
+impl<'a> From<agave_transaction_view::MessageAddressTableLookupView<'a>>
+    for SVMMessageAddressTableLookup<'a>
+{
+    fn from(lookup: agave_transaction_view::MessageAddressTableLookupView<'a>) -> Self {
+        Self {
+            account_key: lookup.account_key,
+            writable_indexes: lookup.writable_indexes,
+            readonly_indexes: lookup.readonly_indexes,
+        }
+    }
+}

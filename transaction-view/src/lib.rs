@@ -18,3 +18,7 @@ pub mod transaction_data;
 mod transaction_frame;
 pub mod transaction_version;
 pub mod transaction_view;
+
+pub use {
+    address_table_lookup_frame::MessageAddressTableLookupView, instructions_frame::InstructionView,
+};

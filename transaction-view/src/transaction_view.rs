@@ -13,10 +13,6 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_svm_transaction::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMStaticMessage,
-    },
 };
 
 // alias for convenience
@@ -269,108 +265,6 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
             .field("instructions", &self.instructions_iter())
             .field("address_table_lookups", &self.address_table_lookup_iter())
             .finish()
-    }
-}
-
-impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
-    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
-        self.version().into()
-    }
-
-    fn num_transaction_signatures(&self) -> u64 {
-        self.num_required_signatures() as u64
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        self.num_requested_write_locks()
-    }
-
-    fn recent_blockhash(&self) -> &Hash {
-        self.recent_blockhash()
-    }
-
-    fn num_instructions(&self) -> usize {
-        self.num_instructions() as usize
-    }
-
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
-        TransactionView::instructions_iter(self).map(SVMInstruction::from)
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        TransactionView::program_instructions_iter(self)
-            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix)))
-    }
-
-    fn static_account_keys(&self) -> &[Pubkey] {
-        self.static_account_keys()
-    }
-
-    fn fee_payer(&self) -> &Pubkey {
-        &self.static_account_keys()[0]
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        self.num_address_table_lookups() as usize
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        self.address_table_lookup_iter()
-            .map(SVMMessageAddressTableLookup::from)
-    }
-}
-
-impl<D: TransactionData> SVMStaticMessage for &TransactionView<true, D> {
-    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
-        <TransactionView<true, D> as SVMStaticMessage>::version(self)
-    }
-
-    fn num_transaction_signatures(&self) -> u64 {
-        <TransactionView<true, D> as SVMStaticMessage>::num_transaction_signatures(self)
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        <TransactionView<true, D> as SVMStaticMessage>::num_write_locks(self)
-    }
-
-    fn recent_blockhash(&self) -> &Hash {
-        <TransactionView<true, D> as SVMStaticMessage>::recent_blockhash(self)
-    }
-
-    fn num_instructions(&self) -> usize {
-        <TransactionView<true, D> as SVMStaticMessage>::num_instructions(self)
-    }
-
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
-        <TransactionView<true, D> as SVMStaticMessage>::instructions_iter(self)
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        <TransactionView<true, D> as SVMStaticMessage>::program_instructions_iter(self)
-    }
-
-    fn static_account_keys(&self) -> &[Pubkey] {
-        <TransactionView<true, D> as SVMStaticMessage>::static_account_keys(self)
-    }
-
-    fn fee_payer(&self) -> &Pubkey {
-        <TransactionView<true, D> as SVMStaticMessage>::fee_payer(self)
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        <TransactionView<true, D> as SVMStaticMessage>::num_lookup_tables(self)
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        <TransactionView<true, D> as SVMStaticMessage>::message_address_table_lookups(self)
     }
 }
 

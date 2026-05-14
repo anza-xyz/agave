@@ -9,17 +9,9 @@ use {
         fmt::{Debug, Formatter},
         ops::Deref,
     },
-    solana_hash::Hash,
     solana_message::{AccountKeys, v0::LoadedAddresses},
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
-    solana_signature::Signature,
-    solana_svm_transaction::{
-        instruction::SVMInstruction,
-        message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::{SVMMessage, SVMStaticMessage},
-        svm_transaction::SVMTransaction,
-    },
     std::collections::HashSet,
 };
 
@@ -152,98 +144,12 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         self.resolved_addresses.as_ref()
     }
 
-    pub fn into_view(self) -> TransactionView<true, D> {
-        self.view
-    }
-}
-
-impl<D: TransactionData> SVMStaticMessage for ResolvedTransactionView<D> {
-    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
-        self.view.version().into()
-    }
-
-    fn num_transaction_signatures(&self) -> u64 {
-        u64::from(self.view.num_required_signatures())
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        self.view.num_requested_write_locks()
-    }
-
-    fn recent_blockhash(&self) -> &Hash {
-        self.view.recent_blockhash()
-    }
-
-    fn num_instructions(&self) -> usize {
-        usize::from(self.view.num_instructions())
-    }
-
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
-        self.view.instructions_iter().map(SVMInstruction::from)
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        self.view
-            .program_instructions_iter()
-            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix)))
-    }
-
-    fn static_account_keys(&self) -> &[Pubkey] {
-        self.view.static_account_keys()
-    }
-
-    fn fee_payer(&self) -> &Pubkey {
-        &self.view.static_account_keys()[0]
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        usize::from(self.view.num_address_table_lookups())
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        self.view
-            .address_table_lookup_iter()
-            .map(SVMMessageAddressTableLookup::from)
-    }
-}
-
-impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
-    fn account_keys(&self) -> AccountKeys<'_> {
-        AccountKeys::new(
-            self.view.static_account_keys(),
-            self.resolved_addresses.as_ref(),
-        )
-    }
-
-    fn is_writable(&self, index: usize) -> bool {
+    pub fn is_writable(&self, index: usize) -> bool {
         self.writable_cache.get(index).copied().unwrap_or(false)
     }
 
-    fn is_signer(&self, index: usize) -> bool {
-        index < usize::from(self.view.num_required_signatures())
-    }
-
-    fn is_invoked(&self, key_index: usize) -> bool {
-        let Ok(index) = u8::try_from(key_index) else {
-            return false;
-        };
+    pub fn into_view(self) -> TransactionView<true, D> {
         self.view
-            .instructions_iter()
-            .any(|ix| ix.program_id_index == index)
-    }
-}
-
-impl<D: TransactionData> SVMTransaction for ResolvedTransactionView<D> {
-    fn signature(&self) -> &Signature {
-        &self.view.signatures()[0]
-    }
-
-    fn signatures(&self) -> &[Signature] {
-        self.view.signatures()
     }
 }
 
@@ -260,6 +166,7 @@ mod tests {
     use {
         super::*,
         crate::transaction_view::SanitizedTransactionView,
+        solana_hash::Hash,
         solana_message::{
             MessageHeader, VersionedMessage,
             compiled_instruction::CompiledInstruction,

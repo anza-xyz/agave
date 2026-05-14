@@ -17,12 +17,11 @@ dev-context-only-utils = []
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
 solana-packet = { workspace = true }
-solana-program-runtime = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
-solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 

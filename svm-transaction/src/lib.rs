@@ -5,3 +5,4 @@ pub mod svm_message;
 pub mod svm_transaction;
 
 mod tests;
+mod transaction_view;
