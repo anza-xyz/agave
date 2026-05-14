@@ -194,6 +194,11 @@ fn verify_base3(
                 let agg_primary = aggregate_pubkeys(&primary_pubkeys)?;
                 let agg_fallback = aggregate_pubkeys(&fallback_pubkeys)?;
 
+                // SAFETY: `aggregate_pubkeys` strictly requires `PopVerified` public keys
+                // as input. Because every constituent key has already proven possession,
+                // the resulting aggregated key inherits this property and is mathematically
+                // protected against rogue-key attacks, making it safe to bypass the
+                // cryptographic check here.
                 let all_pubkeys = [
                     unsafe { PopVerified::new_unchecked(*agg_primary) },
                     unsafe { PopVerified::new_unchecked(*agg_fallback) },
