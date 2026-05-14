@@ -16,6 +16,7 @@ use {
     },
     thiserror::Error,
     tonic::{Request, Status, codegen::InterceptedService, transport::ClientTlsConfig},
+    wincode::{SchemaReadOwned, SchemaWrite, config::DefaultConfig},
 };
 
 #[allow(clippy::all)]
@@ -49,7 +50,7 @@ pub type RowDataSlice<'a> = &'a [(CellName, CellValue)];
 pub type CellName = String;
 pub type CellValue = Vec<u8>;
 pub enum CellData<B, P> {
-    Bincode(B),
+    Wincode(B),
     Protobuf(P),
 }
 
@@ -306,17 +307,17 @@ impl BigTableConnection {
         }
     }
 
-    pub async fn put_bincode_cells_with_retry<T>(
+    pub async fn put_wincode_cells_with_retry<T>(
         &self,
         table: &str,
         cells: &[(RowKey, T)],
     ) -> Result<usize>
     where
-        T: serde::ser::Serialize,
+        T: SchemaWrite<DefaultConfig, Src = T>,
     {
         retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            client.put_bincode_cells(table, cells).await
+            client.put_wincode_cells(table, cells).await
         })
         .await
     }
@@ -329,17 +330,17 @@ impl BigTableConnection {
         .await
     }
 
-    pub async fn get_bincode_cells_with_retry<T>(
+    pub async fn get_wincode_cells_with_retry<T>(
         &self,
         table: &str,
         row_keys: &[RowKey],
     ) -> Result<Vec<(RowKey, Result<T>)>>
     where
-        T: serde::de::DeserializeOwned,
+        T: SchemaReadOwned<DefaultConfig, Dst = T>,
     {
         retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            client.get_bincode_cells(table, row_keys).await
+            client.get_wincode_cells(table, row_keys).await
         })
         .await
     }
@@ -792,21 +793,21 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         Ok(())
     }
 
-    pub async fn get_bincode_cell<T>(&mut self, table: &str, key: RowKey) -> Result<T>
+    pub async fn get_wincode_cell<T>(&mut self, table: &str, key: RowKey) -> Result<T>
     where
-        T: serde::de::DeserializeOwned,
+        T: SchemaReadOwned<DefaultConfig, Dst = T>,
     {
         let row_data = self.get_single_row_data(table, key.clone()).await?;
-        deserialize_bincode_cell_data(&row_data, table, key.to_string())
+        deserialize_wincode_cell_data(&row_data, table, key.to_string())
     }
 
-    pub async fn get_bincode_cells<T>(
+    pub async fn get_wincode_cells<T>(
         &mut self,
         table: &str,
         keys: &[RowKey],
     ) -> Result<Vec<(RowKey, Result<T>)>>
     where
-        T: serde::de::DeserializeOwned,
+        T: SchemaReadOwned<DefaultConfig, Dst = T>,
     {
         Ok(self
             .get_multi_row_data(table, keys)
@@ -816,7 +817,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                 let key_str = key.to_string();
                 (
                     key,
-                    deserialize_bincode_cell_data(&row_data, table, key_str),
+                    deserialize_wincode_cell_data(&row_data, table, key_str),
                 )
             })
             .collect())
@@ -830,26 +831,26 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         deserialize_protobuf_cell_data(&row_data, table, key.to_string())
     }
 
-    pub async fn get_protobuf_or_bincode_cell<B, P>(
+    pub async fn get_protobuf_or_wincode_cell<B, P>(
         &mut self,
         table: &str,
         key: RowKey,
     ) -> Result<CellData<B, P>>
     where
-        B: serde::de::DeserializeOwned,
+        B: SchemaReadOwned<DefaultConfig, Dst = B>,
         P: prost::Message + Default,
     {
         let row_data = self.get_single_row_data(table, key.clone()).await?;
-        deserialize_protobuf_or_bincode_cell_data(&row_data, table, key)
+        deserialize_protobuf_or_wincode_cell_data(&row_data, table, key)
     }
 
-    pub async fn get_protobuf_or_bincode_cells<'a, B, P, R>(
+    pub async fn get_protobuf_or_wincode_cells<'a, B, P, R>(
         &mut self,
         table: &'a str,
         row_keys: R,
     ) -> Result<impl Iterator<Item = (RowKey, CellData<B, P>)> + 'a + use<'a, F, B, P, R>>
     where
-        B: serde::de::DeserializeOwned,
+        B: SchemaReadOwned<DefaultConfig, Dst = B>,
         P: prost::Message + Default,
         R: IntoIterator<Item = RowKey>,
     {
@@ -864,23 +865,23 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                 let key_str = key.to_string();
                 (
                     key,
-                    deserialize_protobuf_or_bincode_cell_data(&row_data, table, key_str).unwrap(),
+                    deserialize_protobuf_or_wincode_cell_data(&row_data, table, key_str).unwrap(),
                 )
             }))
     }
 
-    pub async fn put_bincode_cells<T>(
+    pub async fn put_wincode_cells<T>(
         &mut self,
         table: &str,
         cells: &[(RowKey, T)],
     ) -> Result<usize>
     where
-        T: serde::ser::Serialize,
+        T: SchemaWrite<DefaultConfig, Src = T>,
     {
         let mut bytes_written = 0;
         let mut new_row_data = vec![];
         for (row_key, data) in cells {
-            let data = compress_zstd_or_none(&bincode::serialize(&data).unwrap())?;
+            let data = compress_zstd_or_none(&wincode::serialize(&data).unwrap())?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("bin".to_string(), data)]));
         }
@@ -941,13 +942,13 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
     }
 }
 
-pub(crate) fn deserialize_protobuf_or_bincode_cell_data<B, P>(
+pub(crate) fn deserialize_protobuf_or_wincode_cell_data<B, P>(
     row_data: RowDataSlice,
     table: &str,
     key: RowKey,
 ) -> Result<CellData<B, P>>
 where
-    B: serde::de::DeserializeOwned,
+    B: SchemaReadOwned<DefaultConfig, Dst = B>,
     P: prost::Message + Default,
 {
     match deserialize_protobuf_cell_data(row_data, table, key.to_string()) {
@@ -957,7 +958,7 @@ where
             _ => return Err(err),
         },
     }
-    deserialize_bincode_cell_data(row_data, table, key).map(CellData::Bincode)
+    deserialize_wincode_cell_data(row_data, table, key).map(CellData::Wincode)
 }
 
 pub(crate) fn deserialize_protobuf_cell_data<T>(
@@ -981,13 +982,13 @@ where
     })
 }
 
-pub(crate) fn deserialize_bincode_cell_data<T>(
+pub(crate) fn deserialize_wincode_cell_data<T>(
     row_data: RowDataSlice,
     table: &str,
     key: RowKey,
 ) -> Result<T>
 where
-    T: serde::de::DeserializeOwned,
+    T: SchemaReadOwned<DefaultConfig, Dst = T>,
 {
     let value = &row_data
         .iter()
@@ -996,7 +997,7 @@ where
         .1;
 
     let data = decompress(value)?;
-    bincode::deserialize(&data).map_err(|err| {
+    wincode::deserialize(&data).map_err(|err| {
         warn!("Failed to deserialize {table}/{key}: {err}");
         Error::ObjectCorrupt(format!("{table}/{key}"))
     })
@@ -1048,7 +1049,7 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_protobuf_or_bincode_cell_data() {
+    fn test_deserialize_protobuf_or_wincode_cell_data() {
         let from = Keypair::new();
         let recipient = solana_pubkey::new_rand();
         let transaction = system_transaction::transfer(&from, &recipient, 42, Hash::default());
@@ -1080,8 +1081,8 @@ mod tests {
             block_time: Some(1_234_567_890),
             block_height: Some(1),
         };
-        let bincode_block = compress_zstd_or_none(
-            &bincode::serialize::<StoredConfirmedBlock>(&expected_block.clone().into()).unwrap(),
+        let wincode_block = compress_zstd_or_none(
+            &wincode::serialize::<StoredConfirmedBlock>(&expected_block.clone().into()).unwrap(),
         )
         .unwrap();
 
@@ -1090,7 +1091,7 @@ mod tests {
         protobuf_block.encode(&mut buf).unwrap();
         let protobuf_block = compress_zstd_or_none(&buf).unwrap();
 
-        let deserialized = deserialize_protobuf_or_bincode_cell_data::<
+        let deserialized = deserialize_protobuf_or_wincode_cell_data::<
             StoredConfirmedBlock,
             generated::ConfirmedBlock,
         >(
@@ -1105,16 +1106,16 @@ mod tests {
             panic!("deserialization should produce CellData::Protobuf");
         }
 
-        let deserialized = deserialize_protobuf_or_bincode_cell_data::<
+        let deserialized = deserialize_protobuf_or_wincode_cell_data::<
             StoredConfirmedBlock,
             generated::ConfirmedBlock,
         >(
-            &[("bin".to_string(), bincode_block.clone())],
+            &[("bin".to_string(), wincode_block.clone())],
             "",
             "".to_string(),
         )
         .unwrap();
-        if let CellData::Bincode(bincode_block) = deserialized {
+        if let CellData::Wincode(wincode_block) = deserialized {
             let mut block = expected_block;
             if let TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
                 meta,
@@ -1130,18 +1131,18 @@ mod tests {
                 meta.compute_units_consumed = None; // Legacy bincode implementation does not support CU consumed
                 meta.cost_units = None; // Legacy bincode implementation does not support CU
             }
-            assert_eq!(block, bincode_block.into());
+            assert_eq!(block, wincode_block.into());
         } else {
-            panic!("deserialization should produce CellData::Bincode");
+            panic!("deserialization should produce CellData::Wincode");
         }
 
-        let result = deserialize_protobuf_or_bincode_cell_data::<
+        let result = deserialize_protobuf_or_wincode_cell_data::<
             StoredConfirmedBlock,
             generated::ConfirmedBlock,
-        >(&[("proto".to_string(), bincode_block)], "", "".to_string());
+        >(&[("proto".to_string(), wincode_block)], "", "".to_string());
         assert!(result.is_err());
 
-        let result = deserialize_protobuf_or_bincode_cell_data::<
+        let result = deserialize_protobuf_or_wincode_cell_data::<
             StoredConfirmedBlock,
             generated::ConfirmedBlock,
         >(
@@ -1151,13 +1152,13 @@ mod tests {
         );
         assert!(result.is_err());
 
-        let result = deserialize_protobuf_or_bincode_cell_data::<
+        let result = deserialize_protobuf_or_wincode_cell_data::<
             StoredConfirmedBlock,
             generated::ConfirmedBlock,
         >(&[("bin".to_string(), protobuf_block)], "", "".to_string());
         assert!(result.is_err());
 
-        let result = deserialize_protobuf_or_bincode_cell_data::<
+        let result = deserialize_protobuf_or_wincode_cell_data::<
             StoredConfirmedBlock,
             generated::ConfirmedBlock,
         >(&[("bin".to_string(), vec![1, 2, 3, 4])], "", "".to_string());
