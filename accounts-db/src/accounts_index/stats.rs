@@ -68,6 +68,10 @@ pub struct Stats {
     bins: u64,
     pub flush_should_evict_us: AtomicU64,
     pub flush_read_lock_us: AtomicU64,
+    pub num_hashmap_reallocates: AtomicU64,
+    pub hashmap_reallocate_us: AtomicU64,
+    pub evict_triggered_by_low_free_entries: AtomicU64,
+    pub evict_triggered_by_high_count: AtomicU64,
 }
 
 impl Stats {
@@ -436,6 +440,28 @@ impl Stats {
                 (
                     "flush_read_lock_us",
                     self.flush_read_lock_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_hashmap_reallocates",
+                    self.num_hashmap_reallocates.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "hashmap_reallocate_us",
+                    self.hashmap_reallocate_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "evict_triggered_by_low_free_entries",
+                    self.evict_triggered_by_low_free_entries
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "evict_triggered_by_high_count",
+                    self.evict_triggered_by_high_count
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
