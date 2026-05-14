@@ -42,6 +42,10 @@ impl TransactionFrame {
     /// Parse a serialized transaction and verify basic structure.
     /// The `bytes` parameter must have no trailing data.
     pub(crate) fn try_new(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > u16::MAX as usize {
+            return Err(TransactionViewError::ParseError);
+        }
+
         if Self::is_legacy_or_v0(bytes)? {
             Self::try_new_as_legacy_or_v0(bytes)
         } else {
@@ -926,6 +930,28 @@ mod tests {
         let mut bytes = wincode::serialize(&tx).unwrap();
         bytes.push(0);
 
+        assert!(matches!(
+            TransactionFrame::try_new(&bytes),
+            Err(TransactionViewError::ParseError),
+        ));
+    }
+
+    #[test]
+    fn test_rejects_bytes_with_unrepresentable_frame_offsets() {
+        let mut bytes = Vec::new();
+        bytes.push(v1::V1_PREFIX);
+        bytes.extend_from_slice(&[1, 0, 0]);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 32]);
+        bytes.push(1);
+        bytes.push(1);
+        bytes.extend_from_slice(&[1; 32]);
+        bytes.extend_from_slice(&[0, 0]);
+        bytes.extend_from_slice(&u16::MAX.to_le_bytes());
+        bytes.extend(std::iter::repeat_n(0, u16::MAX as usize));
+        bytes.extend_from_slice(&[0; 64]);
+
+        assert!(bytes.len() > u16::MAX as usize);
         assert!(matches!(
             TransactionFrame::try_new(&bytes),
             Err(TransactionViewError::ParseError),
