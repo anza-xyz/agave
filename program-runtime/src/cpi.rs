@@ -223,7 +223,13 @@ pub struct CallerAccount<'a> {
 }
 
 impl<'a> CallerAccount<'a> {
-    pub fn get_serialized_data(
+    /// # Safety
+    ///
+    /// * The caller must ensure that this function does not violate mutable reference uniqueness
+    ///   constraints;
+    /// * The caller must ensure that the lifetime of the returned slice does not outlive the
+    ///   backing data.
+    pub unsafe fn get_serialized_data(
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         check_aligned: bool,
         vm_addr: u64,
@@ -250,27 +256,31 @@ impl<'a> CallerAccount<'a> {
             Ok(&mut [])
         } else if virtual_address_space_adjustments {
             // Workaround the memory permissions (as these are from the PoV of being inside the VM)
-            let serialization_ptr = translate_slice_mut_for_cpi::<u8>(
-                memory_mapping,
-                solana_sbpf::ebpf::MM_INPUT_START,
-                1,
-                false, // Don't care since it is byte aligned
-            )?
-            .as_mut_ptr();
             unsafe {
+                // SAFETY: Invariants for constructing a mutable reference delegated to the caller.
+                let serialization_ptr: &'a mut [u8] = translate_slice_mut_for_cpi::<u8>(
+                    memory_mapping,
+                    solana_sbpf::ebpf::MM_INPUT_START,
+                    1,
+                    false, // Don't care since it is byte aligned
+                )?;
                 Ok(std::slice::from_raw_parts_mut(
                     serialization_ptr
+                        .as_mut_ptr()
                         .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
                     len,
                 ))
             }
         } else {
-            translate_slice_mut_for_cpi::<u8>(
-                memory_mapping,
-                vm_addr,
-                len as u64,
-                false, // Don't care since it is byte aligned
-            )
+            unsafe {
+                // SAFETY: Invariants for constructing a mutable reference delegated to the caller.
+                translate_slice_mut_for_cpi::<u8>(
+                    memory_mapping,
+                    vm_addr,
+                    len as u64,
+                    false, // Don't care since it is byte aligned
+                )
+            }
         }
     }
 
@@ -381,20 +391,22 @@ impl<'a> CallerAccount<'a> {
             let ref_to_len_in_vm =
                 translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
-            let serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                check_aligned,
-                vm_data_addr,
-                account_metadata.original_data_len,
-                if syscall_parameter_address_restrictions {
-                    *ref_to_len_in_vm as usize
-                } else {
-                    data.len()
-                },
-                syscall_parameter_address_restrictions,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
+            let serialized_data = unsafe {
+                CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    check_aligned,
+                    vm_data_addr,
+                    account_metadata.original_data_len,
+                    if syscall_parameter_address_restrictions {
+                        *ref_to_len_in_vm as usize
+                    } else {
+                        data.len()
+                    },
+                    syscall_parameter_address_restrictions,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?
+            };
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
@@ -498,20 +510,22 @@ impl<'a> CallerAccount<'a> {
         }
         let ref_to_len_in_vm =
             translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
-        let serialized_data = CallerAccount::get_serialized_data(
-            memory_mapping,
-            check_aligned,
-            account_info.data_addr,
-            account_metadata.original_data_len,
-            if syscall_parameter_address_restrictions {
-                *ref_to_len_in_vm as usize
-            } else {
-                account_info.data_len as usize
-            },
-            syscall_parameter_address_restrictions,
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        )?;
+        let serialized_data = unsafe {
+            CallerAccount::get_serialized_data(
+                memory_mapping,
+                check_aligned,
+                account_info.data_addr,
+                account_metadata.original_data_len,
+                if syscall_parameter_address_restrictions {
+                    *ref_to_len_in_vm as usize
+                } else {
+                    account_info.data_len as usize
+                },
+                syscall_parameter_address_restrictions,
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            )?
+        };
 
         Ok(CallerAccount {
             lamports,
@@ -1180,16 +1194,18 @@ fn update_callee_account(
             if !account_data_direct_mapping && post_len < prev_len {
                 // If the account has been shrunk, we're going to zero the unused memory
                 // *that was previously used*.
-                let serialized_data = CallerAccount::get_serialized_data(
-                    memory_mapping,
-                    check_aligned,
-                    caller_account.vm_data_addr,
-                    caller_account.original_data_len,
-                    prev_len,
-                    syscall_parameter_address_restrictions,
-                    virtual_address_space_adjustments,
-                    account_data_direct_mapping,
-                )?;
+                let serialized_data = unsafe {
+                    CallerAccount::get_serialized_data(
+                        memory_mapping,
+                        check_aligned,
+                        caller_account.vm_data_addr,
+                        caller_account.original_data_len,
+                        prev_len,
+                        syscall_parameter_address_restrictions,
+                        virtual_address_space_adjustments,
+                        account_data_direct_mapping,
+                    )?
+                };
                 serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall) as Error)?
@@ -1333,16 +1349,18 @@ fn update_caller_account(
                     .fill(0);
             }
             // Set the length of caller_account.serialized_data to post_len.
-            caller_account.serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                check_aligned,
-                caller_account.vm_data_addr,
-                caller_account.original_data_len,
-                post_len,
-                syscall_parameter_address_restrictions,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
+            unsafe {
+                caller_account.serialized_data = CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    check_aligned,
+                    caller_account.vm_data_addr,
+                    caller_account.original_data_len,
+                    post_len,
+                    syscall_parameter_address_restrictions,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?;
+            }
         }
         // this is the len field in the AccountInfo::data slice
         *caller_account.ref_to_len_in_vm = post_len as u64;
@@ -1997,18 +2015,25 @@ mod tests {
         };
         let memory_mapping =
             unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
-
-        assert_matches!(
+        let serialized_data = unsafe {
             CallerAccount::get_serialized_data(
                 &memory_mapping,
                 true, // check_aligned
                 MM_INPUT_START,
                 account.data().len(),
-                account.data().len().saturating_add(MAX_PERMITTED_DATA_INCREASE).saturating_add(1),
-                true, // syscall_parameter_address_restrictions
-                true, // virtual_address_space_adjustments
+                account
+                    .data()
+                    .len()
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+                    .saturating_add(1),
+                true,  // syscall_parameter_address_restrictions
+                true,  // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
-            ),
+            )
+        };
+
+        assert_matches!(
+            serialized_data,
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
         );
     }

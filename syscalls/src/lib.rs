@@ -49,7 +49,6 @@ use {
     std::{
         alloc::Layout,
         mem::{MaybeUninit, align_of, size_of},
-        slice::from_raw_parts_mut,
         str::{Utf8Error, from_utf8},
     },
     thiserror::Error as ThisError,
@@ -583,7 +582,12 @@ fn translate_slice<T>(
         T,
         check_aligned,
     )
-    .map(|value| &*value)
+    .map(|value| unsafe {
+        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+        // This is producing a shared/read-only slice to the memory, so the uniqueness invariants
+        // aren't relevant.
+        &*value
+    })
 }
 
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
@@ -627,6 +631,12 @@ fn translate_slice_mut<T>(
         T,
         check_aligned,
     )
+    .map(|p| unsafe {
+        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+        // `translate_mut`, which is the only use of this function ensures that the ranges are
+        // non-overlapping.
+        &mut *p
+    })
 }
 
 fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result<(), Error> {
@@ -682,7 +692,7 @@ macro_rules! translate_mut {
             $vm_addr_and_element_count.1,
             $check_aligned,
         )?;
-        let host_addr = slice.as_ptr() as usize;
+        let host_addr = slice.as_ptr().addr();
         (slice, host_addr, std::mem::size_of::<$T>().saturating_mul($vm_addr_and_element_count.1 as usize))
     }};
     (internal, $memory_mapping:expr, $check_aligned:expr, &mut $T:ty, $vm_addr:expr) => {{
