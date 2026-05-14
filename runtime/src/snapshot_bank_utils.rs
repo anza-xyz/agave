@@ -761,12 +761,13 @@ pub fn bank_to_full_snapshot_archive(
 
 /// Convenience function to create an incremental snapshot archive out of any Bank, regardless of
 /// state.  The Bank will be frozen during the process.
-/// This is only called from ledger-tool or tests. Warping is a special case as well.
+/// This is only called from tests.
 ///
 /// Requires:
 ///     - `bank` is complete
 ///     - `bank`'s block id is set
 ///     - `bank`'s slot is greater than `full_snapshot_slot`
+#[cfg(feature = "dev-context-only-utils")]
 pub fn bank_to_incremental_snapshot_archive(
     snapshot_config: &SnapshotConfig,
     bank: &Bank,
