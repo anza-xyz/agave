@@ -116,7 +116,12 @@ pub fn translate_slice<T>(
         T,
         check_aligned,
     )
-    .map(|value| unsafe { &*value })
+    .map(|value| unsafe {
+        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+        // This is producing a shared/read-only slice to the memory, so the uniqueness invariants
+        // aren't relevant.
+        &*value
+    })
 }
 
 /// CPI-specific version with intentionally different lifetime signature.
