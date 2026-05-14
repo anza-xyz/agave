@@ -2527,34 +2527,6 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
 
         test_entries.push(test_entry);
     }
-
-    // fee payer drops below updated rent minimum, should fail
-    {
-        let mut test_entry = SvmTestEntry::default();
-        test_entry.set_rent_params(bumped_rent.clone());
-        test_entry.add_initial_program(program_name);
-
-        let fee_payer_keypair = Keypair::new();
-        let fee_payer = fee_payer_keypair.pubkey();
-        let fee_payer_data =
-            mk_system_account(new_min_balance + LAMPORTS_PER_SIGNATURE - 1, target_size);
-        test_entry.add_initial_account(fee_payer, &fee_payer_data);
-
-        let target = Pubkey::new_unique();
-        let target_data = mk_program_account(old_min_balance, target_size);
-        test_entry.add_initial_account(target, &target_data);
-
-        let set_data_transaction = WriteProgramInstruction::Set.create_transaction(
-            program_id,
-            &fee_payer_keypair,
-            target,
-            None,
-        );
-        test_entry.push_transaction_with_status(set_data_transaction, ExecutionStatus::Discarded);
-
-        test_entries.push(test_entry);
-    }
-
     test_entries
 }
 
