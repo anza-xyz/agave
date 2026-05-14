@@ -865,29 +865,10 @@ fn test_clean_zero_lamport_and_dead_slot() {
     accounts.store_for_tests((0, [(&pubkey1, &account)].as_slice()));
     accounts.store_for_tests((0, [(&pubkey2, &account)].as_slice()));
 
-    // Make sure both accounts are in the same AppendVec in slot 0, which
-    // will prevent pubkey1 from being cleaned up later even when it's a
-    // zero-lamport account
-    let ancestors = Ancestors::from(vec![0]);
-    let (slot1, account_info1) = accounts
-        .accounts_index
-        .get_with_and_then(&pubkey1, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
-        })
-        .unwrap();
-    let (slot2, account_info2) = accounts
-        .accounts_index
-        .get_with_and_then(&pubkey2, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
-        })
-        .unwrap();
-    assert_eq!(slot1, 0);
-    assert_eq!(slot1, slot2);
-    assert_eq!(account_info1.storage_location(), StorageLocation::Cached);
-    assert_eq!(
-        account_info1.storage_location(),
-        account_info2.storage_location()
-    );
+    // Make sure both accounts are in the same slot 0, which will prevent pubkey1
+    // from being cleaned up later even when it's a zero-lamport account
+    assert!(accounts.accounts_cache.load(0, &pubkey1).is_some());
+    assert!(accounts.accounts_cache.load(0, &pubkey2).is_some());
 
     // Update account 1 in slot 1
     accounts.store_for_tests((1, [(&pubkey1, &account)].as_slice()));
@@ -1136,13 +1117,11 @@ fn test_shrink_zero_lamport_single_ref_account() {
             [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
         ));
 
-        accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
-            let entry = entry.unwrap();
-            let slot_list = entry.slot_list_read_lock();
-            let (_, account_info) = slot_list.iter().max_by_key(|(s, _)| *s).cloned().unwrap();
-            assert!(account_info.is_zero_lamport());
-            (false, false)
-        });
+        // Verify the zero-lamport store landed.
+        let account = accounts
+            .get_account_at_slot(&pubkey_zero, slot)
+            .expect("pubkey_zero should be loadable");
+        assert_eq!(account.lamports(), 0);
 
         // Simulate rooting the zero-lamport account, should be a
         // candidate for cleaning
@@ -3497,8 +3476,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
     for key in &keys {
         assert!(
             accounts_db
-                .accounts_index
-                .get_with_and_then(key, &ancestors, false, |_| {})
+                .load_without_fixed_root(&ancestors, key)
                 .is_some()
         );
     }
@@ -3514,12 +3492,11 @@ fn test_accounts_db_cache_clean_dead_slots() {
         alive_slot,
     );
 
-    // Dead slots have been purged from the accounts index, so these keys should not be found.
+    // Dead slots have been purged, so these keys should not be findable in the database.
     for key in &keys {
         assert!(
             accounts_db
-                .accounts_index
-                .get_with_and_then(key, &ancestors, false, |_| {})
+                .load_without_fixed_root(&ancestors, key)
                 .is_none()
         );
     }
