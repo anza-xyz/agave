@@ -16,7 +16,6 @@ use {
     std::{
         collections::{HashMap, HashSet},
         sync::{Arc, RwLock},
-        time::Instant,
     },
 };
 
@@ -59,35 +58,12 @@ impl ValidatorStakeInfo {
     }
 }
 
-pub const RETRANSMIT_BASE_DELAY_MS: u64 = 5_000;
-pub const RETRANSMIT_BACKOFF_CAP: u32 = 6;
-
-#[derive(Debug)]
-pub struct RetransmitInfo {
-    pub(crate) retry_time: Instant,
-    pub(crate) retry_iteration: u32,
-}
-
-impl RetransmitInfo {
-    pub fn reached_retransmit_threshold(&self) -> bool {
-        let backoff = std::cmp::min(self.retry_iteration, RETRANSMIT_BACKOFF_CAP);
-        let backoff_duration_ms = (1_u64 << backoff) * RETRANSMIT_BASE_DELAY_MS;
-        self.retry_time.elapsed().as_millis() > u128::from(backoff_duration_ms)
-    }
-
-    pub fn increment_retry_iteration(&mut self) {
-        self.retry_iteration = self.retry_iteration.saturating_add(1);
-        self.retry_time = Instant::now();
-    }
-}
-
 pub struct ForkProgress {
     pub is_dead: bool,
     pub fork_stats: ForkStats,
     pub propagated_stats: PropagatedStats,
     pub replay_stats: Arc<RwLock<ReplaySlotStats>>,
     pub replay_progress: Arc<RwLock<ConfirmationProgress>>,
-    pub retransmit_info: RetransmitInfo,
     // Note `num_blocks_on_fork` and `num_dropped_blocks_on_fork` only
     // count new blocks replayed since last restart, which won't include
     // blocks already existing in the ledger/before snapshot at start,
@@ -147,10 +123,6 @@ impl ForkProgress {
                 prev_leader_slot,
                 total_epoch_stake,
                 ..PropagatedStats::default()
-            },
-            retransmit_info: RetransmitInfo {
-                retry_time: Instant::now(),
-                retry_iteration: 0u32,
             },
         }
     }
@@ -321,18 +293,6 @@ impl ProgressMap {
         self.progress_map
             .get_mut(&slot)
             .map(|fork_progress| &mut fork_progress.fork_stats)
-    }
-
-    pub fn get_retransmit_info(&self, slot: Slot) -> Option<&RetransmitInfo> {
-        self.progress_map
-            .get(&slot)
-            .map(|fork_progress| &fork_progress.retransmit_info)
-    }
-
-    pub fn get_retransmit_info_mut(&mut self, slot: Slot) -> Option<&mut RetransmitInfo> {
-        self.progress_map
-            .get_mut(&slot)
-            .map(|fork_progress| &mut fork_progress.retransmit_info)
     }
 
     pub fn is_dead(&self, slot: Slot) -> Option<bool> {

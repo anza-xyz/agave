@@ -222,7 +222,6 @@ impl Tvu {
         transaction_status_sender: Option<TransactionStatusSender>,
         entry_notification_sender: Option<EntryNotifierSender>,
         vote_tracker: Arc<VoteTracker>,
-        retransmit_slots_sender: Sender<Slot>,
         gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
         verified_voter_slots_sender: VerifiedVoterSlotsSender,
         verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
@@ -528,7 +527,6 @@ impl Tvu {
             entry_notification_sender,
             bank_notification_sender,
             ancestor_hashes_replay_update_sender,
-            retransmit_slots_sender,
             replay_vote_sender,
             cluster_slots_update_sender,
             cost_update_sender,
@@ -774,7 +772,6 @@ pub mod tests {
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
-        let (retransmit_slots_sender, _retransmit_slots_receiver) = unbounded();
         let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -857,7 +854,6 @@ pub mod tests {
             None, // transaction_status_sender
             None, // entry_notification_sender
             Arc::<VoteTracker>::default(),
-            retransmit_slots_sender,
             gossip_verified_vote_hash_receiver,
             verified_voter_slots_sender,
             verified_voter_slots_receiver,

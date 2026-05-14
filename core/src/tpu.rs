@@ -25,7 +25,6 @@ use {
     },
     agave_votor::event::VotorEventSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
-    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -109,7 +108,6 @@ impl Tpu {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         entry_receiver: Receiver<WorkingBankEntryOrMarker>,
-        retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
         subscriptions: Option<Arc<RpcSubscriptions>>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -340,7 +338,6 @@ impl Tpu {
             broadcast_sockets,
             cluster_info.clone(),
             entry_receiver,
-            retransmit_slots_receiver,
             exit,
             blockstore,
             bank_forks,
