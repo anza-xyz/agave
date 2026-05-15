@@ -4508,9 +4508,6 @@ impl Bank {
             Arc::new(reserved_keys)
         };
 
-        // Update the transaction processor with all active built-in programs
-        self.add_active_builtin_programs();
-
         // Cost-Tracker is not serialized in snapshot or any configs.
         // We must apply previously activated features related to limits here
         // so that the initial bank state is consistent with the feature set.
@@ -4531,6 +4528,9 @@ impl Bank {
             .unwrap()
             .upcoming_epoch = self.epoch;
         self.transaction_processor.program_runtime_environment = program_runtime_environment;
+
+        // Load all active built-in programs after the program runtime environment has been initialized
+        self.add_active_builtin_programs();
     }
 
     fn create_program_runtime_environment(
