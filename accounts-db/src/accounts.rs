@@ -10,6 +10,7 @@ use {
         accounts_scan::{ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
         is_loadable::IsLoadable as _,
+        is_zero_lamport::IsZeroLamport as _,
         storable_accounts::StorableAccounts,
     },
     log::*,
@@ -166,7 +167,7 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(
+        self._load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
@@ -181,7 +182,7 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(
+        self._load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
@@ -194,12 +195,28 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(
+        self._load(
             ancestors,
             pubkey,
             LoadHint::Unspecified,
             PopulateReadCache::True,
         )
+    }
+
+    /// Loads account for `pubkey` that is visible from `ancestors`.
+    ///
+    /// If no account, returns None.
+    /// If account is zero lamport, returns None.
+    fn _load(
+        &self,
+        ancestors: &Ancestors,
+        pubkey: &Pubkey,
+        load_hint: LoadHint,
+        populate_read_cache: PopulateReadCache,
+    ) -> Option<(AccountSharedData, Slot)> {
+        self.accounts_db
+            .load(ancestors, pubkey, load_hint, populate_read_cache)
+            .filter(|(account, _)| !account.is_zero_lamport())
     }
 
     /// scans underlying accounts_db for this delta (slot) with a map function

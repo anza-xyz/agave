@@ -621,7 +621,7 @@ type ReclaimResult = (AccountSlots, SlotOffsets);
 type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey>;
 type ShrinkCandidates = IntSet<Slot>;
 
-// Some hints for applicability of additional sanity checks for the do_load fast-path;
+// Some hints for applicability of additional sanity checks for the load() fast-path;
 // Slower fallback code path will be taken if the fast path has failed over the retry
 // threshold, regardless of these hints. Also, load cannot fail not-deterministically
 // even under very rare circumstances, unlike previously did allow.
@@ -3510,7 +3510,7 @@ impl AccountsDb {
             if config.is_aborted() {
                 break;
             }
-            if let Some((account, slot)) = self.do_load(
+            if let Some((account, slot)) = self.load(
                 ancestors,
                 &pubkey,
                 LoadHint::Unspecified,
@@ -3626,18 +3626,6 @@ impl AccountsDb {
 
             ScanStorageResult::Stored(retval)
         }
-    }
-
-    /// note this returns None for accounts with zero lamports
-    pub fn load(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-        load_hint: LoadHint,
-        populate_read_cache: PopulateReadCache,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(ancestors, pubkey, load_hint, populate_read_cache)
-            .filter(|(account, _)| !account.is_zero_lamport())
     }
 
     fn read_index_for_accessor_or_load_slow<'a>(
@@ -3910,7 +3898,7 @@ impl AccountsDb {
                 // fetched from storage. This means a race occurred between this function and clean
                 // accounts/purge_slots
                 let message = format!(
-                    "do_load() failed to get key: {pubkey} from storage, latest attempt was for \
+                    "load() failed to get key: {pubkey} from storage, latest attempt was for \
                      slot: {slot}, storage_location: {storage_location:?}, load_hint: \
                      {load_hint:?}",
                 );
@@ -3984,7 +3972,11 @@ impl AccountsDb {
         }
     }
 
-    fn do_load(
+    /// Loads account for `pubkey` that is visible from `ancestors`.
+    ///
+    /// If no account, returns None.
+    /// If account is zero lamport, returns Some.
+    pub fn load(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -4087,9 +4079,9 @@ impl AccountsDb {
             let ending_max_root = self.accounts_index.max_root_inclusive();
             if starting_max_root != ending_max_root {
                 warn!(
-                    "do_load_with_populate_read_cache() scanning pubkey {pubkey} called with \
-                     fixed max root, but max root changed from {starting_max_root} to \
-                     {ending_max_root} during function call"
+                    "load_with_populate_read_cache() scanning pubkey {pubkey} called with fixed \
+                     max root, but max root changed from {starting_max_root} to {ending_max_root} \
+                     during function call"
                 );
             }
         }
@@ -6704,12 +6696,12 @@ impl AccountsDb {
     /// Note that this is non-deterministic if clean is running asynchronously.
     /// If a zero lamport account exists in the index, then Some is returned.
     /// Once it is cleaned from the index, None is returned.
-    fn load_without_fixed_root(
+    pub(crate) fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(
+        self.load(
             ancestors,
             pubkey,
             LoadHint::Unspecified,

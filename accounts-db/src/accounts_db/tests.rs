@@ -2880,7 +2880,7 @@ fn test_read_only_accounts_cache() {
             PopulateReadCache::True,
         )
         .map(|(account, _)| account);
-    assert!(account.is_none());
+    assert!(account.unwrap().is_zero_lamport());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
 }
 
@@ -2933,7 +2933,7 @@ fn test_load_with_read_only_accounts_cache() {
         LoadHint::Unspecified,
         PopulateReadCache::False,
     );
-    assert!(account.is_none());
+    assert!(account.unwrap().0.is_zero_lamport());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
 
     db.read_only_accounts_cache.reset_for_tests();
@@ -2944,7 +2944,7 @@ fn test_load_with_read_only_accounts_cache() {
         LoadHint::Unspecified,
         PopulateReadCache::True,
     );
-    assert!(account.is_none());
+    assert!(account.unwrap().0.is_zero_lamport());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
 
     let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
@@ -3060,14 +3060,12 @@ fn test_flush_cache_dont_clean_zero_lamport_account() {
     );
 
     // The zero-lamport account in slot 2 should not be purged yet, because
-    // it is newer than the latest full snapshot, which blocks cleanup
-    // Use `do_load` directly (rather than `load`) to verify the zero-lamport account
-    // is still present in storage; `load` filters out zero-lamport accounts and
-    // would return None here. FixedMaxRoot is safe since we are only using
+    // it is newer than the latest full snapshot, which blocks cleanup.
+    // FixedMaxRoot is safe since we are only using
     // clean_accounts, with no out-of-band removals.
     let load_hint = LoadHint::FixedMaxRoot;
     assert_eq!(
-        db.do_load(
+        db.load(
             &Ancestors::default(),
             &zero_lamport_account_key,
             load_hint,
@@ -4024,7 +4022,7 @@ fn start_load_thread(
 
                 // Load should never be unable to find this key
                 let loaded_account = db
-                    .do_load(&ancestors, &pubkey, load_hint, PopulateReadCache::True)
+                    .load(&ancestors, &pubkey, load_hint, PopulateReadCache::True)
                     .unwrap();
                 // slot + 1 == account.lamports because of the account-cache-flush thread
                 assert_eq!(
