@@ -120,8 +120,14 @@ pub fn archive_snapshot(
                 snapshot_storages,
                 INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );
-            let mut buf_reader = storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, io_setup)
-                .map_err(E::StorageFileBufReaderError)?;
+            // For incremental snapshots, the storage files have just been
+            // written and are likely still hot in the page cache, so prefer
+            // page-cached reads over direct I/O.
+            let use_page_cache =
+                matches!(snapshot_archive_kind, SnapshotArchiveKind::Incremental(_));
+            let mut buf_reader =
+                storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, use_page_cache, io_setup)
+                    .map_err(E::StorageFileBufReaderError)?;
             for storage in storages_orderer.iter() {
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));

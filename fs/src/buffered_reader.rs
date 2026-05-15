@@ -14,7 +14,7 @@
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
 //! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
 #[cfg(target_os = "linux")]
-use crate::io_uring::sequential_file_reader::{SequentialFileReader, SequentialFileReaderBuilder};
+pub use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 use {
     crate::{
         FileSize,
@@ -427,7 +427,13 @@ pub fn large_file_buf_reader(
 ) -> io::Result<impl BufRead + use<>> {
     #[cfg(target_os = "linux")]
     {
-        let mut reader = new_io_uring_file_buf_reader(buf_size, io_setup)?;
+        assert!(agave_io_uring::io_uring_supported());
+
+        let mut reader = SequentialFileReaderBuilder::new()
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .use_direct_io(io_setup.use_direct_io)
+            .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+            .build(buf_size)?;
         reader.set_path(path)?;
         Ok(reader)
     }
@@ -438,20 +444,6 @@ pub fn large_file_buf_reader(
         let _ = io_setup;
         Ok(BufReader::with_capacity(buf_size, file))
     }
-}
-
-#[cfg(target_os = "linux")]
-pub fn new_io_uring_file_buf_reader<'a>(
-    buf_size: usize,
-    io_setup: &IoSetupState,
-) -> io::Result<SequentialFileReader<'a>> {
-    assert!(agave_io_uring::io_uring_supported());
-
-    SequentialFileReaderBuilder::new()
-        .shared_sqpoll(io_setup.shared_sqpoll_fd())
-        .use_direct_io(io_setup.use_direct_io)
-        .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
-        .build(buf_size)
 }
 
 #[cfg(test)]

@@ -17,15 +17,23 @@ use {
 // file fits entirely within the buffer.
 pub const ACCOUNT_STORAGE_MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
+/// When `use_page_cache` is `true`, direct I/O is forced off regardless of
+/// `io_setup.use_direct_io` so that reads can hit the kernel's page cache.
+/// Otherwise, the `io_setup.use_direct_io` setting is honored.
 pub fn storage_file_buf_reader<'a>(
     max_buf_size: usize,
+    use_page_cache: bool,
     io_setup: &IoSetupState,
 ) -> io::Result<impl FileBufRead<'a> + use<'a>> {
     #[cfg(target_os = "linux")]
-    let reader = buffered_reader::new_io_uring_file_buf_reader(max_buf_size, io_setup)?;
+    let reader = buffered_reader::SequentialFileReaderBuilder::new()
+        .shared_sqpoll(io_setup.shared_sqpoll_fd())
+        .use_direct_io(io_setup.use_direct_io && !use_page_cache)
+        .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+        .build(max_buf_size)?;
     #[cfg(not(target_os = "linux"))]
     let reader = {
-        let _ = (max_buf_size, io_setup);
+        let _ = (max_buf_size, use_page_cache, io_setup);
         const READER_STACK_BUFFER_SIZE: usize = 64 * 1024;
         buffered_reader::BufferedReader::<READER_STACK_BUFFER_SIZE>::new()
     };
@@ -185,9 +193,12 @@ mod tests {
 
         storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
-        let mut buf_reader =
-            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, &IoSetupState::default())
-                .unwrap();
+        let mut buf_reader = storage_file_buf_reader(
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
+            false,
+            &IoSetupState::default(),
+        )
+        .unwrap();
         let reader = AccountStorageReader::new(&storage, None, &mut buf_reader).unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
     }
@@ -255,9 +266,12 @@ mod tests {
         let storage = storage.reopen_as_readonly().unwrap_or(storage);
 
         // Create the reader and check the length
-        let mut file_reader =
-            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, &IoSetupState::default())
-                .unwrap();
+        let mut file_reader = storage_file_buf_reader(
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
+            false,
+            &IoSetupState::default(),
+        )
+        .unwrap();
         let mut reader = AccountStorageReader::new(&storage, None, &mut file_reader).unwrap();
         let current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
         assert_eq!(reader.len(), current_len);
@@ -370,9 +384,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Now iterate through all the possible snapshot slots and verify correctness
-        let mut file_reader =
-            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, &IoSetupState::default())
-                .unwrap();
+        let mut file_reader = storage_file_buf_reader(
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
+            false,
+            &IoSetupState::default(),
+        )
+        .unwrap();
         for snapshot_slot in 0..slot_marked_dead {
             let mut reader =
                 AccountStorageReader::new(&storage, Some(snapshot_slot), &mut file_reader).unwrap();

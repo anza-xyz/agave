@@ -124,7 +124,8 @@ mod serde_snapshot_tests {
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
-        let mut buf_reader = storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default())?;
+        let mut buf_reader =
+            storage_file_buf_reader(MAX_BUFFER_SIZE, false, &IoSetupState::default())?;
         for storage_entry in storage_entries.iter() {
             // Copy file to new directory
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
