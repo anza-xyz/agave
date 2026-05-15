@@ -36,7 +36,6 @@ pub fn storage_file_buf_reader<'a>(
 /// This type skips over the data in accounts contained in the obsolete accounts structure
 pub struct AccountStorageReader<'a, 'r, R: FileBufRead<'a>> {
     sorted_obsolete_accounts: Vec<(Offset, usize)>,
-    current_offset: usize,
     reader: &'r mut R,
     num_alive_bytes: usize,
     num_total_bytes: usize,
@@ -77,7 +76,6 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'a, 'r, R> {
 
         Ok(Self {
             sorted_obsolete_accounts,
-            current_offset: 0,
             reader: file_reader,
             num_alive_bytes,
             num_total_bytes,
@@ -101,11 +99,11 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'a, '_, R> {
 
         while total_read < buf_len {
             let next_obsolete_account = self.sorted_obsolete_accounts.last();
+            let file_offset = self.reader.get_file_offset() as usize;
             if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account {
-                if self.current_offset == obsolete_start {
+                if file_offset == obsolete_start {
                     let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
                     self.reader.consume_or_skip(skip_len);
-                    self.current_offset += skip_len;
                     self.sorted_obsolete_accounts.pop();
                     continue;
                 }
@@ -116,9 +114,9 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'a, '_, R> {
 
             // Cannot read beyond the next obsolete account or the end of the file
             let bytes_to_read_from_file = if let Some((obsolete_start, _)) = next_obsolete_account {
-                obsolete_start.saturating_sub(self.current_offset)
+                obsolete_start.saturating_sub(file_offset)
             } else {
-                self.num_total_bytes.saturating_sub(self.current_offset)
+                self.num_total_bytes.saturating_sub(file_offset)
             };
 
             let bytes_to_read = bytes_left_in_buffer.min(bytes_to_read_from_file);
@@ -129,7 +127,6 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'a, '_, R> {
                 break; // EOF
             }
 
-            self.current_offset += read_size;
             total_read += read_size;
         }
 
