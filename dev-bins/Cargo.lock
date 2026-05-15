@@ -413,6 +413,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-xdp-ebpf",
  "arc-swap",
+ "arrayvec",
  "aya",
  "bytes",
  "caps",

@@ -11,6 +11,7 @@ use {
         umem::{OwnedUmem, PageAlignedMemory},
     },
     arc_swap::ArcSwap,
+    arrayvec::ArrayVec,
     aya::Ebpf,
     crossbeam_channel::TryRecvError,
     log::info,
@@ -192,10 +193,7 @@ impl TransmitterBuilder {
     #[cfg(target_os = "linux")]
     pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
         use {
-            caps::{
-                CapSet,
-                Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
-            },
+            caps::Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             log::debug,
             std::collections::HashSet,
         };
@@ -245,20 +243,15 @@ impl TransmitterBuilder {
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
-        caps::raise(None, CapSet::Effective, CAP_NET_ADMIN)
-            .expect("raise CAP_NET_ADMIN capability");
-        caps::raise(None, CapSet::Effective, CAP_NET_RAW).expect("raise CAP_NET_RAW capability");
+        let _setup_caps =
+            CapGuard::raise([CAP_NET_ADMIN, CAP_NET_RAW]).expect("raise net capabilities");
 
         let maybe_ebpf_result = if zero_copy {
-            caps::raise(None, CapSet::Effective, CAP_BPF).expect("raise CAP_BPF capability");
-            caps::raise(None, CapSet::Effective, CAP_PERFMON)
-                .expect("raise CAP_PERFMON capability");
+            let _ebpf_caps =
+                CapGuard::raise([CAP_BPF, CAP_PERFMON]).expect("raise ebpf capabilities");
 
             let load_result =
                 load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"));
-
-            caps::drop(None, CapSet::Effective, CAP_PERFMON).expect("drop CAP_PERFMON capability");
-            caps::drop(None, CapSet::Effective, CAP_BPF).expect("drop CAP_BPF capability");
 
             Some(load_result)
         } else {
@@ -271,9 +264,6 @@ impl TransmitterBuilder {
             .collect::<Vec<_>>();
 
         let tables_result = RoutingTables::from_netlink(RouteTable::Main);
-
-        caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
-        caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
 
         let tables = tables_result?;
         let router = Router::from_tables(tables)?;
@@ -411,4 +401,39 @@ pub(crate) fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
         );
     }
     None
+}
+
+#[cfg(target_os = "linux")]
+const CAP_GUARD_CAPACITY: usize = 2;
+
+#[cfg(target_os = "linux")]
+#[must_use = "capabilities are dropped when the guard goes out of scope"]
+struct CapGuard {
+    capabilities: ArrayVec<caps::Capability, CAP_GUARD_CAPACITY>,
+}
+
+#[cfg(target_os = "linux")]
+impl CapGuard {
+    fn raise(
+        raised_capabilities: impl IntoIterator<Item = caps::Capability>,
+    ) -> Result<Self, caps::errors::CapsError> {
+        let mut capabilities = ArrayVec::new();
+        for capability in raised_capabilities {
+            capabilities.try_push(capability).unwrap_or_else(|_| {
+                panic!("CapGuard supports at most {CAP_GUARD_CAPACITY} capabilities")
+            });
+            caps::raise(None, caps::CapSet::Effective, capability)?;
+        }
+        Ok(Self { capabilities })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for CapGuard {
+    fn drop(&mut self) {
+        for capability in self.capabilities.iter().rev() {
+            caps::drop(None, caps::CapSet::Effective, *capability)
+                .unwrap_or_else(|err| panic!("drop {capability:?} capability: {err}"));
+        }
+    }
 }
