@@ -19,7 +19,6 @@ use {
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 
-#[doc(inline)]
 pub use solana_transaction_return_data::TransactionReturnData;
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
