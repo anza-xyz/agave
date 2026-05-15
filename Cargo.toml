@@ -111,6 +111,7 @@ members = [
     "tpu-client",
     "tpu-client-next",
     "transaction-context",
+    "transaction-return-data",
     "transaction-status",
     "transaction-status-client-types",
     "transaction-view",
@@ -520,6 +521,7 @@ solana-tpu-client-next = { path = "tpu-client-next", version = "=4.2.0-alpha.0",
 solana-transaction = "4.1.1"
 solana-transaction-context = { path = "transaction-context", version = "=4.2.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-error = "3.2.0"
+solana-transaction-return-data = { path = "transaction-return-data", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-transaction-status = { path = "transaction-status", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-turbine = { path = "turbine", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

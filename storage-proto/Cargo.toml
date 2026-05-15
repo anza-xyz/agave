@@ -31,8 +31,8 @@ solana-pubkey = { workspace = true }
 solana-serde = { workspace = true }
 solana-signature = { workspace = true, features = ["std"] }
 solana-transaction = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["serde", "wincode"] }
 solana-transaction-error = { workspace = true, features = ["wincode"] }
+solana-transaction-return-data = { workspace = true, features = ["serde", "wincode"] }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }

@@ -8,8 +8,8 @@ use {
     solana_message::v0::LoadedAddresses,
     solana_serde::default_on_eof,
     solana_transaction::{SchemaRead, SchemaWrite},
-    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_transaction_return_data::TransactionReturnData,
     solana_transaction_status::{
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },

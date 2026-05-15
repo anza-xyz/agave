@@ -738,7 +738,7 @@ mod test {
         solana_seed_derivable::SeedDerivable,
         solana_signer::Signer,
         solana_transaction::Transaction,
-        solana_transaction_context::transaction::TransactionReturnData,
+        solana_transaction_return_data::TransactionReturnData,
         solana_transaction_status::{Reward, RewardType, TransactionStatusMeta},
         std::io::BufWriter,
     };

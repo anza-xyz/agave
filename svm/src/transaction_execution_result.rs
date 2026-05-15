@@ -3,8 +3,8 @@ use {
     solana_message::inner_instruction::InnerInstructionsList,
     solana_program_runtime::program_cache_entry::ProgramCacheEntry,
     solana_pubkey::Pubkey,
-    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionResult,
+    solana_transaction_return_data::TransactionReturnData,
     std::{collections::HashMap, sync::Arc},
 };
 

@@ -15,8 +15,8 @@ use {
     solana_message::inner_instruction::InnerInstructionsList,
     solana_pubkey::Pubkey,
     solana_svm::transaction_commit_result::CommittedTransaction,
-    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionResult,
+    solana_transaction_return_data::TransactionReturnData,
     solana_transaction_status_client_types::UiInstruction,
     std::str::FromStr,
 };

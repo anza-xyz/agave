@@ -28,8 +28,8 @@ solana-message = { workspace = true, features = ["wincode"] }
 solana-reward-info = { workspace = true, features = ["serde", "wincode"] }
 solana-signature = { workspace = true, default-features = false }
 solana-transaction = { workspace = true, features = ["serde", "wincode"] }
-solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true, features = ["serde"] }
+solana-transaction-return-data = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 

@@ -6363,8 +6363,8 @@ pub mod tests {
         solana_storage_proto::convert::generated,
         solana_streamer::evicting_sender::EvictingSender,
         solana_transaction::Transaction,
-        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_error::TransactionError,
+        solana_transaction_return_data::TransactionReturnData,
         solana_transaction_status::{
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
         },

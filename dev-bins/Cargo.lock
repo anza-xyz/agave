@@ -6313,8 +6313,8 @@ dependencies = [
  "solana-signature",
  "solana-sysvar",
  "solana-transaction",
- "solana-transaction-context",
  "solana-transaction-error",
+ "solana-transaction-return-data",
  "tarpc",
  "thiserror 2.0.18",
  "tokio",
@@ -6334,8 +6334,8 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context",
  "solana-transaction-error",
+ "solana-transaction-return-data",
  "tarpc",
 ]
 
@@ -8656,6 +8656,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
+ "solana-transaction-return-data",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
  "solana-version",
@@ -9035,8 +9036,8 @@ dependencies = [
  "solana-serde",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context",
  "solana-transaction-error",
+ "solana-transaction-return-data",
  "solana-transaction-status",
  "thiserror 2.0.18",
  "tonic-prost-build",
@@ -9116,6 +9117,7 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction-context",
  "solana-transaction-error",
+ "solana-transaction-return-data",
  "spl-generic-token",
  "thiserror 2.0.18",
 ]
@@ -9574,7 +9576,7 @@ dependencies = [
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
- "wincode",
+ "solana-transaction-return-data",
 ]
 
 [[package]]
@@ -9587,6 +9589,15 @@ dependencies = [
  "serde_derive",
  "solana-instruction-error",
  "solana-sanitize",
+ "wincode",
+]
+
+[[package]]
+name = "solana-transaction-return-data"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "serde",
+ "solana-address 2.6.0",
  "wincode",
 ]
 
@@ -9646,8 +9657,8 @@ dependencies = [
  "solana-reward-info",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context",
  "solana-transaction-error",
+ "solana-transaction-return-data",
  "thiserror 2.0.18",
  "wincode",
 ]

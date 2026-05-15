@@ -18,15 +18,15 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 bincode = ["dep:bincode", "serde", "solana-account/bincode"]
 dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
-serde = ["serde/derive", "solana-pubkey/serde"]
-wincode = ["dep:wincode", "solana-pubkey/wincode"]
+serde = ["dep:serde", "solana-pubkey/serde", "solana-transaction-return-data/serde"]
+wincode = ["solana-pubkey/wincode", "solana-transaction-return-data/wincode"]
 
 [dependencies]
 solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
-wincode = { workspace = true, optional = true }
+solana-transaction-return-data = { workspace = true }
 
 [target.'cfg(not(any(target_arch = "sbf", target_arch = "bpf")))'.dependencies]
 bincode = { workspace = true, optional = true }
