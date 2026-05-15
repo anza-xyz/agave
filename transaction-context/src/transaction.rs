@@ -18,7 +18,7 @@ use {
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 use {
-    crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccoun,
+    crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccount,
             vm_slice::VmSlice},
     solana_pubkey::Pubkey,
 };
