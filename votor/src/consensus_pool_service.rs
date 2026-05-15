@@ -468,22 +468,25 @@ impl ConsensusPoolService {
     ) -> Result<(), ()> {
         // First, collect new pending blocks from the consensus pool and send them for repair
         for block @ (slot, block_id) in consensus_pool.take_pending_safe_to_notar() {
-            if pending_safe_to_notar.insert(block) {
-                match ctx
-                    .repair_event_sender
-                    .try_send(RepairEvent::FetchBlock { slot, block_id })
-                {
-                    Ok(()) => (),
-                    Err(TrySendError::Full(event)) => {
-                        error!(
-                            "Repair event channel for event={event:?} is full. Will try event in \
-                             next iteration."
-                        );
-                        consensus_pool.add_to_pending_safe_to_notar(block);
-                    }
-                    Err(TrySendError::Disconnected(_)) => return Err(()),
+            if pending_safe_to_notar.contains(&block) {
+                continue;
+            }
+            match ctx
+                .repair_event_sender
+                .try_send(RepairEvent::FetchBlock { slot, block_id })
+            {
+                Ok(()) => {
+                    stats.pending_safe_to_notar_repair_sent += 1;
+                    pending_safe_to_notar.insert(block);
                 }
-                stats.pending_safe_to_notar_repair_sent += 1;
+                Err(TrySendError::Full(event)) => {
+                    error!(
+                        "Repair event channel for event={event:?} is full. Will try event in next \
+                         iteration."
+                    );
+                    consensus_pool.add_to_pending_safe_to_notar(block);
+                }
+                Err(TrySendError::Disconnected(_)) => return Err(()),
             }
         }
 
