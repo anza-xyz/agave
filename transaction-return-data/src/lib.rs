@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! The [`TransactionReturnData`] value returned at the end of a Solana
 //! transaction.
 
