@@ -31,6 +31,7 @@ use {
     dashmap::DashSet,
     itertools::Itertools,
     log::*,
+    lru::LruCache,
     rand::Rng,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
@@ -77,6 +78,7 @@ use {
         fmt::Write,
         fs::{self, File},
         io::Error as IoError,
+        num::NonZeroUsize,
         ops::{Bound, Range},
         path::{Path, PathBuf},
         rc::Rc,
@@ -113,12 +115,20 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 /// a latency event rather than the only source of truth. Keep this small enough
 /// that Tower validators do not pay a large idle-memory cost for the channel.
 pub const MAX_UPDATE_PARENT_SIGNALS: usize = 4_096;
+// Update parent events are expected to be rare, so a small cache to avoid
+// hitting blockstore should suffice here. The "DoS" attack to cause cache churn
+// and misses is also expensive because it would involve malicious leader giving
+// up their future leader slots.
+const UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
 
 pub type UpdateParentSender = Sender<UpdateParentSignal>;
 pub type UpdateParentReceiver = Receiver<UpdateParentSignal>;
+type UpdateParentShredParentKey = (BlockLocation, Slot, u32);
+type UpdateParentShredParentCache =
+    LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
 
 #[derive(Debug, Clone)]
 pub struct UpdateParentSignal {
@@ -296,6 +306,13 @@ pub struct Blockstore {
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     update_parent_signals: Mutex<Vec<UpdateParentSender>>,
+    /// Stable shred-header parent for recent UpdateParent slots.
+    ///
+    /// After UpdateParent, `SlotMeta.parent_slot` contains the effective replay
+    /// parent, but all shreds in the slot must still use the original shred
+    /// parent. This tiny cache avoids a blockstore lookup for each later shred
+    /// in small insertion batches.
+    update_parent_shred_parent_cache: Mutex<UpdateParentShredParentCache>,
     pub lowest_cleanup_slot: RwLock<Slot>,
     // A sender that feeds into the BlockstoreCleanupService request channel
     // to enable manual Blockstore purge requests to be issued
@@ -631,6 +648,9 @@ impl Blockstore {
             new_shreds_signals: Mutex::default(),
             completed_slots_senders: Mutex::default(),
             update_parent_signals: Mutex::default(),
+            update_parent_shred_parent_cache: Mutex::new(LruCache::new(
+                UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY,
+            )),
             insert_shreds_lock: Mutex::<()>::default(),
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
@@ -3168,36 +3188,102 @@ impl Blockstore {
             return false;
         }
 
-        if !slot_meta.has_update_parent() {
-            let Some(meta_parent_slot) = slot_meta.parent_slot else {
-                return false;
-            };
+        let Some(expected_shred_parent) =
+            self.expected_shred_parent(slot, location, slot_meta, just_inserted_shreds)
+        else {
+            error!(
+                "Unable to determine expected shred parent for shred_id {:?}, slot_meta: {:?}",
+                shred.id(),
+                slot_meta
+            );
+            return false;
+        };
 
-            if meta_parent_slot != shred_parent {
-                let leader_pubkey = leader_schedule
-                    .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
+        if expected_shred_parent != shred_parent {
+            let leader_pubkey = leader_schedule
+                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
 
-                datapoint_error!(
-                    "blockstore_error",
-                    (
-                        "error",
-                        format!(
-                            "Leader {:?}, shred_id {:?}: received shred with parent {} but \
-                             slot_meta has parent {} before UpdateParent",
-                            leader_pubkey,
-                            shred.id(),
-                            shred_parent,
-                            meta_parent_slot
-                        ),
-                        String
-                    )
-                );
+            datapoint_error!(
+                "blockstore_error",
+                (
+                    "error",
+                    format!(
+                        "Leader {:?}, shred_id {:?}: received shred with parent {} but expected \
+                         shred parent {}{}",
+                        leader_pubkey,
+                        shred.id(),
+                        shred_parent,
+                        expected_shred_parent,
+                        if slot_meta.has_update_parent() {
+                            " after UpdateParent"
+                        } else {
+                            " before UpdateParent"
+                        }
+                    ),
+                    String
+                )
+            );
 
-                return false;
-            }
+            return false;
         }
 
         true
+    }
+
+    /// Returns the stable shred-header parent that every data shred in `slot`
+    /// must use.
+    ///
+    /// `SlotMeta.parent_slot` is the effective replay parent and is rewritten by
+    /// UpdateParent. The shred-header parent intentionally stays fixed for the
+    /// whole slot, so after UpdateParent we recover it from the marker shred
+    /// that caused `SlotMeta` to switch parents.
+    fn expected_shred_parent(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+        slot_meta: &SlotMeta,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+    ) -> Option<Slot> {
+        if !slot_meta.has_update_parent() {
+            return slot_meta.parent_slot;
+        }
+
+        // There has been an UpdateParent, so we can't use the `slot_meta` to
+        // determine the stable parent used for shred filtering purposes (this
+        // parent is the replay parent). Derive the stable parent from the shred
+        // header of the UpdateParent shred (or cache).
+        let replay_fec_set_index = slot_meta.replay_fec_set_index;
+        let cache_key = (location, slot, replay_fec_set_index);
+        if let Some(parent) = self
+            .update_parent_shred_parent_cache
+            .lock()
+            .unwrap()
+            .get(&cache_key)
+            .copied()
+        {
+            return Some(parent);
+        }
+
+        let update_parent_shred_id = ShredId::new(slot, replay_fec_set_index, ShredType::Data);
+        let update_parent_shred = self.get_shred_from_just_inserted_or_db(
+            just_inserted_shreds,
+            update_parent_shred_id,
+            location,
+        )?;
+        let parent = Self::parent_from_data_shred_payload(slot, &update_parent_shred)?;
+        self.update_parent_shred_parent_cache
+            .lock()
+            .unwrap()
+            .put(cache_key, parent);
+        Some(parent)
+    }
+
+    fn parent_from_data_shred_payload(slot: Slot, payload: &[u8]) -> Option<Slot> {
+        let parent_offset = shred::layout::get_parent_offset(payload)?;
+        if parent_offset == 0 && slot != 0 {
+            return None;
+        }
+        slot.checked_sub(Slot::from(parent_offset))
     }
 
     fn insert_data_shred<'a>(
@@ -13529,6 +13615,68 @@ pub mod tests {
         assert_eq!(meta.replay_fec_set_index, 32);
         assert!(blockstore.get_data_shred(slot, 64).unwrap().is_some());
         assert!(!blockstore.is_dead(slot));
+    }
+
+    #[test_matrix([true, false])]
+    fn test_update_parent_shred_parent(update_parent_first: bool) {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let slot = 90;
+        let original_parent = 85;
+        let update_parent = 80;
+        let bad_shred_parent = 84;
+        let update_parent_shreds = data_shreds(create_update_parent_shreds_with_shred_parent(
+            slot,
+            original_parent,
+            update_parent,
+            Hash::new_unique(),
+            32,
+            false,
+        ));
+        let bad_parent_shreds = data_shreds(create_block_footer_shreds_with_last(
+            slot,
+            bad_shred_parent,
+            64,
+            false,
+        ));
+
+        if update_parent_first {
+            blockstore
+                .insert_shreds(update_parent_shreds, None, false)
+                .unwrap();
+            blockstore
+                .insert_shreds(
+                    data_shreds(create_block_footer_shreds_with_last(
+                        slot,
+                        original_parent,
+                        0,
+                        false,
+                    )),
+                    None,
+                    false,
+                )
+                .unwrap();
+            assert!(blockstore.meta(slot).unwrap().unwrap().has_update_parent());
+
+            blockstore
+                .insert_shreds(bad_parent_shreds, None, false)
+                .unwrap();
+        } else {
+            blockstore
+                .insert_shreds(bad_parent_shreds, None, false)
+                .unwrap();
+            assert_eq!(
+                blockstore.meta(slot).unwrap().unwrap().parent_slot,
+                Some(bad_shred_parent)
+            );
+
+            blockstore
+                .insert_shreds(update_parent_shreds, None, false)
+                .unwrap();
+        }
+
+        assert!(blockstore.is_dead(slot));
     }
 
     #[test]
