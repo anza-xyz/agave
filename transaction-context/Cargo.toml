@@ -16,9 +16,9 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
-bincode = ["dep:bincode", "dep:serde", "solana-account/bincode"]
+bincode = ["dep:bincode", "serde", "solana-account/bincode"]
 dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
-serde = ["solana-pubkey/serde", "solana-transaction-return-data/serde"]
+serde = ["dep:serde", "solana-pubkey/serde", "solana-transaction-return-data/serde"]
 wincode = ["solana-pubkey/wincode", "solana-transaction-return-data/wincode"]
 
 [dependencies]
