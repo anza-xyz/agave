@@ -39,6 +39,7 @@ frozen-abi = [
 [dependencies]
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
+arc-swap = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true, features = ["serde"] }
 log = { workspace = true }
