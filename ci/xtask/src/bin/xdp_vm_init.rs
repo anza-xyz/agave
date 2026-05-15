@@ -27,10 +27,12 @@ fn try_main() -> Result<()> {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
 
-    // veth is usually modular in distro kernels. Tests still pass if it is builtin.
-    let _ = Command::new("/bin/busybox")
-        .args(["modprobe", "veth"])
-        .status();
+    // veth and GRE are often modular in distro kernels. Tests still pass if either is builtin.
+    for module in ["veth", "ip_gre"] {
+        let _ = Command::new("/bin/busybox")
+            .args(["modprobe", module])
+            .status();
+    }
 
     let run_args = guest_run_args()?;
     let tests = discover_tests("/tests")?;

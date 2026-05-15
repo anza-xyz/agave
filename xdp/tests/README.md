@@ -15,6 +15,8 @@ Local mode runs the tests directly on the host and requires root or equivalent n
 cargo xtask xdp-test local --runner "sudo -n -E"
 ```
 
+The harness also creates GRE tunnel interfaces for GRE route and transmit coverage.
+
 VM mode boots a QEMU guest and runs the same tests inside that guest:
 
 ```bash

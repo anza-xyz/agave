@@ -50,3 +50,22 @@ fn netlink_snapshot_reads_the_prepared_namespace() {
             && neighbor.state == NUD_PERMANENT
     }));
 }
+
+#[test]
+fn netlink_snapshot_reads_gre_tunnel_metadata() {
+    let _netns = common::NetNsGuard::new();
+    let links = common::setup_veth_pair();
+    let gre = common::setup_gre_tunnel(&links);
+
+    let interfaces = netlink_get_interfaces(AF_INET as u8).expect("read interfaces from netlink");
+    let tunnel = interfaces
+        .iter()
+        .find(|interface| interface.if_index == gre.if_index)
+        .and_then(|interface| interface.gre_tunnel.as_ref())
+        .expect("read GRE tunnel metadata from netlink");
+
+    assert_eq!(tunnel.local, IpAddr::V4(gre.local_ip));
+    assert_eq!(tunnel.remote, IpAddr::V4(gre.remote_ip));
+    assert_eq!(tunnel.ttl, 64);
+    assert_eq!(tunnel.tos, 0);
+}

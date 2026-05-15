@@ -202,3 +202,62 @@ fn route_monitor_publishes_link_removals() {
     exit.store(true, Ordering::Relaxed);
     handle.join().expect("join route monitor thread");
 }
+
+#[test]
+fn route_monitor_publishes_live_gre_route_updates() {
+    let netns = common::NetNsGuard::new();
+    let links = common::setup_veth_pair();
+
+    let (atomic_router, exit, handle) = start_route_monitor();
+    let overlay_destination = Ipv4Addr::new(192, 0, 2, 99);
+    assert!(matches!(
+        atomic_router.load().route_v4(overlay_destination),
+        Err(RouteError::NoRouteFound(_))
+    ));
+
+    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
+    common::add_route_to_dev(&format!("{}/32", links.right_ip), &links.left_name);
+    let gre = common::setup_gre_tunnel(&links);
+    common::add_route_to_dev_with_src("192.0.2.0/24", &gre.name, gre.overlay_ip);
+
+    common::wait_until(
+        "the route monitor to publish a GRE overlay route",
+        Duration::from_secs(2),
+        || {
+            let router = atomic_router.load();
+            match router.route_v4(overlay_destination) {
+                Ok(next_hop)
+                    if next_hop.if_index == gre.if_index
+                        && next_hop.ip_addr == IpAddr::V4(overlay_destination)
+                        && next_hop.mac_addr == Some(links.right_mac)
+                        && next_hop.preferred_src_ip == Some(gre.overlay_ip)
+                        && next_hop.gre.as_ref().is_some_and(|gre_route| {
+                            gre_route.if_index == gre.if_index
+                                && gre_route.mac_addr == links.right_mac
+                                && gre_route.tunnel_info.local == IpAddr::V4(gre.local_ip)
+                                && gre_route.tunnel_info.remote == IpAddr::V4(gre.remote_ip)
+                        }) =>
+                {
+                    Some(())
+                }
+                _ => None,
+            }
+        },
+    );
+
+    netns.ip(&["link", "del", &gre.name]);
+    common::wait_until(
+        "the route monitor to publish a removed GRE link",
+        Duration::from_secs(2),
+        || {
+            matches!(
+                atomic_router.load().route_v4(overlay_destination),
+                Err(RouteError::NoRouteFound(_))
+            )
+            .then_some(())
+        },
+    );
+
+    exit.store(true, Ordering::Relaxed);
+    handle.join().expect("join route monitor thread");
+}

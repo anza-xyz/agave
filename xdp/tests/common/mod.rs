@@ -19,6 +19,7 @@ const LEFT_IFACE: &str = "axdp0";
 const RIGHT_IFACE: &str = "axdp1";
 const BACKUP_LEFT_IFACE: &str = "bxdp0";
 const BACKUP_RIGHT_IFACE: &str = "bxdp1";
+const GRE_IFACE: &str = "gxdp0";
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -31,6 +32,16 @@ pub struct TestLinks {
     pub right_ip: std::net::Ipv4Addr,
     pub left_mac: MacAddress,
     pub right_mac: MacAddress,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct TestGreTunnel {
+    pub name: String,
+    pub if_index: u32,
+    pub local_ip: std::net::Ipv4Addr,
+    pub remote_ip: std::net::Ipv4Addr,
+    pub overlay_ip: std::net::Ipv4Addr,
 }
 
 pub struct NetNsGuard {
@@ -98,6 +109,38 @@ pub fn setup_backup_veth_pair() -> TestLinks {
     )
 }
 
+pub fn setup_gre_tunnel(underlay: &TestLinks) -> TestGreTunnel {
+    setup_gre_tunnel_named(
+        GRE_IFACE,
+        underlay.left_ip,
+        underlay.right_ip,
+        std::net::Ipv4Addr::new(192, 0, 2, 1),
+    )
+}
+
+pub fn setup_gre_tunnel_named(
+    name: &str,
+    local_ip: std::net::Ipv4Addr,
+    remote_ip: std::net::Ipv4Addr,
+    overlay_ip: std::net::Ipv4Addr,
+) -> TestGreTunnel {
+    let local = local_ip.to_string();
+    let remote = remote_ip.to_string();
+    run_ip(&[
+        "tunnel", "add", name, "mode", "gre", "local", &local, "remote", &remote, "ttl", "64",
+    ]);
+    add_ipv4_addr(&format!("{overlay_ip}/32"), name);
+    set_link_up(name);
+
+    TestGreTunnel {
+        name: name.to_string(),
+        if_index: if_index(name),
+        local_ip,
+        remote_ip,
+        overlay_ip,
+    }
+}
+
 pub fn setup_veth_pair_named(
     left_name: &str,
     right_name: &str,
@@ -131,6 +174,15 @@ pub fn setup_veth_pair_named(
 pub fn add_route(destination: &str, via: std::net::Ipv4Addr, dev: &str) {
     let via = via.to_string();
     run_ip(&["route", "replace", destination, "via", &via, "dev", dev]);
+}
+
+pub fn add_route_to_dev(destination: &str, dev: &str) {
+    run_ip(&["route", "replace", destination, "dev", dev]);
+}
+
+pub fn add_route_to_dev_with_src(destination: &str, dev: &str, src: std::net::Ipv4Addr) {
+    let src = src.to_string();
+    run_ip(&["route", "replace", destination, "dev", dev, "src", &src]);
 }
 
 #[allow(dead_code)]
