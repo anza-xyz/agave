@@ -591,6 +591,8 @@ impl ValidatorTpuConfig {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+                max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
                 ..Default::default()
             },
             qos_config: SwQosConfig::default(),
