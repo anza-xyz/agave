@@ -364,7 +364,7 @@ impl RpcSender for MockSender {
                 } else {
                     let tx_str = params.as_array().unwrap()[0].as_str().unwrap().to_string();
                     let data = BASE64_STANDARD.decode(tx_str).unwrap();
-                    let tx: Transaction = bincode::deserialize(&data).unwrap();
+                    let tx: Transaction = wincode::deserialize(&data).unwrap();
                     tx.signatures[0].to_string()
                 };
                 Value::String(signature)

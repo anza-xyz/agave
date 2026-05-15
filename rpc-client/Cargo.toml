@@ -54,6 +54,7 @@ solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-interface = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

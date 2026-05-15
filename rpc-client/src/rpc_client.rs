@@ -18,7 +18,6 @@ use {
         rpc_sender::*,
     },
     agave_votor_messages::certificate::Certificate,
-    serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
     solana_account_decoder::UiAccount,
@@ -46,6 +45,7 @@ use {
     },
     solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration},
+    wincode::{SchemaWrite, config::DefaultConfig},
 };
 
 #[derive(Default)]
@@ -95,7 +95,7 @@ impl SerializableMessage for v0::Message {
 
 /// Trait used to add support for versioned transactions to RPC APIs while
 /// retaining backwards compatibility
-pub trait SerializableTransaction: Serialize {
+pub trait SerializableTransaction: SchemaWrite<DefaultConfig, Src = Self> {
     fn get_signature(&self) -> &Signature;
     fn get_recent_blockhash(&self) -> &Hash;
     fn uses_durable_nonce(&self) -> bool;

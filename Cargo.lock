@@ -9815,6 +9815,7 @@ dependencies = [
  "static_assertions",
  "test-case",
  "tokio",
+ "wincode",
 ]
 
 [[package]]

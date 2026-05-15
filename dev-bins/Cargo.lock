@@ -8264,6 +8264,7 @@ dependencies = [
  "solana-version",
  "solana-vote-interface",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
