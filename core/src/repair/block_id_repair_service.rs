@@ -27,7 +27,7 @@ use {
         common::DELTA,
         event::{RepairEvent, RepairEventReceiver},
     },
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    agave_votor_messages::consensus_message::Block,
     crossbeam_channel::select,
     lazy_lru::LruCache,
     log::{debug, info},
@@ -309,12 +309,13 @@ impl BlockIdRepairService {
             .name("solBlockIdRep".to_string())
             .spawn(move || {
                 info!("BlockIdRepairService started");
-                let sharable_banks = context
-                    .repair_info
-                    .bank_forks
-                    .read()
-                    .unwrap()
-                    .sharable_banks();
+                let (sharable_banks, migration_status) = {
+                    let bank_forks_r = context.repair_info.bank_forks.read().unwrap();
+                    (
+                        bank_forks_r.sharable_banks(),
+                        bank_forks_r.migration_status(),
+                    )
+                };
                 let mut state = RepairState {
                     // One day we'll actually split out the build request functionality from the full ServeRepair :'(
                     serve_repair: ServeRepair::new(
@@ -322,8 +323,7 @@ impl BlockIdRepairService {
                         sharable_banks.clone(),
                         context.repair_info.repair_whitelist.clone(),
                         Box::new(StandardRepairHandler::new(context.blockstore.clone())),
-                        // Doesn't matter this serve_repair isn't used to respond
-                        Arc::new(MigrationStatus::default()),
+                        migration_status,
                     ),
                     peers_cache: LruCache::new(REPAIR_PEERS_CACHE_CAPACITY),
                     outstanding_requests: OutstandingBlockIdRepairs::default(),
@@ -931,8 +931,6 @@ impl BlockIdRepairService {
             Vec::with_capacity(max_batch_len);
         let mut shred_socket_batch = Vec::with_capacity(max_batch_len);
 
-        let root_bank = repair_info.bank_forks.read().unwrap().root_bank();
-        let staked_nodes = root_bank.current_epoch_staked_nodes();
         let now = timestamp();
 
         while block_id_socket_batch
@@ -955,10 +953,10 @@ impl BlockIdRepairService {
                         .block_id_repair_request(
                             &repair_info.repair_validators,
                             block_id_repair_type,
+                            &repair_info.cluster_slots,
                             &mut state.peers_cache,
                             &mut state.outstanding_requests,
                             &repair_info.cluster_info.keypair(),
-                            &staked_nodes,
                         )
                         .inspect_err(|e| {
                             error!(

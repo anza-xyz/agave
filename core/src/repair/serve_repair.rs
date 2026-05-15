@@ -625,8 +625,15 @@ pub struct ServeRepair {
 // Cache entry for repair peers for a slot.
 pub(crate) struct RepairPeers {
     asof: Instant,
+    weight_source: RepairPeerWeightSource,
     peers: Vec<Node>,
     weighted_index: WeightedIndex<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RepairPeerWeightSource {
+    ClusterSlots,
+    CurrentEpochStake,
 }
 
 struct Node {
@@ -635,7 +642,12 @@ struct Node {
 }
 
 impl RepairPeers {
-    fn new(asof: Instant, peers: &[ContactInfo], weights: &[u64]) -> Result<Self> {
+    fn new(
+        asof: Instant,
+        weight_source: RepairPeerWeightSource,
+        peers: &[ContactInfo],
+        weights: &[u64],
+    ) -> Result<Self> {
         if peers.len() != weights.len() {
             return Err(Error::from(WeightedError::InvalidWeight));
         }
@@ -656,6 +668,7 @@ impl RepairPeers {
         let weighted_index = WeightedIndex::new(weights)?;
         Ok(Self {
             asof,
+            weight_source,
             peers,
             weighted_index,
         })
@@ -664,6 +677,10 @@ impl RepairPeers {
     fn sample<R: Rng>(&self, rng: &mut R) -> &Node {
         let index = self.weighted_index.sample(rng);
         &self.peers[index]
+    }
+
+    fn is_valid_for(&self, weight_source: RepairPeerWeightSource) -> bool {
+        self.asof.elapsed() < REPAIR_PEERS_CACHE_TTL && self.weight_source == weight_source
     }
 }
 
@@ -732,6 +749,64 @@ impl ServeRepair {
     #[cfg(test)]
     pub(crate) fn my_id(&self) -> Pubkey {
         self.cluster_info.id()
+    }
+
+    fn stake_weighted_repair_peer_weights(
+        repair_peers: &[ContactInfo],
+        staked_nodes: &HashMap<Pubkey, u64>,
+    ) -> Vec<u64> {
+        repair_peers
+            .iter()
+            .map(|peer| staked_nodes.get(peer.pubkey()).copied().unwrap_or(0))
+            .collect()
+    }
+
+    fn repair_peer_weights(
+        &self,
+        slot: Slot,
+        cluster_slots: &ClusterSlots,
+        repair_peers: &[ContactInfo],
+        weight_source: RepairPeerWeightSource,
+    ) -> Vec<u64> {
+        match weight_source {
+            RepairPeerWeightSource::ClusterSlots => {
+                cluster_slots.compute_weights(slot, repair_peers)
+            }
+            RepairPeerWeightSource::CurrentEpochStake => {
+                let staked_nodes = self.sharable_banks.root().current_epoch_staked_nodes();
+                Self::stake_weighted_repair_peer_weights(repair_peers, &staked_nodes)
+            }
+        }
+    }
+
+    fn repair_peer_weight_source(&self, slot: Slot) -> RepairPeerWeightSource {
+        if self.migration_status.should_publish_epoch_slots(slot) {
+            RepairPeerWeightSource::ClusterSlots
+        } else {
+            RepairPeerWeightSource::CurrentEpochStake
+        }
+    }
+
+    fn repair_peers_from_cache<'a>(
+        &self,
+        slot: Slot,
+        cluster_slots: &ClusterSlots,
+        repair_validators: &Option<HashSet<Pubkey>>,
+        peers_cache: &'a mut LruCache<Slot, RepairPeers>,
+        identity_keypair: &Keypair,
+        weight_source: RepairPeerWeightSource,
+    ) -> Result<&'a RepairPeers> {
+        if matches!(peers_cache.get(&slot), Some(entry) if entry.is_valid_for(weight_source)) {
+            return Ok(peers_cache.get(&slot).unwrap());
+        }
+
+        peers_cache.pop(&slot);
+        let repair_peers = self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
+        let weights = self.repair_peer_weights(slot, cluster_slots, &repair_peers, weight_source);
+        let repair_peers =
+            RepairPeers::new(Instant::now(), weight_source, &repair_peers, &weights)?;
+        peers_cache.put(slot, repair_peers);
+        Ok(peers_cache.get(&slot).unwrap())
     }
 
     fn handle_repair(
@@ -1517,6 +1592,13 @@ impl ServeRepair {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Finds a peer to send this repair request too and returns their address and the raw bytes to send.
+    ///
+    /// For TowerBFT blocks we do a weighted selection where:
+    /// - `x` is `1` if the peer has indicated they have the block via publishing an EpochSlots gossip message and `0` otherwise
+    /// - weights are `(peer_stake / 2 + peer_stake / 2 * x)`
+    ///
+    /// For Alpenglow blocks we do a weighted selection where the weights are `peer_stake`
     pub(crate) fn repair_request(
         &self,
         cluster_slots: &ClusterSlots,
@@ -1530,18 +1612,15 @@ impl ServeRepair {
         // find a peer that appears to be accepting replication and has the desired slot, as indicated
         // by a valid tvu port location
         let slot = repair_request.slot();
-        let repair_peers = match peers_cache.get(&slot) {
-            Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
-            _ => {
-                peers_cache.pop(&slot);
-                let repair_peers =
-                    self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
-                let weights = cluster_slots.compute_weights(slot, &repair_peers);
-                let repair_peers = RepairPeers::new(Instant::now(), &repair_peers, &weights)?;
-                peers_cache.put(slot, repair_peers);
-                peers_cache.get(&slot).unwrap()
-            }
-        };
+        let weight_source = self.repair_peer_weight_source(slot);
+        let repair_peers = self.repair_peers_from_cache(
+            slot,
+            cluster_slots,
+            repair_validators,
+            peers_cache,
+            identity_keypair,
+            weight_source,
+        )?;
         let peer = repair_peers.sample(&mut rand::rng());
         let location = repair_request
             .block_id()
@@ -1572,33 +1651,27 @@ impl ServeRepair {
         Ok(Some((peer.serve_repair, out)))
     }
 
-    /// Similar to [`Self::repair_request`] but for [`BlockIdRepairType`] requests.
-    /// Uses stake-weighted peer selection rather than cluster_slots weights.
+    /// [`Self::repair_request`] but for [`BlockIdRepairType`] requests
+    /// Only for use in Alpenglow blocks, peer selection is based on `peer_stake`
     pub(crate) fn block_id_repair_request(
         &self,
         repair_validators: &Option<HashSet<Pubkey>>,
         repair_request: BlockIdRepairType,
+        cluster_slots: &ClusterSlots,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         outstanding_requests: &mut OutstandingRequests<BlockIdRepairType>,
         identity_keypair: &Keypair,
-        staked_nodes: &HashMap<Pubkey, u64>,
     ) -> Result<(Vec<u8>, SocketAddr, Pubkey)> {
         let slot = repair_request.slot();
-        let repair_peers = match peers_cache.get(&slot) {
-            Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
-            _ => {
-                peers_cache.pop(&slot);
-                let repair_peers =
-                    self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
-                let weights: Vec<u64> = repair_peers
-                    .iter()
-                    .map(|peer| staked_nodes.get(peer.pubkey()).copied().unwrap_or(0))
-                    .collect();
-                let repair_peers = RepairPeers::new(Instant::now(), &repair_peers, &weights)?;
-                peers_cache.put(slot, repair_peers);
-                peers_cache.get(&slot).unwrap()
-            }
-        };
+        let weight_source = RepairPeerWeightSource::CurrentEpochStake;
+        let repair_peers = self.repair_peers_from_cache(
+            slot,
+            cluster_slots,
+            repair_validators,
+            peers_cache,
+            identity_keypair,
+            weight_source,
+        )?;
         let peer = repair_peers.sample(&mut rand::rng());
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
 
@@ -1858,6 +1931,8 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
+        agave_votor_messages::consensus_message::{Certificate, CertificateType},
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -1877,6 +1952,22 @@ mod tests {
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
+
+    fn enable_alpenglow_for_tests(bank_forks: &Arc<RwLock<BankForks>>) {
+        let migration_status = bank_forks.read().unwrap().migration_status();
+        let genesis_block = (0, Hash::new_unique());
+        migration_status.record_feature_activation(0);
+        migration_status.set_genesis_block(genesis_block);
+        migration_status.set_genesis_certificate(Arc::new(Certificate {
+            cert_type: CertificateType::Genesis(genesis_block.0, genesis_block.1),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        }));
+        assert_eq!(
+            migration_status.enable_alpenglow_during_startup(),
+            genesis_block.0
+        );
+    }
 
     fn discard_malformed_repair_requests(
         requests: &mut Vec<BytesPacket>,
@@ -2732,6 +2823,57 @@ mod tests {
                 panic!("unexpected response: {:?}", &ancestor_hashes_response);
             }
         }
+    }
+
+    #[test]
+    fn repair_request_uses_current_epoch_stake_weights_for_alpenglow_slots() {
+        let GenesisConfigInfo {
+            genesis_config,
+            validator_pubkey,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        enable_alpenglow_for_tests(&bank_forks);
+
+        let staked_nodes = bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .current_epoch_staked_nodes();
+        let validator_stake = staked_nodes[&validator_pubkey];
+        let unstaked_pubkey = Pubkey::new_unique();
+        let slot = 1;
+        let cluster_slots = ClusterSlots::default_for_tests();
+        cluster_slots.fake_epoch_info_for_tests(HashMap::from([
+            (validator_pubkey, 1),
+            (unstaked_pubkey, validator_stake.saturating_add(1)),
+        ]));
+        let repair_peers = vec![
+            ContactInfo::new_localhost(&validator_pubkey, timestamp()),
+            ContactInfo::new_localhost(&unstaked_pubkey, timestamp()),
+        ];
+        assert_ne!(
+            cluster_slots.compute_weights(slot, &repair_peers),
+            vec![validator_stake, 0]
+        );
+
+        let cluster_info = Arc::new(new_test_cluster_info());
+        let serve_repair = ServeRepair::new_for_test(
+            cluster_info,
+            bank_forks,
+            Arc::new(RwLock::new(HashSet::default())),
+        );
+
+        assert_eq!(
+            serve_repair.repair_peer_weights(
+                slot,
+                &cluster_slots,
+                &repair_peers,
+                serve_repair.repair_peer_weight_source(slot),
+            ),
+            vec![validator_stake, 0]
+        );
     }
 
     #[test]
