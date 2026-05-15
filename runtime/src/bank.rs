@@ -79,7 +79,7 @@ use {
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -2122,12 +2122,7 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
-        bank.initialize_after_snapshot_restore(|| {
-            ThreadPoolBuilder::new()
-                .thread_name(|i| format!("solBnkClcRwds{i:02}"))
-                .build()
-                .expect("new rayon threadpool")
-        });
+        bank.initialize_after_snapshot_restore(rewards_calculation_thread_pool);
 
         datapoint_info!(
             "bank-new-from-fields",
