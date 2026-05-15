@@ -816,6 +816,8 @@ mod test {
             }),
             compute_units_consumed: Some(1234u64),
             cost_units: Some(5678),
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         };
 
         let output = {
@@ -897,6 +899,8 @@ Rewards:
             }),
             compute_units_consumed: Some(2345u64),
             cost_units: Some(5678),
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         };
 
         let output = {

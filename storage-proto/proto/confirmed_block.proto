@@ -75,6 +75,12 @@ message TransactionStatusMeta {
     optional uint64 compute_units_consumed = 16;
     // Total transaction cost
     optional uint64 cost_units = 17;
+    // Per-account data sizes before transaction execution.
+    repeated uint64 pre_acc_sizes = 18;
+    // Per-account data sizes after transaction execution.
+    repeated uint64 post_acc_sizes = 19;
+    bool pre_acc_sizes_none = 20;
+    bool post_acc_sizes_none = 21;
 }
 
 message TransactionError {

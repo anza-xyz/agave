@@ -277,6 +277,10 @@ pub struct StoredTransactionStatusMeta {
     #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<u64>>")]
     pub cost_units: Option<u64>,
+    #[serde(deserialize_with = "default_on_eof")]
+    pub pre_acc_sizes: Option<Vec<usize>>,
+    #[serde(deserialize_with = "default_on_eof")]
+    pub post_acc_sizes: Option<Vec<usize>>,
 }
 
 impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
@@ -294,6 +298,8 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         } = value;
         Self {
             status,
@@ -312,6 +318,8 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         }
     }
 }
@@ -333,6 +341,8 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         } = value;
 
         if !loaded_addresses.is_empty() {
@@ -357,6 +367,8 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         })
     }
 }

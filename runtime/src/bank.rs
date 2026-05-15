@@ -148,7 +148,6 @@ use {
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
-        transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -162,6 +161,7 @@ use {
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
+        transaction_status_meta_collector::{SvmTokenInfo, TxStatusMetaCollector},
     },
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
@@ -347,7 +347,7 @@ pub struct LoadAndExecuteTransactionsOutput {
     pub processed_counts: ProcessedTransactionCounts,
     // Balances accumulated for TransactionStatusSender when transaction
     // balance recording is enabled.
-    pub balance_collector: Option<BalanceCollector>,
+    pub tx_status_meta_collector: Option<TxStatusMetaCollector>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -400,6 +400,7 @@ impl TransactionBalancesSet {
         }
     }
 }
+
 pub type TransactionBalances = Vec<Vec<u64>>;
 
 pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
@@ -3489,7 +3490,7 @@ impl Bank {
 
         let LoadAndExecuteTransactionsOutput {
             mut processing_results,
-            balance_collector,
+            tx_status_meta_collector,
             ..
         } = self.load_and_execute_transactions(
             &batch,
@@ -3571,21 +3572,35 @@ impl Bank {
         };
         let logs = logs.unwrap_or_default();
 
-        let (pre_balances, post_balances, pre_token_balances, post_token_balances) =
-            match balance_collector {
-                Some(balance_collector) => {
-                    let (mut native_pre, mut native_post, mut token_pre, mut token_post) =
-                        balance_collector.into_vecs();
+        let (
+            pre_balances,
+            post_balances,
+            _pre_acc_sizes,
+            _post_acc_sizes,
+            pre_token_balances,
+            post_token_balances,
+        ) = match tx_status_meta_collector {
+            Some(tx_status_meta_collector) => {
+                let (
+                    mut native_pre,
+                    mut native_post,
+                    mut acc_size_pre,
+                    mut acc_size_post,
+                    mut token_pre,
+                    mut token_post,
+                ) = tx_status_meta_collector.into_vecs();
 
-                    (
-                        native_pre.pop(),
-                        native_post.pop(),
-                        token_pre.pop(),
-                        token_post.pop(),
-                    )
-                }
-                None => (None, None, None, None),
-            };
+                (
+                    native_pre.pop(),
+                    native_post.pop(),
+                    acc_size_pre.pop(),
+                    acc_size_post.pop(),
+                    token_pre.pop(),
+                    token_post.pop(),
+                )
+            }
+            None => (None, None, None, None, None, None),
+        };
 
         TransactionSimulationResult {
             result,
@@ -3768,7 +3783,7 @@ impl Bank {
         LoadAndExecuteTransactionsOutput {
             processing_results: sanitized_output.processing_results,
             processed_counts,
-            balance_collector: sanitized_output.balance_collector,
+            tx_status_meta_collector: sanitized_output.tx_status_meta_collector,
         }
     }
 
@@ -4188,7 +4203,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (Vec<TransactionCommitResult>, Option<BalanceCollector>) {
+    ) -> (Vec<TransactionCommitResult>, Option<TxStatusMetaCollector>) {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             recording_config,
@@ -4209,7 +4224,7 @@ impl Bank {
             &mut ExecuteTimings,
             &[TransactionProcessingResult],
         ) -> PreCommitResult<'a>,
-    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
+    ) -> Result<(Vec<TransactionCommitResult>, Option<TxStatusMetaCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             recording_config,
@@ -4228,11 +4243,11 @@ impl Bank {
         pre_commit_callback: Option<
             impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
         >,
-    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
+    ) -> Result<(Vec<TransactionCommitResult>, Option<TxStatusMetaCollector>)> {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
-            balance_collector,
+            tx_status_meta_collector,
         } = self.load_and_execute_transactions(
             batch,
             self.max_processing_age(),
@@ -4265,7 +4280,7 @@ impl Bank {
             timings,
         );
         drop(freeze_lock);
-        Ok((commit_results, balance_collector))
+        Ok((commit_results, tx_status_meta_collector))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector

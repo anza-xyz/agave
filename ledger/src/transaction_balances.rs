@@ -3,25 +3,32 @@ use {
         parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
     },
     solana_runtime::bank::TransactionBalancesSet,
-    solana_svm::transaction_balances::{BalanceCollector, SvmTokenInfo},
+    solana_svm::transaction_status_meta_collector::{SvmTokenInfo, TxStatusMetaCollector},
     solana_transaction_status::{
-        TransactionTokenBalance, token_balances::TransactionTokenBalancesSet,
+        TransactionTokenBalance, account_sizes::TransactionAccountSizesSet,
+        token_balances::TransactionTokenBalancesSet,
     },
 };
 
-// decompose the contents of BalanceCollector into the two structs required by TransactionStatusSender
-pub fn compile_collected_balances(
-    balance_collector: BalanceCollector,
-) -> (TransactionBalancesSet, TransactionTokenBalancesSet) {
-    let (native_pre, native_post, token_pre, token_post) = balance_collector.into_vecs();
+// Decompose the SVM collector into status-writer transport structs.
+pub fn compile_collected_tx_status_meta(
+    tx_status_meta_collector: TxStatusMetaCollector,
+) -> (
+    TransactionBalancesSet,
+    TransactionAccountSizesSet,
+    TransactionTokenBalancesSet,
+) {
+    let (native_pre, native_post, acc_size_pre, acc_size_post, token_pre, token_post) =
+        tx_status_meta_collector.into_vecs();
 
     let native_balances = TransactionBalancesSet::new(native_pre, native_post);
+    let account_sizes = TransactionAccountSizesSet::new(acc_size_pre, acc_size_post);
     let token_balances = TransactionTokenBalancesSet::new(
         collected_token_infos_to_token_balances(token_pre),
         collected_token_infos_to_token_balances(token_post),
     );
 
-    (native_balances, token_balances)
+    (native_balances, account_sizes, token_balances)
 }
 
 fn collected_token_infos_to_token_balances(
@@ -131,23 +138,32 @@ mod tests {
             program_id: token_2022::id().to_string(),
         };
 
+        let acc_size_pre = vec![vec![10, 20, 30], vec![40, 50, 60]];
+        let acc_size_post = vec![vec![11, 21, 31], vec![41, 51, 61]];
         let expected_native = TransactionBalancesSet::new(native_pre.clone(), native_post.clone());
+        let expected_sizes =
+            TransactionAccountSizesSet::new(acc_size_pre.clone(), acc_size_post.clone());
         let expected_token = TransactionTokenBalancesSet::new(
             vec![vec![token_balance_before], vec![]],
             vec![vec![token_balance_after], vec![]],
         );
 
-        let balance_collector = BalanceCollector {
+        let tx_status_meta_collector = TxStatusMetaCollector {
             native_pre,
             native_post,
+            acc_size_pre,
+            acc_size_post,
             token_pre,
             token_post,
         };
 
-        let (actual_native, actual_token) = compile_collected_balances(balance_collector);
+        let (actual_native, actual_sizes, actual_token) =
+            compile_collected_tx_status_meta(tx_status_meta_collector);
 
         assert_eq!(expected_native.pre_balances, actual_native.pre_balances);
         assert_eq!(expected_native.post_balances, actual_native.post_balances);
+        assert_eq!(expected_sizes.pre_acc_sizes, actual_sizes.pre_acc_sizes);
+        assert_eq!(expected_sizes.post_acc_sizes, actual_sizes.post_acc_sizes);
 
         assert_eq!(
             expected_token.pre_token_balances,

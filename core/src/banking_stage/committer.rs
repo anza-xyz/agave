@@ -4,7 +4,7 @@ use {
     solana_cost_model::cost_model::CostModel,
     solana_ledger::{
         blockstore_processor::TransactionStatusSender,
-        transaction_balances::compile_collected_balances,
+        transaction_balances::compile_collected_tx_status_meta,
     },
     solana_measure::measure_us,
     solana_runtime::{
@@ -16,9 +16,9 @@ use {
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
-        transaction_balances::BalanceCollector,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::TransactionProcessingResult,
+        transaction_status_meta_collector::TxStatusMetaCollector,
     },
     solana_transaction_error::TransactionError,
     std::{num::Saturating, sync::Arc},
@@ -65,7 +65,7 @@ impl Committer {
         processing_results: Vec<TransactionProcessingResult>,
         starting_transaction_index: Option<usize>,
         bank: &Bank,
-        balance_collector: Option<BalanceCollector>,
+        tx_status_meta_collector: Option<TxStatusMetaCollector>,
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
@@ -115,7 +115,7 @@ impl Committer {
                 commit_results,
                 bank,
                 batch,
-                balance_collector,
+                tx_status_meta_collector,
                 starting_transaction_index,
             );
         });
@@ -128,7 +128,7 @@ impl Committer {
         commit_results: Vec<TransactionCommitResult>,
         bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        balance_collector: Option<BalanceCollector>,
+        tx_status_meta_collector: Option<TxStatusMetaCollector>,
         starting_transaction_index: Option<usize>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
@@ -166,17 +166,17 @@ impl Committer {
                 })
                 .unzip();
 
-            // There are two cases where balance_collector could be None:
+            // There are two cases where tx_status_meta_collector could be None:
             // * Balance recording is disabled. If that were the case, there would
             //   be no TransactionStatusSender, and we would not be in this branch.
             // * The batch was aborted in its entirety in SVM. In that case, there
             //   would be zero processed transactions, and commit_transactions()
             //   would not have been called at all.
             // Therefore this should always be true.
-            debug_assert!(balance_collector.is_some());
+            debug_assert!(tx_status_meta_collector.is_some());
 
-            let (balances, token_balances) =
-                compile_collected_balances(balance_collector.unwrap_or_default());
+            let (balances, account_sizes, token_balances) =
+                compile_collected_tx_status_meta(tx_status_meta_collector.unwrap_or_default());
 
             transaction_status_sender.send_transaction_status_batch(
                 bank.slot(),
@@ -184,6 +184,7 @@ impl Committer {
                 commit_results,
                 balances,
                 token_balances,
+                account_sizes,
                 tx_costs,
                 batch_transaction_indexes,
             );

@@ -48,6 +48,7 @@ use {
     thiserror::Error,
 };
 
+pub mod account_sizes;
 pub mod extract_memos;
 pub mod parse_accounts;
 pub mod parse_address_lookup_table;
@@ -189,6 +190,8 @@ fn build_simple_ui_transaction_status_meta(
         return_data: OptionSerializer::Skip,
         compute_units_consumed: OptionSerializer::Skip,
         cost_units: OptionSerializer::Skip,
+        pre_acc_sizes: OptionSerializer::or_skip(meta.pre_acc_sizes),
+        post_acc_sizes: OptionSerializer::or_skip(meta.post_acc_sizes),
     }
 }
 
@@ -204,6 +207,8 @@ fn parse_ui_transaction_status_meta(
         fee: meta.fee,
         pre_balances: meta.pre_balances,
         post_balances: meta.post_balances,
+        pre_acc_sizes: OptionSerializer::or_skip(meta.pre_acc_sizes),
+        post_acc_sizes: OptionSerializer::or_skip(meta.post_acc_sizes),
         inner_instructions: meta
             .inner_instructions
             .map(|ixs| {
@@ -961,6 +966,8 @@ mod test {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         };
         #[rustfmt::skip]
         let expected_json_output_value: serde_json::Value = serde_json::from_str(
@@ -1055,6 +1062,8 @@ mod test {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         };
 
         let confirmed_tx = ConfirmedTransactionWithStatusMeta {

@@ -135,6 +135,7 @@ impl TransactionStatusService {
                     transactions,
                     commit_results,
                     balances,
+                    account_sizes,
                     token_balances,
                     costs,
                     transaction_indexes,
@@ -154,6 +155,8 @@ impl TransactionStatusService {
                     post_balances,
                     pre_token_balances,
                     post_token_balances,
+                    pre_acc_sizes,
+                    post_acc_sizes,
                     cost,
                     transaction_index,
                 ) in izip!(
@@ -163,6 +166,8 @@ impl TransactionStatusService {
                     balances.post_balances,
                     token_balances.pre_token_balances,
                     token_balances.post_token_balances,
+                    account_sizes.pre_acc_sizes,
+                    account_sizes.post_acc_sizes,
                     costs,
                     transaction_indexes,
                 ) {
@@ -203,6 +208,8 @@ impl TransactionStatusService {
                         return_data,
                         compute_units_consumed: Some(executed_units),
                         cost_units: cost,
+                        pre_acc_sizes: Some(pre_acc_sizes),
+                        post_acc_sizes: Some(post_acc_sizes),
                     };
 
                     if let Some(transaction_notifier) = transaction_notifier.as_ref() {
@@ -376,7 +383,7 @@ pub(crate) mod tests {
         },
         solana_transaction_status::{
             TransactionStatusMeta, TransactionTokenBalance,
-            token_balances::TransactionTokenBalancesSet,
+            account_sizes::TransactionAccountSizesSet, token_balances::TransactionTokenBalancesSet,
         },
         std::sync::{Arc, atomic::AtomicBool},
     };
@@ -485,6 +492,10 @@ pub(crate) mod tests {
             pre_balances: vec![vec![123456]],
             post_balances: vec![vec![234567]],
         };
+        let account_sizes = TransactionAccountSizesSet {
+            pre_acc_sizes: vec![vec![32]],
+            post_acc_sizes: vec![vec![64]],
+        };
 
         let owner = Pubkey::new_unique().to_string();
         let token_program_id = Pubkey::new_unique().to_string();
@@ -523,6 +534,7 @@ pub(crate) mod tests {
             transactions: vec![transaction],
             commit_results: vec![commit_result],
             balances,
+            account_sizes,
             token_balances,
             costs: vec![Some(123)],
             transaction_indexes: vec![transaction_index],
@@ -616,6 +628,10 @@ pub(crate) mod tests {
             pre_balances: vec![vec![123456], vec![234567]],
             post_balances: vec![vec![234567], vec![345678]],
         };
+        let account_sizes = TransactionAccountSizesSet {
+            pre_acc_sizes: vec![vec![32], vec![128]],
+            post_acc_sizes: vec![vec![64], vec![256]],
+        };
 
         let token_balances = TransactionTokenBalancesSet {
             pre_token_balances: vec![vec![], vec![]],
@@ -631,6 +647,7 @@ pub(crate) mod tests {
             transactions: vec![transaction1, transaction2],
             commit_results: vec![commit_result.clone(), commit_result],
             balances: balances.clone(),
+            account_sizes,
             token_balances,
             costs: vec![Some(123), Some(456)],
             transaction_indexes: vec![transaction_index1, transaction_index2],

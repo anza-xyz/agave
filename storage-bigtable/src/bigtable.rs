@@ -1068,6 +1068,8 @@ mod tests {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: Some(1234),
                 cost_units: Some(5678),
+                pre_acc_sizes: None,
+                post_acc_sizes: None,
             },
         });
         let expected_block = ConfirmedBlock {

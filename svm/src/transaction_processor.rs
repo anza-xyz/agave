@@ -13,12 +13,14 @@ use {
         transaction_account_state_info::{
             TransactionAccountStateInfo, get_uninitialized_accounts_size, verify_changes,
         },
-        transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
             AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
         },
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
+        transaction_status_meta_collector::{
+            TxStatusMetaCollectionRoutines, TxStatusMetaCollector,
+        },
     },
     log::debug,
     percentage::Percentage,
@@ -86,9 +88,9 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
-    /// Balances accumulated for TransactionStatusSender when
-    /// transaction balance recording is enabled.
-    pub balance_collector: Option<BalanceCollector>,
+    /// Transaction status metadata accumulated for TransactionStatusSender
+    /// when transaction recording is enabled.
+    pub tx_status_meta_collector: Option<TxStatusMetaCollector>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -421,11 +423,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_keys_in_batch,
         );
 
-        // Create the transaction balance collector if recording is enabled.
-        let mut balance_collector = config
+        // Create the transaction status metadata collector if recording is enabled.
+        let mut tx_status_meta_collector = config
             .recording_config
             .enable_transaction_balance_recording
-            .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
+            .then(|| TxStatusMetaCollector::new_with_transaction_count(sanitized_txs.len()));
 
         // Clone the batch-local program cache (builtins already populated in new_from()).
         // User-deployed programs are loaded per-transaction via replenish_program_cache
@@ -441,7 +443,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .collect(),
                 // If we abort the batch and balance recording is enabled, no balances should be
                 // collected. If this is a leader thread, no batch will be committed.
-                balance_collector: None,
+                tx_status_meta_collector: None,
             };
         }
 
@@ -477,8 +479,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let ((), collect_balances_us) =
-                measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+            let ((), collect_balances_us) = measure_us!(
+                tx_status_meta_collector.collect_pre_status_meta(&mut account_loader, tx)
+            );
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
@@ -536,7 +539,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 .collect(),
                             // If we abort the batch and balance recording is enabled, no balances should be
                             // collected. If this is a leader thread, no batch will be committed.
-                            balance_collector: None,
+                            tx_status_meta_collector: None,
                         };
                     }
 
@@ -587,8 +590,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
-            let ((), collect_balances_us) =
-                measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+            let ((), collect_balances_us) = measure_us!(
+                tx_status_meta_collector.collect_post_status_meta(&mut account_loader, tx)
+            );
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
@@ -615,7 +619,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results,
                     // If we abort the batch and balance recording is enabled, no balances should be
                     // collected. If this is a leader thread, no batch will be committed.
-                    balance_collector: None,
+                    tx_status_meta_collector: None,
                 };
             }
 
@@ -646,15 +650,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
 
-        if let Some(ref balance_collector) = balance_collector {
-            debug_assert!(balance_collector.lengths_match_expected(sanitized_txs.len()));
+        if let Some(ref tx_status_meta_collector) = tx_status_meta_collector {
+            debug_assert!(tx_status_meta_collector.lengths_match_expected(sanitized_txs.len()));
         }
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,
             execute_timings,
             processing_results,
-            balance_collector,
+            tx_status_meta_collector,
         }
     }
 

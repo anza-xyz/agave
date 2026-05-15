@@ -475,7 +475,21 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         } = value;
+        let pre_acc_sizes_none = pre_acc_sizes.is_none();
+        let pre_acc_sizes = pre_acc_sizes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|account_size| u64::try_from(account_size).expect("account data size fits in u64"))
+            .collect();
+        let post_acc_sizes_none = post_acc_sizes.is_none();
+        let post_acc_sizes = post_acc_sizes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|account_size| u64::try_from(account_size).expect("account data size fits in u64"))
+            .collect();
         let err = match status {
             Ok(()) => None,
             Err(err) => Some(generated::TransactionError {
@@ -536,6 +550,10 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             return_data_none,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            pre_acc_sizes_none,
+            post_acc_sizes,
+            post_acc_sizes_none,
         }
     }
 }
@@ -569,6 +587,10 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             return_data_none,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            pre_acc_sizes_none,
+            post_acc_sizes,
+            post_acc_sizes_none,
         } = value;
         let status = match err {
             None => Ok(()),
@@ -595,6 +617,30 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             None
         } else {
             Some(log_messages)
+        };
+        let pre_acc_sizes = if pre_acc_sizes_none {
+            None
+        } else {
+            Some(
+                pre_acc_sizes
+                    .into_iter()
+                    .map(|account_size| {
+                        usize::try_from(account_size).expect("account data size fits in usize")
+                    })
+                    .collect(),
+            )
+        };
+        let post_acc_sizes = if post_acc_sizes_none {
+            None
+        } else {
+            Some(
+                post_acc_sizes
+                    .into_iter()
+                    .map(|account_size| {
+                        usize::try_from(account_size).expect("account data size fits in usize")
+                    })
+                    .collect(),
+            )
         };
         let pre_token_balances = Some(
             pre_token_balances
@@ -646,6 +692,8 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         })
     }
 }
