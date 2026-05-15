@@ -13,8 +13,8 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
+    solana_transaction_return_data::TransactionReturnData,
     solana_transaction_status::{
         ConfirmedBlock, EntrySummary, InnerInstruction, InnerInstructions, Reward, RewardType,
         RewardsAndNumPartitions, TransactionByAddrInfo, TransactionStatusMeta,

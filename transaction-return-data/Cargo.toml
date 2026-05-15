@@ -1,0 +1,27 @@
+[package]
+name = "solana-transaction-return-data"
+description = "TransactionReturnData type emitted at the end of a Solana transaction."
+documentation = "https://docs.rs/solana-transaction-return-data"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = "2024"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+serde = ["dep:serde", "solana-address/serde"]
+wincode = ["dep:wincode", "solana-address/wincode"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+solana-address = { workspace = true }
+wincode = { workspace = true, optional = true }
+
+[lints]
+workspace = true

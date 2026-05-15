@@ -59,8 +59,8 @@ use {
     solana_system_transaction as system_transaction,
     solana_sysvar::rent::Rent,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
+    solana_transaction_return_data::TransactionReturnData,
     std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
     test_case::test_case,
 };

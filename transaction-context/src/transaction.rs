@@ -19,6 +19,9 @@ use {
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 
+#[doc(inline)]
+pub use solana_transaction_return_data::TransactionReturnData;
+
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 pub type InstructionTrace<'ix_data> = (
     Vec<InstructionFrame>,
@@ -595,16 +598,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn number_of_cpis_in_trace(&self) -> usize {
         self.transaction_frame.number_of_cpis_in_trace as usize
     }
-}
-
-/// Return data at the end of a transaction
-#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "wincode", derive(wincode::SchemaRead, wincode::SchemaWrite))]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TransactionReturnData {
-    pub program_id: Pubkey,
-    pub data: Vec<u8>,
 }
 
 /// Everything that needs to be recorded from a TransactionContext after execution

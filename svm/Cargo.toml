@@ -77,6 +77,7 @@ solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-transaction-return-data = { workspace = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 

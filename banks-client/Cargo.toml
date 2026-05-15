@@ -34,8 +34,8 @@ solana-rent = { workspace = true }
 solana-signature = { workspace = true }
 solana-sysvar = { workspace = true, features = ["bincode"] }
 solana-transaction = { workspace = true }
-solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-transaction-return-data = { workspace = true }
 tarpc = { workspace = true, features = ["full"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

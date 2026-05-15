@@ -176,10 +176,9 @@ use {
         sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
         versioned::{TransactionVersion, VersionedTransaction},
     },
-    solana_transaction_context::{
-        transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
-    },
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_transaction_return_data::TransactionReturnData,
     solana_vote::{
         vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
         vote_parser,

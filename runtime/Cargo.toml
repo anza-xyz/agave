@@ -169,6 +169,7 @@ solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-transaction-return-data = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 solana-version = { workspace = true }
