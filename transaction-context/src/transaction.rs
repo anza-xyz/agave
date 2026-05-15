@@ -1,3 +1,4 @@
+pub use solana_transaction_return_data::TransactionReturnData;
 use {
     crate::{
         IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
@@ -18,8 +19,6 @@ use {
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
-
-pub use solana_transaction_return_data::TransactionReturnData;
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 pub type InstructionTrace<'ix_data> = (
