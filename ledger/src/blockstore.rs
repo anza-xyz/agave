@@ -61,8 +61,8 @@ use {
         versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_status::{
-        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
-        RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
+        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, EntrySummary,
+        Rewards, RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
         VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
     },
@@ -240,6 +240,17 @@ impl<T> AsRef<T> for WorkingEntry<T> {
 pub struct InsertResults {
     completed_data_set_infos: Vec<CompletedDataSetInfo>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
+}
+
+#[allow(clippy::large_enum_variant)]
+pub enum ConfirmedBlockComponent {
+    EntryBatch(Vec<EntrySummary>),
+    BlockMarker(VersionedBlockMarker),
+}
+
+pub struct VersionedConfirmedBlockWithComponents {
+    pub block: VersionedConfirmedBlock,
+    pub components: Vec<ConfirmedBlockComponent>,
 }
 
 /// A "complete data set" is a range of [`Shred`]s that combined in sequence carry a single
@@ -4140,6 +4151,121 @@ impl Blockstore {
                 transaction
             });
 
+        let block = self.build_versioned_confirmed_block(
+            slot,
+            require_previous_blockhash,
+            allow_dead_slots,
+            &slot_meta,
+            &blockhash,
+            slot_transaction_iterator,
+        )?;
+
+        Ok(VersionedConfirmedBlockWithEntries { block, entries })
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn get_complete_block_with_components(
+        &self,
+        slot: Slot,
+        require_previous_blockhash: bool,
+        populate_components: bool,
+        allow_dead_slots: bool,
+    ) -> Result<VersionedConfirmedBlockWithComponents> {
+        let Some(slot_meta) = self.meta_cf.get(slot)? else {
+            trace!("do_get_complete_block_with_components() failed for {slot} (missing SlotMeta)");
+            return Err(BlockstoreError::SlotUnavailable);
+        };
+
+        if !slot_meta.is_full() {
+            trace!("do_get_complete_block_with_components() failed for {slot} (slot not full)");
+            return Err(BlockstoreError::SlotUnavailable);
+        }
+
+        let (slot_components, _, _) = self.get_slot_components_with_shred_info(
+            slot,
+            /*start_index:*/ 0,
+            allow_dead_slots,
+        )?;
+
+        if slot_components.is_empty() {
+            trace!("do_get_complete_block_with_components() failed for {slot} (no entries found)");
+            return Err(BlockstoreError::SlotUnavailable);
+        }
+
+        let blockhash = slot_components
+            .iter()
+            .rev()
+            .find_map(|component| match component {
+                BlockComponent::EntryBatch(entries) => entries.last().map(|entry| entry.hash),
+                BlockComponent::BlockMarker(_) => None,
+            })
+            .unwrap_or_else(|| panic!("Rooted slot {slot:?} must have blockhash"));
+
+        let mut starting_transaction_index = 0;
+        let mut transactions = Vec::new();
+        let mut components = if populate_components {
+            Vec::with_capacity(slot_components.len())
+        } else {
+            Vec::new()
+        };
+
+        for component in slot_components {
+            match component {
+                BlockComponent::EntryBatch(entries) => {
+                    let mut entry_summaries = if populate_components {
+                        Vec::with_capacity(entries.len())
+                    } else {
+                        Vec::new()
+                    };
+
+                    for entry in entries {
+                        if populate_components {
+                            entry_summaries.push(solana_transaction_status::EntrySummary {
+                                num_hashes: entry.num_hashes,
+                                hash: entry.hash,
+                                num_transactions: entry.transactions.len() as u64,
+                                starting_transaction_index,
+                            });
+                        }
+                        starting_transaction_index += entry.transactions.len();
+                        transactions.extend(entry.transactions);
+                    }
+
+                    if populate_components {
+                        components.push(ConfirmedBlockComponent::EntryBatch(entry_summaries));
+                    }
+                }
+                BlockComponent::BlockMarker(marker) => {
+                    if populate_components {
+                        components.push(ConfirmedBlockComponent::BlockMarker(marker));
+                    }
+                }
+            }
+        }
+        let slot_transaction_iterator = transactions.into_iter();
+
+        let block = self.build_versioned_confirmed_block(
+            slot,
+            require_previous_blockhash,
+            allow_dead_slots,
+            &slot_meta,
+            &blockhash,
+            slot_transaction_iterator,
+        )?;
+
+        Ok(VersionedConfirmedBlockWithComponents { block, components })
+    }
+
+    // Helper to build VersionConfirmedBlock from blockhash and transactions
+    fn build_versioned_confirmed_block(
+        &self,
+        slot: Slot,
+        require_previous_blockhash: bool,
+        allow_dead_slots: bool,
+        slot_meta: &SlotMeta,
+        blockhash: &Hash,
+        slot_transaction_iterator: impl Iterator<Item = VersionedTransaction>,
+    ) -> Result<VersionedConfirmedBlock> {
         let previous_blockhash = slot_meta.parent_slot.and_then(|parent_slot| {
             self.get_slot_entries_with_shred_info(
                 parent_slot,
@@ -4160,7 +4286,7 @@ impl Blockstore {
         if previous_blockhash.is_none() && require_previous_blockhash {
             return Err(BlockstoreError::ParentEntriesUnavailable);
         }
-        let previous_blockhash = previous_blockhash.unwrap_or_else(Hash::default);
+        let previous_blockhash = previous_blockhash.unwrap_or_default();
 
         let (rewards, num_partitions) = self
             .rewards_cf
@@ -4174,7 +4300,7 @@ impl Blockstore {
         let block_time = self.blocktime_cf.get(slot)?;
         let block_height = self.block_height_cf.get(slot)?;
 
-        let block = VersionedConfirmedBlock {
+        Ok(VersionedConfirmedBlock {
             previous_blockhash: previous_blockhash.to_string(),
             blockhash: blockhash.to_string(),
             // If the slot is full it should have parent_slot populated
@@ -4185,9 +4311,7 @@ impl Blockstore {
             num_partitions,
             block_time,
             block_height,
-        };
-
-        Ok(VersionedConfirmedBlockWithEntries { block, entries })
+        })
     }
 
     pub fn map_transactions_to_statuses(
