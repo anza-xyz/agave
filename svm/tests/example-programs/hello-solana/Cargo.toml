@@ -1,6 +1,6 @@
 [package]
 name = "hello-solana-program"
-version = "4.0.0-rc.1"
+version = "4.0.0"
 edition = "2021"
 
 [dependencies]
