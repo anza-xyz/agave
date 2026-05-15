@@ -24,6 +24,14 @@ use {
     },
 };
 
+const XDP_OPTIONS: i32 = 8;
+const XDP_OPTIONS_ZEROCOPY: u32 = 1 << 0;
+
+#[repr(C)]
+struct XdpOptions {
+    flags: u32,
+}
+
 pub struct Socket<U: Umem> {
     fd: OwnedFd,
     dev_queue: DeviceQueue,
@@ -248,6 +256,24 @@ impl<U: Umem> Socket<U> {
 
     pub fn umem(&mut self) -> &mut U {
         &mut self.umem
+    }
+
+    pub fn zero_copy_enabled(&self) -> Result<bool, io::Error> {
+        let mut options = XdpOptions { flags: 0 };
+        let mut optlen = mem::size_of::<XdpOptions>() as socklen_t;
+        let result = unsafe {
+            getsockopt(
+                self.fd.as_raw_fd(),
+                SOL_XDP,
+                XDP_OPTIONS,
+                &mut options as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            )
+        };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(options.flags & XDP_OPTIONS_ZEROCOPY != 0)
     }
 }
 

@@ -27,6 +27,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "route_monitor",
     "router_snapshot",
     "transmitter_smoke",
+    "zero_copy_hardware",
 ];
 const DEFAULT_PR_KERNEL_VERSIONS: &[&str] = &["6.1", "6.12"];
 const DEFAULT_NIGHTLY_KERNEL_VERSIONS: &[&str] = &["5.10", "6.1", "6.12", "6.17"];

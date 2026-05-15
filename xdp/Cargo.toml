@@ -44,3 +44,8 @@ required-features = ["agave-unstable-api"]
 name = "transmitter_smoke"
 path = "tests/transmitter_smoke.rs"
 required-features = ["agave-unstable-api"]
+
+[[test]]
+name = "zero_copy_hardware"
+path = "tests/zero_copy_hardware.rs"
+required-features = ["agave-unstable-api"]
