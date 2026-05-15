@@ -12,6 +12,11 @@ use {
     },
 };
 
+// Read-ahead buffer capacity, sized as a multiple of the default io-uring
+// reader's read size (1 MiB) and large enough that almost any account storage
+// file fits entirely within the buffer.
+pub const ACCOUNT_STORAGE_MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;
+
 pub fn storage_file_buf_reader<'a>(
     max_buf_size: usize,
     io_setup: &IoSetupState,
@@ -155,8 +160,6 @@ mod tests {
         test_case::test_case,
     };
 
-    const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
-
     fn create_storage_for_storage_reader(
         slot: Slot,
         provider: AccountsFileProvider,
@@ -186,7 +189,8 @@ mod tests {
         storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
         let mut buf_reader =
-            storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default()).unwrap();
+            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, &IoSetupState::default())
+                .unwrap();
         let reader = AccountStorageReader::new(&storage, None, &mut buf_reader).unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
     }
@@ -255,7 +259,8 @@ mod tests {
 
         // Create the reader and check the length
         let mut file_reader =
-            storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default()).unwrap();
+            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, &IoSetupState::default())
+                .unwrap();
         let mut reader = AccountStorageReader::new(&storage, None, &mut file_reader).unwrap();
         let current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
         assert_eq!(reader.len(), current_len);
@@ -369,7 +374,8 @@ mod tests {
 
         // Now iterate through all the possible snapshot slots and verify correctness
         let mut file_reader =
-            storage_file_buf_reader(MAX_BUFFER_SIZE, &IoSetupState::default()).unwrap();
+            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, &IoSetupState::default())
+                .unwrap();
         for snapshot_slot in 0..slot_marked_dead {
             let mut reader =
                 AccountStorageReader::new(&storage, Some(snapshot_slot), &mut file_reader).unwrap();

@@ -8,7 +8,9 @@ use {
     solana_accounts_db::{
         account_storage::AccountStoragesOrderer,
         account_storage_entry::AccountStorageEntry,
-        account_storage_reader::{AccountStorageReader, storage_file_buf_reader},
+        account_storage_reader::{
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE, AccountStorageReader, storage_file_buf_reader,
+        },
         accounts_file::AccountsFile,
     },
     solana_clock::Slot,
@@ -21,9 +23,6 @@ use {
 // such that during unpacking large writes are mixed with file metadata operations
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
-
-// Buffer size capacity for read-ahead using default io-uring reader.
-const ACCOUNT_STORAGE_MAX_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 /// Archives a snapshot into `archive_path`
 pub fn archive_snapshot(
