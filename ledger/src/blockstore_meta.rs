@@ -121,9 +121,9 @@ pub struct SlotMetaBase<T> {
     /// At the same time, it is also an index of the first missing shred for this slot, while the
     /// slot is incomplete.
     pub consumed: u64,
-    /// The index *plus one* of the highest shred received for this slot.  Useful
+    /// The index *plus one* of the highest shred received for this slot. Useful
     /// for checking if the slot has received any shreds yet, and to calculate the
-    /// range where there is one or more holes: `(consumed..received)`.
+    /// range that may contain holes: `(consumed..received)`.
     pub received: u64,
     /// The timestamp of the first time a shred was added for this slot
     pub first_shred_timestamp: u64,

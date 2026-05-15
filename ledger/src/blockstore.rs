@@ -37,7 +37,7 @@ use {
     rocksdb::{DBRawIterator, LiveFile},
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
-    solana_clock::{DEFAULT_TICKS_PER_SECOND, Slot, UnixTimestamp},
+    solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
             BlockComponent, VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
@@ -1494,7 +1494,7 @@ impl Blockstore {
     }
 
     /// Attempts to insert shreds into blockstore and updates relevant metrics
-    /// based on the results, split out by shred source (tubine vs. repair).
+    /// based on the results, split out by shred source (turbine vs. repair).
     fn attempt_shred_insertion<'a>(
         &self,
         shreds: impl IntoIterator<
@@ -3336,7 +3336,6 @@ impl Blockstore {
             slot_meta,
             index as u32,
             new_consumed,
-            shred.reference_tick(),
             data_index,
         )
         .map(move |indices| CompletedDataSetInfo { slot, indices });
@@ -3699,26 +3698,17 @@ impl Blockstore {
     }
 
     /// Find missing shred indices for a given `slot` within the range
-    /// [`start_index`, `end_index`]. Missing shreds will only be reported as
-    /// missing if they should be present by the time this function is called,
-    /// as controlled by`first_timestamp` and `defer_threshold_ticks`.
+    /// [`start_index`, `end_index`].
     ///
     /// Arguments:
     ///  - `db_iterator`: Iterator to run search over.
     ///  - `slot`: The slot to search for missing shreds for.
-    ///  - 'first_timestamp`: Timestamp (ms) for slot's first shred insertion.
-    ///  - `defer_threshold_ticks`: A grace period to allow shreds that are
-    ///    missing to be excluded from the reported missing list. This allows
-    ///    tuning on how aggressively missing shreds should be reported and
-    ///    acted upon.
     ///  - `start_index`: Begin search (inclusively) at this shred index.
     ///  - `end_index`: Finish search (exclusively) at this shred index.
     ///  - `max_missing`: Limit result to this many indices.
     fn find_missing_indexes<C>(
         db_iterator: &mut DBRawIterator,
         slot: Slot,
-        first_timestamp: u64,
-        defer_threshold_ticks: u64,
         start_index: u64,
         end_index: u64,
         max_missing: usize,
@@ -3731,9 +3721,6 @@ impl Blockstore {
         }
 
         let mut missing_indexes = vec![];
-        // System time is not monotonic
-        let ticks_since_first_insert =
-            DEFAULT_TICKS_PER_SECOND * timestamp().saturating_sub(first_timestamp) / 1000;
 
         // Seek to the first shred with index >= start_index
         db_iterator.seek(C::key(&(slot, start_index)));
@@ -3757,14 +3744,6 @@ impl Blockstore {
             };
 
             let upper_index = cmp::min(current_index, end_index);
-            // the tick that will be used to figure out the timeout for this hole
-            let data = db_iterator.value().expect("couldn't read value");
-            let reference_tick = u64::from(shred::layout::get_reference_tick(data).unwrap());
-            if ticks_since_first_insert < reference_tick + defer_threshold_ticks {
-                // The higher index holes have not timed out yet
-                break;
-            }
-
             let num_to_take = max_missing - missing_indexes.len();
             missing_indexes.extend((prev_index..upper_index).take(num_to_take));
 
@@ -3788,8 +3767,6 @@ impl Blockstore {
     pub fn find_missing_data_indexes(
         &self,
         slot: Slot,
-        first_timestamp: u64,
-        defer_threshold_ticks: u64,
         start_index: u64,
         end_index: u64,
         max_missing: usize,
@@ -3801,8 +3778,6 @@ impl Blockstore {
         Self::find_missing_indexes::<cf::ShredData>(
             &mut db_iterator,
             slot,
-            first_timestamp,
-            defer_threshold_ticks,
             start_index,
             end_index,
             max_missing,
@@ -5874,7 +5849,6 @@ fn update_slot_meta<'a>(
     slot_meta: &mut SlotMeta,
     index: u32,
     new_consumed: u64,
-    reference_tick: u8,
     received_data_shreds: &'a ShredIndex,
 ) -> impl Iterator<Item = Range<u32>> + 'a + use<'a> {
     let first_insert = slot_meta.received == 0;
@@ -5882,9 +5856,7 @@ fn update_slot_meta<'a>(
     // so received = index + 1 for the same shred.
     slot_meta.received = cmp::max(u64::from(index) + 1, slot_meta.received);
     if first_insert {
-        // predict the timestamp of what would have been the first shred in this slot
-        let slot_time_elapsed = u64::from(reference_tick) * 1000 / DEFAULT_TICKS_PER_SECOND;
-        slot_meta.first_shred_timestamp = timestamp() - slot_time_elapsed;
+        slot_meta.first_shred_timestamp = timestamp();
     }
     slot_meta.consumed = new_consumed;
     // If the last index in the slot hasn't been set before, then

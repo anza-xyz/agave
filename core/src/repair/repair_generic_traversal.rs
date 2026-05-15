@@ -1,7 +1,10 @@
 use {
     crate::{
         consensus::{heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice, tree_diff::TreeDiff},
-        repair::{repair_service::RepairService, serve_repair::ShredRepairType},
+        repair::{
+            repair_service::{RepairEligibility, RepairService},
+            serve_repair::ShredRepairType,
+        },
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -40,8 +43,12 @@ impl Iterator for GenericTraversal<'_> {
     }
 }
 
-/// Does a generic traversal and inserts all slots that have a missing last index prioritized by how
-/// many shreds have been received
+/// Does a generic traversal and requests `HighestShred` for slots that have an
+/// unknown last index.
+///
+/// This preserves the legacy aggressive probing policy by bypassing
+/// `RepairEligibility`. Candidates are prioritized by the number of data shreds
+/// currently present in blockstore.
 pub fn get_unknown_last_index(
     tree: &HeaviestSubtreeForkChoice,
     blockstore: &Blockstore,
@@ -72,7 +79,7 @@ pub fn get_unknown_last_index(
             }
         }
     }
-    // prioritize slots with more received shreds
+    // Prioritize slots with more data shreds currently present in blockstore.
     unknown_last.sort_by(|(_, _, count1), (_, _, count2)| count2.cmp(count1));
     unknown_last
         .iter()
@@ -114,7 +121,8 @@ fn get_unrepaired_path(
 }
 
 /// Finds repairs for slots that are closest to completion (# of missing shreds).
-/// Additionally we repair up to their oldest full ancestor (using blockstore fork info).
+/// Additionally repairs their incomplete ancestor path until the first full or
+/// previously visited ancestor.
 pub fn get_closest_completion(
     tree: &HeaviestSubtreeForkChoice,
     blockstore: &Blockstore,
@@ -122,7 +130,7 @@ pub fn get_closest_completion(
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
-    ticks_per_second: u64,
+    repair_eligibility: &mut RepairEligibility,
     outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
 ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
     let mut slot_dists: Vec<(Slot, u64)> = Vec::default();
@@ -200,7 +208,7 @@ pub fn get_closest_completion(
                 blockstore,
                 path_slot,
                 slot_meta,
-                ticks_per_second,
+                repair_eligibility,
                 limit - repairs.len(),
                 outstanding_repairs,
             );
@@ -216,8 +224,6 @@ pub fn get_closest_completion(
 pub mod test {
     use {
         super::*,
-        crate::repair::repair_service::sleep_shred_deferment_period,
-        solana_clock::DEFAULT_TICKS_PER_SECOND,
         solana_hash::Hash,
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
         trees::{Tree, TreeWalk, tr},
@@ -272,7 +278,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             10,
-            DEFAULT_TICKS_PER_SECOND,
+            &mut RepairEligibility::default(),
             &mut outstanding_requests,
         );
         assert_eq!(repairs, []);
@@ -293,7 +299,8 @@ pub mod test {
         let mut slot_meta_cache = HashMap::default();
         let mut processed_slots = HashSet::default();
         outstanding_requests = HashMap::new();
-        sleep_shred_deferment_period();
+        let mut repair_eligibility =
+            RepairEligibility::elapsed_for_slots_for_tests(&blockstore, 0..=5);
         let (repairs, _) = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
@@ -301,7 +308,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             1,
-            DEFAULT_TICKS_PER_SECOND,
+            &mut repair_eligibility,
             &mut outstanding_requests,
         );
         assert_eq!(repairs, [ShredRepairType::Shred(1, 30)]);
@@ -314,7 +321,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             4,
-            DEFAULT_TICKS_PER_SECOND,
+            &mut repair_eligibility,
             &mut outstanding_requests,
         );
         assert_eq!(repairs.len(), 4);
@@ -328,7 +335,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             1,
-            DEFAULT_TICKS_PER_SECOND,
+            &mut repair_eligibility,
             &mut outstanding_requests,
         );
         assert_eq!(repairs.len(), 0);

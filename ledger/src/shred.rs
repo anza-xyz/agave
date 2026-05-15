@@ -516,6 +516,7 @@ impl Shred {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn reference_tick(&self) -> u8 {
         match self {
             Self::ShredCode(_) => ShredFlags::SHRED_TICK_REFERENCE_MASK.bits(),
