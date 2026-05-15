@@ -1,4 +1,7 @@
-pub const GUEST_REGION_SIZE: u64 = 1 << 32;
+pub const SHIFT: u32 = 32;
+pub const GUEST_REGION_SIZE: u64 = 1 << SHIFT;
+pub const HEAP_ADDRESS: u64 = 2 * GUEST_REGION_SIZE;
+pub const STACK_ADDRESS: u64 = 3 * GUEST_REGION_SIZE;
 pub const TRANSACTION_FRAME_ADDRESS: u64 = 4 * GUEST_REGION_SIZE;
 pub const ACCOUNT_METADATA_AREA: u64 = 5 * GUEST_REGION_SIZE;
 pub const INSTRUCTION_TRACE_AREA: u64 = 6 * GUEST_REGION_SIZE;
@@ -6,3 +9,7 @@ pub const RETURN_DATA_SCRATCHPAD: u64 = 7 * GUEST_REGION_SIZE;
 pub const GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS: u64 = 8 * GUEST_REGION_SIZE;
 pub const GUEST_INSTRUCTION_DATA_BASE_ADDRESS: u64 = 264 * GUEST_REGION_SIZE;
 pub const GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS: u64 = 328 * GUEST_REGION_SIZE;
+
+pub const fn abiv2_region_index_from_vm_address(vm_base_address: u64) -> usize {
+    (vm_base_address >> SHIFT) as usize
+}
