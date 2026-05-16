@@ -19,7 +19,10 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    agave_tpu_plugin::{AccountFilter, BankingHooks, NoFilter},
+    agave_tpu_extension_api::{
+        AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter, NoGate,
+        SchedulerGate,
+    },
     crossbeam_channel::{Receiver, Sender, unbounded},
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
@@ -323,7 +326,11 @@ impl LikeClusterInfo for Arc<ClusterInfo> {
     }
 }
 
-pub struct BankingStage<F: AccountFilter = NoFilter> {
+pub struct BankingStage<
+    F: AccountFilter = NoFilter,
+    G: SchedulerGate = NoGate,
+    L: ExternalLocks = NoExternalLocks,
+> {
     banking_shutdown_signal: CancellationToken,
     worker_exit_signal: Arc<AtomicBool>,
     banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
@@ -335,11 +342,13 @@ pub struct BankingStage<F: AccountFilter = NoFilter> {
     bank_forks: Arc<RwLock<BankForks>>,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
-    hooks: BankingHooks<F>,
+    hooks: BankingHooks<F, G, L>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
 
-impl<F: AccountFilter + 'static> BankingStage<F> {
+impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 'static>
+    BankingStage<F, G, L>
+{
     #[allow(clippy::too_many_arguments)]
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
@@ -356,7 +365,7 @@ impl<F: AccountFilter + 'static> BankingStage<F> {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        hooks: BankingHooks<F>,
+        hooks: BankingHooks<F, G, L>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -532,7 +541,7 @@ impl<F: AccountFilter + 'static> BankingStage<F> {
                     self.committer.clone(),
                     self.transaction_recorder.clone(),
                     self.log_messages_bytes_limit,
-                    Arc::clone(&self.hooks.batch_commit),
+                    self.hooks.commit_mode(),
                 ),
                 finished_work_sender.clone(),
                 self.poh_recorder.read().unwrap().shared_leader_state(),
@@ -557,8 +566,8 @@ impl<F: AccountFilter + 'static> BankingStage<F> {
             finished_work_receiver,
             GreedySchedulerConfig::default(),
         );
-        let tip_processor = Arc::clone(&self.hooks.tip_processor);
-        let tip_config = self.hooks.tip_config;
+        let tip_processor = self.hooks.tip_processor_handle();
+        let tip_config = self.hooks.tip_config();
         let exit = exit.clone();
         let shutdown_signal = self.banking_shutdown_signal.clone();
         threads.push(
@@ -592,6 +601,11 @@ impl<F: AccountFilter + 'static> BankingStage<F> {
                         Err(SchedulerError::DisconnectedSendChannel(_)) => {
                             warn!("Unexpected worker disconnect from scheduler")
                         }
+                        Err(SchedulerError::TipProcessorFailed { slot, reason }) => {
+                            error!("Tip processor failed for slot {slot}: {reason}");
+                            shutdown_signal.cancel();
+                            drop(scheduler_controller);
+                        }
                     }
                 })
                 .unwrap(),
@@ -602,15 +616,19 @@ impl<F: AccountFilter + 'static> BankingStage<F> {
 
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
         let vote_storage = VoteStorage::new(&self.bank_forks.read().unwrap().working_bank());
-        let tpu_receiver =
-            VotePacketReceiver::new(self.tpu_vote_receiver.clone(), Arc::clone(&self.hooks.account_filter));
-        let gossip_receiver =
-            VotePacketReceiver::new(self.gossip_vote_receiver.clone(), Arc::clone(&self.hooks.account_filter));
+        let tpu_receiver = VotePacketReceiver::new(
+            self.tpu_vote_receiver.clone(),
+            self.hooks.packet_filter_handle(),
+        );
+        let gossip_receiver = VotePacketReceiver::new(
+            self.gossip_vote_receiver.clone(),
+            self.hooks.packet_filter_handle(),
+        );
         let consumer = Consumer::new(
             self.committer.clone(),
             self.transaction_recorder.clone(),
             self.log_messages_bytes_limit,
-            Arc::clone(&self.hooks.batch_commit),
+            self.hooks.commit_mode(),
         );
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
 
@@ -634,13 +652,18 @@ impl<F: AccountFilter + 'static> BankingStage<F> {
             })
             .unwrap()
     }
-
 }
 
 impl BankingStage {
-    pub fn default_num_workers() -> NonZeroUsize { DEFAULT_NUM_WORKERS }
-    pub const fn max_num_workers() -> NonZeroUsize { MAX_NUM_WORKERS }
-    pub const fn default_fill_time_millis() -> NonZeroU64 { DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS }
+    pub fn default_num_workers() -> NonZeroUsize {
+        DEFAULT_NUM_WORKERS
+    }
+    pub const fn max_num_workers() -> NonZeroUsize {
+        MAX_NUM_WORKERS
+    }
+    pub const fn default_fill_time_millis() -> NonZeroU64 {
+        DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS
+    }
 }
 
 #[cfg(unix)]
@@ -652,7 +675,9 @@ mod external {
         tpu_to_pack::BankingPacketReceivers,
     };
 
-    impl<F: AccountFilter + 'static> BankingStage<F> {
+    impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 'static>
+        BankingStage<F, G, L>
+    {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
@@ -665,8 +690,7 @@ mod external {
             info!("Spawning external scheduler");
 
             static_assertions::const_assert!(
-                agave_scheduling_utils::handshake::MAX_WORKERS
-                    == MAX_NUM_WORKERS.get()
+                agave_scheduling_utils::handshake::MAX_WORKERS == MAX_NUM_WORKERS.get()
             );
             assert!(workers.len() <= MAX_NUM_WORKERS.get());
 
@@ -690,7 +714,7 @@ mod external {
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
                         self.log_messages_bytes_limit,
-                        Arc::clone(&self.hooks.batch_commit),
+                        self.hooks.commit_mode(),
                     ),
                     worker_to_pack,
                     allocator,

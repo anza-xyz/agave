@@ -10,11 +10,11 @@ use {
         vote_packet_receiver::VotePacketReceiver,
         vote_storage::VoteStorage,
     },
-    agave_tpu_plugin::{AccountFilter, NoFilter},
     crate::banking_stage::{
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
         transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
     },
+    agave_tpu_extension_api::{AccountFilter, NoFilter},
     agave_transaction_view::{
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
@@ -573,12 +573,12 @@ fn has_reached_end_of_slot(reached_max_poh_height: bool, bank: &Bank) -> bool {
 mod tests {
     use {
         super::*,
-        agave_tpu_plugin::StandardCommit,
         crate::banking_stage::{
             committer::Committer,
             tests::{create_slow_genesis_config, sanitize_transactions},
             vote_storage::tests::packet_from_slots,
         },
+        agave_tpu_extension_api::BatchCommitMode,
         crossbeam_channel::unbounded,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::BytesPacket,
@@ -670,7 +670,8 @@ mod tests {
 
         // Assert - Able to extract exactly one packet.
         let expected = *packets[0].message_hash();
-        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted =
+            VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected);
         assert!(extracted.next().is_none());
     }
@@ -686,7 +687,8 @@ mod tests {
         let retryable_indices = vec![];
 
         // Assert - Able to extract exactly zero packets.
-        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted =
+            VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert!(extracted.next().is_none());
     }
 
@@ -706,7 +708,8 @@ mod tests {
 
         // Assert - Able to extract exactly one packet.
         let expected = *packets[2].message_hash();
-        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted =
+            VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected);
         assert!(extracted.next().is_none());
     }
@@ -728,7 +731,8 @@ mod tests {
         // Assert - Able to extract exactly one packet.
         let expected0 = *packets[0].message_hash();
         let expected1 = *packets[2].message_hash();
-        let mut extracted = VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
+        let mut extracted =
+            VoteWorker::<NoFilter>::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
         assert!(extracted.next().is_none());
@@ -768,7 +772,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None, Arc::new(StandardCommit));
+        let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
 
         // Create and process a simple transfer transaction
         let pubkey = solana_pubkey::new_rand();

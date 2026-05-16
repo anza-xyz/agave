@@ -5,7 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    agave_tpu_plugin::BatchCommitPolicy,
+    agave_tpu_extension_api::BatchCommitMode,
     itertools::Itertools,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
@@ -13,7 +13,6 @@ use {
         poh_recorder::PohRecorderError,
         transaction_recorder::{RecordTransactionsTimings, TransactionRecorder},
     },
-    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{
             Bank, LoadAndExecuteTransactionsOutput, entry_bytes_budget::EntryBytesReserveError,
@@ -24,14 +23,12 @@ use {
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_result::{
-            TransactionProcessingResult, TransactionProcessingResultExtensions,
-        },
+        transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
     solana_vote::vote_parser,
-    std::{collections::HashSet, num::Saturating, sync::Arc},
+    std::num::Saturating,
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
@@ -111,7 +108,7 @@ pub struct Consumer {
     committer: Committer,
     transaction_recorder: TransactionRecorder,
     log_messages_bytes_limit: Option<usize>,
-    batch_commit: Arc<dyn BatchCommitPolicy>,
+    batch_commit_mode: BatchCommitMode,
 }
 
 impl Consumer {
@@ -119,13 +116,13 @@ impl Consumer {
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        batch_commit: Arc<dyn BatchCommitPolicy>,
+        batch_commit_mode: BatchCommitMode,
     ) -> Self {
         Self {
             committer,
             transaction_recorder,
             log_messages_bytes_limit,
-            batch_commit,
+            batch_commit_mode,
         }
     }
 
@@ -162,7 +159,7 @@ impl Consumer {
             check_results.into_iter(),
             ExecutionFlags {
                 drop_on_failure: false,
-                all_or_nothing: self.batch_commit.revert_batch_on_error(),
+                all_or_nothing: self.batch_commit_mode.reverts_on_error(),
             },
         );
 
@@ -172,6 +169,10 @@ impl Consumer {
             .error_counters
             .accumulate(&error_counters);
         output
+    }
+
+    pub fn batch_commit_mode(&self) -> BatchCommitMode {
+        self.batch_commit_mode
     }
 
     pub fn process_and_record_aged_transactions(
@@ -260,47 +261,6 @@ impl Consumer {
         }
     }
 
-    /// Partition processed transactions into conflict-free groups for separate PoH entries.
-    /// Uses a greedy graph-coloring approach: each transaction goes into the first group
-    /// whose write-account set is disjoint from its own writes.
-    fn partition_into_entry_groups<'a>(
-        batch: &'a TransactionBatch<impl TransactionWithMeta>,
-        processing_results: &[TransactionProcessingResult],
-    ) -> Vec<Vec<usize>> {
-        let mut groups: Vec<Vec<usize>> = vec![];
-        let mut group_write_sets: Vec<HashSet<&'a Pubkey>> = vec![];
-
-        for (idx, (result, tx)) in processing_results
-            .iter()
-            .zip(batch.sanitized_transactions())
-            .enumerate()
-        {
-            if !result.was_processed() {
-                continue;
-            }
-            let writes: HashSet<&Pubkey> = tx
-                .account_keys()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, k)| tx.is_writable(i).then_some(k))
-                .collect();
-
-            let placed = groups
-                .iter_mut()
-                .zip(group_write_sets.iter_mut())
-                .find(|(_, ws)| ws.is_disjoint(&writes));
-
-            if let Some((group, ws)) = placed {
-                group.push(idx);
-                ws.extend(&writes);
-            } else {
-                group_write_sets.push(writes);
-                groups.push(vec![idx]);
-            }
-        }
-        groups
-    }
-
     fn execute_and_commit_transactions_locked(
         &self,
         bank: &Bank,
@@ -319,7 +279,7 @@ impl Consumer {
                 // following are retryable errors
                 Err(TransactionError::AccountInUse) => {
                     error_counters.account_in_use += 1;
-                    // AccountInUse is retryable — includes vote conflicts and write-lock contention.
+                    // AccountInUse is retryable: includes vote conflicts and write-lock contention.
                     Some(RetryableIndex {
                         index,
                         immediately_retryable: true,
@@ -415,92 +375,31 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-        // When `partition_into_entries()` is set, split write-conflicting transactions into
-        // separate PoH entries. On the vanilla path this check is eliminated by the inliner.
-        let (recording_result, starting_transaction_index) =
-            if self.batch_commit.partition_into_entries() {
-                let groups = Self::partition_into_entry_groups(batch, &processing_results);
-                let mut first_starting_index = None;
-                let mut combined_result = Ok(());
-                let mut accumulated_timings = RecordTransactionsTimings::default();
-
-                let (_, record_us) = measure_us!({
-                    for group in &groups {
-                        let group_bytes: u64 = group
-                            .iter()
-                            .map(|&i| {
-                                batch.sanitized_transactions()[i].serialized_size() as u64
-                            })
-                            .sum::<u64>()
-                            + SERIALIZED_ENTRIES_OVERHEAD;
-
-                        let reserve_result = bank
-                            .entry_bytes_budget()
-                            .reserve(group_bytes)
-                            .map_err(|_| PohRecorderError::MaxHeightReached);
-
-                        match reserve_result.map(|_| {
-                            let txs = group
-                                .iter()
-                                .map(|&i| {
-                                    batch.sanitized_transactions()[i].to_versioned_transaction()
-                                })
-                                .collect();
-                            self.transaction_recorder
-                                .record_transactions(bank.bank_id(), txs)
-                        }) {
-                            Ok(summary) => {
-                                first_starting_index
-                                    .get_or_insert(summary.starting_transaction_index);
-                                accumulated_timings
-                                    .accumulate(&summary.record_transactions_timings);
-                            }
-                            Err(e) => {
-                                combined_result = Err(e);
-                                break;
-                            }
-                        }
-                    }
+        let reserved_bytes =
+            bank.entry_bytes_budget()
+                .reserve(entry_bytes)
+                .map_err(|err| match err {
+                    EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
                 });
-                execute_and_commit_timings.record_us = record_us;
+        let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
+            self.transaction_recorder
+                .record_transactions(bank.bank_id(), processed_transactions)
+        }));
+        execute_and_commit_timings.record_us = record_us;
+
+        let (recording_result, starting_transaction_index) = match record_transactions_summary {
+            Ok(summary) => {
                 execute_and_commit_timings.record_transactions_timings =
                     RecordTransactionsTimings {
                         processing_results_to_transactions_us: Saturating(
                             processing_results_to_transactions_us,
                         ),
-                        ..accumulated_timings
+                        ..summary.record_transactions_timings
                     };
-                (combined_result, first_starting_index.flatten())
-            } else {
-                let reserved_bytes = bank
-                    .entry_bytes_budget()
-                    .reserve(entry_bytes)
-                    .map_err(|err| match err {
-                        EntryBytesReserveError::ExceedsSlotLimit => {
-                            PohRecorderError::MaxHeightReached
-                        }
-                    });
-                let (record_transactions_summary, record_us) =
-                    measure_us!(reserved_bytes.map(|_| {
-                        self.transaction_recorder
-                            .record_transactions(bank.bank_id(), processed_transactions)
-                    }));
-                execute_and_commit_timings.record_us = record_us;
-
-                match record_transactions_summary {
-                    Ok(summary) => {
-                        execute_and_commit_timings.record_transactions_timings =
-                            RecordTransactionsTimings {
-                                processing_results_to_transactions_us: Saturating(
-                                    processing_results_to_transactions_us,
-                                ),
-                                ..summary.record_transactions_timings
-                            };
-                        (summary.result, summary.starting_transaction_index)
-                    }
-                    Err(err) => (Err(err), None),
-                }
-            };
+                (summary.result, summary.starting_transaction_index)
+            }
+            Err(err) => (Err(err), None),
+        };
 
         if let Err(recorder_err) = recording_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
@@ -615,7 +514,6 @@ impl Consumer {
 mod tests {
     use {
         super::*,
-        agave_tpu_plugin::StandardCommit,
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
@@ -689,7 +587,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None, Arc::new(StandardCommit));
+        let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
 
         TestFrame {
             mint_keypair,
@@ -712,7 +610,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None, Arc::new(StandardCommit));
+        let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
         consumer.process_and_record_transactions(&bank, &transactions)
     }
 

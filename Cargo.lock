@@ -311,11 +311,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-tpu-plugin"
+name = "agave-tpu-extension-api"
 version = "4.1.0-alpha.0"
 dependencies = [
  "solana-pubkey 4.2.0",
- "thiserror 2.0.18",
+]
+
+[[package]]
+name = "agave-tpu-extension-api-jito-solana"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-tpu-extension-api",
+ "agave-xdp",
+ "anyhow",
+ "crossbeam-channel",
+ "solana-core",
+ "solana-geyser-plugin-manager",
+ "solana-gossip",
+ "solana-keypair",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
 ]
 
 [[package]]
@@ -7825,7 +7840,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
- "agave-tpu-plugin",
+ "agave-tpu-extension-api",
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",

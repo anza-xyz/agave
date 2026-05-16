@@ -23,7 +23,9 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
-    agave_tpu_plugin::{AccountFilter, BankingHooks},
+    agave_tpu_extension_api::{
+        AccountFilter, ExternalLocks, SchedulerGate, TpuExtensions, TpuStage,
+    },
     agave_votor::event::VotorEventSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
@@ -89,6 +91,7 @@ pub const MAX_VOTES_PER_SECOND: u64 = 20;
 const TPU_CHANNEL_SIZE: usize = 50_000;
 
 pub struct Tpu {
+    extension_stage_handles: Vec<Box<dyn TpuStage>>,
     fetch_stage: FetchStage,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     sigverify_stage: SigVerifyStage,
@@ -105,7 +108,11 @@ pub struct Tpu {
 
 impl Tpu {
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_client<F: AccountFilter + 'static>(
+    pub fn new_with_client<
+        F: AccountFilter + 'static,
+        G: SchedulerGate + 'static,
+        L: ExternalLocks + 'static,
+    >(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
@@ -143,7 +150,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
-        hooks: BankingHooks<F>,
+        extensions: TpuExtensions<F, G, L>,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
@@ -152,6 +159,7 @@ impl Tpu {
         cancel: CancellationToken,
         votor_event_sender: VotorEventSender,
     ) -> Self {
+        let (extension_stage_handles, hooks) = extensions.into_parts();
         let TpuSockets {
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
@@ -357,6 +365,7 @@ impl Tpu {
         key_notifiers.add(KeyUpdaterType::Forward, client_updater);
 
         Self {
+            extension_stage_handles,
             fetch_stage,
             cluster_info_vote_listener,
             sigverify_stage,
@@ -373,6 +382,16 @@ impl Tpu {
     }
 
     pub fn join(self) -> thread::Result<()> {
+        let extension_stage_handles = self.extension_stage_handles;
+        for stage in extension_stage_handles.iter().rev() {
+            stage.abort();
+        }
+        let extension_results = extension_stage_handles
+            .into_iter()
+            .rev()
+            .map(|stage| stage.join())
+            .collect::<Vec<_>>();
+
         let results = vec![
             self.fetch_stage.join(),
             self.cluster_info_vote_listener.join(),
@@ -385,6 +404,9 @@ impl Tpu {
             self.tpu_vote_quic_t.join(),
         ];
         let broadcast_result = self.broadcast_stage.join();
+        for result in extension_results {
+            result?;
+        }
         for result in results {
             result?;
         }

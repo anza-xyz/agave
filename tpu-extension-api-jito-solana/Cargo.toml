@@ -1,0 +1,28 @@
+[package]
+name = "agave-tpu-extension-api-jito-solana"
+description = "Jito-Solana shaped reference integration for the Agave TPU extension API."
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[[bin]]
+name = "jito_solana"
+path = "src/main.rs"
+
+[dependencies]
+agave-tpu-extension-api = { workspace = true }
+agave-xdp = { workspace = true }
+anyhow = { workspace = true }
+crossbeam-channel = { workspace = true }
+solana-core = { workspace = true }
+solana-geyser-plugin-manager = { workspace = true }
+solana-gossip = { workspace = true }
+solana-keypair = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true }
+
+[lints]
+workspace = true

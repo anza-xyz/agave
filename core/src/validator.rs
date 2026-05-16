@@ -33,9 +33,9 @@ use {
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
     },
-    agave_tpu_plugin::{
-        AccountFilter, BankingHooks, NoFilter, NoLocks, NoTip, NoYield,
-        SetAccountFilter, StandardCommit, TipConfig,
+    agave_tpu_extension_api::{
+        AccountFilter, BankingConfig, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter,
+        NoGate, SchedulerGate, SetAccountFilter, TipConfig, TpuExtensions,
     },
     agave_votor::{
         vote_history::VoteHistory,
@@ -725,7 +725,7 @@ impl Validator {
     ) -> Result<Self> {
         let validator_identity = identity_keypair.pubkey();
         if config.filter_keys.is_empty() {
-            Self::new_with_exit_filtered::<NoFilter>(
+            Self::new_with_exit_with_tpu_extensions::<NoFilter, NoGate, NoExternalLocks>(
                 node,
                 identity_keypair,
                 ledger_path,
@@ -739,18 +739,11 @@ impl Validator {
                 tpu_config,
                 admin_rpc_service_post_init,
                 xdp_builder_with_src_addr,
-                BankingHooks::<NoFilter>::new(
-                    Arc::new(NoYield),
-                    Arc::new(NoFilter),
-                    Arc::new(NoLocks),
-                    Arc::new(NoTip),
-                    Arc::new(StandardCommit),
-                    TipConfig { validator_identity, ..TipConfig::default() },
-                ),
+                Self::default_tpu_extensions(Arc::new(NoFilter), validator_identity),
                 exit,
             )
         } else {
-            Self::new_with_exit_filtered::<SetAccountFilter>(
+            Self::new_with_exit_with_tpu_extensions::<SetAccountFilter, NoGate, NoExternalLocks>(
                 node,
                 identity_keypair,
                 ledger_path,
@@ -764,45 +757,64 @@ impl Validator {
                 tpu_config,
                 admin_rpc_service_post_init,
                 xdp_builder_with_src_addr,
-                BankingHooks::new(
-                    Arc::new(NoYield),
+                Self::default_tpu_extensions(
                     Arc::new(SetAccountFilter((*config.filter_keys).clone())),
-                    Arc::new(NoLocks),
-                    Arc::new(NoTip),
-                    Arc::new(StandardCommit),
-                    TipConfig { validator_identity, ..TipConfig::default() },
+                    validator_identity,
                 ),
                 exit,
             )
         }
     }
 
-    /// Validator constructor for downstream forks that inject custom TPU hooks.
+    fn default_tpu_extensions<F: AccountFilter>(
+        account_filter: Arc<F>,
+        validator_fee_payer: Pubkey,
+    ) -> TpuExtensions<F, NoGate, NoExternalLocks> {
+        TpuExtensions::new(
+            Vec::new(),
+            BankingHooks::builder()
+                .shared_packet_filter(account_filter)
+                .config(BankingConfig {
+                    tip_config: TipConfig {
+                        validator_fee_payer,
+                    },
+                    ..BankingConfig::default()
+                })
+                .build(),
+        )
+    }
+
+    /// Validator constructor for downstream forks that inject custom TPU stages and hooks.
     ///
-    /// `F` is the fork's [`AccountFilter`] implementation. It is monomorphised into
+    /// `F` is the fork's [`AccountFilter`] implementation. It is monomorphized into
     /// the packet hot path, so the filter check has zero dynamic-dispatch overhead.
-    /// Pass `TpuPlugin::default()` / `BankingHooks::default()` to get vanilla behaviour
-    /// with all null impls inlined away.
+    /// Pass `TpuExtensions::default()` to get vanilla behavior with inactive hooks
+    /// short-circuited before the packet hot path.
     ///
     /// Typical call site in a fork binary:
     ///
     /// ```ignore
-    /// let plugin = TpuPlugin::<MyFilter>::new(my_stages, banking_hooks);
-    /// Validator::new_with_exit_filtered::<MyFilter>(node, identity, ledger_path, …, plugin)
+    /// let extensions = TpuExtensions::<MyFilter, MyGate, MyLocks>::new(my_stages, banking_hooks);
+    /// Validator::new_with_exit_with_tpu_extensions::<MyFilter, MyGate, MyLocks>(
+    ///     node, identity, ledger_path, /* existing args */, extensions, exit,
+    /// )
     /// ```
     ///
-    /// See the `agave-tpu-plugin` crate doc for the full hook contract, call sites,
-    /// and a runnable reference implementation in `tpu-plugin/src/bin/jito_solana/`.
+    /// See the `agave-tpu-extension-api` crate doc for the full hook contract, call sites,
+    /// and the `tpu-extension-api-jito-solana` crate for a reviewer-facing reference integration.
     ///
     /// **`ValidatorConfig::filter_keys` is not applied when this constructor is used.**
     /// The `--filter-keys` flag is only wired through `Validator::new`. Forks that need
-    /// that behaviour must incorporate it into their own `AccountFilter` implementation.
+    /// that behavior must incorporate it into their own `AccountFilter` implementation.
     ///
-    /// **Not stable** — subject to change as the hook set evolves.
-    // Bundle injection (bypassing sigverify) is out of scope; see agave-tpu-plugin docs.
-    #[doc(hidden)]
+    /// **Not stable** - subject to change as the hook set evolves.
+    // Packet injection that bypasses sigverify is out of scope; see agave-tpu-extension-api docs.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_exit_filtered<F: AccountFilter + 'static>(
+    pub fn new_with_exit_with_tpu_extensions<
+        F: AccountFilter + 'static,
+        G: SchedulerGate + 'static,
+        L: ExternalLocks + 'static,
+    >(
         mut node: Node,
         identity_keypair: Arc<Keypair>,
         ledger_path: &Path,
@@ -816,7 +828,7 @@ impl Validator {
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
         xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
-        hooks: BankingHooks<F>,
+        extensions: TpuExtensions<F, G, L>,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         #[cfg(debug_assertions)]
@@ -1813,7 +1825,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
-            hooks,
+            extensions,
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),

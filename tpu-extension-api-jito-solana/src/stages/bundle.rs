@@ -1,7 +1,7 @@
 use {
     super::PacketBundle,
-    crate::hooks::{BundleLocks, TipManager},
-    agave_tpu_plugin::{LifecycleStage, TpuStage},
+    crate::hooks::BundleExternalLocks,
+    agave_tpu_extension_api::{LifecycleStage, TpuStage},
     std::{
         sync::{
             Arc,
@@ -15,39 +15,53 @@ use {
 pub struct BundleStage {
     abort_signal: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
-    #[allow(dead_code)]
-    locks: Arc<BundleLocks>,
-    #[allow(dead_code)]
-    tip_manager: Arc<TipManager>,
+    yield_flag: Arc<AtomicBool>,
 }
 
 impl BundleStage {
     pub fn spawn(
         receiver: Receiver<PacketBundle>,
-        locks: Arc<BundleLocks>,
-        tip_manager: Arc<TipManager>,
-        _exit: Arc<AtomicBool>,
+        yield_flag: Arc<AtomicBool>,
+        locks: Arc<BundleExternalLocks>,
     ) -> Self {
         let abort_signal = Arc::new(AtomicBool::new(false));
         let signal = Arc::clone(&abort_signal);
+        let scheduler_gate = Arc::clone(&yield_flag);
         let handle = thread::Builder::new()
             .name("jitoBundleStage".to_string())
             .spawn(move || {
-                while receiver.recv().is_ok() {
+                while let Ok(bundle) = receiver.recv() {
                     if signal.load(Ordering::Acquire) {
                         break;
                     }
-                    // stub: production executes set yield_flag → lock accounts → execute → unlock
+
+                    scheduler_gate.store(true, Ordering::Release);
+                    for account in &bundle.write_locks {
+                        locks.lock(*account);
+                    }
+
+                    // Reference mock: production executes the bundle packets here.
+                    let _packet_count = bundle.packets.len();
+
+                    for account in &bundle.write_locks {
+                        locks.unlock(account);
+                    }
+                    scheduler_gate.store(false, Ordering::Release);
                 }
             })
             .expect("jitoBundleStage spawn failed");
-        Self { abort_signal, handle: Some(handle), locks, tip_manager }
+        Self {
+            abort_signal,
+            handle: Some(handle),
+            yield_flag,
+        }
     }
 }
 
 impl LifecycleStage for BundleStage {
     fn abort(&self) {
         self.abort_signal.store(true, Ordering::Release);
+        self.yield_flag.store(false, Ordering::Release);
     }
     fn join(mut self: Box<Self>) -> thread::Result<()> {
         self.abort();

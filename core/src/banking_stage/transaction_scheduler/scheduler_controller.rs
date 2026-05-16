@@ -20,7 +20,7 @@ use {
         },
         validator::SchedulerPacing,
     },
-    agave_tpu_plugin::{TipConfig, TipContext, TipProcessor, TipProcessorError},
+    agave_tpu_extension_api::{TipConfig, TipContext, TipProcessor, TipProcessorError},
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -89,7 +89,7 @@ where
     recheck_cursor: Option<TransactionPriorityId>,
     /// Recheck IDs scratch space.
     recheck_chunk: Vec<TransactionPriorityId>,
-    // Tip hook — called once per leader-slot transition to initialize PDAs.
+    // Tip hook: called once per leader-slot transition to initialize PDAs.
     tip_processor: Arc<dyn TipProcessor>,
     tip_config: TipConfig,
 }
@@ -167,14 +167,12 @@ where
                     let ctx = TipContext::new(
                         bank.slot(),
                         bank.epoch(),
-                        &self.tip_config.validator_identity,
-                        self.tip_config.block_builder_pubkey,
-                        self.tip_config.block_builder_commission_bps,
+                        &self.tip_config.validator_fee_payer,
                     );
                     match self.tip_processor.process(&ctx) {
-                        Ok(()) | Err(TipProcessorError::AlreadyInitialized(_)) => {}
+                        Ok(()) | Err(TipProcessorError::AlreadyInitialized) => {}
                         Err(TipProcessorError::InitializationFailed { slot, reason }) => {
-                            warn!("tip PDA init failed for slot {slot}: {reason}");
+                            return Err(SchedulerError::TipProcessorFailed { slot, reason });
                         }
                     }
                 }
@@ -408,7 +406,7 @@ where
                 num_dropped_on_already_processed,
                 num_dropped_on_fee_payer,
                 num_dropped_on_filter_key,
-                num_dropped_on_bundle_lock,
+                num_dropped_on_extension_account_lock,
                 num_dropped_on_capacity,
                 num_buffered,
                 receive_time_us: _,
@@ -426,7 +424,8 @@ where
                 *num_dropped_on_already_processed;
             count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
             count_metrics.num_dropped_on_filter_key += *num_dropped_on_filter_key;
-            count_metrics.num_dropped_on_bundle_lock += *num_dropped_on_bundle_lock;
+            count_metrics.num_dropped_on_extension_account_lock +=
+                *num_dropped_on_extension_account_lock;
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
             count_metrics.num_buffered += *num_buffered;
         });
@@ -479,7 +478,7 @@ mod tests {
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
-        agave_tpu_plugin::{BankingHooks, NoTip},
+        agave_tpu_extension_api::{BankingHooks, NoTip},
         crossbeam_channel::{Receiver, Sender, unbounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,

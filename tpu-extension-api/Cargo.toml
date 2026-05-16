@@ -1,7 +1,7 @@
 [package]
-name = "agave-tpu-plugin"
-description = "Extension traits for plugging custom stages into the Agave TPU pipeline."
-documentation = "https://docs.rs/agave-tpu-plugin"
+name = "agave-tpu-extension-api"
+description = "Extension traits for custom stages in the Agave TPU pipeline."
+documentation = "https://docs.rs/agave-tpu-extension-api"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -14,7 +14,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 solana-pubkey = { workspace = true }
-thiserror = { workspace = true }
 
 [lints]
 workspace = true

@@ -13,7 +13,7 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_tpu_plugin::BankingHooks,
+    agave_tpu_extension_api::BankingHooks,
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::assert_matches,
     bincode::deserialize_from,

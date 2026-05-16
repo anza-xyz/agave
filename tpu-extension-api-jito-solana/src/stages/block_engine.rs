@@ -1,7 +1,6 @@
 use {
     super::PacketBundle,
-    crate::hooks::BlockEngineConfig,
-    agave_tpu_plugin::{LifecycleStage, TpuStage},
+    agave_tpu_extension_api::{LifecycleStage, TpuStage},
     std::{
         sync::{
             Arc,
@@ -12,6 +11,12 @@ use {
     },
 };
 
+#[allow(dead_code)]
+pub struct BlockEngineConfig {
+    pub block_engine_url: String,
+    pub trust_packets: bool,
+}
+
 pub struct BlockEngineStage {
     abort_signal: Arc<AtomicBool>,
     thread: thread::Thread,
@@ -21,11 +26,7 @@ pub struct BlockEngineStage {
 }
 
 impl BlockEngineStage {
-    pub fn spawn(
-        config: BlockEngineConfig,
-        bundle_sender: SyncSender<PacketBundle>,
-        _exit: Arc<AtomicBool>,
-    ) -> Self {
+    pub fn spawn(config: BlockEngineConfig, bundle_sender: SyncSender<PacketBundle>) -> Self {
         let abort_signal = Arc::new(AtomicBool::new(false));
         let signal = Arc::clone(&abort_signal);
         let handle = thread::Builder::new()
@@ -38,7 +39,12 @@ impl BlockEngineStage {
             })
             .expect("jitoBlockEngineStage spawn failed");
         let thread = handle.thread().clone();
-        Self { abort_signal, thread, handle: Some(handle), config }
+        Self {
+            abort_signal,
+            thread,
+            handle: Some(handle),
+            config,
+        }
     }
 }
 

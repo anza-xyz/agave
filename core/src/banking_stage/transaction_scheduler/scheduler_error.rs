@@ -6,4 +6,6 @@ pub enum SchedulerError {
     DisconnectedSendChannel(&'static str),
     #[error("Recv channel disconnected: {0}")]
     DisconnectedRecvChannel(&'static str),
+    #[error("Tip processor failed for slot {slot}: {reason}")]
+    TipProcessorFailed { slot: u64, reason: String },
 }

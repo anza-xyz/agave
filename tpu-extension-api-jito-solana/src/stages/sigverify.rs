@@ -1,6 +1,6 @@
 use {
     super::PacketBundle,
-    agave_tpu_plugin::{LifecycleStage, TpuStage},
+    agave_tpu_extension_api::{LifecycleStage, TpuStage},
     std::{
         sync::{
             Arc,
@@ -20,7 +20,6 @@ impl BundleSigverifyStage {
     pub fn spawn(
         receiver: Receiver<PacketBundle>,
         verified_sender: SyncSender<PacketBundle>,
-        _exit: Arc<AtomicBool>,
     ) -> Self {
         let abort_signal = Arc::new(AtomicBool::new(false));
         let signal = Arc::clone(&abort_signal);
@@ -37,7 +36,10 @@ impl BundleSigverifyStage {
                 }
             })
             .expect("jitoBundleSigverify spawn failed");
-        Self { abort_signal, handle: Some(handle) }
+        Self {
+            abort_signal,
+            handle: Some(handle),
+        }
     }
 }
 
