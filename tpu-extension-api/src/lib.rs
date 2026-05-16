@@ -129,8 +129,7 @@ pub use extension::{
 };
 pub use traits::{
     AccountFilter, BatchCommitMode, BatchCommitPolicy, BundleAccountLockView, ExternalLocks,
-    LifecycleStage, ReadLockView, SchedulerGate, TipContext, TipProcessor, TipProcessorError,
-    TpuStage,
+    LifecycleStage, ReadLockView, SchedulerGate, TipContext, TipProcessor, TpuStage,
 };
 
 #[cfg(test)]

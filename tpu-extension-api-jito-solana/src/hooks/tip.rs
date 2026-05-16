@@ -1,5 +1,5 @@
 use {
-    agave_tpu_extension_api::{TipContext, TipProcessor, TipProcessorError},
+    agave_tpu_extension_api::{TipContext, TipProcessor},
     solana_pubkey::Pubkey,
     std::{collections::HashSet, sync::Mutex},
 };
@@ -21,16 +21,16 @@ impl TipManager {
 }
 
 impl TipProcessor for TipManager {
-    fn process(&self, ctx: &TipContext<'_>) -> Result<(), TipProcessorError> {
+    fn process(&self, ctx: &TipContext<'_>) {
         if self.tip_accounts.is_empty() {
-            return Err(TipProcessorError::InitializationFailed {
-                slot: ctx.slot,
-                reason: "no tip accounts configured".to_string(),
-            });
+            // Fatal: validator cannot produce MEV-compatible blocks without tip accounts.
+            // Panic propagates through the scheduler thread and triggers validator shutdown.
+            panic!(
+                "no tip accounts configured; cannot initialize tip PDAs for slot {}",
+                ctx.slot
+            );
         }
-        if !self.initialized_epochs.lock().unwrap().insert(ctx.epoch) {
-            return Err(TipProcessorError::AlreadyInitialized);
-        }
-        Ok(())
+        // Already initialized for this epoch — idempotent, nothing to do.
+        self.initialized_epochs.lock().unwrap().insert(ctx.epoch);
     }
 }

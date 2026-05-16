@@ -601,11 +601,6 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
                         Err(SchedulerError::DisconnectedSendChannel(_)) => {
                             warn!("Unexpected worker disconnect from scheduler")
                         }
-                        Err(SchedulerError::TipProcessorFailed { slot, reason }) => {
-                            error!("Tip processor failed for slot {slot}: {reason}");
-                            shutdown_signal.cancel();
-                            drop(scheduler_controller);
-                        }
                     }
                 })
                 .unwrap(),

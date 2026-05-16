@@ -1,7 +1,7 @@
 use {
     crate::{
         AccountFilter, BatchCommitMode, BatchCommitPolicy, BundleAccountLockView, ExternalLocks,
-        ReadLockView, SchedulerGate, TipContext, TipProcessor, TipProcessorError,
+        ReadLockView, SchedulerGate, TipContext, TipProcessor,
     },
     solana_pubkey::Pubkey,
     std::collections::HashSet,
@@ -57,9 +57,7 @@ impl BundleAccountLockView for NoExternalLocks {}
 
 impl TipProcessor for NoTip {
     #[inline(always)]
-    fn process(&self, _: &TipContext<'_>) -> Result<(), TipProcessorError> {
-        Ok(())
-    }
+    fn process(&self, _: &TipContext<'_>) {}
 }
 
 impl BatchCommitPolicy for StandardCommit {

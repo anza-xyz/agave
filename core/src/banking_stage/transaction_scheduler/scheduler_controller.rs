@@ -20,7 +20,7 @@ use {
         },
         validator::SchedulerPacing,
     },
-    agave_tpu_extension_api::{TipConfig, TipContext, TipProcessor, TipProcessorError},
+    agave_tpu_extension_api::{TipConfig, TipContext, TipProcessor},
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -169,12 +169,7 @@ where
                         bank.epoch(),
                         &self.tip_config.validator_fee_payer,
                     );
-                    match self.tip_processor.process(&ctx) {
-                        Ok(()) | Err(TipProcessorError::AlreadyInitialized) => {}
-                        Err(TipProcessorError::InitializationFailed { slot, reason }) => {
-                            return Err(SchedulerError::TipProcessorFailed { slot, reason });
-                        }
-                    }
+                    self.tip_processor.process(&ctx);
                 }
 
                 cost_pacer = new_leader_bank.map(|b| {

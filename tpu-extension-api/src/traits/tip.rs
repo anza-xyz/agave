@@ -1,11 +1,14 @@
-use {
-    solana_pubkey::Pubkey,
-    std::{error, fmt},
-};
+use solana_pubkey::Pubkey;
 
-// Must be idempotent: AlreadyInitialized is non-fatal.
+/// Called at each leader-slot transition.
+///
+/// Implementations must be idempotent — the scheduler may call this multiple
+/// times for the same slot. If setup fails in a way that is truly fatal, the
+/// implementation should `panic!`; the scheduler thread will propagate the
+/// panic and trigger validator shutdown. Non-fatal errors (e.g. already
+/// initialized) should be swallowed silently.
 pub trait TipProcessor: Send + Sync + 'static {
-    fn process(&self, ctx: &TipContext<'_>) -> Result<(), TipProcessorError>;
+    fn process(&self, ctx: &TipContext<'_>);
 }
 
 #[non_exhaustive]
@@ -24,29 +27,3 @@ impl<'a> TipContext<'a> {
         }
     }
 }
-
-#[derive(Debug)]
-pub enum TipProcessorError {
-    /// Tip PDAs were already initialized. Callers should treat this as success.
-    AlreadyInitialized,
-    InitializationFailed {
-        slot: u64,
-        reason: String,
-    },
-}
-
-impl fmt::Display for TipProcessorError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AlreadyInitialized => formatter.write_str("tip PDAs already initialized"),
-            Self::InitializationFailed { slot, reason } => {
-                write!(
-                    formatter,
-                    "tip PDA initialization failed for slot {slot}: {reason}"
-                )
-            }
-        }
-    }
-}
-
-impl error::Error for TipProcessorError {}

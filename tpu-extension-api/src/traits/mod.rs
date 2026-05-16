@@ -8,4 +8,4 @@ pub use banking::{
 };
 pub use batch::{BatchCommitMode, BatchCommitPolicy};
 pub use lifecycle::{LifecycleStage, TpuStage};
-pub use tip::{TipContext, TipProcessor, TipProcessorError};
+pub use tip::{TipContext, TipProcessor};
