@@ -62,7 +62,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
     pub num_dropped_on_filter_key: usize,
-    pub num_dropped_on_extension_account_lock: usize,
+    pub num_dropped_on_external_lock: usize,
     pub num_dropped_on_capacity: usize,
 
     pub num_buffered: usize,
@@ -83,7 +83,7 @@ impl ReceivingStats {
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
         self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
-        self.num_dropped_on_extension_account_lock += other.num_dropped_on_extension_account_lock;
+        self.num_dropped_on_external_lock += other.num_dropped_on_external_lock;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_buffered += other.num_buffered;
 
@@ -216,7 +216,7 @@ pub(crate) enum PacketHandlingError {
     ComputeBudget,
     ALTResolution,
     FilterKey,
-    ExtensionAccountLock,
+    ExternalLock,
 }
 
 impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks>
@@ -247,7 +247,7 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks>
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
         let mut num_dropped_on_filter_key = 0;
-        let mut num_dropped_on_extension_account_lock = 0;
+        let mut num_dropped_on_external_lock = 0;
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
@@ -364,8 +364,8 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks>
                                 num_dropped_on_filter_key += 1;
                                 Err(())
                             }
-                            Err(PacketHandlingError::ExtensionAccountLock) => {
-                                num_dropped_on_extension_account_lock += 1;
+                            Err(PacketHandlingError::ExternalLock) => {
+                                num_dropped_on_external_lock += 1;
                                 Err(())
                             }
                         }
@@ -399,7 +399,7 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks>
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key,
-            num_dropped_on_extension_account_lock,
+            num_dropped_on_external_lock,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: 0, // receive is outside this function
@@ -436,7 +436,7 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks>
                 .iter()
                 .any(|key| hooks.external_locks().is_write_locked(key))
         {
-            return Err(PacketHandlingError::ExtensionAccountLock);
+            return Err(PacketHandlingError::ExternalLock);
         }
 
         let Ok(transaction_configuration) =
@@ -743,7 +743,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -799,7 +799,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -844,7 +844,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -888,7 +888,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -937,7 +937,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1001,7 +1001,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1050,7 +1050,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1200,7 +1200,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1281,7 +1281,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
-            num_dropped_on_extension_account_lock: _,
+            num_dropped_on_external_lock: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,

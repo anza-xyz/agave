@@ -738,7 +738,7 @@ impl Validator {
                 tpu_config,
                 admin_rpc_service_post_init,
                 xdp_builder_with_src_addr,
-                Self::default_tpu_extensions(Arc::new(NoFilter)),
+                TpuExtensions::noop(),
                 exit,
             )
         } else {
@@ -756,37 +756,33 @@ impl Validator {
                 tpu_config,
                 admin_rpc_service_post_init,
                 xdp_builder_with_src_addr,
-                Self::default_tpu_extensions(Arc::new(SetAccountFilter(
-                    (*config.filter_keys).clone(),
-                ))),
+                TpuExtensions::builder()
+                    .banking_hooks(
+                        BankingHooks::builder()
+                            .packet_filter(SetAccountFilter((*config.filter_keys).clone()))
+                            .build(),
+                    )
+                    .build(),
                 exit,
             )
         }
-    }
-
-    fn default_tpu_extensions<F: AccountFilter>(
-        account_filter: Arc<F>,
-    ) -> TpuExtensions<F, NoGate, NoExternalLocks> {
-        TpuExtensions::new(
-            Vec::new(),
-            BankingHooks::builder()
-                .shared_packet_filter(account_filter)
-                .config(BankingConfig::default())
-                .build(),
-        )
     }
 
     /// Validator constructor for downstream forks that inject custom TPU stages and hooks.
     ///
     /// `F` is the fork's [`AccountFilter`] implementation. It is monomorphized into
     /// the packet hot path, so the filter check has zero dynamic-dispatch overhead.
-    /// Pass `TpuExtensions::default()` to get vanilla behavior with inactive hooks
+    /// Pass `TpuExtensions::noop()` to get vanilla behavior with inactive hooks
     /// short-circuited before the packet hot path.
     ///
     /// Typical call site in a fork binary:
     ///
     /// ```ignore
-    /// let extensions = TpuExtensions::<MyFilter, MyGate, MyLocks>::new(my_stages, banking_hooks);
+    /// let extensions = TpuExtensions::builder()
+    ///     .processing_stage(bundle_stage)
+    ///     .intake_stage(block_engine_stage)
+    ///     .banking_hooks(hooks)
+    ///     .build();
     /// Validator::new_with_exit_with_tpu_extensions::<MyFilter, MyGate, MyLocks>(
     ///     node, identity, ledger_path, /* existing args */, extensions, exit,
     /// )

@@ -6,6 +6,10 @@ use {
     },
 };
 
+/// Pauses the packet scheduler while a bundle is executing.
+///
+/// `BundleStage` raises the flag before acquiring locks and lowers it after
+/// releasing them; the scheduler spins until the flag is clear.
 pub struct BundleSchedulerGate(Arc<AtomicBool>);
 
 impl BundleSchedulerGate {

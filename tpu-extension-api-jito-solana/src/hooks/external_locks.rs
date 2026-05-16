@@ -10,10 +10,11 @@ use {
     },
 };
 
-/// Reference bundle lock table.
+/// Tracks accounts write-locked by in-flight bundles.
 ///
-/// Production Jito-Solana would back this with its existing bundle lock tracker;
-/// the atomic count keeps the hot-path `is_active` guard cheap in this mock.
+/// `BundleStage` calls `lock`/`unlock` around each bundle; the scheduler
+/// calls `is_write_locked` to skip any transaction that would conflict.
+/// The atomic count makes the hot-path `is_active` guard a single load.
 pub struct BundleExternalLocks {
     locked_accounts: RwLock<HashSet<Pubkey>>,
     locked_account_count: AtomicUsize,

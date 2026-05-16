@@ -11,32 +11,18 @@ use {
     },
 };
 
-/// Connection parameters for the external block-engine service.
-///
-/// In production Jito-Solana this drives a gRPC streaming connection to
-/// a Jito block-engine endpoint that pushes bundles to the validator.
-/// `trust_packets` controls whether the block engine's packet signatures
-/// are trusted without local re-verification.
+/// Connection parameters for the external block-engine gRPC endpoint.
 #[allow(dead_code)]
 pub struct BlockEngineConfig {
     pub block_engine_url: String,
     pub trust_packets: bool,
 }
 
-/// Intake stage: receives bundles from an external block engine and forwards
-/// them into the sigverify pipeline.
+/// Receives bundles from the block engine and forwards them to sigverify.
 ///
-/// This is the first stage in the bundle pipeline:
-/// `BlockEngineStage` → `BundleSigverifyStage` → `BundleStage`.
-///
-/// In production it maintains a persistent gRPC stream to the block-engine
-/// endpoint and deserializes incoming bundle protos into the internal bundle
-/// type. The reference stub parks its thread until abort is signalled.
-///
-/// Aborted first on shutdown (last registered via [`intake_stage`]) so new
-/// bundle intake stops before the executor drains.
-///
-/// [`intake_stage`]: agave_tpu_extension_api::TpuExtensionsBuilder::intake_stage
+/// First stage in `BlockEngineStage → BundleSigverifyStage → BundleStage`.
+/// In production: persistent gRPC stream, deserializes bundle protos.
+/// Reference stub: parks until abort.
 pub struct BlockEngineStage {
     abort_signal: Arc<AtomicBool>,
     thread: thread::Thread,

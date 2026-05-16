@@ -1,11 +1,28 @@
 use {
-    super::{BankingConfig, BankingHandles, BankingHooksBuilder},
+    super::BankingHooksBuilder,
     crate::{
         AccountFilter, BatchCommitMode, ExternalLocks, NoExternalLocks, NoFilter, NoGate, NoTip,
         SchedulerGate, TipProcessor,
     },
     std::sync::Arc,
 };
+
+/// Cold-path configuration for [`BankingHooks`].
+///
+/// Validator-level config only — services (tip processor, filters) stay on
+/// [`BankingHooks`] directly.
+#[derive(Clone)]
+pub struct BankingConfig {
+    pub commit_mode: BatchCommitMode,
+}
+
+impl Default for BankingConfig {
+    fn default() -> Self {
+        Self {
+            commit_mode: BatchCommitMode::standard(),
+        }
+    }
+}
 
 pub struct BankingHooks<F = NoFilter, G = NoGate, L = NoExternalLocks>
 where
@@ -40,17 +57,6 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> BankingHooks<F, G, L>
             external_locks,
             tip_processor,
             config,
-        }
-    }
-
-    /// Returns fully type-erased handles for sharing across threads that do not
-    /// need the concrete types.
-    pub fn handles(&self) -> BankingHandles {
-        BankingHandles {
-            scheduler_gate: Arc::clone(&self.scheduler_gate) as Arc<dyn SchedulerGate>,
-            packet_filter: Arc::clone(&self.packet_filter) as Arc<dyn AccountFilter>,
-            external_locks: Arc::clone(&self.external_locks) as Arc<dyn ExternalLocks>,
-            tip_processor: Arc::clone(&self.tip_processor),
         }
     }
 

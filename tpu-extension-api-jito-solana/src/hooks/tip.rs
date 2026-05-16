@@ -7,10 +7,13 @@ use {
     },
 };
 
+/// Initializes tip-distribution PDAs at each leader-slot transition.
+///
+/// In production Jito-Solana this submits an on-chain transaction to create
+/// the `TipDistributionAccount` PDA once per epoch. The reference mock records
+/// the epoch in-process to stay idempotent without hitting the chain.
 pub struct TipManager {
     tip_accounts: HashSet<Pubkey>,
-    // Real Jito-Solana submits a transaction to initialize the TipDistributionAccount PDA
-    // once per epoch. This Mutex is the in-process guard for the mock.
     initialized_epochs: Mutex<HashSet<u64>>,
 }
 

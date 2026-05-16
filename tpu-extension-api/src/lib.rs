@@ -118,19 +118,98 @@
 //! [`SetAccountFilter`]. Fork constructors that bypass that path must include
 //! equivalent behavior in their own [`AccountFilter`] if they need it.
 
-mod defaults;
 mod extension;
 mod traits;
 
-pub use defaults::{NoExternalLocks, NoFilter, NoGate, NoTip, SetAccountFilter, StandardCommit};
 pub use extension::{
-    BankingConfig, BankingHandles, BankingHooks, BankingHooksBuilder, TpuExtensions,
-    TpuExtensionsBuilder,
+    BankingConfig, BankingHooks, BankingHooksBuilder, TpuExtensions, TpuExtensionsBuilder,
 };
 pub use traits::{
     AccountFilter, BatchCommitMode, BatchCommitPolicy, BundleAccountLockView, ExternalLocks,
     LifecycleStage, ReadLockView, SchedulerGate, TipContext, TipProcessor, TpuStage,
 };
+
+use solana_pubkey::Pubkey;
+use std::collections::HashSet;
+
+/// No-op [`SchedulerGate`]: the scheduler never yields. Inlines to `false`.
+pub struct NoGate;
+/// No-op [`AccountFilter`]: no packet is ever blocked. Inlines to `false`.
+pub struct NoFilter;
+/// No-op [`ExternalLocks`]: no account is ever write-locked. Inlines to `false`.
+pub struct NoExternalLocks;
+/// No-op [`TipProcessor`]: leader-slot transitions are a no-op.
+pub struct NoTip;
+/// No-op [`BatchCommitPolicy`]: uses [`BatchCommitMode::standard`].
+pub struct StandardCommit;
+
+impl SchedulerGate for NoGate {
+    #[inline(always)]
+    fn should_yield(&self) -> bool {
+        false
+    }
+}
+
+impl AccountFilter for NoFilter {
+    #[inline(always)]
+    fn is_blocked(&self, _: &Pubkey) -> bool {
+        false
+    }
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        false
+    }
+}
+
+impl ExternalLocks for NoExternalLocks {
+    #[inline(always)]
+    fn is_write_locked(&self, _: &Pubkey) -> bool {
+        false
+    }
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        false
+    }
+}
+
+impl ReadLockView for NoExternalLocks {
+    #[inline(always)]
+    fn is_read_locked(&self, _: &Pubkey) -> bool {
+        false
+    }
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        false
+    }
+}
+
+impl BundleAccountLockView for NoExternalLocks {}
+
+impl TipProcessor for NoTip {
+    #[inline(always)]
+    fn process(&self, _: &TipContext) {}
+}
+
+impl BatchCommitPolicy for StandardCommit {
+    #[inline(always)]
+    fn mode(&self) -> BatchCommitMode {
+        BatchCommitMode::standard()
+    }
+}
+
+/// Bridges `ValidatorConfig::filter_keys` (the `--filter-keys` CLI flag) to [`AccountFilter`].
+pub struct SetAccountFilter(pub HashSet<Pubkey>);
+
+impl AccountFilter for SetAccountFilter {
+    #[inline(always)]
+    fn is_blocked(&self, pubkey: &Pubkey) -> bool {
+        self.0.contains(pubkey)
+    }
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        !self.0.is_empty()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -155,7 +234,7 @@ mod tests {
 
     #[test]
     fn default_extensions_are_empty_and_no_op() {
-        let extensions = TpuExtensions::default();
+        let extensions = TpuExtensions::noop();
         assert!(extensions.stages.is_empty());
         assert_eq!(
             extensions.banking.commit_mode(),
@@ -191,16 +270,6 @@ mod tests {
         assert!(Arc::ptr_eq(&hooks.external_locks, &cloned.external_locks));
         assert!(Arc::ptr_eq(&hooks.tip_processor, &cloned.tip_processor));
         assert_eq!(hooks.commit_mode(), cloned.commit_mode());
-    }
-
-    #[test]
-    fn extension_banking_handles_expose_composable_trait_objects() {
-        let extensions = TpuExtensions::default();
-        let handles = extensions.handles();
-        assert!(!handles.scheduler_gate.should_yield());
-        assert!(!handles.packet_filter.is_blocked(&Pubkey::default()));
-        assert!(!handles.external_locks.is_write_locked(&Pubkey::default()));
-        handles.tip_processor.process(&TipContext::new(0, 0));
     }
 
     #[test]

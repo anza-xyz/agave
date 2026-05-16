@@ -1,7 +1,7 @@
 use {
     crate::{
-        AccountFilter, BankingHandles, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter,
-        NoGate, SchedulerGate, TpuStage,
+        AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter, NoGate,
+        SchedulerGate, TpuStage,
     },
     std::boxed::Box,
 };
@@ -30,10 +30,6 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> TpuExtensions<F, G, L
         Self { stages, banking }
     }
 
-    pub fn handles(&self) -> BankingHandles {
-        self.banking.handles()
-    }
-
     pub fn into_parts(self) -> (Vec<Box<dyn TpuStage>>, BankingHooks<F, G, L>) {
         (self.stages, self.banking)
     }
@@ -47,6 +43,13 @@ impl TpuExtensions<NoFilter, NoGate, NoExternalLocks> {
 
 impl Default for TpuExtensions<NoFilter, NoGate, NoExternalLocks> {
     fn default() -> Self {
+        Self::noop()
+    }
+}
+
+impl TpuExtensions<NoFilter, NoGate, NoExternalLocks> {
+    /// No-op extensions: no stages, all hooks are vanilla Agave defaults.
+    pub fn noop() -> Self {
         Self {
             stages: Vec::new(),
             banking: BankingHooks::default(),

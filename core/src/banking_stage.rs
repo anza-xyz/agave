@@ -467,7 +467,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
 
         self.cycle_threads(BankingControlMsg::Internal {
             block_production_method: BlockProductionMethod::default(),
-            num_workers: DEFAULT_NUM_WORKERS,
+            num_workers: BankingStage::default_num_workers(),
             config: SchedulerConfig::default(),
         })
         .await

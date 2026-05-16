@@ -15,6 +15,11 @@ pub fn tip_account_pubkeys() -> impl Iterator<Item = Pubkey> {
     TIP_ACCOUNTS.iter().map(|s| s.parse().unwrap())
 }
 
+/// Blocks packets that touch Jito tip accounts.
+///
+/// Tip accounts must not be written by regular transactions while bundles
+/// are using them to collect MEV fees. `jito_mainnet` loads the eight
+/// canonical mainnet tip account addresses.
 pub struct TipAccountFilter(HashSet<Pubkey>);
 
 impl TipAccountFilter {
