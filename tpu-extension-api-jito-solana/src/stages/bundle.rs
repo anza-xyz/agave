@@ -12,6 +12,27 @@ use {
     },
 };
 
+/// Processing stage: executes verified bundles atomically while coordinating
+/// with the packet scheduler via the gate and lock hooks.
+///
+/// This is the last stage in the bundle pipeline and the primary reason the
+/// other extension hooks exist:
+///
+/// 1. Raises [`BundleSchedulerGate`] (`yield_flag`) so the packet scheduler
+///    pauses while a bundle is in flight — preventing interleaving.
+/// 2. Acquires [`BundleExternalLocks`] on each writable account so the
+///    scheduler's account-conflict check blocks any concurrent Agave
+///    transaction that would touch the same accounts.
+/// 3. Executes the bundle (reference stub: counts packets only).
+/// 4. Releases locks and lowers the gate so the scheduler resumes.
+///
+/// Registered via [`processing_stage`] so it is aborted *after* `BlockEngineStage`
+/// and `BundleSigverifyStage` — giving in-flight bundles a chance to finish
+/// before intake stops.
+///
+/// [`BundleSchedulerGate`]: crate::hooks::BundleSchedulerGate
+/// [`BundleExternalLocks`]: crate::hooks::BundleExternalLocks
+/// [`processing_stage`]: agave_tpu_extension_api::TpuExtensionsBuilder::processing_stage
 pub struct BundleStage {
     abort_signal: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,

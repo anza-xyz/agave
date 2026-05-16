@@ -382,15 +382,15 @@ impl Tpu {
     }
 
     pub fn join(self) -> thread::Result<()> {
-        let extension_stage_handles = self.extension_stage_handles;
-        for stage in extension_stage_handles.iter().rev() {
+        for stage in self.extension_stage_handles.iter().rev() {
             stage.abort();
         }
-        let extension_results = extension_stage_handles
+        let extension_results: Vec<_> = self
+            .extension_stage_handles
             .into_iter()
             .rev()
             .map(|stage| stage.join())
-            .collect::<Vec<_>>();
+            .collect();
 
         let results = vec![
             self.fetch_stage.join(),

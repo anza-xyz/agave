@@ -20,7 +20,7 @@ use {
         },
         validator::SchedulerPacing,
     },
-    agave_tpu_extension_api::{TipConfig, TipContext, TipProcessor},
+    agave_tpu_extension_api::{TipContext, TipProcessor},
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -91,7 +91,6 @@ where
     recheck_chunk: Vec<TransactionPriorityId>,
     // Tip hook: called once per leader-slot transition to initialize PDAs.
     tip_processor: Arc<dyn TipProcessor>,
-    tip_config: TipConfig,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -108,7 +107,6 @@ where
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         tip_processor: Arc<dyn TipProcessor>,
-        tip_config: TipConfig,
     ) -> Self {
         Self {
             exit,
@@ -125,7 +123,6 @@ where
             recheck_cursor: None,
             recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
             tip_processor,
-            tip_config,
         }
     }
 
@@ -161,15 +158,9 @@ where
                 self.container.flush_held_transactions();
                 most_recent_leader_slot = new_leader_slot;
 
-                // AlreadyInitialized is non-fatal; TipProcessor impls must be idempotent
-                // because a re-elected leader for the same epoch will hit this path again.
                 if let Some(bank) = new_leader_bank {
-                    let ctx = TipContext::new(
-                        bank.slot(),
-                        bank.epoch(),
-                        &self.tip_config.validator_fee_payer,
-                    );
-                    self.tip_processor.process(&ctx);
+                    self.tip_processor
+                        .process(&TipContext::new(bank.slot(), bank.epoch()));
                 }
 
                 cost_pacer = new_leader_bank.map(|b| {
@@ -573,7 +564,6 @@ mod tests {
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
             Arc::new(NoTip),
-            TipConfig::default(),
         );
 
         (test_frame, scheduler_controller)

@@ -124,7 +124,7 @@ mod traits;
 
 pub use defaults::{NoExternalLocks, NoFilter, NoGate, NoTip, SetAccountFilter, StandardCommit};
 pub use extension::{
-    BankingConfig, BankingHandles, BankingHooks, BankingHooksBuilder, TipConfig, TpuExtensions,
+    BankingConfig, BankingHandles, BankingHooks, BankingHooksBuilder, TpuExtensions,
     TpuExtensionsBuilder,
 };
 pub use traits::{
@@ -150,7 +150,7 @@ mod tests {
         assert!(!ExternalLocks::is_active(&NoExternalLocks));
         assert!(!ReadLockView::is_active(&NoExternalLocks));
         assert!(!StandardCommit.mode().reverts_on_error());
-        assert!(NoTip.process(&TipContext::new(0, 0, &key)).is_ok());
+        NoTip.process(&TipContext::new(0, 0));
     }
 
     #[test]
@@ -200,12 +200,7 @@ mod tests {
         assert!(!handles.scheduler_gate.should_yield());
         assert!(!handles.packet_filter.is_blocked(&Pubkey::default()));
         assert!(!handles.external_locks.is_write_locked(&Pubkey::default()));
-        assert!(
-            handles
-                .tip_processor
-                .process(&TipContext::new(0, 0, &Pubkey::default()))
-                .is_ok()
-        );
+        handles.tip_processor.process(&TipContext::new(0, 0));
     }
 
     #[test]

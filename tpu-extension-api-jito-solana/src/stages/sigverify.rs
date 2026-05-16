@@ -11,6 +11,19 @@ use {
     },
 };
 
+/// Intermediate stage: verifies bundle transaction signatures before forwarding
+/// to the executor.
+///
+/// Sits between `BlockEngineStage` (intake) and `BundleStage` (execution).
+/// In production it verifies each transaction's Ed25519 signatures and sanitizes
+/// the transactions; bundles that fail verification are dropped. The reference
+/// stub forwards bundles through without any verification to keep the stand-in
+/// minimal.
+///
+/// A production implementation would change the channel type here: the input
+/// would carry raw serialized transactions and the output would carry
+/// `SanitizedTransaction` objects. The reference collapses both to
+/// [`PacketBundle`](super::PacketBundle) for simplicity.
 pub struct BundleSigverifyStage {
     abort_signal: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,

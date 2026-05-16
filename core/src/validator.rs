@@ -35,7 +35,7 @@ use {
     },
     agave_tpu_extension_api::{
         AccountFilter, BankingConfig, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter,
-        NoGate, SchedulerGate, SetAccountFilter, TipConfig, TpuExtensions,
+        NoGate, SchedulerGate, SetAccountFilter, TpuExtensions,
     },
     agave_votor::{
         vote_history::VoteHistory,
@@ -723,7 +723,6 @@ impl Validator {
         xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
-        let validator_identity = identity_keypair.pubkey();
         if config.filter_keys.is_empty() {
             Self::new_with_exit_with_tpu_extensions::<NoFilter, NoGate, NoExternalLocks>(
                 node,
@@ -739,7 +738,7 @@ impl Validator {
                 tpu_config,
                 admin_rpc_service_post_init,
                 xdp_builder_with_src_addr,
-                Self::default_tpu_extensions(Arc::new(NoFilter), validator_identity),
+                Self::default_tpu_extensions(Arc::new(NoFilter)),
                 exit,
             )
         } else {
@@ -757,10 +756,9 @@ impl Validator {
                 tpu_config,
                 admin_rpc_service_post_init,
                 xdp_builder_with_src_addr,
-                Self::default_tpu_extensions(
-                    Arc::new(SetAccountFilter((*config.filter_keys).clone())),
-                    validator_identity,
-                ),
+                Self::default_tpu_extensions(Arc::new(SetAccountFilter(
+                    (*config.filter_keys).clone(),
+                ))),
                 exit,
             )
         }
@@ -768,18 +766,12 @@ impl Validator {
 
     fn default_tpu_extensions<F: AccountFilter>(
         account_filter: Arc<F>,
-        validator_fee_payer: Pubkey,
     ) -> TpuExtensions<F, NoGate, NoExternalLocks> {
         TpuExtensions::new(
             Vec::new(),
             BankingHooks::builder()
                 .shared_packet_filter(account_filter)
-                .config(BankingConfig {
-                    tip_config: TipConfig {
-                        validator_fee_payer,
-                    },
-                    ..BankingConfig::default()
-                })
+                .config(BankingConfig::default())
                 .build(),
         )
     }

@@ -21,17 +21,13 @@ use {
 pub struct VotePacketReceiver<F: AccountFilter = NoFilter> {
     banking_packet_receiver: BankingPacketReceiver,
     account_filter: Arc<F>,
-    account_filter_active: bool,
 }
 
 impl<F: AccountFilter> VotePacketReceiver<F> {
     pub fn new(banking_packet_receiver: BankingPacketReceiver, account_filter: Arc<F>) -> Self {
-        let account_filter_active = account_filter.is_active();
-
         Self {
             banking_packet_receiver,
             account_filter,
-            account_filter_active,
         }
     }
 
@@ -158,7 +154,7 @@ impl<F: AccountFilter> VotePacketReceiver<F> {
 
     fn should_filter_packet(&self, packet: &SanitizedTransactionView<SharedBytes>) -> bool {
         // Vote transactions do not use address lookup tables, so static keys cover this path.
-        self.account_filter_active
+        self.account_filter.is_active()
             && packet
                 .static_account_keys()
                 .iter()

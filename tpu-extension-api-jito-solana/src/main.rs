@@ -7,12 +7,9 @@ mod hooks;
 mod stages;
 
 use {
-    agave_tpu_extension_api::{
-        BankingConfig, BankingHooks, BatchCommitPolicy, TipConfig, TpuExtensions,
-    },
+    agave_tpu_extension_api::{BankingConfig, BankingHooks, BatchCommitMode, TpuExtensions},
     hooks::{
-        BundleCommitPolicy, BundleExternalLocks, BundleSchedulerGate, TipAccountFilter, TipManager,
-        tip_account_pubkeys,
+        BundleExternalLocks, BundleSchedulerGate, TipAccountFilter, TipManager, tip_account_pubkeys,
     },
     stages::{BlockEngineConfig, BlockEngineStage, BundleSigverifyStage, BundleStage},
     std::sync::{Arc, atomic::AtomicBool, mpsc},
@@ -22,7 +19,6 @@ fn main() {
     let yield_flag = Arc::new(AtomicBool::new(false));
     let locks = Arc::new(BundleExternalLocks::new());
     let tip_manager = Arc::new(TipManager::new(tip_account_pubkeys()));
-    let commit_policy = BundleCommitPolicy;
 
     let (unverified_tx, unverified_rx) = mpsc::sync_channel(1_024);
     let (verified_tx, verified_rx) = mpsc::sync_channel(1_024);
@@ -42,9 +38,9 @@ fn main() {
         .packet_filter(TipAccountFilter::jito_mainnet())
         .shared_external_locks(Arc::clone(&locks))
         .shared_tip_processor(Arc::clone(&tip_manager))
+        // Bundles are atomic: all transactions commit or none do.
         .config(BankingConfig {
-            tip_config: TipConfig::default(),
-            commit_mode: commit_policy.mode(),
+            commit_mode: BatchCommitMode::all_or_nothing(),
         })
         .build();
 

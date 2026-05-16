@@ -1,7 +1,10 @@
 use {
     agave_tpu_extension_api::{TipContext, TipProcessor},
     solana_pubkey::Pubkey,
-    std::{collections::HashSet, sync::Mutex},
+    std::{
+        collections::HashSet,
+        sync::Mutex,
+    },
 };
 
 pub struct TipManager {
@@ -21,7 +24,7 @@ impl TipManager {
 }
 
 impl TipProcessor for TipManager {
-    fn process(&self, ctx: &TipContext<'_>) {
+    fn process(&self, ctx: &TipContext) {
         if self.tip_accounts.is_empty() {
             // Fatal: validator cannot produce MEV-compatible blocks without tip accounts.
             // Panic propagates through the scheduler thread and triggers validator shutdown.

@@ -567,7 +567,6 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
             GreedySchedulerConfig::default(),
         );
         let tip_processor = self.hooks.tip_processor_handle();
-        let tip_config = self.hooks.tip_config();
         let exit = exit.clone();
         let shutdown_signal = self.banking_shutdown_signal.clone();
         threads.push(
@@ -583,7 +582,6 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
                         scheduler,
                         worker_metrics,
                         tip_processor,
-                        tip_config,
                     );
 
                     match scheduler_controller.run() {

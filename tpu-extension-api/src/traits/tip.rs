@@ -1,29 +1,38 @@
-use solana_pubkey::Pubkey;
-
-/// Called at each leader-slot transition.
+/// Called once per leader-slot transition to perform fork-specific setup.
 ///
-/// Implementations must be idempotent — the scheduler may call this multiple
-/// times for the same slot. If setup fails in a way that is truly fatal, the
-/// implementation should `panic!`; the scheduler thread will propagate the
-/// panic and trigger validator shutdown. Non-fatal errors (e.g. already
-/// initialized) should be swallowed silently.
+/// The canonical use case is initializing tip-distribution PDAs (Jito-Solana),
+/// but implementations may do any per-slot leader-side work here.
+///
+/// **Idempotency:** the scheduler may call `process` multiple times for the
+/// same slot (e.g. if the validator is re-elected leader for an epoch it already
+/// processed). Implementations must detect and silently skip already-done work.
+///
+/// **Error policy:** if initialization fails fatally, `panic!`. The scheduler
+/// thread propagates the panic and triggers validator shutdown. Non-fatal
+/// conditions (already initialized, nothing to do) must be swallowed.
+///
+/// **Configuration:** any validator-level parameters the implementation needs
+/// (e.g. fee-payer keypair, tip account pubkeys) should be given to the
+/// `TipProcessor` at construction time, not through [`TipContext`].
 pub trait TipProcessor: Send + Sync + 'static {
-    fn process(&self, ctx: &TipContext<'_>);
+    fn process(&self, ctx: &TipContext);
 }
 
+/// Contextual information passed to [`TipProcessor::process`] at each
+/// leader-slot transition.
+///
+/// Marked `#[non_exhaustive]` so fields can be added in future API versions
+/// without breaking existing implementations.
 #[non_exhaustive]
-pub struct TipContext<'a> {
+pub struct TipContext {
+    /// The slot the validator is about to lead.
     pub slot: u64,
+    /// The epoch containing `slot`. Useful for once-per-epoch initialization.
     pub epoch: u64,
-    pub validator_fee_payer: &'a Pubkey,
 }
 
-impl<'a> TipContext<'a> {
-    pub fn new(slot: u64, epoch: u64, validator_fee_payer: &'a Pubkey) -> Self {
-        Self {
-            slot,
-            epoch,
-            validator_fee_payer,
-        }
+impl TipContext {
+    pub fn new(slot: u64, epoch: u64) -> Self {
+        Self { slot, epoch }
     }
 }

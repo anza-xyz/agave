@@ -57,7 +57,7 @@ impl BundleAccountLockView for NoExternalLocks {}
 
 impl TipProcessor for NoTip {
     #[inline(always)]
-    fn process(&self, _: &TipContext<'_>) {}
+    fn process(&self, _: &TipContext) {}
 }
 
 impl BatchCommitPolicy for StandardCommit {

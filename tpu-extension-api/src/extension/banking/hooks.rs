@@ -1,5 +1,5 @@
 use {
-    super::{BankingConfig, BankingHandles, BankingHooksBuilder, TipConfig},
+    super::{BankingConfig, BankingHandles, BankingHooksBuilder},
     crate::{
         AccountFilter, BatchCommitMode, ExternalLocks, NoExternalLocks, NoFilter, NoGate, NoTip,
         SchedulerGate, TipProcessor,
@@ -78,10 +78,6 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> BankingHooks<F, G, L>
 
     pub fn config(&self) -> &BankingConfig {
         &self.config
-    }
-
-    pub fn tip_config(&self) -> TipConfig {
-        self.config.tip_config
     }
 
     pub fn commit_mode(&self) -> BatchCommitMode {
