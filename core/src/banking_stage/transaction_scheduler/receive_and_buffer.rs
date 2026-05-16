@@ -126,7 +126,7 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> ReceiveAndBuffer
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        // Extension-controlled scheduling pause; caller retries next cycle.
+        // Bundle is executing; skip this cycle to avoid conflicting with its write locks.
         if self.hooks.scheduler_gate().should_yield() {
             return Ok(ReceivingStats::default());
         }

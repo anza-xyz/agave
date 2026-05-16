@@ -506,7 +506,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
     ) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal central scheduler");
 
-        assert!(num_workers <= MAX_NUM_WORKERS);
+        assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
 
         let exit = self.worker_exit_signal.clone();
@@ -683,9 +683,10 @@ mod external {
             info!("Spawning external scheduler");
 
             static_assertions::const_assert!(
-                agave_scheduling_utils::handshake::MAX_WORKERS == MAX_NUM_WORKERS.get()
+                agave_scheduling_utils::handshake::MAX_WORKERS
+                    == BankingStage::max_num_workers().get()
             );
-            assert!(workers.len() <= MAX_NUM_WORKERS.get());
+            assert!(workers.len() <= BankingStage::max_num_workers().get());
 
             // Spawn the external consumer workers.
             let mut threads = Vec::with_capacity(workers.len() + 2);
