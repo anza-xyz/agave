@@ -63,7 +63,7 @@ impl ShredFetchStage {
         let mut shred_filter_ctx = ShredFilterContext::new_with_turbine_mode(
             sharable_banks.root(),
             shred_version,
-            turbine_mode,
+            Some(turbine_mode),
         );
         let repair_keypair = repair_context.map(RepairContext::keypair);
 
