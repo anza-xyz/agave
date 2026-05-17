@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "agave-tpu-extension-api"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "crossbeam-channel",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "agave-tpu-extension-api-jito-solana"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-tpu-extension-api",
