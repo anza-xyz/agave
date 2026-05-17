@@ -8,12 +8,14 @@ use {
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    solana_cost_model::shred_limit::{
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+    },
     solana_entry::block_component::{BlockComponent, VersionedBlockMarker, VersionedUpdateParent},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
-        Shred, ShredType, Shredder, merkle_tree::MerkleTree,
+        ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder, merkle_tree::MerkleTree,
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -91,8 +93,8 @@ impl StandardBroadcastRun {
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
-            max_data_shreds_per_slot: MAX_DATA_SHREDS_PER_SLOT as u32,
-            max_code_shreds_per_slot: MAX_CODE_SHREDS_PER_SLOT as u32,
+            max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+            max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
         }
     }
 
@@ -306,6 +308,8 @@ impl StandardBroadcastRun {
         } = receive_results;
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
+        self.max_data_shreds_per_slot = bank.max_data_shreds_per_slot();
+        self.max_code_shreds_per_slot = bank.max_code_shreds_per_slot();
 
         let maybe_send_header = if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
@@ -982,6 +986,53 @@ mod test {
             )
             .unwrap();
         assert!(standard_broadcast_run.completed)
+    }
+
+    #[test]
+    fn test_update_shred_limits_from_bank() {
+        agave_logger::setup();
+        let num_shreds_per_slot = 2;
+        let (
+            blockstore,
+            genesis_config,
+            cluster_info,
+            parent_bank,
+            leader_keypair,
+            socket,
+            bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks),
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + 1,
+        };
+
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        standard_broadcast_run.max_data_shreds_per_slot = 1;
+        standard_broadcast_run.max_code_shreds_per_slot = 1;
+        standard_broadcast_run
+            .test_process_receive_results(
+                &leader_keypair,
+                &cluster_info,
+                &socket,
+                &blockstore,
+                receive_results,
+                &bank_forks,
+            )
+            .unwrap();
+
+        assert_eq!(
+            standard_broadcast_run.max_data_shreds_per_slot,
+            bank.max_data_shreds_per_slot()
+        );
+        assert_eq!(
+            standard_broadcast_run.max_code_shreds_per_slot,
+            bank.max_code_shreds_per_slot()
+        );
     }
 
     #[test]

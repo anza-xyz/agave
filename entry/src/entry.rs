@@ -10,6 +10,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_address::Address,
+    solana_cost_model::shred_limit::DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -78,8 +79,8 @@ pub struct Api<'a> {
         Symbol<'a, unsafe extern "C" fn(hashes: *mut u8, num_hashes: *const u64)>,
 }
 
-const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-pub const MAX_DATA_SHREDS_SIZE: usize = MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
+pub const MAX_DATA_SHREDS_SIZE: usize =
+    DEFAULT_MAX_DATA_SHREDS_PER_SLOT as usize * solana_packet::PACKET_DATA_SIZE;
 pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 
 /// Each Entry contains three pieces of data. The `num_hashes` field is the number
