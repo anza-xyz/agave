@@ -23,8 +23,11 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_tpu_extension_api::{
-        AccountFilter, ExternalLocks, SchedulerGate, TpuExtensions, TpuStage,
+        AccountFilter, BundleExecution, BundleExecutionRequest, BundleExecutionStatus,
+        ExternalLocks, PacketIngress, SchedulerGate, TpuExtensionParts, TpuExtensions, TpuStage,
+        TpuStageContext, TrustedBankingIngress, TrustedBankingPacketSink,
     },
     agave_votor::event::VotorEventSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
@@ -66,7 +69,7 @@ use {
         net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
-        sync::{Arc, RwLock, atomic::AtomicBool},
+        sync::{Arc, Mutex, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
     tokio::sync::mpsc,
@@ -104,6 +107,53 @@ pub struct Tpu {
     staked_nodes_updater_service: StakedNodesUpdaterService,
     tracer_thread_hdl: TracerThread,
     tpu_vote_quic_t: thread::JoinHandle<()>,
+}
+
+struct CoreTpuStageContext {
+    packet_ingress: PacketIngress,
+    packet_receiver: Arc<Mutex<Option<Receiver<solana_perf::packet::PacketBatch>>>>,
+    bundle_execution: Arc<dyn BundleExecution>,
+    exit: Arc<AtomicBool>,
+}
+
+impl TpuStageContext for CoreTpuStageContext {
+    fn packet_ingress(&self) -> &PacketIngress {
+        &self.packet_ingress
+    }
+
+    fn take_packet_receiver(&self) -> Option<crossbeam_channel::Receiver<solana_perf::packet::PacketBatch>> {
+        self.packet_receiver.lock().unwrap().take()
+    }
+
+    fn exit(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.exit)
+    }
+
+    fn bundle_execution(&self) -> Arc<dyn BundleExecution> {
+        Arc::clone(&self.bundle_execution)
+    }
+}
+
+struct CoreTrustedBankingSink(crate::banking_trace::BankingPacketSender);
+
+impl TrustedBankingPacketSink for CoreTrustedBankingSink {
+    fn send(&self, packets: BankingPacketBatch) -> Result<(), BankingPacketBatch> {
+        self.0.send(packets).map_err(|err| err.0)
+    }
+}
+
+/// Proof bridge for extension-owned bundle stages.
+///
+/// A production implementation would delegate to the same bank/PoH/committer
+/// machinery that Jito-Solana's `BundleConsumer` uses. This branch keeps the
+/// runtime side intentionally stubbed while making the API handoff explicit.
+struct CoreBundleExecutionStub;
+
+impl BundleExecution for CoreBundleExecutionStub {
+    fn execute_and_record_bundle(&self, request: BundleExecutionRequest) -> BundleExecutionStatus {
+        let _ = request;
+        BundleExecutionStatus::Unavailable
+    }
 }
 
 impl Tpu {
@@ -159,7 +209,12 @@ impl Tpu {
         cancel: CancellationToken,
         votor_event_sender: VotorEventSender,
     ) -> Self {
-        let (extension_stage_handles, hooks) = extensions.into_parts();
+        let TpuExtensionParts {
+            stages: extension_stage_specs,
+            banking_worker_pools,
+            banking: hooks,
+            packet_intake_mode,
+        } = extensions.into_parts();
         let TpuSockets {
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
@@ -169,13 +224,30 @@ impl Tpu {
             vote_forwarding_client: vote_forwarding_client_socket,
         } = sockets;
 
-        let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
+        let (
+            fetch_packet_sender,
+            sigverify_packet_receiver,
+            routed_packet_receiver,
+            sigverify_sender,
+        ) = if packet_intake_mode.is_routed() {
+            let (fetch_packet_sender, routed_packet_receiver) = bounded(TPU_CHANNEL_SIZE);
+            let (sigverify_sender, sigverify_packet_receiver) = bounded(TPU_CHANNEL_SIZE);
+            (
+                fetch_packet_sender,
+                sigverify_packet_receiver,
+                Some(routed_packet_receiver),
+                sigverify_sender,
+            )
+        } else {
+            let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
+            (packet_sender.clone(), packet_receiver, None, packet_sender)
+        };
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),
-            &packet_sender,
+            &fetch_packet_sender,
             &vote_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
@@ -197,6 +269,7 @@ impl Tpu {
             gossip_vote_sender,
             gossip_vote_receiver,
         } = banking_tracer_channels;
+        let extension_non_vote_sender = non_vote_sender.clone();
 
         // Streamer for Votes:
         let quic_vote_sockets: Vec<QuicSocket> =
@@ -235,7 +308,7 @@ impl Tpu {
             "quic_streamer_tpu",
             transactions_quic_sockets,
             keypair,
-            packet_sender,
+            fetch_packet_sender,
             staked_nodes.clone(),
             tpu_quic_server_config.quic_streamer_config,
             tpu_quic_server_config.qos_config,
@@ -269,7 +342,7 @@ impl Tpu {
         let (forward_stage_sender, forward_stage_receiver) = bounded(50_000);
 
         let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
-            packet_receiver,
+            sigverify_packet_receiver,
             vote_packet_receiver,
             non_vote_sender,
             tpu_vote_sender,
@@ -311,7 +384,22 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache,
             hooks,
+            banking_worker_pools,
         );
+
+        let packet_ingress = PacketIngress::new(sigverify_sender).with_trusted_banking(
+            TrustedBankingIngress::new(Arc::new(CoreTrustedBankingSink(extension_non_vote_sender))),
+        );
+        let extension_stage_context = CoreTpuStageContext {
+            packet_ingress,
+            packet_receiver: Arc::new(Mutex::new(routed_packet_receiver)),
+            bundle_execution: Arc::new(CoreBundleExecutionStub),
+            exit: Arc::clone(&exit),
+        };
+        let extension_stage_handles = extension_stage_specs
+            .into_iter()
+            .map(|stage| stage.spawn(&extension_stage_context))
+            .collect();
 
         #[cfg(unix)]
         if let Some((path, banking_control_sender)) = scheduler_bindings {

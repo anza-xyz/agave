@@ -13,6 +13,7 @@ name = "jito_solana"
 path = "src/main.rs"
 
 [dependencies]
+agave-banking-stage-ingress-types = { workspace = true }
 agave-tpu-extension-api = { workspace = true }
 agave-xdp = { workspace = true }
 anyhow = { workspace = true }

@@ -16,26 +16,40 @@ use {
 /// calls `is_write_locked` to skip any transaction that would conflict.
 /// The atomic count makes the hot-path `is_active` guard a single load.
 pub struct BundleExternalLocks {
-    locked_accounts: RwLock<HashSet<Pubkey>>,
+    write_locked_accounts: RwLock<HashSet<Pubkey>>,
+    read_locked_accounts: RwLock<HashSet<Pubkey>>,
     locked_account_count: AtomicUsize,
 }
 
 impl BundleExternalLocks {
     pub fn new() -> Self {
         Self {
-            locked_accounts: RwLock::new(HashSet::new()),
+            write_locked_accounts: RwLock::new(HashSet::new()),
+            read_locked_accounts: RwLock::new(HashSet::new()),
             locked_account_count: AtomicUsize::new(0),
         }
     }
 
-    pub fn lock(&self, pubkey: Pubkey) {
-        if self.locked_accounts.write().unwrap().insert(pubkey) {
+    pub fn lock_write(&self, pubkey: Pubkey) {
+        if self.write_locked_accounts.write().unwrap().insert(pubkey) {
             self.locked_account_count.fetch_add(1, Ordering::Release);
         }
     }
 
-    pub fn unlock(&self, pubkey: &Pubkey) {
-        if self.locked_accounts.write().unwrap().remove(pubkey) {
+    pub fn lock_read(&self, pubkey: Pubkey) {
+        if self.read_locked_accounts.write().unwrap().insert(pubkey) {
+            self.locked_account_count.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    pub fn unlock_write(&self, pubkey: &Pubkey) {
+        if self.write_locked_accounts.write().unwrap().remove(pubkey) {
+            self.locked_account_count.fetch_sub(1, Ordering::Release);
+        }
+    }
+
+    pub fn unlock_read(&self, pubkey: &Pubkey) {
+        if self.read_locked_accounts.write().unwrap().remove(pubkey) {
             self.locked_account_count.fetch_sub(1, Ordering::Release);
         }
     }
@@ -44,7 +58,12 @@ impl BundleExternalLocks {
 impl ExternalLocks for BundleExternalLocks {
     #[inline(always)]
     fn is_write_locked(&self, pubkey: &Pubkey) -> bool {
-        self.locked_accounts.read().unwrap().contains(pubkey)
+        self.write_locked_accounts.read().unwrap().contains(pubkey)
+    }
+
+    #[inline(always)]
+    fn is_read_locked(&self, pubkey: &Pubkey) -> bool {
+        self.read_locked_accounts.read().unwrap().contains(pubkey)
     }
 
     #[inline(always)]
@@ -62,10 +81,10 @@ mod tests {
         let locks = BundleExternalLocks::new();
         let account = Pubkey::new_from_array([1u8; 32]);
         assert!(!locks.is_active());
-        locks.lock(account);
+        locks.lock_write(account);
         assert!(locks.is_active());
         assert!(locks.is_write_locked(&account));
-        locks.unlock(&account);
+        locks.unlock_write(&account);
         assert!(!locks.is_active());
         assert!(!locks.is_write_locked(&account));
     }

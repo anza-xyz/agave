@@ -5,7 +5,9 @@ use {
     },
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    agave_tpu_extension_api::{AccountFilter, NoFilter},
+    agave_tpu_extension_api::{
+        AccountAccess, AccountFilter, ExternalLocks, NoExternalLocks, NoFilter,
+    },
     agave_transaction_view::{
         result::TransactionViewError, transaction_view::SanitizedTransactionView,
     },
@@ -18,16 +20,22 @@ use {
     },
 };
 
-pub struct VotePacketReceiver<F: AccountFilter = NoFilter> {
+pub struct VotePacketReceiver<F: AccountFilter = NoFilter, L: ExternalLocks = NoExternalLocks> {
     banking_packet_receiver: BankingPacketReceiver,
     account_filter: Arc<F>,
+    external_locks: Arc<L>,
 }
 
-impl<F: AccountFilter> VotePacketReceiver<F> {
-    pub fn new(banking_packet_receiver: BankingPacketReceiver, account_filter: Arc<F>) -> Self {
+impl<F: AccountFilter, L: ExternalLocks> VotePacketReceiver<F, L> {
+    pub fn new(
+        banking_packet_receiver: BankingPacketReceiver,
+        account_filter: Arc<F>,
+        external_locks: Arc<L>,
+    ) -> Self {
         Self {
             banking_packet_receiver,
             account_filter,
+            external_locks,
         }
     }
 
@@ -154,11 +162,17 @@ impl<F: AccountFilter> VotePacketReceiver<F> {
 
     fn should_filter_packet(&self, packet: &SanitizedTransactionView<SharedBytes>) -> bool {
         // Vote transactions do not use address lookup tables, so static keys cover this path.
-        self.account_filter.is_active()
-            && packet
-                .static_account_keys()
+        let keys = packet.static_account_keys();
+        if self.account_filter.is_active()
+            && keys.iter().any(|key| self.account_filter.is_blocked(key))
+        {
+            return true;
+        }
+
+        self.external_locks.is_active()
+            && keys
                 .iter()
-                .any(|key| self.account_filter.is_blocked(key))
+                .any(|key| self.external_locks.conflicts(key, AccountAccess::Write))
     }
 
     fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
@@ -276,7 +290,7 @@ mod tests {
             leader_slot_metrics::LeaderSlotMetricsTracker,
             vote_storage::{VoteStorage, tests::packet_from_slots},
         },
-        agave_tpu_extension_api::SetAccountFilter,
+        agave_tpu_extension_api::{NoExternalLocks, SetAccountFilter},
         crossbeam_channel::unbounded,
         solana_perf::packet::PacketBatch,
         solana_pubkey::Pubkey,
@@ -298,7 +312,8 @@ mod tests {
             .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
             .unwrap();
 
-        let mut receiver = VotePacketReceiver::new(receiver, account_filter);
+        let mut receiver =
+            VotePacketReceiver::new(receiver, account_filter, Arc::new(NoExternalLocks));
         let genesis_config =
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[keypairs], vec![200])
                 .genesis_config;

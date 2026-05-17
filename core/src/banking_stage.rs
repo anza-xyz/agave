@@ -20,8 +20,8 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     agave_tpu_extension_api::{
-        AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter, NoGate,
-        SchedulerGate,
+        AccountFilter, BankingHooks, BankingStageContext, BankingWorkerPoolFactory, ExternalLocks,
+        NoExternalLocks, NoFilter, NoGate, SchedulerGate, TipContext,
     },
     crossbeam_channel::{Receiver, Sender, unbounded},
     futures::{StreamExt, stream::FuturesUnordered},
@@ -343,7 +343,38 @@ pub struct BankingStage<
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     hooks: BankingHooks<F, G, L>,
+    extension_worker_pools: Vec<Arc<dyn BankingWorkerPoolFactory>>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
+}
+
+struct CoreBankingStageContext {
+    non_vote_receiver: BankingPacketReceiver,
+    tpu_vote_receiver: BankingPacketReceiver,
+    gossip_vote_receiver: BankingPacketReceiver,
+    worker_exit_signal: Arc<AtomicBool>,
+    commit_mode: agave_tpu_extension_api::BatchCommitMode,
+}
+
+impl BankingStageContext for CoreBankingStageContext {
+    fn non_vote_receiver(&self) -> BankingPacketReceiver {
+        self.non_vote_receiver.clone()
+    }
+
+    fn tpu_vote_receiver(&self) -> BankingPacketReceiver {
+        self.tpu_vote_receiver.clone()
+    }
+
+    fn gossip_vote_receiver(&self) -> BankingPacketReceiver {
+        self.gossip_vote_receiver.clone()
+    }
+
+    fn worker_exit_signal(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.worker_exit_signal)
+    }
+
+    fn commit_mode(&self) -> agave_tpu_extension_api::BatchCommitMode {
+        self.commit_mode
+    }
 }
 
 impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 'static>
@@ -366,6 +397,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         hooks: BankingHooks<F, G, L>,
+        extension_worker_pools: Vec<Arc<dyn BankingWorkerPoolFactory>>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -388,6 +420,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
             committer,
             log_messages_bytes_limit,
             hooks,
+            extension_worker_pools,
             threads: FuturesUnordered::default(),
         };
 
@@ -414,7 +447,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
     }
 
     async fn run(mut self, initial_args: BankingControlMsg) -> std::thread::Result<()> {
-        self.spawn_scheduler(initial_args).unwrap();
+        self.spawn_scheduler(initial_args, true).unwrap();
 
         loop {
             tokio::select! {
@@ -446,7 +479,30 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
     }
 
     async fn cycle_threads(&mut self, args: BankingControlMsg) -> Result<(), ()> {
-        // Shutdown all current threads.
+        self.stop_threads().await;
+        self.spawn_scheduler(args, true)
+    }
+
+    async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
+        error!("Spawning the default block production method as a fallback...");
+
+        self.cycle_threads_without_extensions(BankingControlMsg::Internal {
+            block_production_method: BlockProductionMethod::default(),
+            num_workers: BankingStage::default_num_workers(),
+            config: SchedulerConfig::default(),
+        })
+        .await
+    }
+
+    async fn cycle_threads_without_extensions(
+        &mut self,
+        args: BankingControlMsg,
+    ) -> Result<(), ()> {
+        self.stop_threads().await;
+        self.spawn_scheduler(args, false)
+    }
+
+    async fn stop_threads(&mut self) {
         self.worker_exit_signal.store(true, Ordering::Relaxed);
         while let Some((name, res)) = self.threads.next().await {
             match res.unwrap() {
@@ -455,25 +511,14 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
             }
         }
 
-        // Revert the exit signal.
         self.worker_exit_signal.store(false, Ordering::Relaxed);
-
-        // Spawn the requested threads.
-        self.spawn_scheduler(args)
     }
 
-    async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
-        error!("Spawning the default block production method as a fallback...");
-
-        self.cycle_threads(BankingControlMsg::Internal {
-            block_production_method: BlockProductionMethod::default(),
-            num_workers: BankingStage::default_num_workers(),
-            config: SchedulerConfig::default(),
-        })
-        .await
-    }
-
-    fn spawn_scheduler(&mut self, args: BankingControlMsg) -> Result<(), ()> {
+    fn spawn_scheduler(
+        &mut self,
+        args: BankingControlMsg,
+        include_extension_worker_pools: bool,
+    ) -> Result<(), ()> {
         let threads = (match args {
             BankingControlMsg::Internal {
                 block_production_method,
@@ -482,7 +527,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
             } => match block_production_method {
                 BlockProductionMethod::CentralScheduler
                 | BlockProductionMethod::CentralSchedulerGreedy => {
-                    self.spawn_internal_central(num_workers, config)
+                    self.spawn_internal_central(num_workers, config, include_extension_worker_pools)
                 }
             },
             #[cfg(unix)]
@@ -503,6 +548,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
         &self,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
+        include_extension_worker_pools: bool,
     ) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal central scheduler");
 
@@ -511,100 +557,152 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
 
         let exit = self.worker_exit_signal.clone();
 
-        // Setup receive & buffer.
-        let sharable_banks = self.bank_forks.read().unwrap().sharable_banks();
-        let receive_and_buffer = TransactionViewReceiveAndBuffer {
-            receiver: self.non_vote_receiver.clone(),
-            sharable_banks: sharable_banks.clone(),
-            hooks: self.hooks.clone(),
-        };
-
         // Spawn vote worker.
         let mut threads = Vec::with_capacity(num_workers + 2);
         threads.push(self.spawn_vote_worker());
 
-        // Create channels for communication between scheduler and workers
-        let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
-            (0..num_workers).map(|_| unbounded()).unzip();
-        let (finished_work_sender, finished_work_receiver) = unbounded();
+        let replace_internal = include_extension_worker_pools
+            && self
+                .extension_worker_pools
+                .iter()
+                .any(|pool| pool.scheduler_mode().replaces_internal());
 
-        // Spawn the worker threads
-        let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
-        let mut worker_metrics = Vec::with_capacity(num_workers);
-        for (index, work_receiver) in work_receivers.into_iter().enumerate() {
-            let id = index as u32;
-            let consume_worker = ConsumeWorker::new(
-                id,
-                exit.clone(),
-                work_receiver,
-                Consumer::new(
-                    self.committer.clone(),
-                    self.transaction_recorder.clone(),
-                    self.log_messages_bytes_limit,
-                    self.hooks.commit_mode(),
-                ),
-                finished_work_sender.clone(),
-                self.poh_recorder.read().unwrap().shared_leader_state(),
+        if !replace_internal {
+            // Setup receive & buffer.
+            let sharable_banks = self.bank_forks.read().unwrap().sharable_banks();
+            let receive_and_buffer = TransactionViewReceiveAndBuffer {
+                receiver: self.non_vote_receiver.clone(),
+                sharable_banks: sharable_banks.clone(),
+                hooks: self.hooks.clone(),
+            };
+
+            // Create channels for communication between scheduler and workers
+            let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
+                (0..num_workers).map(|_| unbounded()).unzip();
+            let (finished_work_sender, finished_work_receiver) = unbounded();
+
+            // Spawn the worker threads
+            let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
+            let mut worker_metrics = Vec::with_capacity(num_workers);
+            for (index, work_receiver) in work_receivers.into_iter().enumerate() {
+                let id = index as u32;
+                let consume_worker = ConsumeWorker::new(
+                    id,
+                    exit.clone(),
+                    work_receiver,
+                    Consumer::new(
+                        self.committer.clone(),
+                        self.transaction_recorder.clone(),
+                        self.log_messages_bytes_limit,
+                        self.hooks.commit_mode(),
+                    ),
+                    finished_work_sender.clone(),
+                    self.poh_recorder.read().unwrap().shared_leader_state(),
+                );
+
+                worker_metrics.push(consume_worker.metrics_handle());
+                threads.push(
+                    Builder::new()
+                        .name(format!("solCoWorker{id:02}"))
+                        .spawn(|| {
+                            if let Err(err) = consume_worker.run() {
+                                error!("Internal consume worker error; err={err}");
+                            }
+                        })
+                        .unwrap(),
+                )
+            }
+
+            // Both block production methods currently route to the greedy scheduler.
+            let scheduler = GreedyScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                GreedySchedulerConfig::default(),
             );
-
-            worker_metrics.push(consume_worker.metrics_handle());
+            let tip_processor = self.hooks.tip_processor_handle();
+            let exit = exit.clone();
+            let shutdown_signal = self.banking_shutdown_signal.clone();
             threads.push(
                 Builder::new()
-                    .name(format!("solCoWorker{id:02}"))
-                    .spawn(|| {
-                        if let Err(err) = consume_worker.run() {
-                            error!("Internal consume worker error; err={err}");
+                    .name("solBnkTxSched".to_string())
+                    .spawn(move || {
+                        let mut scheduler_controller = SchedulerController::new(
+                            exit,
+                            scheduler_config,
+                            decision_maker,
+                            receive_and_buffer,
+                            sharable_banks,
+                            scheduler,
+                            worker_metrics,
+                            tip_processor,
+                        );
+
+                        match scheduler_controller.run() {
+                            Ok(_) => info!("Scheduler exiting without error"),
+                            Err(SchedulerError::DisconnectedRecvChannel(_)) => {
+                                info!("Upstream disconnected, shutting down banking");
+
+                                // NB: We must signal shutdown before dropping the scheduler
+                                //     controller, else, the workers may exit with an error and
+                                //     trigger a new spawn before we have a chance to issue the
+                                //     cancel.
+                                shutdown_signal.cancel();
+                                drop(scheduler_controller);
+                            }
+                            Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                                warn!("Unexpected worker disconnect from scheduler")
+                            }
                         }
                     })
                     .unwrap(),
-            )
+            );
         }
 
-        // Both block production methods currently route to the greedy scheduler.
-        let scheduler = GreedyScheduler::new(
-            work_senders,
-            finished_work_receiver,
-            GreedySchedulerConfig::default(),
-        );
-        let tip_processor = self.hooks.tip_processor_handle();
-        let exit = exit.clone();
-        let shutdown_signal = self.banking_shutdown_signal.clone();
-        threads.push(
-            Builder::new()
-                .name("solBnkTxSched".to_string())
-                .spawn(move || {
-                    let mut scheduler_controller = SchedulerController::new(
-                        exit,
-                        scheduler_config,
-                        decision_maker,
-                        receive_and_buffer,
-                        sharable_banks,
-                        scheduler,
-                        worker_metrics,
-                        tip_processor,
-                    );
+        if replace_internal {
+            threads.push(self.spawn_extension_leader_hook(exit.clone()));
+        }
 
-                    match scheduler_controller.run() {
-                        Ok(_) => info!("Scheduler exiting without error"),
-                        Err(SchedulerError::DisconnectedRecvChannel(_)) => {
-                            info!("Upstream disconnected, shutting down banking");
-
-                            // NB: We must signal shutdown before dropping the scheduler
-                            //     controller, else, the workers may exit with an error and
-                            //     trigger a new spawn before we have a chance to issue the
-                            //     cancel.
-                            shutdown_signal.cancel();
-                            drop(scheduler_controller);
-                        }
-                        Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                            warn!("Unexpected worker disconnect from scheduler")
-                        }
-                    }
-                })
-                .unwrap(),
-        );
+        if include_extension_worker_pools {
+            let extension_context = CoreBankingStageContext {
+                non_vote_receiver: self.non_vote_receiver.clone(),
+                tpu_vote_receiver: self.tpu_vote_receiver.clone(),
+                gossip_vote_receiver: self.gossip_vote_receiver.clone(),
+                worker_exit_signal: self.worker_exit_signal.clone(),
+                commit_mode: self.hooks.commit_mode(),
+            };
+            for pool in &self.extension_worker_pools {
+                threads.extend(pool.spawn_threads(&extension_context));
+            }
+        }
 
         Ok(threads)
+    }
+
+    fn spawn_extension_leader_hook(&self, exit: Arc<AtomicBool>) -> JoinHandle<()> {
+        let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
+        let tip_processor = self.hooks.tip_processor_handle();
+
+        Builder::new()
+            .name("solExtLeaderHook".to_string())
+            .spawn(move || {
+                let mut most_recent_leader_slot = None;
+                while !exit.load(Ordering::Relaxed) {
+                    let decision = decision_maker.make_consume_or_forward_decision();
+                    let new_leader_bank = decision.bank();
+                    let new_leader_slot = new_leader_bank.map(|bank| bank.slot());
+
+                    if most_recent_leader_slot != new_leader_slot {
+                        most_recent_leader_slot = new_leader_slot;
+
+                        if let Some(bank) = new_leader_bank {
+                            tip_processor.process(&TipContext::new(bank.slot(), bank.epoch()));
+                        }
+                    }
+
+                    thread::sleep(SLOT_BOUNDARY_CHECK_PERIOD);
+                }
+            })
+            .unwrap()
     }
 
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
@@ -612,10 +710,12 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
         let tpu_receiver = VotePacketReceiver::new(
             self.tpu_vote_receiver.clone(),
             self.hooks.packet_filter_handle(),
+            self.hooks.external_locks_handle(),
         );
         let gossip_receiver = VotePacketReceiver::new(
             self.gossip_vote_receiver.clone(),
             self.hooks.packet_filter_handle(),
+            self.hooks.external_locks_handle(),
         );
         let consumer = Consumer::new(
             self.committer.clone(),
@@ -931,6 +1031,7 @@ mod tests {
             bank_forks,
             None,
             BankingHooks::default(),
+            Vec::new(),
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -992,6 +1093,7 @@ mod tests {
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
             BankingHooks::default(),
+            Vec::new(),
         );
 
         // good tx, and no verify
@@ -1147,6 +1249,7 @@ mod tests {
                 bank_forks,
                 None,
                 BankingHooks::default(),
+                Vec::new(),
             );
 
             // wait for banking_stage to eat the packets
@@ -1301,6 +1404,7 @@ mod tests {
             bank_forks,
             None,
             BankingHooks::default(),
+            Vec::new(),
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

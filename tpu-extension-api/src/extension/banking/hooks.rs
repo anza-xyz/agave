@@ -78,6 +78,12 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> BankingHooks<F, G, L>
         self.external_locks.as_ref()
     }
 
+    /// Returns a cloned Arc for sharing `external_locks` across threads that
+    /// require the concrete type (e.g. vote packet receive).
+    pub fn external_locks_handle(&self) -> Arc<L> {
+        Arc::clone(&self.external_locks)
+    }
+
     pub fn tip_processor_handle(&self) -> Arc<dyn TipProcessor> {
         Arc::clone(&self.tip_processor)
     }

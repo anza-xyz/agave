@@ -855,6 +855,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             None,
             BankingHooks::default(),
+            Vec::new(),
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

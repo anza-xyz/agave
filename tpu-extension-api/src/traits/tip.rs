@@ -1,7 +1,7 @@
 /// Called once per leader-slot transition to perform fork-specific setup.
 ///
-/// The canonical use case is initializing tip-distribution PDAs (Jito-Solana),
-/// but implementations may do any per-slot leader-side work here.
+/// The canonical use case is initializing or cranking tip-distribution state
+/// (Jito-Solana), but implementations may do any per-slot leader-side work here.
 ///
 /// **Idempotency:** the scheduler may call `process` multiple times for the
 /// same slot (e.g. if the validator is re-elected leader for an epoch it already

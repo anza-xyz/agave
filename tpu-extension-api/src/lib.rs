@@ -35,7 +35,8 @@
 //! # Fork Integration
 //!
 //! Build a [`BankingHooks`] value from the extension points the fork needs, then
-//! pass it with any owned extension stages through [`TpuExtensions`]:
+//! pass it with any owned stages or launch-context factories through
+//! [`TpuExtensions`]:
 //!
 //! ```ignore
 //! let hooks = BankingHooks::builder()
@@ -44,14 +45,15 @@
 //!     .shared_external_locks(Arc::clone(&my_locks))
 //!     .shared_tip_processor(Arc::clone(&my_tip_processor))
 //!     .config(BankingConfig {
-//!         tip_config: TipConfig { validator_fee_payer },
-//!         commit_mode: BatchCommitMode::all_or_nothing(),
+//!         commit_mode: BatchCommitMode::standard(),
 //!     })
 //!     .build();
 //!
 //! let extensions = TpuExtensions::builder()
-//!     .processing_stage(my_executor_stage)
-//!     .intake_stage(my_ingress_stage)
+//!     .with_packet_receiver()
+//!     .processing_stage(TpuStageSpec::running(my_executor_stage))
+//!     .intake_stage(TpuStageSpec::factory(my_ingress_factory))
+//!     .banking_worker_pool(my_worker_pool_factory)
 //!     .banking_hooks(hooks)
 //!     .build();
 //!
@@ -74,6 +76,10 @@
 //! | [`TipProcessor`] | [`NoTip`] | leader-slot transitions need fork-specific setup |
 //! | [`BankingConfig::commit_mode`] | [`BatchCommitMode::standard`] | a batch should use [`BatchCommitMode::all_or_nothing`] |
 //! | [`TpuStage`] | none | the fork owns an additional TPU-side service thread |
+//! | [`TpuStageFactory`] | none | a stage needs Agave-created launch handles such as [`PacketIngress`] |
+//! | [`TpuExtensionsBuilder::with_packet_receiver`] | direct packet flow | a fork needs to route raw TPU packets before sigverify |
+//! | [`BundleExecution`] | [`NoBundleExecution`] | an extension stage needs Agave to execute and record an atomic bundle |
+//! | [`BankingWorkerPoolFactory`] | none | a fork owns extra or replacement banking workers |
 //!
 //! A Jito-shaped reference integration lives in the sibling
 //! `tpu-extension-api-jito-solana` crate.
@@ -95,42 +101,71 @@
 //! | `tip_processor.process(...)` | called on leader-slot transitions only |
 //! | `commit_mode()` | copied into `Consumer`; no per-batch policy vtable |
 //! | `TpuStage::abort` and `TpuStage::join` | lifecycle only, during shutdown |
+//! | [`BundleExecution::execute_and_record_bundle`] | extension stage only; not called by normal packet scheduling |
 //!
 //! # Current Scope
 //!
-//! This API intentionally covers lifecycle, scheduler gating, account filtering,
-//! extension account locks, tip setup, and batch commit mode.
+//! This API intentionally covers lifecycle, launch-context stage factories,
+//! packet ingress, optional raw-packet routing, scheduler gating, account
+//! filtering, extension account locks, tip setup, batch commit mode, bundle
+//! execution/entry recording, and banking worker-pool factories.
 //!
-//! Packet injection is intentionally deferred. Injecting pre-verified packets
-//! directly into banking, bypassing sigverify, needs a separate ingress contract.
-//! [`ReadLockView`] and [`BundleAccountLockView`] are reserved for that follow-up.
+//! [`PacketIngress`] sends unverified packets into Agave's normal sigverify path.
+//! When [`TpuExtensionsBuilder::with_packet_receiver`] is enabled,
+//! [`PacketIngress::packet_receiver`] lets a fork-owned fetch manager receive
+//! raw TPU packets before sigverify.
+//! [`TrustedBankingIngress`] is available for fork-owned paths that already
+//! verified packets and intentionally bypass sigverify.
 //!
-//! Entry partitioning is also intentionally not an Agave hook. Forks that need
-//! write-conflicting bundle recording should keep that algorithm with their
-//! bundle executor.
+//! [`BundleExecution`] is the narrow bridge for extension-owned bundle stages
+//! that need Agave's runtime to execute, record, and commit an atomic batch.
+//! [`BundleEntryPolicy::SplitConflicts`] makes Jito's ordered bundle-entry
+//! partitioning requirement explicit without exposing PoH internals to the
+//! extension crate.
 //!
-//! # Known Limitation
+//! # Jito-Solana Coverage
 //!
-//! `ValidatorConfig::filter_keys` is not applied by
-//! `Validator::new_with_exit_with_tpu_extensions`.
+//! The table below maps every Jito-Solana component to the API extension point
+//! it uses. All components are demonstrated in `tpu-extension-api-jito-solana`.
 //!
-//! The standard `Validator::new_with_exit` path applies it by building a
-//! [`SetAccountFilter`]. Fork constructors that bypass that path must include
-//! equivalent behavior in their own [`AccountFilter`] if they need it.
+//! | Jito-Solana component | API extension point | Reference file |
+//! |-----------------------|---------------------|----------------|
+//! | `FetchStageManager` — routes raw QUIC packets before sigverify | [`TpuStageFactory`] · [`TpuStageContext::take_packet_receiver`] · [`PacketIngress::send_to_sigverify`] | `stages/fetch_manager.rs` |
+//! | `RelayerStage` — receives packets from a trusted relayer gRPC stream | [`TpuStageFactory`] · [`PacketIngress::send_to_sigverify`] | `stages/relayer.rs` |
+//! | `BlockEngineStage` — receives bundles and packets from the block-engine gRPC stream | [`TpuStageFactory`] · [`PacketIngress::send_to_sigverify`] · [`PacketIngress::trusted_banking`] | `stages/block_engine.rs` |
+//! | `BundleSigverifyStage` — batch-verifies bundle Ed25519 signatures | [`TpuStage`] (lifecycle only; owns its own inter-stage channels) | `stages/sigverify.rs` |
+//! | `BundleStage` — executes verified bundles atomically | [`TpuStageFactory`] · [`BundleExecution::execute_and_record_bundle`] · [`BundleExecutionRequest`] | `stages/bundle.rs` |
+//! | `BamManager` — coordinator thread for the bundle-aware mempool | [`TpuStage`] (lifecycle; workers spawned via [`BankingWorkerPoolFactory`]) | `stages/bam_manager.rs` |
+//! | `BundleSchedulerGate` — yields the packet scheduler during bundle execution | [`SchedulerGate::should_yield`] (hot path, `#[inline(always)]`) | `hooks/scheduler_gate.rs` |
+//! | `BundleExternalLocks` — read/write account locks for in-flight bundles | [`ExternalLocks`] · [`BundleAccountLockView`] (hot path, `#[inline(always)]`) | `hooks/external_locks.rs` |
+//! | `TipAccountFilter` — blocks transactions touching Jito tip accounts | [`AccountFilter::is_blocked`] (per-packet hot path) | `hooks/tip_account_filter.rs` |
+//! | `TipManager` — handles tip distribution on leader-slot transitions | [`TipProcessor::process`] (called once per leader slot) | `hooks/tip.rs` |
+//! | `BamWorkerPoolFactory` — spawns BAM banking worker threads | [`BankingWorkerPoolFactory::spawn_threads`] · [`BankingSchedulerMode::ReplaceInternal`] | `hooks/bam.rs` |
+//!
+//! `CoreBundleExecutionStub` in `core/src/tpu.rs` is the only intentional stub:
+//! a production `BundleExecution` holds `Arc<RwLock<BankForks>>` and
+//! `Arc<Mutex<PohRecorder>>` and delegates to the same bank/PoH machinery as
+//! Jito-Solana's `BundleConsumer`. The API bridge is correct; the implementation
+//! is a follow-up scoped to `agave-core`.
 
 mod extension;
 mod traits;
 
-pub use extension::{
-    BankingConfig, BankingHooks, BankingHooksBuilder, TpuExtensions, TpuExtensionsBuilder,
+pub use {
+    extension::{
+        BankingConfig, BankingHooks, BankingHooksBuilder, BankingWorkerPoolFactories,
+        PacketIntakeMode, TpuExtensionParts, TpuExtensions, TpuExtensionsBuilder, TpuStageSpec,
+    },
+    traits::{
+        AccountAccess, AccountFilter, BankingSchedulerMode, BankingStageContext,
+        BankingWorkerPoolFactory, BatchCommitMode, BatchCommitPolicy, BundleAccountLockView,
+        BundleEntryPolicy, BundleExecution, BundleExecutionRequest, BundleExecutionStatus,
+        ExternalLocks, LifecycleStage, NoBundleExecution, PacketBatch, PacketIngress, ReadLockView,
+        SchedulerGate, TipContext, TipProcessor, TpuStage, TpuStageContext, TpuStageFactory,
+        TrustedBankingIngress, TrustedBankingPacketSink,
+    },
 };
-pub use traits::{
-    AccountFilter, BatchCommitMode, BatchCommitPolicy, BundleAccountLockView, ExternalLocks,
-    LifecycleStage, ReadLockView, SchedulerGate, TipContext, TipProcessor, TpuStage,
-};
-
-use solana_pubkey::Pubkey;
-use std::collections::HashSet;
+use {solana_pubkey::Pubkey, std::collections::HashSet};
 
 /// No-op [`SchedulerGate`]: the scheduler never yields. Inlines to `false`.
 pub struct NoGate;
@@ -164,6 +199,10 @@ impl AccountFilter for NoFilter {
 impl ExternalLocks for NoExternalLocks {
     #[inline(always)]
     fn is_write_locked(&self, _: &Pubkey) -> bool {
+        false
+    }
+    #[inline(always)]
+    fn is_read_locked(&self, _: &Pubkey) -> bool {
         false
     }
     #[inline(always)]
@@ -225,7 +264,9 @@ mod tests {
         assert!(!NoGate.should_yield());
         assert!(!NoFilter.is_blocked(&key));
         assert!(!NoExternalLocks.is_write_locked(&key));
-        assert!(!NoExternalLocks.is_read_locked(&key));
+        assert!(!ExternalLocks::is_read_locked(&NoExternalLocks, &key));
+        assert!(!NoExternalLocks.conflicts(&key, AccountAccess::Read));
+        assert!(!NoExternalLocks.conflicts(&key, AccountAccess::Write));
         assert!(!ExternalLocks::is_active(&NoExternalLocks));
         assert!(!ReadLockView::is_active(&NoExternalLocks));
         assert!(!StandardCommit.mode().reverts_on_error());
@@ -275,9 +316,11 @@ mod tests {
     #[test]
     fn extensions_split_into_stages_and_hooks() {
         let extensions = TpuExtensions::builder().build();
-        let (stages, hooks) = extensions.into_parts();
-        assert!(stages.is_empty());
-        assert!(!hooks.scheduler_gate().should_yield());
+        let parts = extensions.into_parts();
+        assert!(parts.stages.is_empty());
+        assert!(parts.banking_worker_pools.is_empty());
+        assert!(!parts.banking.scheduler_gate().should_yield());
+        assert_eq!(parts.packet_intake_mode, PacketIntakeMode::Direct);
     }
 
     #[test]

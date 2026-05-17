@@ -3,9 +3,16 @@ use {
     solana_pubkey::Pubkey,
     std::{
         collections::HashSet,
-        sync::Mutex,
+        sync::{Arc, Mutex, RwLock},
     },
 };
+
+/// Block-builder fee state updated by Jito's block-engine stage in production.
+#[derive(Clone)]
+pub struct BlockBuilderFeeInfo {
+    pub block_builder: Pubkey,
+    pub commission_bps: u16,
+}
 
 /// Initializes tip-distribution PDAs at each leader-slot transition.
 ///
@@ -14,6 +21,7 @@ use {
 /// the epoch in-process to stay idempotent without hitting the chain.
 pub struct TipManager {
     tip_accounts: HashSet<Pubkey>,
+    block_builder_fee_info: Arc<RwLock<BlockBuilderFeeInfo>>,
     initialized_epochs: Mutex<HashSet<u64>>,
 }
 
@@ -21,8 +29,16 @@ impl TipManager {
     pub fn new(tip_accounts: impl IntoIterator<Item = Pubkey>) -> Self {
         Self {
             tip_accounts: tip_accounts.into_iter().collect(),
+            block_builder_fee_info: Arc::new(RwLock::new(BlockBuilderFeeInfo {
+                block_builder: Pubkey::default(),
+                commission_bps: 0,
+            })),
             initialized_epochs: Mutex::new(HashSet::new()),
         }
+    }
+
+    pub fn block_builder_fee_info(&self) -> Arc<RwLock<BlockBuilderFeeInfo>> {
+        Arc::clone(&self.block_builder_fee_info)
     }
 }
 
@@ -36,6 +52,8 @@ impl TipProcessor for TipManager {
                 ctx.slot
             );
         }
+        let fee_info = self.block_builder_fee_info.read().unwrap();
+        let _builder_tip_terms = (fee_info.block_builder, fee_info.commission_bps);
         // Already initialized for this epoch — idempotent, nothing to do.
         self.initialized_epochs.lock().unwrap().insert(ctx.epoch);
     }

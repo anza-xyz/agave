@@ -14,7 +14,7 @@ use {
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
         transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
     },
-    agave_tpu_extension_api::{AccountFilter, NoFilter},
+    agave_tpu_extension_api::{AccountFilter, ExternalLocks, NoExternalLocks, NoFilter},
     agave_transaction_view::{
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
@@ -56,24 +56,24 @@ mod transaction {
 // 2. Constrain max entry size for FEC set packing (Smaller is better)
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
-pub struct VoteWorker<F: AccountFilter = NoFilter> {
+pub struct VoteWorker<F: AccountFilter = NoFilter, L: ExternalLocks = NoExternalLocks> {
     exit: Arc<AtomicBool>,
     shutdown_signal: CancellationToken,
     decision_maker: DecisionMaker,
-    tpu_receiver: VotePacketReceiver<F>,
-    gossip_receiver: VotePacketReceiver<F>,
+    tpu_receiver: VotePacketReceiver<F, L>,
+    gossip_receiver: VotePacketReceiver<F, L>,
     storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
 }
 
-impl<F: AccountFilter> VoteWorker<F> {
+impl<F: AccountFilter, L: ExternalLocks> VoteWorker<F, L> {
     pub fn new(
         exit: Arc<AtomicBool>,
         shutdown_signal: CancellationToken,
         decision_maker: DecisionMaker,
-        tpu_receiver: VotePacketReceiver<F>,
-        gossip_receiver: VotePacketReceiver<F>,
+        tpu_receiver: VotePacketReceiver<F, L>,
+        gossip_receiver: VotePacketReceiver<F, L>,
         storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,

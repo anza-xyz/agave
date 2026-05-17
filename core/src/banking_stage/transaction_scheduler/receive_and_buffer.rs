@@ -12,8 +12,8 @@ use {
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_tpu_extension_api::{
-        AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter, NoGate,
-        SchedulerGate,
+        AccountAccess, AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter,
+        NoGate, SchedulerGate,
     },
     agave_transaction_view::{
         resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
@@ -126,7 +126,7 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> ReceiveAndBuffer
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        // Bundle is executing; skip this cycle to avoid conflicting with its write locks.
+        // An extension owns a critical section; skip this cycle to avoid conflicts.
         if self.hooks.scheduler_gate().should_yield() {
             return Ok(ReceivingStats::default());
         }
@@ -431,10 +431,12 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks>
             return Err(PacketHandlingError::FilterKey);
         }
         if hooks.external_locks().is_active()
-            && view
-                .account_keys()
-                .iter()
-                .any(|key| hooks.external_locks().is_write_locked(key))
+            && view.account_keys().iter().enumerate().any(|(index, key)| {
+                hooks.external_locks().conflicts(
+                    key,
+                    AccountAccess::from_is_writable(view.is_writable(index)),
+                )
+            })
         {
             return Err(PacketHandlingError::ExternalLock);
         }

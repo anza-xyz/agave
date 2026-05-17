@@ -11,10 +11,21 @@ use {
     },
 };
 
-/// Verifies bundle signatures before forwarding to the executor.
+/// Verifies bundle Ed25519 signatures before forwarding to the executor.
 ///
-/// In production: validates Ed25519 signatures, drops invalid bundles.
-/// Reference stub: passes bundles through without verification.
+/// This stage owns its own inter-stage channels (no context needed) and is
+/// registered with [`TpuStageSpec::running`](agave_tpu_extension_api::TpuStageSpec::running).
+///
+/// Production loop (stub passes bundles through without verification):
+/// ```text
+/// while let Ok(bundle) = receiver.recv() {
+///     // Batch-verify all Ed25519 signatures in the bundle's packets.
+///     if verify_ed25519_batch(&bundle.packets) {
+///         verified_sender.send(bundle)?;    // → BundleStage
+///     }
+///     // Invalid bundles are silently dropped here.
+/// }
+/// ```
 pub struct BundleSigverifyStage {
     abort_signal: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,

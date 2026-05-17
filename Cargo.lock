@@ -314,6 +314,9 @@ dependencies = [
 name = "agave-tpu-extension-api"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
+ "crossbeam-channel",
+ "solana-perf",
  "solana-pubkey 4.2.0",
 ]
 
@@ -321,6 +324,7 @@ dependencies = [
 name = "agave-tpu-extension-api-jito-solana"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "agave-tpu-extension-api",
  "agave-xdp",
  "anyhow",

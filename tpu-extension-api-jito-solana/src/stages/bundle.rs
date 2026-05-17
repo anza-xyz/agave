@@ -1,7 +1,10 @@
 use {
     super::PacketBundle,
     crate::hooks::BundleExternalLocks,
-    agave_tpu_extension_api::{LifecycleStage, TpuStage},
+    agave_tpu_extension_api::{
+        BundleExecution, BundleExecutionRequest, LifecycleStage, TpuStage, TpuStageContext,
+        TpuStageFactory,
+    },
     std::{
         sync::{
             Arc,
@@ -12,12 +15,44 @@ use {
     },
 };
 
+/// Builds `BundleStage` after Agave exposes its bundle execution runtime.
+pub struct BundleStageFactory {
+    receiver: Receiver<PacketBundle>,
+    yield_flag: Arc<AtomicBool>,
+    locks: Arc<BundleExternalLocks>,
+}
+
+impl BundleStageFactory {
+    pub fn new(
+        receiver: Receiver<PacketBundle>,
+        yield_flag: Arc<AtomicBool>,
+        locks: Arc<BundleExternalLocks>,
+    ) -> Self {
+        Self {
+            receiver,
+            yield_flag,
+            locks,
+        }
+    }
+}
+
+impl TpuStageFactory for BundleStageFactory {
+    fn spawn(self: Box<Self>, context: &dyn TpuStageContext) -> Box<dyn TpuStage> {
+        Box::new(BundleStage::spawn(
+            self.receiver,
+            self.yield_flag,
+            self.locks,
+            context.bundle_execution(),
+        ))
+    }
+}
+
 /// Executes verified bundles atomically.
 ///
 /// For each bundle: raises the scheduler gate, acquires write locks on the
-/// bundle's accounts, executes (reference stub: no-op), then releases locks
-/// and lowers the gate. The gate and locks together prevent the packet
-/// scheduler from interleaving regular transactions during execution.
+/// bundle's accounts, asks Agave's bundle runtime to execute and record it,
+/// then releases locks and lowers the gate. The gate and locks together prevent
+/// the packet scheduler from interleaving regular transactions during execution.
 pub struct BundleStage {
     abort_signal: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
@@ -29,6 +64,7 @@ impl BundleStage {
         receiver: Receiver<PacketBundle>,
         yield_flag: Arc<AtomicBool>,
         locks: Arc<BundleExternalLocks>,
+        bundle_execution: Arc<dyn BundleExecution>,
     ) -> Self {
         let abort_signal = Arc::new(AtomicBool::new(false));
         let signal = Arc::clone(&abort_signal);
@@ -41,18 +77,19 @@ impl BundleStage {
                         break;
                     }
 
-                    scheduler_gate.store(true, Ordering::Release);
-                    for account in &bundle.write_locks {
-                        locks.lock(*account);
-                    }
+                    let _gate = SchedulerGateGuard::raise(Arc::clone(&scheduler_gate));
+                    let _lock_guard = BundleLockGuard::lock(
+                        Arc::clone(&locks),
+                        bundle.read_locks.clone(),
+                        bundle.write_locks.clone(),
+                    );
 
-                    // Reference mock: production executes the bundle packets here.
-                    let _packet_count = bundle.packets.len();
-
-                    for account in &bundle.write_locks {
-                        locks.unlock(account);
-                    }
-                    scheduler_gate.store(false, Ordering::Release);
+                    let _status =
+                        bundle_execution.execute_and_record_bundle(BundleExecutionRequest::new(
+                            Arc::clone(&bundle.packets),
+                            bundle.read_locks.clone(),
+                            bundle.write_locks.clone(),
+                        ));
                 }
             })
             .expect("jitoBundleStage spawn failed");
@@ -76,3 +113,57 @@ impl LifecycleStage for BundleStage {
 }
 
 impl TpuStage for BundleStage {}
+
+struct SchedulerGateGuard {
+    yield_flag: Arc<AtomicBool>,
+}
+
+impl SchedulerGateGuard {
+    fn raise(yield_flag: Arc<AtomicBool>) -> Self {
+        yield_flag.store(true, Ordering::Release);
+        Self { yield_flag }
+    }
+}
+
+impl Drop for SchedulerGateGuard {
+    fn drop(&mut self) {
+        self.yield_flag.store(false, Ordering::Release);
+    }
+}
+
+struct BundleLockGuard {
+    locks: Arc<BundleExternalLocks>,
+    read_locks: Vec<solana_pubkey::Pubkey>,
+    write_locks: Vec<solana_pubkey::Pubkey>,
+}
+
+impl BundleLockGuard {
+    fn lock(
+        locks: Arc<BundleExternalLocks>,
+        read_locks: Vec<solana_pubkey::Pubkey>,
+        write_locks: Vec<solana_pubkey::Pubkey>,
+    ) -> Self {
+        for account in &read_locks {
+            locks.lock_read(*account);
+        }
+        for account in &write_locks {
+            locks.lock_write(*account);
+        }
+        Self {
+            locks,
+            read_locks,
+            write_locks,
+        }
+    }
+}
+
+impl Drop for BundleLockGuard {
+    fn drop(&mut self) {
+        for account in &self.write_locks {
+            self.locks.unlock_write(account);
+        }
+        for account in &self.read_locks {
+            self.locks.unlock_read(account);
+        }
+    }
+}

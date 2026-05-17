@@ -34,8 +34,8 @@ use {
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
     },
     agave_tpu_extension_api::{
-        AccountFilter, BankingConfig, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter,
-        NoGate, SchedulerGate, SetAccountFilter, TpuExtensions,
+        AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter, NoGate,
+        SchedulerGate, SetAccountFilter, TpuExtensions,
     },
     agave_votor::{
         vote_history::VoteHistory,

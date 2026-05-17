@@ -102,7 +102,7 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> BankingHooksBuilder<F
         self
     }
 
-    /// Set cold-path validator config (tip fee payer, commit mode).
+    /// Set cold-path banking config.
     pub fn config(mut self, config: BankingConfig) -> Self {
         self.config = config;
         self

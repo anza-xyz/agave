@@ -5,8 +5,8 @@
 ///   committed or rejected individually. A failed transaction does not affect
 ///   others. This is vanilla Agave behavior.
 /// - [`all_or_nothing`](BatchCommitMode::all_or_nothing): if any transaction in
-///   a batch fails, the whole batch is reverted. Used by bundle executors (e.g.
-///   Jito) that need atomicity across a group of transactions.
+///   a batch fails, the whole batch is reverted. Useful for forks that want
+///   atomic batch semantics without a full bundle-execution bridge.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatchCommitMode {
     revert_on_error: bool,
