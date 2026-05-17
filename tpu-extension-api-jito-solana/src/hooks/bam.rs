@@ -40,7 +40,6 @@ impl BamWorkerPoolFactory {
 }
 
 impl Default for BamWorkerPoolFactory {
-    /// Creates a pool sized to the machine's available parallelism.
     fn default() -> Self {
         let worker_count = std::thread::available_parallelism()
             .map(|n| n.get())

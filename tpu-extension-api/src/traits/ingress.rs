@@ -30,12 +30,10 @@ impl PacketIngress {
         self
     }
 
-    /// Send unverified packets into Agave's normal sigverify path.
     pub fn send_to_sigverify(&self, packets: PacketBatch) -> Result<(), SendError<PacketBatch>> {
         self.sigverify_sender.send(packets)
     }
 
-    /// Optional trusted ingress for fork-owned paths that already verified packets.
     pub fn trusted_banking(&self) -> Option<&TrustedBankingIngress> {
         self.trusted_banking.as_ref()
     }
@@ -49,10 +47,7 @@ pub trait TrustedBankingPacketSink: Send + Sync + 'static {
     fn send(&self, packets: BankingPacketBatch) -> Result<(), BankingPacketBatch>;
 }
 
-/// Cloneable ingress for packets that should bypass sigverify.
-///
-/// This remains off the Agave packet hot path: extensions call it from their own
-/// stages when they can prove packets are already verified or trusted.
+/// Ingress for packets that bypass sigverify (pre-verified by the extension).
 #[derive(Clone)]
 pub struct TrustedBankingIngress {
     sink: Arc<dyn TrustedBankingPacketSink>,

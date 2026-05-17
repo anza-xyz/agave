@@ -1,7 +1,4 @@
-/// Called once per leader-slot transition to perform fork-specific setup.
-///
-/// The canonical use case is initializing or cranking tip-distribution state
-/// (Jito-Solana), but implementations may do any per-slot leader-side work here.
+/// Called once per leader-slot transition for fork-specific setup (e.g. tip-distribution init).
 ///
 /// **Idempotency:** the scheduler may call `process` multiple times for the
 /// same slot (e.g. if the validator is re-elected leader for an epoch it already
@@ -18,16 +15,11 @@ pub trait TipProcessor: Send + Sync + 'static {
     fn process(&self, ctx: &TipContext);
 }
 
-/// Contextual information passed to [`TipProcessor::process`] at each
-/// leader-slot transition.
-///
-/// Marked `#[non_exhaustive]` so fields can be added in future API versions
-/// without breaking existing implementations.
+/// `#[non_exhaustive]` so fields can be added without breaking existing implementations.
 #[non_exhaustive]
 pub struct TipContext {
-    /// The slot the validator is about to lead.
     pub slot: u64,
-    /// The epoch containing `slot`. Useful for once-per-epoch initialization.
+    /// Useful for once-per-epoch initialization.
     pub epoch: u64,
 }
 

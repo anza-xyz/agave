@@ -209,11 +209,7 @@ mod tests {
 
         // One worker pool registered and it replaces the internal scheduler.
         assert_eq!(parts.banking_worker_pools.len(), 1);
-        assert!(
-            parts.banking_worker_pools[0]
-                .scheduler_mode()
-                .replaces_internal()
-        );
+        assert!(parts.banking_worker_pools.replaces_internal_scheduler());
 
         // Spawn all stages (factories get the mock context, running stages pass through).
         let ctx = MockTpuStageContext::new(Arc::clone(&exit));

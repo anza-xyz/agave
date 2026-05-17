@@ -20,7 +20,7 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     agave_tpu_extension_api::{
-        AccountFilter, BankingHooks, BankingStageContext, BankingWorkerPoolFactory, ExternalLocks,
+        AccountFilter, BankingHooks, BankingStageContext, BankingWorkerPoolFactories, ExternalLocks,
         NoExternalLocks, NoFilter, NoGate, SchedulerGate, TipContext,
     },
     crossbeam_channel::{Receiver, Sender, unbounded},
@@ -343,7 +343,7 @@ pub struct BankingStage<
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     hooks: BankingHooks<F, G, L>,
-    extension_worker_pools: Vec<Arc<dyn BankingWorkerPoolFactory>>,
+    extension_worker_pools: BankingWorkerPoolFactories,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
 
@@ -397,7 +397,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         hooks: BankingHooks<F, G, L>,
-        extension_worker_pools: Vec<Arc<dyn BankingWorkerPoolFactory>>,
+        extension_worker_pools: BankingWorkerPoolFactories,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -485,21 +485,15 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
 
     async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
         error!("Spawning the default block production method as a fallback...");
-
-        self.cycle_threads_without_extensions(BankingControlMsg::Internal {
-            block_production_method: BlockProductionMethod::default(),
-            num_workers: BankingStage::default_num_workers(),
-            config: SchedulerConfig::default(),
-        })
-        .await
-    }
-
-    async fn cycle_threads_without_extensions(
-        &mut self,
-        args: BankingControlMsg,
-    ) -> Result<(), ()> {
         self.stop_threads().await;
-        self.spawn_scheduler(args, false)
+        self.spawn_scheduler(
+            BankingControlMsg::Internal {
+                block_production_method: BlockProductionMethod::default(),
+                num_workers: BankingStage::default_num_workers(),
+                config: SchedulerConfig::default(),
+            },
+            false,
+        )
     }
 
     async fn stop_threads(&mut self) {
@@ -562,10 +556,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
         threads.push(self.spawn_vote_worker());
 
         let replace_internal = include_extension_worker_pools
-            && self
-                .extension_worker_pools
-                .iter()
-                .any(|pool| pool.scheduler_mode().replaces_internal());
+            && self.extension_worker_pools.replaces_internal_scheduler();
 
         if !replace_internal {
             // Setup receive & buffer.
@@ -594,8 +585,8 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
                         self.log_messages_bytes_limit,
-                        self.hooks.commit_mode(),
-                    ),
+                    )
+                    .with_commit_mode(self.hooks.commit_mode()),
                     finished_work_sender.clone(),
                     self.poh_recorder.read().unwrap().shared_leader_state(),
                 );
@@ -670,7 +661,7 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
                 worker_exit_signal: self.worker_exit_signal.clone(),
                 commit_mode: self.hooks.commit_mode(),
             };
-            for pool in &self.extension_worker_pools {
+            for pool in self.extension_worker_pools.iter() {
                 threads.extend(pool.spawn_threads(&extension_context));
             }
         }
@@ -721,8 +712,8 @@ impl<F: AccountFilter + 'static, G: SchedulerGate + 'static, L: ExternalLocks + 
             self.committer.clone(),
             self.transaction_recorder.clone(),
             self.log_messages_bytes_limit,
-            self.hooks.commit_mode(),
-        );
+        )
+        .with_commit_mode(self.hooks.commit_mode());
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
 
         let worker_exit_signal = self.worker_exit_signal.clone();
@@ -808,8 +799,8 @@ mod external {
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
                         self.log_messages_bytes_limit,
-                        self.hooks.commit_mode(),
-                    ),
+                    )
+                    .with_commit_mode(self.hooks.commit_mode()),
                     worker_to_pack,
                     allocator,
                     self.poh_recorder.read().unwrap().shared_leader_state(),
@@ -1031,7 +1022,7 @@ mod tests {
             bank_forks,
             None,
             BankingHooks::default(),
-            Vec::new(),
+            BankingWorkerPoolFactories::default(),
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1093,7 +1084,7 @@ mod tests {
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
             BankingHooks::default(),
-            Vec::new(),
+            BankingWorkerPoolFactories::default(),
         );
 
         // good tx, and no verify
@@ -1404,7 +1395,7 @@ mod tests {
             bank_forks,
             None,
             BankingHooks::default(),
-            Vec::new(),
+            BankingWorkerPoolFactories::default(),
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

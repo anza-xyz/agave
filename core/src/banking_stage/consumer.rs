@@ -116,14 +116,18 @@ impl Consumer {
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        batch_commit_mode: BatchCommitMode,
     ) -> Self {
         Self {
             committer,
             transaction_recorder,
             log_messages_bytes_limit,
-            batch_commit_mode,
+            batch_commit_mode: BatchCommitMode::standard(),
         }
+    }
+
+    pub fn with_commit_mode(mut self, mode: BatchCommitMode) -> Self {
+        self.batch_commit_mode = mode;
+        self
     }
 
     pub fn process_and_record_transactions(
@@ -587,7 +591,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
+        let consumer = Consumer::new(committer, recorder, None);
 
         TestFrame {
             mint_keypair,
@@ -610,7 +614,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
+        let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }
 

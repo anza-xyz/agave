@@ -9,12 +9,31 @@
 //! # Vanilla Validators
 //!
 //! Validators that do not opt into TPU extensions keep calling
-//! `Validator::new_with_exit(...)`. That path builds default [`TpuExtensions`]
-//! internally and still bridges `ValidatorConfig::filter_keys` into
-//! [`SetAccountFilter`].
+//! `Validator::new_with_exit(...)`. That function internally calls
+//! `new_with_exit_with_tpu_extensions` with [`TpuExtensions::noop()`] —
+//! `BankingHooks<NoFilter, NoGate, NoExternalLocks>` — so all hot-path hook
+//! checks inline to `false` and are eliminated by the compiler. No vtable, no
+//! branch, no overhead compared to pre-extension Agave.
+//!
+//! The only non-trivial wiring in the vanilla path is bridging
+//! `ValidatorConfig::filter_keys` (the `--filter-keys` CLI flag) into
+//! [`SetAccountFilter`] when the set is non-empty.
 //!
 //! ```ignore
-//! let validator = Validator::new_with_exit(
+//! // Equivalent to what Validator::new_with_exit does internally:
+//! let extensions = if config.filter_keys.is_empty() {
+//!     TpuExtensions::noop()
+//! } else {
+//!     TpuExtensions::builder()
+//!         .banking_hooks(
+//!             BankingHooks::builder()
+//!                 .packet_filter((*config.filter_keys).clone().into()) // HashSet → SetAccountFilter
+//!                 .build(),
+//!         )
+//!         .build()
+//! };
+//!
+//! let validator = Validator::new_with_exit_with_tpu_extensions::<SetAccountFilter, NoGate, NoExternalLocks>(
 //!     node,
 //!     identity_keypair,
 //!     ledger_path,
@@ -28,6 +47,7 @@
 //!     tpu_config,
 //!     admin_rpc_service_post_init,
 //!     xdp_builder_with_src_addr,
+//!     extensions,
 //!     exit,
 //! )?;
 //! ```
@@ -238,6 +258,12 @@ impl BatchCommitPolicy for StandardCommit {
 
 /// Bridges `ValidatorConfig::filter_keys` (the `--filter-keys` CLI flag) to [`AccountFilter`].
 pub struct SetAccountFilter(pub HashSet<Pubkey>);
+
+impl From<HashSet<Pubkey>> for SetAccountFilter {
+    fn from(set: HashSet<Pubkey>) -> Self {
+        Self(set)
+    }
+}
 
 impl AccountFilter for SetAccountFilter {
     #[inline(always)]

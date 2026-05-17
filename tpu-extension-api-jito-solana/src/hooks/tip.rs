@@ -54,7 +54,6 @@ impl TipProcessor for TipManager {
         }
         let fee_info = self.block_builder_fee_info.read().unwrap();
         let _builder_tip_terms = (fee_info.block_builder, fee_info.commission_bps);
-        // Already initialized for this epoch — idempotent, nothing to do.
         self.initialized_epochs.lock().unwrap().insert(ctx.epoch);
     }
 }

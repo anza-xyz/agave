@@ -18,7 +18,6 @@ pub enum TpuStageSpec {
 }
 
 impl TpuStageSpec {
-    /// Wrap an already-spawned stage.
     pub fn running(stage: impl TpuStage) -> Self {
         Self::Running(Box::new(stage))
     }
@@ -36,7 +35,34 @@ impl TpuStageSpec {
     }
 }
 
-pub type BankingWorkerPoolFactories = Vec<Arc<dyn BankingWorkerPoolFactory>>;
+/// Collection of fork-owned banking worker pool factories.
+///
+/// Wraps a `Vec` so the collection can answer scheduling-mode queries without
+/// scattering that logic across core call sites.
+#[derive(Default)]
+pub struct BankingWorkerPoolFactories(Vec<Arc<dyn BankingWorkerPoolFactory>>);
+
+impl BankingWorkerPoolFactories {
+    pub fn replaces_internal_scheduler(&self) -> bool {
+        self.0.iter().any(|p| p.scheduler_mode().replaces_internal())
+    }
+
+    pub fn push(&mut self, pool: Arc<dyn BankingWorkerPoolFactory>) {
+        self.0.push(pool);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<dyn BankingWorkerPoolFactory>> {
+        self.0.iter()
+    }
+}
 
 /// How Agave wires its raw packet intake to sigverify.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,7 +145,7 @@ impl TpuExtensions<NoFilter, NoGate, NoExternalLocks> {
     pub fn noop() -> Self {
         Self {
             stages: Vec::new(),
-            banking_worker_pools: Vec::new(),
+            banking_worker_pools: BankingWorkerPoolFactories::default(),
             banking: BankingHooks::default(),
             packet_intake_mode: PacketIntakeMode::Direct,
         }
@@ -144,7 +170,7 @@ impl Default for TpuExtensionsBuilder<NoFilter, NoGate, NoExternalLocks> {
         Self {
             processing_stages: Vec::new(),
             intake_stages: Vec::new(),
-            banking_worker_pools: Vec::new(),
+            banking_worker_pools: BankingWorkerPoolFactories::default(),
             banking: BankingHooks::default(),
             packet_intake_mode: PacketIntakeMode::Direct,
         }
@@ -154,10 +180,8 @@ impl Default for TpuExtensionsBuilder<NoFilter, NoGate, NoExternalLocks> {
 impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> TpuExtensionsBuilder<F, G, L> {
     /// Add a processing stage (e.g. bundle executor).
     ///
-    /// Processing stages are aborted last on shutdown, giving them time to drain
-    /// before intake is cut off. Pass [`TpuStageSpec::running`] for stages spawned
-    /// before validator startup, or [`TpuStageSpec::factory`] for stages that need
-    /// Agave's launch context.
+    /// Processing stages are aborted last on shutdown, giving them time to drain before intake
+    /// is cut off.
     pub fn processing_stage(mut self, spec: TpuStageSpec) -> Self {
         self.processing_stages.push(spec);
         self
@@ -165,10 +189,8 @@ impl<F: AccountFilter, G: SchedulerGate, L: ExternalLocks> TpuExtensionsBuilder<
 
     /// Add an intake stage (e.g. block-engine relay, relayer, fetch manager).
     ///
-    /// Intake stages are aborted first on shutdown, cutting off new work before
-    /// processing stages are stopped. Pass [`TpuStageSpec::running`] for stages
-    /// spawned before validator startup, or [`TpuStageSpec::factory`] for stages
-    /// that need Agave's launch context.
+    /// Intake stages are aborted first on shutdown, cutting off new work before processing stages
+    /// are stopped.
     pub fn intake_stage(mut self, spec: TpuStageSpec) -> Self {
         self.intake_stages.push(spec);
         self

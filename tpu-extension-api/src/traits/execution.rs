@@ -7,8 +7,17 @@ use {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BundleEntryPolicy {
+    /// Pack all bundle transactions into a single PoH entry.
+    ///
+    /// Simpler and lower-latency, but fails atomically if any transaction in
+    /// the bundle write-conflicts with another in the same entry.
+    AllInOne,
     /// Preserve bundle order and split write-conflicting transactions into
     /// sequential entries before recording.
+    ///
+    /// Jito-Solana uses this policy so that bundles with internal conflicts
+    /// still execute atomically — each conflict group becomes its own entry,
+    /// and the entries are committed together.
     SplitConflicts,
 }
 

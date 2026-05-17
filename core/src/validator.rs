@@ -759,7 +759,7 @@ impl Validator {
                 TpuExtensions::builder()
                     .banking_hooks(
                         BankingHooks::builder()
-                            .packet_filter(SetAccountFilter((*config.filter_keys).clone()))
+                            .packet_filter((*config.filter_keys).clone().into())
                             .build(),
                     )
                     .build(),

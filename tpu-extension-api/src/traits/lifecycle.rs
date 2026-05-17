@@ -13,9 +13,8 @@ use std::thread;
 /// `abort` must be idempotent: `Tpu::join` calls it before `join`, and each
 /// stage's own `join` may also call it defensively.
 pub trait LifecycleStage: Send + 'static {
-    /// Send the shutdown signal. Non-blocking; must be idempotent.
+    /// Non-blocking; must be idempotent.
     fn abort(&self);
-    /// Block until the stage thread exits. Consumes the handle.
     fn join(self: Box<Self>) -> thread::Result<()>;
 }
 
