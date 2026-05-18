@@ -4136,8 +4136,6 @@ fn test_load_account_and_cache_flush_race() {
 /// Regression test for stale reads during a batched flush.
 #[test]
 fn test_load_during_batched_flush_returns_latest() {
-    agave_logger::setup();
-
     let db = Arc::new(AccountsDb::new_single_for_tests());
     let pubkey = Arc::new(Pubkey::new_unique());
     let exit = Arc::new(AtomicBool::new(false));
@@ -4147,7 +4145,7 @@ fn test_load_during_batched_flush_returns_latest() {
         0,
         &[(
             pubkey.as_ref(),
-            &AccountSharedData::new(1, 0, AccountSharedData::default().owner()),
+            &AccountSharedData::new(1, 0, &Pubkey::default()),
         )][..],
     ));
     db.add_root(0);
@@ -4159,7 +4157,7 @@ fn test_load_during_batched_flush_returns_latest() {
         1,
         &[(
             pubkey.as_ref(),
-            &AccountSharedData::new(2, 0, AccountSharedData::default().owner()),
+            &AccountSharedData::new(2, 0, &Pubkey::default()),
         )][..],
     ));
     db.add_root(1);
@@ -4168,24 +4166,18 @@ fn test_load_during_batched_flush_returns_latest() {
     // has to process ~100 other slots before it reaches slot 1.
     for slot in 2..=100 {
         let other = Pubkey::new_unique();
-        let account = AccountSharedData::new(slot, 0, AccountSharedData::default().owner());
+        let account = AccountSharedData::new(slot, 0, &Pubkey::default());
         db.store_for_tests((slot, &[(&other, &account)][..]));
         db.add_root(slot);
     }
 
-    let t_flush_accounts_cache = {
-        let db = db.clone();
-        std::thread::Builder::new()
-            .name("account-cache-flush".to_string())
-            .spawn(move || db.flush_accounts_cache(true, None))
-            .unwrap()
-    };
-
     // The reader must always see slot 1's value; we check lamports == 2 to
     // catch stale reads of slot 0 (lamports == 1).
-    let t_do_load = start_load_thread(false, Ancestors::default(), db, exit.clone(), pubkey, |_| 2);
+    let t_do_load =
+        start_load_thread(false, Ancestors::default(), db.clone(), exit.clone(), pubkey, |_| 2);
 
-    t_flush_accounts_cache.join().unwrap();
+    db.flush_accounts_cache(true, None);
+
     exit.store(true, Ordering::Relaxed);
     t_do_load.join().map_err(std::panic::resume_unwind).unwrap();
 }
