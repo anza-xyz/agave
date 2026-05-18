@@ -4934,7 +4934,7 @@ impl RpcClient {
         serde_json::from_value(response)
             .map_err(|err| ClientError::new_with_request(err.into(), request))
     }
-    
+
     /// Returns accumulated transport metrics for this client instance.
     pub fn get_transport_stats(&self) -> RpcTransportStats {
         self.sender.get_transport_stats()

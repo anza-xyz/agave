@@ -53,7 +53,7 @@ pub struct RpcClientConfig {
 }
 
 impl RpcClientConfig {
-        /// Create a new [`RpcClientConfig`] that uses the provided [`CommitmentConfig`].
+    /// Create a new [`RpcClientConfig`] that uses the provided [`CommitmentConfig`].
     ///
     /// All other configuration fields retain their default values. This helper is
     /// convenient when a caller needs to tweak only the commitment level while
@@ -2008,7 +2008,6 @@ impl RpcClient {
     ) -> ClientResult<RpcVoteAccountStatus> {
         self.invoke((self.rpc_client.as_ref()).get_vote_accounts_with_config(config))
     }
-
 
     /// Returns information about all the nodes participating in the cluster.
     ///
