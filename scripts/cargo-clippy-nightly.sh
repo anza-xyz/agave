@@ -32,5 +32,4 @@ source "$here/../ci/rust-version.sh" nightly
   --deny=clippy::arithmetic_side_effects \
   --deny=clippy::manual_let_else \
   --deny=clippy::uninlined-format-args \
-  --deny=clippy::used_underscore_binding \
-  --allow=clippy::collapsible_if
+  --deny=clippy::used_underscore_binding
