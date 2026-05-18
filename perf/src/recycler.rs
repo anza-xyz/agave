@@ -2,7 +2,7 @@ use {
     rand::{Rng, rng},
     std::sync::{
         Arc, Mutex, Weak,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -74,32 +74,9 @@ pub trait Reset {
         Self: std::marker::Sized;
 }
 
-static WARM_RECYCLERS: AtomicBool = AtomicBool::new(false);
-
-pub fn enable_recycler_warming() {
-    WARM_RECYCLERS.store(true, Ordering::Relaxed);
-}
-
-fn warm_recyclers() -> bool {
-    WARM_RECYCLERS.load(Ordering::Relaxed)
-}
-
 impl<T: Default + Reset + Sized> Recycler<T> {
-    pub fn warmed(num: usize, size_hint: usize) -> Self {
-        let new = Self::default();
-        if warm_recyclers() {
-            let warmed_items: Vec<_> = (0..num)
-                .map(|_| {
-                    let mut item = new.allocate("warming");
-                    item.warm(size_hint);
-                    item
-                })
-                .collect();
-            warmed_items
-                .into_iter()
-                .for_each(|i| new.recycler.recycle(i));
-        }
-        new
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn allocate(&self, name: &'static str) -> T {

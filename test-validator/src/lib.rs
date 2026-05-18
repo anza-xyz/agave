@@ -160,7 +160,7 @@ impl Default for TestValidatorGenesis {
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
             rent: Rent::default(),
             rpc_config: JsonRpcConfig::default_for_test(),
-            pubsub_config: PubSubConfig::default(),
+            pubsub_config: PubSubConfig::default_for_tests(),
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
             accounts: HashMap::<Pubkey, AccountSharedData>::default(),
@@ -1087,8 +1087,6 @@ impl TestValidator {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             scan_filter_for_shrinking: ScanFilter::All,
-            use_registered_io_uring_buffers: false,
-            snapshots_use_direct_io: false,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
@@ -1135,6 +1133,8 @@ impl TestValidator {
                 bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+                use_registered_io_uring_buffers: false,
+                use_direct_io: false,
                 ..SnapshotConfig::default()
             },
             warp_slot: config.warp_slot,
@@ -1159,7 +1159,6 @@ impl TestValidator {
             config.authorized_voter_keypairs.clone(),
             vec![],
             &validator_config,
-            true, // should_check_duplicate_instance
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,

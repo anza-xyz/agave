@@ -649,7 +649,7 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors);
         assert_eq!(actual_accounts_lt_hash, calculated_accounts_lt_hash);
     }
 
@@ -803,7 +803,7 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors);
         assert_eq!(expected_accounts_lt_hash, calculated_accounts_lt_hash);
     }
 
@@ -907,9 +907,9 @@ mod tests {
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1005,9 +1005,9 @@ mod tests {
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,

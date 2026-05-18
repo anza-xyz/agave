@@ -38,6 +38,13 @@ const fn get_target_batch_pad_bytes() -> u64 {
     get_data_shred_bytes_per_batch_typical() / 20
 }
 
+fn get_max_batch_byte_count(serialized_batch_byte_count: u64) -> u64 {
+    let next_full_batch_byte_count = serialized_batch_byte_count
+        .div_ceil(get_data_shred_bytes_per_batch_typical())
+        .saturating_mul(get_data_shred_bytes_per_batch_typical());
+    next_full_batch_byte_count.max(get_target_batch_bytes_default())
+}
+
 fn keep_coalescing_entries(
     last_tick_height: u64,
     max_tick_height: u64,
@@ -113,49 +120,13 @@ fn recv_slot_components_maybe_empty(
         }
     };
 
-    // Drain the channel of entries until we hit a marker or the slot ends
-    let mut hit_marker = false;
-    while last_tick_height != bank.max_tick_height() {
-        let Ok((try_bank, (next_entry_or_marker, tick_height))) = receiver.try_recv() else {
-            break;
-        };
-        // If the bank changed, that implies the previous slot was interrupted and we do not have to
-        // broadcast its entries.
-        if try_bank.slot() != bank.slot() {
-            warn!("Broadcast for slot: {} interrupted", bank.slot());
-            entries.clear();
-            last_tick_height = 0;
-            bank = try_bank.clone();
-        }
-        match next_entry_or_marker {
-            EntryOrMarker::Marker(ref _marker) => {
-                // If we hit a block marker, save it for next time and stop draining
-                *carryover_entry = Some((try_bank, (next_entry_or_marker, tick_height)));
-                hit_marker = true;
-                break;
-            }
-            EntryOrMarker::Entry(entry) => {
-                // Only update after confirming the entry is included in this batch.
-                last_tick_height = tick_height;
-
-                // Add the entry to our batch
-                entries.push(entry);
-                assert!(last_tick_height <= bank.max_tick_height());
-            }
-        }
-    }
-
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
 
     // Determine the maximum batch size we will allow for coalescing. Normally
-    // this would just be the default target batch size, but if we happened to
-    // pull out a large number of entries from the channel, we might have
-    // already exceeded the default target, and we should try to build towards the
-    // next batch boundary to avoid excessive padding.
-    let next_full_batch_byte_count = serialized_batch_byte_count
-        .div_ceil(get_data_shred_bytes_per_batch_typical())
-        .saturating_mul(get_data_shred_bytes_per_batch_typical());
-    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
+    // this would just be the default target batch size, but if the first entry
+    // already exceeded that target, try to build towards the next batch boundary
+    // to avoid excessive padding.
+    let mut max_batch_byte_count = get_max_batch_byte_count(serialized_batch_byte_count);
 
     // Coalesce entries until one of the following conditions are hit:
     // 1. We ticked through the entire slot.
@@ -164,15 +135,13 @@ fn recv_slot_components_maybe_empty(
     // 4. We hit a block marker.
     // 5. We're "close enough" to tightly packing erasure batches.
     let mut coalesce_start = Instant::now();
-    while !hit_marker
-        && keep_coalescing_entries(
-            last_tick_height,
-            bank.max_tick_height(),
-            serialized_batch_byte_count,
-            max_batch_byte_count,
-            process_stats,
-        )
-    {
+    while keep_coalescing_entries(
+        last_tick_height,
+        bank.max_tick_height(),
+        serialized_batch_byte_count,
+        max_batch_byte_count,
+        process_stats,
+    ) {
         let Ok((try_bank, (entry_or_marker, tick_height))) =
             receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
         else {
@@ -185,6 +154,7 @@ fn recv_slot_components_maybe_empty(
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
             serialized_batch_byte_count = 8; // Vec len
+            max_batch_byte_count = get_max_batch_byte_count(serialized_batch_byte_count);
             last_tick_height = 0;
             bank = try_bank.clone();
             coalesce_start = Instant::now();
@@ -314,6 +284,18 @@ mod tests {
         (genesis_config, bank0, bank_forks, tx)
     }
 
+    fn oversized_entry(last_hash: &mut Hash, tx: &Transaction) -> Entry {
+        let mut num_transactions = 1;
+        loop {
+            let entry = Entry::new(last_hash, 1, vec![tx.clone(); num_transactions]);
+            if serialized_size(&vec![entry.clone()]).unwrap() > get_target_batch_bytes_default() {
+                *last_hash = entry.hash;
+                return entry;
+            }
+            num_transactions *= 2;
+        }
+    }
+
     const LAST_TICK_HEIGHT: u64 = 1;
     const MAX_TICK_HEIGHT: u64 = 10;
 
@@ -354,6 +336,36 @@ mod tests {
         }
         assert_eq!(last_tick_height, bank1.max_tick_height());
         assert_eq!(res_entries, entries);
+    }
+
+    #[test]
+    fn test_recv_slot_components_does_not_pre_drain_queue() {
+        let (genesis_config, bank0, _bank_forks, tx) = setup_test();
+        let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let (s, r) = unbounded();
+        let mut last_hash = genesis_config.hash();
+        let entries: Vec<_> = (1..=3)
+            .map(|tick_height| {
+                let entry = oversized_entry(&mut last_hash, &tx);
+                s.send((
+                    bank1.clone(),
+                    (EntryOrMarker::Entry(entry.clone()), tick_height),
+                ))
+                .unwrap();
+                entry
+            })
+            .collect();
+
+        let mut carryover = None;
+        let result =
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+
+        assert_eq!(result.last_tick_height, 1);
+        assert!(matches!(
+            result.component,
+            BlockComponent::EntryBatch(ref batch) if batch == &entries[..1]
+        ));
+        assert!(carryover.is_some() || !r.is_empty());
     }
 
     #[test]

@@ -12,8 +12,6 @@ use {
     thiserror::Error,
 };
 
-pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum VoteHistoryVersions {
     Current(VoteHistory),

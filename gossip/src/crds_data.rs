@@ -1,10 +1,8 @@
 use {
     crate::{
         contact_info::ContactInfo,
-        deprecated,
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
-        legacy_contact_info::LegacyContactInfo,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
@@ -21,10 +19,6 @@ use {
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
 pub(crate) const MAX_SLOT: u64 = 1_000_000_000_000_000;
-/// Maximum number of hashes in AccountsHashes a node publishes
-/// such that the serialized size of the push/pull message stays below
-/// PACKET_DATA_SIZE.
-const MAX_ACCOUNTS_HASHES: usize = 16;
 
 pub(crate) type VoteIndex = u8;
 // Until the cluster upgrades we allow votes from higher indices
@@ -35,6 +29,11 @@ pub const MAX_VOTES: VoteIndex = 12;
 pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 
+// Helper for deprecated types
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Deprecated {}
+reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
+
 /// CrdsData that defines the different types of items CrdsValues can hold
 /// * Merge Strategy - Latest wallclock is picked
 /// * LowestSlot index is deprecated
@@ -43,34 +42,33 @@ pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
-    LegacyContactInfo(LegacyContactInfo),
+    LegacyContactInfo(Deprecated), // Deprecated
     Vote(VoteIndex, Vote),
     LowestSlot(
         #[serde(deserialize_with = "reject_nonzero_u8")] u8, // u8 is deprecated
         LowestSlot,
     ),
     #[allow(private_interfaces)]
-    LegacySnapshotHashes(LegacySnapshotHashes), // Deprecated
+    LegacySnapshotHashes(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    AccountsHashes(AccountsHashes), // Deprecated
+    AccountsHashes(Deprecated), // Deprecated
     EpochSlots(EpochSlotsIndex, EpochSlots),
     #[allow(private_interfaces)]
-    LegacyVersion(LegacyVersion), // Deprecated
+    LegacyVersion(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    Version(Version), // Deprecated
+    Version(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    NodeInstance(NodeInstance), // Deprecated
+    NodeInstance(Deprecated), // Deprecated
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
     RestartLastVotedForkSlots(RestartLastVotedForkSlots), // Deprecated
-    RestartHeaviestFork(RestartHeaviestFork),             //Deprecated
+    RestartHeaviestFork(RestartHeaviestFork),             // Deprecated
 }
 
 impl Sanitize for CrdsData {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         match self {
-            CrdsData::LegacyContactInfo(val) => val.sanitize(),
             CrdsData::Vote(ix, val) => {
                 if *ix >= OLD_MAX_VOTES {
                     return Err(SanitizeError::ValueOutOfBounds);
@@ -83,17 +81,12 @@ impl Sanitize for CrdsData {
                 }
                 val.sanitize()
             }
-            CrdsData::LegacySnapshotHashes(val) => val.sanitize(),
-            CrdsData::AccountsHashes(val) => val.sanitize(),
             CrdsData::EpochSlots(ix, val) => {
                 if *ix as usize >= MAX_EPOCH_SLOTS as usize {
                     return Err(SanitizeError::ValueOutOfBounds);
                 }
                 val.sanitize()
             }
-            CrdsData::LegacyVersion(version) => version.sanitize(),
-            CrdsData::Version(version) => version.sanitize(),
-            CrdsData::NodeInstance(node) => node.sanitize(),
             CrdsData::DuplicateShred(ix, shred) => {
                 if *ix >= MAX_DUPLICATE_SHREDS {
                     Err(SanitizeError::ValueOutOfBounds)
@@ -105,6 +98,13 @@ impl Sanitize for CrdsData {
             CrdsData::ContactInfo(node) => node.sanitize(),
             CrdsData::RestartLastVotedForkSlots(slots) => slots.sanitize(),
             CrdsData::RestartHeaviestFork(fork) => fork.sanitize(),
+            // Deprecated
+            CrdsData::AccountsHashes(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::NodeInstance(_)
+            | CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
         }
     }
 }
@@ -118,7 +118,7 @@ pub(crate) fn new_rand_timestamp<R: Rng>(rng: &mut R) -> u64 {
 impl CrdsData {
     /// New random CrdsData for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
-        let kind = rng.random_range(0..8);
+        let kind = rng.random_range(0..6);
         // TODO: Implement other kinds of CrdsData here.
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
@@ -126,13 +126,11 @@ impl CrdsData {
             0 => CrdsData::from(ContactInfo::new_rand(rng, pubkey)),
             // Index for LowestSlot is deprecated and should be zero.
             1 => CrdsData::LowestSlot(0, LowestSlot::new_rand(rng, pubkey)),
-            2 => CrdsData::LegacySnapshotHashes(LegacySnapshotHashes::new_rand(rng, pubkey)),
-            3 => CrdsData::AccountsHashes(AccountsHashes::new_rand(rng, pubkey)),
-            4 => CrdsData::Vote(rng.random_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
-            5 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
+            2 => CrdsData::Vote(rng.random_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
+            3 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
                 rng, pubkey,
             )),
-            6 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
+            4 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
             _ => CrdsData::EpochSlots(
                 rng.random_range(0..MAX_EPOCH_SLOTS),
                 EpochSlots::new_rand(rng, pubkey),
@@ -142,39 +140,41 @@ impl CrdsData {
 
     pub(crate) fn wallclock(&self) -> u64 {
         match self {
-            CrdsData::LegacyContactInfo(contact_info) => contact_info.wallclock(),
             CrdsData::Vote(_, vote) => vote.wallclock,
             CrdsData::LowestSlot(_, obj) => obj.wallclock,
-            CrdsData::LegacySnapshotHashes(hash) => hash.wallclock,
-            CrdsData::AccountsHashes(hash) => hash.wallclock,
             CrdsData::EpochSlots(_, p) => p.wallclock,
-            CrdsData::LegacyVersion(version) => version.wallclock,
-            CrdsData::Version(version) => version.wallclock,
-            CrdsData::NodeInstance(node) => node.wallclock,
             CrdsData::DuplicateShred(_, shred) => shred.wallclock,
             CrdsData::SnapshotHashes(hash) => hash.wallclock,
             CrdsData::ContactInfo(node) => node.wallclock(),
             CrdsData::RestartLastVotedForkSlots(slots) => slots.wallclock,
             CrdsData::RestartHeaviestFork(fork) => fork.wallclock,
+            // Deprecated: sanitize() rejects these before any caller reaches here.
+            CrdsData::AccountsHashes(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::NodeInstance(_)
+            | CrdsData::Version(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
 
     pub(crate) fn pubkey(&self) -> Pubkey {
         match &self {
-            CrdsData::LegacyContactInfo(contact_info) => *contact_info.pubkey(),
             CrdsData::Vote(_, vote) => vote.from,
             CrdsData::LowestSlot(_, slots) => slots.from,
-            CrdsData::LegacySnapshotHashes(hash) => hash.from,
-            CrdsData::AccountsHashes(hash) => hash.from,
             CrdsData::EpochSlots(_, p) => p.from,
-            CrdsData::LegacyVersion(version) => version.from,
-            CrdsData::Version(version) => version.from,
-            CrdsData::NodeInstance(node) => node.from,
             CrdsData::DuplicateShred(_, shred) => shred.from,
             CrdsData::SnapshotHashes(hash) => hash.from,
             CrdsData::ContactInfo(node) => *node.pubkey(),
             CrdsData::RestartLastVotedForkSlots(slots) => slots.from,
             CrdsData::RestartHeaviestFork(fork) => fork.from,
+            // Deprecated: sanitize() rejects these before any caller reaches here.
+            CrdsData::AccountsHashes(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::NodeInstance(_)
+            | CrdsData::Version(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
 
@@ -216,48 +216,6 @@ impl From<&ContactInfo> for CrdsData {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AccountsHashes {
-    pub(crate) from: Pubkey,
-    pub(crate) hashes: Vec<(Slot, Hash)>,
-    pub(crate) wallclock: u64,
-}
-reject_deserialize!(AccountsHashes, "AccountsHashes is deprecated");
-
-impl Sanitize for AccountsHashes {
-    fn sanitize(&self) -> Result<(), SanitizeError> {
-        sanitize_wallclock(self.wallclock)?;
-        for (slot, _) in &self.hashes {
-            if *slot >= MAX_SLOT {
-                return Err(SanitizeError::ValueOutOfBounds);
-            }
-        }
-        self.from.sanitize()
-    }
-}
-
-impl AccountsHashes {
-    /// New random AccountsHashes for tests and benchmarks.
-    pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
-        let num_hashes = rng.random_range(0..MAX_ACCOUNTS_HASHES) + 1;
-        let hashes = std::iter::repeat_with(|| {
-            let slot = 47825632 + rng.random_range(0..512);
-            let hash = Hash::new_unique();
-            (slot, hash)
-        })
-        .take(num_hashes)
-        .collect();
-        Self {
-            from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
-            hashes,
-            wallclock: new_rand_timestamp(rng),
-        }
-    }
-}
-
-type LegacySnapshotHashes = AccountsHashes;
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
@@ -290,13 +248,23 @@ pub struct LowestSlot {
     pub(crate) from: Pubkey,
     root: Slot, //deprecated
     pub lowest: Slot,
-    slots: BTreeSet<Slot>,                        //deprecated
-    stash: Vec<deprecated::EpochIncompleteSlots>, //deprecated
+    slots: BTreeSet<Slot>, //deprecated
+    stash: Vec<u8>,        //deprecated
     wallclock: u64,
 }
 
 impl LowestSlot {
-    pub(crate) fn new(from: Pubkey, lowest: Slot, wallclock: u64) -> Self {
+    #[cfg(any(test, feature = "conformance"))]
+    pub(crate) fn wallclock(&self) -> u64 {
+        self.wallclock
+    }
+
+    #[cfg(any(test, feature = "conformance"))]
+    pub(crate) fn from(&self) -> &Pubkey {
+        &self.from
+    }
+
+    pub fn new(from: Pubkey, lowest: Slot, wallclock: u64) -> Self {
         Self {
             from,
             root: 0,
@@ -397,6 +365,16 @@ impl Vote {
         &self.transaction
     }
 
+    #[cfg(any(test, feature = "conformance"))]
+    pub(crate) fn from(&self) -> &Pubkey {
+        &self.from
+    }
+
+    #[cfg(any(test, feature = "conformance"))]
+    pub(crate) fn wallclock(&self) -> u64 {
+        self.wallclock
+    }
+
     pub(crate) fn slot(&self) -> Option<Slot> {
         self.slot
     }
@@ -419,57 +397,6 @@ impl<'de> Deserialize<'de> for Vote {
             .map_err(serde::de::Error::custom)?;
         Self::new(vote.from, vote.transaction, vote.wallclock)
             .ok_or_else(|| serde::de::Error::custom("invalid vote tx"))
-    }
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LegacyVersion {
-    from: Pubkey,
-    wallclock: u64,
-    version: solana_version::v1::Version,
-}
-reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
-
-impl Sanitize for LegacyVersion {
-    fn sanitize(&self) -> Result<(), SanitizeError> {
-        sanitize_wallclock(self.wallclock)?;
-        self.from.sanitize()?;
-        self.version.sanitize()
-    }
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Version {
-    from: Pubkey,
-    wallclock: u64,
-    version: solana_version::v2::Version,
-}
-reject_deserialize!(Version, "Version is deprecated");
-
-impl Sanitize for Version {
-    fn sanitize(&self) -> Result<(), SanitizeError> {
-        sanitize_wallclock(self.wallclock)?;
-        self.from.sanitize()?;
-        self.version.sanitize()
-    }
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct NodeInstance {
-    from: Pubkey,
-    wallclock: u64,
-    timestamp: u64, // Timestamp when the instance was created.
-    token: u64,     // Randomly generated value at node instantiation.
-}
-reject_deserialize!(NodeInstance, "NodeInstance is deprecated");
-
-impl Sanitize for NodeInstance {
-    fn sanitize(&self) -> Result<(), SanitizeError> {
-        sanitize_wallclock(self.wallclock)?;
-        self.from.sanitize()
     }
 }
 
@@ -530,7 +457,7 @@ mod test {
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
 
         let mut o = ls;
-        o.stash.push(deprecated::EpochIncompleteSlots::default());
+        o.stash.push(0);
         let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(0, o));
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
     }
@@ -592,73 +519,21 @@ mod test {
 
     #[test]
     fn test_deprecated_values_fail_deserialization() {
-        let keypair = Keypair::new();
+        let deprecated_values = [
+            CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+        ];
 
-        // NodeInstance
-        let node_instance = CrdsData::NodeInstance(NodeInstance {
-            from: keypair.pubkey(),
-            wallclock: timestamp(),
-            timestamp: 0,
-            token: 0,
-        });
-        let bytes = bincode::serialize(&node_instance).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        #[derive(serde::Serialize)]
-        struct LegacyVersion1Mirror {
-            major: u16,
-            minor: u16,
-            patch: u16,
-            commit: Option<u32>,
+        for value in deprecated_values {
+            let bytes = bincode::serialize(&value).unwrap();
+            assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
         }
 
-        let legacy_v1: solana_version::v1::Version = {
-            let bytes = bincode::serialize(&LegacyVersion1Mirror {
-                major: 0,
-                minor: 0,
-                patch: 0,
-                commit: None,
-            })
-            .unwrap();
-            bincode::deserialize(&bytes).unwrap()
-        };
-
-        // LegacyVersion
-        let legacy_version = CrdsData::LegacyVersion(LegacyVersion {
-            from: keypair.pubkey(),
-            wallclock: timestamp(),
-            version: legacy_v1,
-        });
-        let bytes = bincode::serialize(&legacy_version).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // Version
-        let version = CrdsData::Version(Version {
-            from: keypair.pubkey(),
-            wallclock: timestamp(),
-            version: solana_version::v2::Version::default(),
-        });
-        let bytes = bincode::serialize(&version).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacyContactInfo
-        let legacy_contact_info = CrdsData::LegacyContactInfo(LegacyContactInfo::default());
-        let bytes = bincode::serialize(&legacy_contact_info).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // AccountsHashes
-        let mut rng = rand::rng();
-        let accounts_hashes =
-            CrdsData::AccountsHashes(AccountsHashes::new_rand(&mut rng, Some(keypair.pubkey())));
-        let bytes = bincode::serialize(&accounts_hashes).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacySnapshotHashes
-        let legacy_snapshot_hashes = CrdsData::LegacySnapshotHashes(
-            LegacySnapshotHashes::new_rand(&mut rng, Some(keypair.pubkey())),
-        );
-        let bytes = bincode::serialize(&legacy_snapshot_hashes).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+        let keypair = Keypair::new();
 
         // LowestSlot(1, ...)
         let lowest_slot =

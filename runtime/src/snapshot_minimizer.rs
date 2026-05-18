@@ -78,10 +78,7 @@ impl<'a> SnapshotMinimizer<'a> {
             // Since the account state has changed, the accounts lt hash must be recalculated
             let new_accounts_lt_hash = minimizer
                 .accounts_db()
-                .calculate_accounts_lt_hash_at_startup_from_index(
-                    &minimizer.bank.ancestors,
-                    minimizer.bank.slot(),
-                );
+                .calculate_accounts_lt_hash_at_startup_from_index(&minimizer.bank.ancestors);
             bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
         }
     }
@@ -309,10 +306,11 @@ impl<'a> SnapshotMinimizer<'a> {
 
         let mut shrink_in_progress = None;
         if total_bytes > 0 {
-            shrink_in_progress = Some(
-                self.accounts_db()
-                    .get_store_for_shrink(slot, total_bytes as u64),
-            );
+            shrink_in_progress = Some(self.accounts_db().get_store_for_shrink(
+                slot,
+                Arc::clone(storage),
+                total_bytes as u64,
+            ));
             let new_storage = shrink_in_progress.as_ref().unwrap().new_storage();
 
             let accounts = [(slot, &keep_accounts[..])];
@@ -653,9 +651,9 @@ mod tests {
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
             None,

@@ -1,5 +1,5 @@
 use {
-    crate::FileSize,
+    crate::{FileSize, io_setup::IoSetupState},
     std::{fs, io, path::Path},
 };
 
@@ -18,24 +18,25 @@ const DEFAULT_BUF_WRITER_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 /// Return a buffered writer for creating a new file at `path`
 ///
 /// The returned writer is using a buffer size tuned for writing large files to disks.
-pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Write> {
+/// `io_setup` controls the I/O configuration (e.g. direct I/O, shared sqpoll).
+pub fn large_file_buf_writer(
+    path: impl AsRef<Path>,
+    io_setup: &IoSetupState,
+) -> io::Result<impl io::Write> {
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
         use {
-            crate::{
-                io_setup::IoSetupState,
-                io_uring::{
-                    file_creator::IoUringFileCreatorBuilder, file_writer::IoUringFileWriter,
-                },
+            crate::io_uring::{
+                file_creator::IoUringFileCreatorBuilder, file_writer::IoUringFileWriter,
             },
             std::sync::Arc,
         };
 
-        let io_setup = IoSetupState::default();
         let file_creator = IoUringFileCreatorBuilder::new()
             .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
             .write_with_direct_io(io_setup.use_direct_io)
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
             .build(DEFAULT_IO_URING_BUFFER_SIZE, |_| None)?;
 
         IoUringFileWriter::new(
@@ -53,6 +54,7 @@ pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Writ
 
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = io_setup;
         let file = fs::File::create(path)?;
 
         Ok(io::BufWriter::with_capacity(

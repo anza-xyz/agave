@@ -14,6 +14,16 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
         .saturating_add(size_of::<T>() as u64);
     invoke_context.compute_meter.consume_checked(amount)?;
 
+    // If a test case contains a program that is owned by the deprecated
+    // bpf loader but also contains get_sysvar syscalls, the store into the
+    // host memory will segfault due to unaligned accesses. However, this has
+    // no consensus impact because this loader was deprecated before the get_sysvar
+    // syscall was activated.
+    let check_aligned = invoke_context.get_check_aligned();
+    if !check_aligned {
+        return Err(SyscallError::UnalignedPointer.into());
+    }
+
     if var_addr >= ebpf::MM_INPUT_START
         && invoke_context
             .get_feature_set()
@@ -22,12 +32,11 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
         return Err(SyscallError::InvalidPointer.into());
     }
 
-    let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     translate_mut!(
         memory_mapping,
         check_aligned,
-        let var: &mut T = map(var_addr)?;
+        let var: (&mut std::mem::MaybeUninit<T>) = map(var_addr)?;
     );
 
     // this clone looks unnecessary now, but it exists to zero out trailing alignment bytes
@@ -35,7 +44,7 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     // but there are tests using MemoryMapping that expect to see this
     // we preserve the previous behavior out of an abundance of caution
     let sysvar: Arc<T> = sysvar?;
-    *var = T::clone(sysvar.as_ref());
+    var.write(T::clone(&sysvar));
 
     Ok(SUCCESS)
 }
@@ -188,6 +197,16 @@ declare_builtin_function!(
             .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost));
         invoke_context.compute_meter.consume_checked(cost)?;
 
+        // If a test case contains a program that is owned by the deprecated
+        // bpf loader but also contains get_sysvar syscalls, the store into the
+        // host memory will segfault due to unaligned accesses. However, this has
+        // no consensus impact because this loader was deprecated before the get_sysvar
+        // syscall was activated.
+        let check_aligned = invoke_context.get_check_aligned();
+        if !check_aligned {
+            return Err(SyscallError::UnalignedPointer.into());
+        }
+
         if var_addr >= ebpf::MM_INPUT_START
             && invoke_context
                 .get_feature_set()
@@ -196,13 +215,12 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidPointer.into());
         }
 
-        let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let var: &mut [u8] = map(var_addr, length)?;
+            let var: (&mut [MaybeUninit<u8>]) = map(var_addr, length)?;
         );
 
         // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
@@ -227,7 +245,7 @@ declare_builtin_function!(
 
         // "`1` if `offset + length` is greater than the length of the sysvar data."
         if let Some(sysvar_slice) = sysvar_buf.get(offset as usize..offset_length as usize) {
-            var.copy_from_slice(sysvar_slice);
+            var.write_copy_of_slice(sysvar_slice);
         } else {
             return Ok(OFFSET_LENGTH_EXCEEDS_SYSVAR);
         }

@@ -16,8 +16,8 @@ use {
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
-        Pubkey as BLSPubkey, Signature as BLSSignature, keypair::Keypair as BLSKeypair,
-        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+        BLS_SIGNATURE_AFFINE_SIZE, Pubkey as BLSPubkey, Signature as BLSSignature,
+        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Epoch,
     solana_cluster_type::ClusterType,
@@ -322,7 +322,7 @@ pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     // so we add a fake genesis certificate.
     let cert = Certificate {
         cert_type: CertificateType::Genesis(0, Hash::default()),
-        signature: BLSSignature::default(),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::default(),
     };
     let cert_size = bincode::serialized_size(&cert).unwrap();
@@ -595,6 +595,7 @@ pub fn create_lockup_stake_account(
         .set_state(&StakeStateV2::Initialized(Meta {
             authorized: *authorized,
             lockup: *lockup,
+            #[expect(deprecated)]
             rent_exempt_reserve,
         }))
         .expect("set_state");

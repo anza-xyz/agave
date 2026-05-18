@@ -8,13 +8,17 @@ use {
     clap::{ArgMatches, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
-    solana_accounts_db::utils::{
-        create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
-        validate_account_paths_for_direct_io,
+    solana_accounts_db::{
+        accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        utils::{
+            create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
+            validate_account_paths_for_direct_io,
+        },
     },
     solana_clock::Slot,
-    solana_core::validator::{
-        BlockProductionMethod, BlockVerificationMethod, supported_scheduling_mode,
+    solana_core::{
+        resource_limits,
+        validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
@@ -67,7 +71,6 @@ pub struct LoadAndProcessLedgerOutput {
     // not. It is safe to let ABS continue in the background, and ABS will stop
     // if/when it finally checks the exit flag
     pub accounts_background_service: AccountsBackgroundService,
-    pub unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
 }
 
 const PROCESS_SLOTS_HELP_STRING: &str =
@@ -185,6 +188,10 @@ pub fn load_and_process_ledger(
             full_snapshot_archives_dir,
             incremental_snapshot_archives_dir,
             bank_snapshots_dir,
+            use_direct_io: !arg_matches.is_present("no_accounts_db_snapshots_direct_io"),
+            use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+                TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+            ),
             ..SnapshotConfig::new_load_only()
         }
     };
@@ -260,9 +267,15 @@ pub fn load_and_process_ledger(
     let account_paths = account_run_paths;
 
     validate_account_paths_for_direct_io(
-        &process_options.accounts_db_config,
-        &account_paths,
-        &account_snapshot_paths,
+        snapshot_config.use_direct_io,
+        account_paths
+            .iter()
+            .chain(account_snapshot_paths.iter())
+            .chain([
+                &snapshot_config.full_snapshot_archives_dir,
+                &snapshot_config.incremental_snapshot_archives_dir,
+                &snapshot_config.bank_snapshots_dir,
+            ]),
     )
     .map_err(LoadAndProcessLedgerError::ValidateAccountPaths)?;
 
@@ -388,31 +401,31 @@ pub fn load_and_process_ledger(
         BlockProductionMethod
     )
     .unwrap_or_default();
+    block_production_method.warn_if_deprecated_value();
     info!(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
          {block_production_method}",
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let unified_scheduler_pool = match (&block_verification_method, &block_production_method) {
-        methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
+    match block_verification_method {
+        BlockVerificationMethod::UnifiedScheduler => {
             let no_replay_vote_sender = None;
+            let no_prioritization_fee_cache = None;
 
-            let pool = DefaultSchedulerPool::new(
-                supported_scheduling_mode(methods),
+            let scheduler_pool = DefaultSchedulerPool::new(
                 unified_scheduler_handler_threads,
                 process_options.runtime_config.log_messages_bytes_limit,
                 transaction_status_sender.clone(),
                 no_replay_vote_sender,
-                None,
+                no_prioritization_fee_cache,
             );
             bank_forks
                 .write()
                 .unwrap()
-                .install_scheduler_pool(pool.clone());
-            Some(pool)
+                .install_scheduler_pool(scheduler_pool);
         }
-    };
+    }
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
 
@@ -461,7 +474,6 @@ pub fn load_and_process_ledger(
         bank_forks,
         starting_snapshot_hashes,
         accounts_background_service,
-        unified_scheduler_pool,
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 

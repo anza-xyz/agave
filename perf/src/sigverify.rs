@@ -2,10 +2,7 @@
 //! By default, signatures are verified in parallel using all available CPU
 //! cores.
 use {
-    crate::{
-        packet::{BytesPacketBatch, PacketBatch, PacketFlags, PacketRefMut, RecycledPacketBatch},
-        recycled_vec::RecycledVec,
-    },
+    crate::packet::{PacketBatch, PacketFlags, PacketRefMut},
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_version::TransactionVersion,
         transaction_view::SanitizedTransactionView,
@@ -16,37 +13,10 @@ use {
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
-pub type TxOffset = RecycledVec<u32>;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum PacketError {
-    InvalidLen,
-    InvalidPubkeyLen,
-    InvalidShortVec,
-    InvalidSignatureLen,
-    MismatchSignatureLen,
-    PayerNotWritable,
-    InvalidProgramIdIndex,
-    InvalidNumberOfInstructions,
-    UnsupportedVersion,
-}
-
-impl std::convert::From<std::boxed::Box<bincode::ErrorKind>> for PacketError {
-    fn from(_e: std::boxed::Box<bincode::ErrorKind>) -> PacketError {
-        PacketError::InvalidShortVec
-    }
-}
-
-impl std::convert::From<std::num::TryFromIntError> for PacketError {
-    fn from(_e: std::num::TryFromIntError) -> Self {
-        Self::InvalidLen
-    }
-}
-
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
 #[must_use]
-fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
+fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool, enable_tx_v1: bool) -> bool {
     // If this packet was already marked as discard, drop it
     if packet.meta().discard() {
         return false;
@@ -61,8 +31,7 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
             return false;
         };
 
-        // Discard v1 transactions until support is added.
-        if matches!(view.version(), TransactionVersion::V1) {
+        if !enable_tx_v1 && matches!(view.version(), TransactionVersion::V1) {
             return false;
         }
 
@@ -103,13 +72,6 @@ pub fn count_valid_packets<'a>(batches: impl IntoIterator<Item = &'a PacketBatch
         .sum()
 }
 
-pub fn count_discarded_packets(batches: &[PacketBatch]) -> usize {
-    batches
-        .iter()
-        .map(|batch| batch.iter().filter(|p| p.meta().discard()).count())
-        .sum()
-}
-
 fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransactionView<D>) -> bool {
     // vote could have 1 or 2 sigs; zero sig has already been excluded by sanitization.
     if view.num_signatures() > 2 {
@@ -142,100 +104,31 @@ fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransacti
     *program_id == solana_sdk_ids::vote::id()
 }
 
-fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<RecycledPacketBatch>) {
-    let mut bytes_batches = Vec::new();
-    let mut pinned_batches = Vec::new();
-    for batch in batches {
-        match batch {
-            PacketBatch::Bytes(batch) => bytes_batches.push(batch),
-            PacketBatch::Pinned(batch) => pinned_batches.push(batch),
-            PacketBatch::Single(packet) => {
-                let mut batch = BytesPacketBatch::with_capacity(1);
-                batch.push(packet);
-                bytes_batches.push(batch);
-            }
-        }
-    }
-    (bytes_batches, pinned_batches)
-}
-
-macro_rules! shrink_batches_fn {
-    ($fn_name:ident, $batch_ty:ty) => {
-        fn $fn_name(batches: &mut Vec<$batch_ty>) {
-            let mut valid_batch_ix = 0;
-            let mut valid_packet_ix = 0;
-            let mut last_valid_batch = 0;
-            for batch_ix in 0..batches.len() {
-                let cur_batch = batches.get_mut(batch_ix).unwrap();
-                for packet_ix in 0..cur_batch.len() {
-                    if batches[batch_ix][packet_ix].meta().discard() {
-                        continue;
-                    }
-                    last_valid_batch = batch_ix.saturating_add(1);
-                    let mut found_spot = false;
-                    while valid_batch_ix < batch_ix && !found_spot {
-                        while valid_packet_ix < batches[valid_batch_ix].len() {
-                            if batches[valid_batch_ix][valid_packet_ix].meta().discard() {
-                                batches[valid_batch_ix][valid_packet_ix] =
-                                    batches[batch_ix][packet_ix].clone();
-                                batches[batch_ix][packet_ix].meta_mut().set_discard(true);
-                                last_valid_batch = valid_batch_ix.saturating_add(1);
-                                found_spot = true;
-                                break;
-                            }
-                            valid_packet_ix = valid_packet_ix.saturating_add(1);
-                        }
-                        if valid_packet_ix >= batches[valid_batch_ix].len() {
-                            valid_packet_ix = 0;
-                            valid_batch_ix = valid_batch_ix.saturating_add(1);
-                        }
-                    }
-                }
-            }
-            batches.truncate(last_valid_batch);
-        }
-    };
-}
-
-shrink_batches_fn!(shrink_bytes_batches, BytesPacketBatch);
-shrink_batches_fn!(shrink_pinned_batches, RecycledPacketBatch);
-
-pub fn shrink_batches(batches: Vec<PacketBatch>) -> Vec<PacketBatch> {
-    let (mut bytes_batches, mut pinned_batches) = split_batches(batches);
-    shrink_bytes_batches(&mut bytes_batches);
-    shrink_pinned_batches(&mut pinned_batches);
-    bytes_batches
-        .into_iter()
-        .map(PacketBatch::Bytes)
-        .chain(pinned_batches.into_iter().map(PacketBatch::Pinned))
-        .collect()
-}
-
 pub fn ed25519_verify(
     thread_pool: &rayon::ThreadPool,
     batches: &mut [PacketBatch],
     reject_non_vote: bool,
     packet_count: usize,
+    enable_tx_v1: bool,
 ) {
     debug!("CPU ECDSA for {packet_count}");
     thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            if !packet.meta().discard()
+                && !verify_packet(&mut packet, reject_non_vote, enable_tx_v1)
+            {
                 packet.meta_mut().set_discard(true);
             }
         });
     });
 }
 
-pub fn ed25519_verify_disabled(thread_pool: &rayon::ThreadPool, batches: &mut [PacketBatch]) {
-    let packet_count = count_packets_in_batches(batches);
-    debug!("disabled ECDSA for {packet_count}");
-
-    thread_pool.install(|| {
-        batches.par_iter_mut().flatten().for_each(|mut packet| {
-            packet.meta_mut().set_discard(false);
-        })
-    });
+pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool, enable_tx_v1: bool) {
+    for mut packet in batch.iter_mut() {
+        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote, enable_tx_v1) {
+            packet.meta_mut().set_discard(true);
+        }
+    }
 }
 
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
@@ -274,17 +167,13 @@ mod tests {
     use {
         super::*,
         crate::{
-            packet::{
-                BytesPacket, BytesPacketBatch, PACKETS_PER_BATCH, Packet, RecycledPacketBatch,
-                to_packet_batches,
-            },
+            packet::{BytesPacket, BytesPacketBatch},
             sigverify::{self},
             test_tx::{
                 new_test_tx_with_number_of_ixs, new_test_vote_tx, test_multisig_tx, test_tx,
             },
         },
         bytes::Bytes,
-        rand::Rng,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{
@@ -294,6 +183,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_signature::Signature,
         solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
         test_case::test_case,
     };
@@ -313,6 +203,20 @@ mod tests {
         )
         .unwrap();
         VersionedTransaction::try_new(VersionedMessage::V0(message), &[&payer]).unwrap()
+    }
+
+    fn test_tx_v1() -> VersionedTransaction {
+        let payer = Keypair::new();
+        let recipient = Pubkey::new_unique();
+        let instruction = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
+        let message = solana_message::v1::Message::try_compile(
+            &payer.pubkey(),
+            &[instruction],
+            Hash::new_unique(),
+        )
+        .unwrap();
+
+        VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
     }
 
     #[test]
@@ -350,7 +254,11 @@ mod tests {
         let actual_num_sigs = 5;
 
         let mut packet = packet_from_num_sigs(required_num_sigs, actual_num_sigs);
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -363,7 +271,11 @@ mod tests {
         data.truncate(2);
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -377,7 +289,7 @@ mod tests {
         tx.message.header.num_required_signatures = NUM_SIG as u8;
         let mut packet = BytesPacket::from_data(None, tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false));
+        assert!(!verify_packet(&mut packet.as_mut(), false, false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
@@ -408,7 +320,7 @@ mod tests {
 
         let mut packet = BytesPacket::from_data(None, tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false));
+        assert!(!verify_packet(&mut packet.as_mut(), false, false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
@@ -425,7 +337,11 @@ mod tests {
         data[0] = 0x7f;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -440,7 +356,11 @@ mod tests {
         data[3] = 0xff;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -454,7 +374,11 @@ mod tests {
         data[PUBKEY_OFFSET] = 0x7f;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -472,7 +396,11 @@ mod tests {
         let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default()];
         let mut packet = BytesPacket::from_data(None, tx).unwrap();
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -480,12 +408,17 @@ mod tests {
         let tx = test_tx();
         let mut data = bincode::serialize(&tx).unwrap();
 
-        // set message version to 1
+        // Set message version to 2. V1 is supported by transaction-view, but
+        // still explicitly feature-gated by sigverify.
         const MESSAGE_OFFSET: usize = 1 + core::mem::size_of::<Signature>();
-        data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 1;
+        data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 2;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(
+            &mut packet.as_mut(),
+            false,
+            false
+        ));
     }
 
     fn generate_bytes_packet_batches(
@@ -557,7 +490,7 @@ mod tests {
     fn ed25519_verify(batches: &mut [PacketBatch]) {
         let threadpool = threadpool_for_tests();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(&threadpool, batches, false, packet_count);
+        sigverify::ed25519_verify(&threadpool, batches, false, packet_count, false);
     }
 
     #[test]
@@ -744,275 +677,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_shrink_fuzz() {
-        let mut rng = rand::rng();
-        for _ in 0..5 {
-            let mut batches: Vec<_> = (0..3)
-                .map(|_| {
-                    if rng.random_bool(0.5) {
-                        let batch = (0..PACKETS_PER_BATCH)
-                            .map(|_| {
-                                BytesPacket::from_data(None, test_tx()).expect("serialize request")
-                            })
-                            .collect::<BytesPacketBatch>();
-                        PacketBatch::Bytes(batch)
-                    } else {
-                        let batch = (0..PACKETS_PER_BATCH)
-                            .map(|_| Packet::from_data(None, test_tx()).expect("serialize request"))
-                            .collect::<Vec<_>>();
-                        PacketBatch::Pinned(RecycledPacketBatch::new(batch))
-                    }
-                })
-                .collect();
-            batches.iter_mut().for_each(|b| {
-                b.iter_mut()
-                    .for_each(|mut p| p.meta_mut().set_discard(rand::rng().random()))
-            });
-            //find all the non discarded packets
-            let mut start = vec![];
-            batches.iter_mut().for_each(|b| {
-                b.iter_mut()
-                    .filter(|p| !p.meta().discard())
-                    .for_each(|p| start.push(p.data(..).unwrap().to_vec()))
-            });
-            start.sort();
-
-            let packet_count = count_valid_packets(&batches);
-            let mut batches = shrink_batches(batches);
-
-            //make sure all the non discarded packets are the same
-            let mut end = vec![];
-            batches.iter_mut().for_each(|b| {
-                b.iter_mut()
-                    .filter(|p| !p.meta().discard())
-                    .for_each(|p| end.push(p.data(..).unwrap().to_vec()))
-            });
-            end.sort();
-            let packet_count2 = count_valid_packets(&batches);
-            assert_eq!(packet_count, packet_count2);
-            assert_eq!(start, end);
-        }
-    }
-
-    #[test]
-    fn test_shrink_empty() {
-        const PACKET_COUNT: usize = 1024;
-        const BATCH_COUNT: usize = PACKET_COUNT / PACKETS_PER_BATCH;
-
-        // No batches
-        // truncate of 1 on len 0 is a noop
-        shrink_batches(Vec::new());
-        // One empty batch
-        {
-            let batches = vec![RecycledPacketBatch::with_capacity(0).into()];
-            let batches = shrink_batches(batches);
-            assert_eq!(batches.len(), 0);
-        }
-        // Many empty batches
-        {
-            let batches = (0..BATCH_COUNT)
-                .map(|_| RecycledPacketBatch::with_capacity(0).into())
-                .collect::<Vec<_>>();
-            let batches = shrink_batches(batches);
-            assert_eq!(batches.len(), 0);
-        }
-    }
-
-    #[test]
-    fn test_shrink_vectors() {
-        const PACKET_COUNT: usize = 1024;
-        const BATCH_COUNT: usize = PACKET_COUNT / PACKETS_PER_BATCH;
-
-        let set_discards = [
-            // contiguous
-            // 0
-            // No discards
-            |_, _| false,
-            // All discards
-            |_, _| true,
-            // single partitions
-            // discard last half of packets
-            |b, p| ((b * PACKETS_PER_BATCH) + p) >= (PACKET_COUNT / 2),
-            // discard first half of packets
-            |b, p| ((b * PACKETS_PER_BATCH) + p) < (PACKET_COUNT / 2),
-            // discard last half of each batch
-            |_, p| p >= (PACKETS_PER_BATCH / 2),
-            // 5
-            // discard first half of each batch
-            |_, p| p < (PACKETS_PER_BATCH / 2),
-            // uniform sparse
-            // discard even packets
-            |b: usize, p: usize| ((b * PACKETS_PER_BATCH) + p).is_multiple_of(2),
-            // discard odd packets
-            |b: usize, p: usize| !((b * PACKETS_PER_BATCH) + p).is_multiple_of(2),
-            // discard even batches
-            |b, _| b % 2 == 0,
-            // discard odd batches
-            |b, _| b % 2 == 1,
-            // edges
-            // 10
-            // discard first batch
-            |b, _| b == 0,
-            // discard last batch
-            |b, _| b == BATCH_COUNT - 1,
-            // discard first and last batches
-            |b, _| b == 0 || b == BATCH_COUNT - 1,
-            // discard all but first and last batches
-            |b, _| b != 0 && b != BATCH_COUNT - 1,
-            // discard first packet
-            |b, p| ((b * PACKETS_PER_BATCH) + p) == 0,
-            // 15
-            // discard all but first packet
-            |b, p| ((b * PACKETS_PER_BATCH) + p) != 0,
-            // discard last packet
-            |b, p| ((b * PACKETS_PER_BATCH) + p) == PACKET_COUNT - 1,
-            // discard all but last packet
-            |b, p| ((b * PACKETS_PER_BATCH) + p) != PACKET_COUNT - 1,
-            // discard first packet of each batch
-            |_, p| p == 0,
-            // discard all but first packet of each batch
-            |_, p| p != 0,
-            // 20
-            // discard last packet of each batch
-            |_, p| p == PACKETS_PER_BATCH - 1,
-            // discard all but last packet of each batch
-            |_, p| p != PACKETS_PER_BATCH - 1,
-            // discard first and last packet of each batch
-            |_, p| p == 0 || p == PACKETS_PER_BATCH - 1,
-            // discard all but first and last packet of each batch
-            |_, p| p != 0 && p != PACKETS_PER_BATCH - 1,
-            // discard all after first packet in second to last batch
-            |b, p| (b == BATCH_COUNT - 2 && p > 0) || b == BATCH_COUNT - 1,
-            // 25
-        ];
-
-        let expect_valids = [
-            // (expected_batches, expected_valid_packets)
-            //
-            // contiguous
-            // 0
-            (BATCH_COUNT, PACKET_COUNT),
-            (0, 0),
-            // single partitions
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            // 5
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            // uniform sparse
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            (BATCH_COUNT / 2, PACKET_COUNT / 2),
-            // edges
-            // 10
-            (BATCH_COUNT - 1, PACKET_COUNT - PACKETS_PER_BATCH),
-            (BATCH_COUNT - 1, PACKET_COUNT - PACKETS_PER_BATCH),
-            (BATCH_COUNT - 2, PACKET_COUNT - 2 * PACKETS_PER_BATCH),
-            (2, 2 * PACKETS_PER_BATCH),
-            (BATCH_COUNT, PACKET_COUNT - 1),
-            // 15
-            (1, 1),
-            (BATCH_COUNT, PACKET_COUNT - 1),
-            (1, 1),
-            (
-                (BATCH_COUNT * (PACKETS_PER_BATCH - 1) + PACKETS_PER_BATCH) / PACKETS_PER_BATCH,
-                (PACKETS_PER_BATCH - 1) * BATCH_COUNT,
-            ),
-            (
-                (BATCH_COUNT + PACKETS_PER_BATCH) / PACKETS_PER_BATCH,
-                BATCH_COUNT,
-            ),
-            // 20
-            (
-                (BATCH_COUNT * (PACKETS_PER_BATCH - 1) + PACKETS_PER_BATCH) / PACKETS_PER_BATCH,
-                (PACKETS_PER_BATCH - 1) * BATCH_COUNT,
-            ),
-            (
-                (BATCH_COUNT + PACKETS_PER_BATCH) / PACKETS_PER_BATCH,
-                BATCH_COUNT,
-            ),
-            (
-                (BATCH_COUNT * (PACKETS_PER_BATCH - 2) + PACKETS_PER_BATCH) / PACKETS_PER_BATCH,
-                (PACKETS_PER_BATCH - 2) * BATCH_COUNT,
-            ),
-            (
-                (2 * BATCH_COUNT + PACKETS_PER_BATCH) / PACKETS_PER_BATCH,
-                PACKET_COUNT - (PACKETS_PER_BATCH - 2) * BATCH_COUNT,
-            ),
-            (BATCH_COUNT - 1, PACKET_COUNT - 2 * PACKETS_PER_BATCH + 1),
-            // 25
-        ];
-
-        let test_cases = set_discards.iter().zip(&expect_valids).enumerate();
-        for (i, (set_discard, (expect_batch_count, expect_valid_packets))) in test_cases {
-            debug!("test_shrink case: {i}");
-            let mut batches = to_packet_batches(
-                &(0..PACKET_COUNT).map(|_| test_tx()).collect::<Vec<_>>(),
-                PACKETS_PER_BATCH,
-            );
-            assert_eq!(batches.len(), BATCH_COUNT);
-            assert_eq!(count_valid_packets(&batches), PACKET_COUNT);
-            batches.iter_mut().enumerate().for_each(|(i, b)| {
-                b.iter_mut()
-                    .enumerate()
-                    .for_each(|(j, mut p)| p.meta_mut().set_discard(set_discard(i, j)))
-            });
-            assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
-            debug!("show valid packets for case {i}");
-            batches.iter_mut().enumerate().for_each(|(i, b)| {
-                b.iter_mut().enumerate().for_each(|(j, p)| {
-                    if !p.meta().discard() {
-                        trace!("{i} {j}")
-                    }
-                })
-            });
-            debug!("done show valid packets for case {i}");
-            let batches = shrink_batches(batches);
-            let shrunken_batch_count = batches.len();
-            debug!("shrunk batch test {i} count: {shrunken_batch_count}");
-            assert_eq!(shrunken_batch_count, *expect_batch_count);
-            assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
-        }
-    }
-
-    #[test]
-    fn test_split_batches() {
-        let tx = test_tx();
-
-        let batches = vec![];
-        let (bytes_batches, pinned_batches) = split_batches(batches);
-        assert!(bytes_batches.is_empty());
-        assert!(pinned_batches.is_empty());
-
-        let pinned_packet = Packet::from_data(None, tx.clone()).unwrap();
-        let bytes_packet = BytesPacket::from_data(None, tx).unwrap();
-        let batches = vec![
-            PacketBatch::Pinned(RecycledPacketBatch::new(vec![pinned_packet.clone(); 10])),
-            PacketBatch::Bytes(BytesPacketBatch::from(vec![bytes_packet.clone(); 10])),
-            PacketBatch::Pinned(RecycledPacketBatch::new(vec![pinned_packet.clone(); 10])),
-            PacketBatch::Pinned(RecycledPacketBatch::new(vec![pinned_packet.clone(); 10])),
-            PacketBatch::Bytes(BytesPacketBatch::from(vec![bytes_packet.clone(); 10])),
-        ];
-        let (bytes_batches, pinned_batches) = split_batches(batches);
-        assert_eq!(
-            bytes_batches,
-            vec![
-                BytesPacketBatch::from(vec![bytes_packet.clone(); 10]),
-                BytesPacketBatch::from(vec![bytes_packet; 10]),
-            ]
-        );
-        assert_eq!(
-            pinned_batches,
-            vec![
-                RecycledPacketBatch::new(vec![pinned_packet.clone(); 10]),
-                RecycledPacketBatch::new(vec![pinned_packet.clone(); 10]),
-                RecycledPacketBatch::new(vec![pinned_packet; 10]),
-            ]
-        )
-    }
-
     #[test_case(false, false; "ok_ixs_legacy")]
     #[test_case(true, false; "too_many_ixs_legacy")]
     #[test_case(false, true; "ok_ixs_versioned")]
@@ -1032,8 +696,20 @@ mod tests {
         };
 
         assert_eq!(
-            sigverify::verify_packet(&mut packet.as_mut(), false),
+            sigverify::verify_packet(&mut packet.as_mut(), false, false),
             !too_many_ixs
+        );
+    }
+
+    #[test_case(false, false; "tx_v1_disabled")]
+    #[test_case(true, true; "tx_v1_enabled")]
+    fn test_verify_packet_tx_v1_feature_gate(enable_tx_v1: bool, expected: bool) {
+        let tx = test_tx_v1();
+        let mut packet = BytesPacket::from_bytes(None, wincode::serialize(&tx).unwrap());
+
+        assert_eq!(
+            verify_packet(&mut packet.as_mut(), false, enable_tx_v1),
+            expected,
         );
     }
 }

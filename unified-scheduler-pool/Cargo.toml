@@ -21,7 +21,6 @@ crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derive-where = { workspace = true }
 derive_more = { workspace = true }
-dyn-clone = { workspace = true }
 log = { workspace = true }
 scopeguard = { workspace = true }
 solana-clock = { workspace = true }
@@ -38,7 +37,6 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
-trait-set = { workspace = true }
 unwrap_none = { workspace = true }
 
 [dev-dependencies]

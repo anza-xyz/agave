@@ -46,6 +46,11 @@ pub struct UiStakeAccount {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UiMeta {
+    #[deprecated(
+        since = "4.1.0",
+        note = "Stake account rent must be calculated via the `Rent` sysvar. This value will \
+                cease to be correct once lamports-per-byte is adjusted."
+    )]
     pub rent_exempt_reserve: StringAmount,
     pub authorized: UiAuthorized,
     pub lockup: UiLockup,
@@ -54,6 +59,7 @@ pub struct UiMeta {
 impl From<Meta> for UiMeta {
     fn from(meta: Meta) -> Self {
         Self {
+            #[expect(deprecated)]
             rent_exempt_reserve: meta.rent_exempt_reserve.to_string(),
             authorized: meta.authorized.into(),
             lockup: meta.lockup.into(),

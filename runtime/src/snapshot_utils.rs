@@ -15,6 +15,7 @@ use {
     },
     agave_fs::{
         FileInfo,
+        buffered_reader::large_file_buf_reader,
         buffered_writer::{SizeLimitedWriter, large_file_buf_writer},
         io_setup::IoSetupState,
     },
@@ -25,7 +26,7 @@ use {
             HardLinkStoragesToSnapshotError, SnapshotError, SnapshotFastbootError,
             SnapshotNewFromDirError,
         },
-        paths::{self as snapshot_paths, get_incremental_snapshot_archives},
+        paths::{self as snapshot_paths, incremental_snapshot_archives_iter},
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
             SnapshotArchiveInfoGetter,
@@ -41,8 +42,8 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
-        accounts_file::{AccountsFile, StorageAccess},
+        accounts_db::AtomicAccountsFileId,
+        accounts_file::AccountsFile,
         utils::{ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
@@ -60,6 +61,7 @@ use {
         thread,
     },
     tempfile::TempDir,
+    wincode::io::std_read::ReadAdapter,
 };
 
 pub mod snapshot_storage_rebuilder;
@@ -71,6 +73,8 @@ pub mod snapshot_storage_rebuilder;
 pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 GB
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
+/// Buffer size that allows several concurrent reads using default io-uring reader read size (1MiB)
+const OBSOLETE_ACCOUNTS_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 
 // Snapshot Fastboot Version History
 // Legacy - No fastboot version file, storages flushed file presence determines if snapshot is loadable
@@ -486,6 +490,7 @@ pub fn archive_snapshot_package(
     bank_snapshot_dir: impl AsRef<Path>,
     mut snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     snapshot_config: &SnapshotConfig,
+    io_setup: &IoSetupState,
 ) -> Result<SnapshotArchiveInfo> {
     let snapshot_archive_path = match snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
@@ -515,7 +520,8 @@ pub fn archive_snapshot_package(
         snapshot_storages.as_slice(),
         &bank_snapshot_dir,
         snapshot_archive_path,
-        snapshot_config,
+        snapshot_config.archive_format,
+        io_setup,
     )?;
 
     Ok(snapshot_archive_info)
@@ -528,6 +534,7 @@ pub fn serialize_snapshot(
     bank_snapshot_package: BankSnapshotPackage,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     should_flush_and_hard_link_storages: bool,
+    io_setup: &IoSetupState,
 ) -> Result<BankSnapshotInfo> {
     let BankSnapshotPackage {
         mut bank_fields,
@@ -579,7 +586,7 @@ pub fn serialize_snapshot(
             Ok(())
         };
         let (bank_snapshot_consumed_size, bank_serialize) = measure_time!(
-            serialize_snapshot_data_file(&bank_snapshot_path, bank_snapshot_serializer)
+            serialize_snapshot_data_file(&bank_snapshot_path, io_setup, bank_snapshot_serializer)
                 .map_err(|err| AddBankSnapshotError::SerializeBank(Box::new(err)))?,
             "bank serialize"
         );
@@ -612,10 +619,13 @@ pub fn serialize_snapshot(
                 );
 
                 let (_, serialize_obsolete_accounts_us) = measure_us!({
-                    write_obsolete_accounts_to_snapshot(&bank_snapshot_dir, snapshot_storages, slot)
-                        .map_err(|err| {
-                            AddBankSnapshotError::SerializeObsoleteAccounts(Box::new(err))
-                        })?
+                    write_obsolete_accounts_to_snapshot(
+                        &bank_snapshot_dir,
+                        snapshot_storages,
+                        slot,
+                        io_setup,
+                    )
+                    .map_err(|err| AddBankSnapshotError::SerializeObsoleteAccounts(Box::new(err)))?
                 });
 
                 mark_bank_snapshot_as_loadable(&bank_snapshot_dir)
@@ -720,6 +730,7 @@ pub fn write_obsolete_accounts_to_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     snapshot_slot: Slot,
+    io_setup: &IoSetupState,
 ) -> Result<u64> {
     let obsolete_accounts =
         SerdeObsoleteAccountsMap::new_from_storages(snapshot_storages, snapshot_slot);
@@ -727,6 +738,7 @@ pub fn write_obsolete_accounts_to_snapshot(
         bank_snapshot_dir,
         &obsolete_accounts,
         MAX_OBSOLETE_ACCOUNTS_FILE_SIZE,
+        io_setup,
     )
 }
 
@@ -734,12 +746,13 @@ fn serialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
     obsolete_accounts_map: &SerdeObsoleteAccountsMap,
     maximum_obsolete_accounts_file_size: u64,
+    io_setup: &IoSetupState,
 ) -> Result<u64> {
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
     let mut file_stream = SizeLimitedWriter::new(
-        large_file_buf_writer(&obsolete_accounts_path)?,
+        large_file_buf_writer(&obsolete_accounts_path, io_setup)?,
         maximum_obsolete_accounts_file_size,
     );
 
@@ -760,7 +773,11 @@ fn deserialize_obsolete_accounts(
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
-    let obsolete_accounts_file = fs::File::open(&obsolete_accounts_path)?;
+    let obsolete_accounts_reader = ReadAdapter::new(large_file_buf_reader(
+        &obsolete_accounts_path,
+        OBSOLETE_ACCOUNTS_READ_BUF_SIZE,
+        &IoSetupState::default(),
+    )?);
     // If the file is too large return error
     let obsolete_accounts_file_metadata = fs::metadata(&obsolete_accounts_path)?;
     if obsolete_accounts_file_metadata.len() > maximum_obsolete_accounts_file_size {
@@ -774,17 +791,22 @@ fn deserialize_obsolete_accounts(
     }
 
     Ok(serde_snapshot::deserialize_wincode_from(
-        obsolete_accounts_file,
+        obsolete_accounts_reader,
     )?)
 }
 
-pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
+pub fn serialize_snapshot_data_file<F>(
+    data_file_path: &Path,
+    io_setup: &IoSetupState,
+    serializer: F,
+) -> Result<u64>
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
         MAX_SNAPSHOT_DATA_FILE_SIZE,
+        io_setup,
         serializer,
     )
 }
@@ -823,13 +845,16 @@ pub fn deserialize_snapshot_data_files<T: Sized>(
 fn serialize_snapshot_data_file_capped<F>(
     data_file_path: &Path,
     maximum_file_size: u64,
+    io_setup: &IoSetupState,
     serializer: F,
 ) -> Result<u64>
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
 {
-    let mut data_file_stream =
-        SizeLimitedWriter::new(large_file_buf_writer(data_file_path)?, maximum_file_size);
+    let mut data_file_stream = SizeLimitedWriter::new(
+        large_file_buf_writer(data_file_path, io_setup)?,
+        maximum_file_size,
+    );
     serializer(&mut data_file_stream).map_err(|err| {
         IoError::other(format!(
             "unable to serialize snapshot data to file '{}': {err}",
@@ -1047,7 +1072,7 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
-    accounts_db_config: &AccountsDbConfig,
+    io_setup: &IoSetupState,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
@@ -1071,7 +1096,7 @@ pub fn verify_and_unarchive_snapshots(
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
         None,
-        accounts_db_config,
+        io_setup,
     )?;
 
     let (
@@ -1098,7 +1123,7 @@ pub fn verify_and_unarchive_snapshots(
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
             Some(incremental_snapshot_archive_info.base_slot()),
-            accounts_db_config,
+            io_setup,
         )?;
         (
             Some(unpack_dir),
@@ -1280,6 +1305,7 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
 /// Perform the common tasks when unarchiving a snapshot.  Handles creating the temporary
 /// directories, untaring, reading the version file, and then returning those fields plus the
 /// rebuilt storage
+#[allow(clippy::too_many_arguments)]
 fn unarchive_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     unpacked_snapshots_dir_prefix: &'static str,
@@ -1289,70 +1315,67 @@ fn unarchive_snapshot(
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     base_slot: Option<Slot>,
-    accounts_db_config: &AccountsDbConfig,
+    io_setup: &IoSetupState,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
     let unpacked_snapshots_dir = unpack_dir.path().join(snapshot_paths::BANK_SNAPSHOTS_DIR);
 
-    let io_setup = IoSetupState::default()
-        .with_shared_sqpoll()?
-        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
-        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
-
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let unarchive_handle = streaming_unarchive_snapshot(
-        file_sender,
-        account_paths.to_vec(),
-        unpack_dir.path().to_path_buf(),
-        snapshot_archive_path.as_ref().to_path_buf(),
-        archive_format,
-        io_setup,
-    );
+    thread::scope(|scope| {
+        let unarchive_handle = streaming_unarchive_snapshot(
+            scope,
+            file_sender,
+            account_paths.to_vec(),
+            unpack_dir.path().to_path_buf(),
+            snapshot_archive_path.as_ref().to_path_buf(),
+            archive_format,
+            io_setup,
+        );
 
-    let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-    let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
-        |SnapshotFieldsBundle {
-             snapshot_version,
-             bank_fields,
-             accounts_db_fields,
-             append_vec_files,
-             ..
-         }| {
-            let snapshot_storage_lengths =
-                accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
-            let (storage, measure_untar) = measure_time!(
-                SnapshotStorageRebuilder::spawn_rebuilder_threads(
-                    snapshot_storage_lengths,
-                    append_vec_files,
-                    file_receiver,
-                    num_rebuilder_threads,
-                    next_append_vec_id,
-                    SnapshotFrom::Archive,
-                    accounts_db_config.storage_access,
-                    None,
-                )?,
-                measure_name
-            );
-            info!("{measure_untar}");
-            create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
+        let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
+        let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
+            |SnapshotFieldsBundle {
+                 snapshot_version,
+                 bank_fields,
+                 accounts_db_fields,
+                 append_vec_files,
+                 ..
+             }| {
+                let snapshot_storage_lengths =
+                    accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
+                let (storage, measure_untar) = measure_time!(
+                    SnapshotStorageRebuilder::spawn_rebuilder_threads(
+                        snapshot_storage_lengths,
+                        append_vec_files,
+                        file_receiver,
+                        num_rebuilder_threads,
+                        next_append_vec_id,
+                        SnapshotFrom::Archive,
+                        None,
+                    )?,
+                    measure_name
+                );
+                info!("{measure_untar}");
+                create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
-            Ok(UnarchivedSnapshot {
-                unpack_dir,
-                storage,
-                bank_fields,
-                accounts_db_fields,
-                unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
-                    unpacked_snapshots_dir,
-                    snapshot_version,
-                },
-                measure_untar,
-            })
-        },
-    );
-    unarchive_handle.join().unwrap()?;
-    snapshot_result
+                Ok(UnarchivedSnapshot {
+                    unpack_dir,
+                    storage,
+                    bank_fields,
+                    accounts_db_fields,
+                    unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
+                        unpacked_snapshots_dir,
+                        snapshot_version,
+                    },
+                    measure_untar,
+                })
+            },
+        );
+        unarchive_handle.join().unwrap()?;
+        snapshot_result
+    })
 }
 
 /// Spawn thread that streams snapshot dir files across channel
@@ -1362,7 +1385,6 @@ fn spawn_streaming_snapshot_dir_files(
     snapshot_file_path: PathBuf,
     snapshot_version_path: PathBuf,
     account_paths: &[PathBuf],
-    writable: bool,
 ) -> (Receiver<FileInfo>, thread::JoinHandle<Result<()>>) {
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let account_paths = account_paths.to_vec();
@@ -1379,7 +1401,7 @@ fn spawn_streaming_snapshot_dir_files(
                 for dir_entry_result in fs::read_dir(account_path)? {
                     let dir_entry = dir_entry_result?;
                     let path = dir_entry.path();
-                    let file_info = FileInfo::new_from_path_writable(path, writable)?;
+                    let file_info = FileInfo::new_from_path(path)?;
                     file_sender.send(file_info)?;
                 }
             }
@@ -1398,7 +1420,6 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-    storage_access: StorageAccess,
 ) -> Result<(
     AccountStorageMap,
     BankFieldsToDeserialize,
@@ -1477,12 +1498,10 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 
     let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    #[expect(deprecated)]
     let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,
         account_paths,
-        storage_access == StorageAccess::Mmap,
     );
 
     let SnapshotFieldsBundle {
@@ -1503,7 +1522,6 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         num_rebuilder_threads,
         next_append_vec_id,
         SnapshotFrom::Dir,
-        storage_access,
         obsolete_accounts,
     )?;
     stream_files_handle
@@ -1577,7 +1595,8 @@ pub fn purge_old_snapshot_archives(
     );
 
     let mut full_snapshot_archives =
-        snapshot_paths::get_full_snapshot_archives(&full_snapshot_archives_dir);
+        snapshot_paths::full_snapshot_archives_iter(full_snapshot_archives_dir.as_ref())
+            .collect::<Vec<_>>();
     full_snapshot_archives.sort_unstable();
     full_snapshot_archives.reverse();
 
@@ -1624,7 +1643,7 @@ pub fn purge_old_snapshot_archives(
     );
     let mut incremental_snapshot_archives_by_base_slot = HashMap::<Slot, Vec<_>>::new();
     for incremental_snapshot_archive in
-        get_incremental_snapshot_archives(&incremental_snapshot_archives_dir)
+        incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.as_ref())
     {
         incremental_snapshot_archives_by_base_slot
             .entry(incremental_snapshot_archive.base_slot())
@@ -1819,7 +1838,7 @@ mod tests {
         super::*,
         agave_snapshots::{
             paths::{
-                get_full_snapshot_archives, get_highest_full_snapshot_archive_slot,
+                full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,
                 get_highest_incremental_snapshot_archive_slot,
             },
             snapshot_config::{
@@ -1843,6 +1862,7 @@ mod tests {
         let consumed_size = serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &2323_u32)?;
                 Ok(())
@@ -1859,6 +1879,7 @@ mod tests {
         let result = serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size - 1,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &2323_u32)?;
                 Ok(())
@@ -1876,6 +1897,7 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &expected_data)?;
                 Ok(())
@@ -1910,6 +1932,7 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(stream, &expected_data)?;
                 Ok(())
@@ -1943,6 +1966,7 @@ mod tests {
         serialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size * 2,
+            &IoSetupState::default(),
             |stream| {
                 serialize_into(&mut *stream, &expected_data)?;
                 serialize_into(&mut *stream, &expected_data)?;
@@ -2154,7 +2178,8 @@ mod tests {
             0,
         );
 
-        let snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
+        let snapshot_archives =
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
     }
 
@@ -2177,7 +2202,8 @@ mod tests {
             0,
         );
 
-        let snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
+        let snapshot_archives =
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
         assert!(snapshot_archives.iter().all(|info| info.is_remote()));
     }
@@ -2200,7 +2226,8 @@ mod tests {
         );
 
         let incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir);
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             incremental_snapshot_archives.len() as Slot,
             (max_full_snapshot_slot - min_full_snapshot_slot)
@@ -2230,7 +2257,8 @@ mod tests {
         );
 
         let incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir);
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             incremental_snapshot_archives.len() as Slot,
             (max_full_snapshot_slot - min_full_snapshot_slot)
@@ -2411,7 +2439,7 @@ mod tests {
                 NonZeroUsize::new(usize::MAX).unwrap(),
             );
             let mut full_snapshot_archives =
-                get_full_snapshot_archives(&full_snapshot_archives_dir);
+                full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
             full_snapshot_archives.sort_unstable();
             assert_eq!(
                 full_snapshot_archives.len(),
@@ -2487,7 +2515,7 @@ mod tests {
 
         // Ensure correct number of full snapshot archives are purged/retained
         let mut remaining_full_snapshot_archives =
-            get_full_snapshot_archives(full_snapshot_archives_dir.path());
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(
             remaining_full_snapshot_archives.len(),
             maximum_full_snapshot_archives_to_retain.get(),
@@ -2501,7 +2529,8 @@ mod tests {
         // incremental snapshot archive is retained. This is accounted for by the
         // `+ maximum_full_snapshot_archives_to_retain.saturating_sub(1)`
         let mut remaining_incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir.path());
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             remaining_incremental_snapshot_archives.len(),
             maximum_incremental_snapshot_archives_to_retain
@@ -2587,7 +2616,8 @@ mod tests {
         );
 
         let remaining_incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir.path());
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert!(remaining_incremental_snapshot_archives.is_empty());
     }
 
@@ -2668,14 +2698,18 @@ mod tests {
                 i as u32, // Incrementing id
                 1024,
                 AccountsFileProvider::AppendVec,
-                StorageAccess::File,
             ));
             snapshot_storages.push(storage);
         }
 
         // write obsolete accounts to snapshot
-        write_obsolete_accounts_to_snapshot(bank_snapshot_dir, &snapshot_storages, snapshot_slot)
-            .unwrap();
+        write_obsolete_accounts_to_snapshot(
+            bank_snapshot_dir,
+            &snapshot_storages,
+            snapshot_slot,
+            &IoSetupState::default(),
+        )
+        .unwrap();
 
         // Deserialize
         let deserialized_accounts =
@@ -2707,7 +2741,6 @@ mod tests {
                 i as u32, // Incrementing id
                 1024,
                 AccountsFileProvider::AppendVec,
-                StorageAccess::File,
             ));
             snapshot_storages.push(storage);
         }
@@ -2717,7 +2750,13 @@ mod tests {
             SerdeObsoleteAccountsMap::new_from_storages(&snapshot_storages, snapshot_slot);
 
         // Limit the file size to something low for the test
-        serialize_obsolete_accounts(bank_snapshot_dir, &obsolete_accounts, 100).unwrap();
+        serialize_obsolete_accounts(
+            bank_snapshot_dir,
+            &obsolete_accounts,
+            100,
+            &IoSetupState::default(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2737,14 +2776,18 @@ mod tests {
                 i as u32, // Incrementing id
                 1024,
                 AccountsFileProvider::AppendVec,
-                StorageAccess::File,
             ));
             snapshot_storages.push(storage);
         }
 
         // Write obsolete accounts to snapshot
-        write_obsolete_accounts_to_snapshot(bank_snapshot_dir, &snapshot_storages, snapshot_slot)
-            .unwrap();
+        write_obsolete_accounts_to_snapshot(
+            bank_snapshot_dir,
+            &snapshot_storages,
+            snapshot_slot,
+            &IoSetupState::default(),
+        )
+        .unwrap();
 
         // Set a very low maximum file size for deserialization
         // This should panic

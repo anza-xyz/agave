@@ -60,7 +60,22 @@ impl QosService {
     ) -> Vec<transaction::Result<TransactionCost<'a, Tx>>> {
         transactions
             .zip(pre_results)
-            .map(|(tx, pre_result)| pre_result.map(|()| CostModel::calculate_cost(tx, feature_set)))
+            .map(|(tx, pre_result)| {
+                pre_result.map(|()| {
+                    let mut reserving_cost = CostModel::calculate_cost(tx, feature_set);
+
+                    if let TransactionCost::Transaction(ref mut usage_cost_details) = reserving_cost
+                    {
+                        // To maintain cost tracking consistency, reserve at least one page for
+                        // loading the fee payer account in fee-only fallback scenarios.
+                        usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
+                            .loaded_accounts_data_size_cost
+                            .max(CostModel::calculate_pages_cost(1));
+                    }
+
+                    reserving_cost
+                })
+            })
             .collect()
     }
 
@@ -516,6 +531,145 @@ mod tests {
             assert_eq!(
                 expected_final_txs_count,
                 bank.read_cost_tracker().unwrap().transaction_count()
+            );
+        }
+    }
+
+    #[test]
+    fn test_min_one_page_cost_reserved() {
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
+
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+    ));
+
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+        let tx_costs = QosService::compute_transaction_costs(
+            &FeatureSet::all_enabled(),
+            txs.iter(),
+            std::iter::repeat(Ok(())),
+        );
+
+        let tx_cost = tx_costs
+            .into_iter()
+            .next()
+            .expect("one tx cost")
+            .expect("tx cost should be computed");
+
+        let TransactionCost::Transaction(usage_cost_details) = tx_cost else {
+            panic!("expected TransactionCost::Transaction");
+        };
+
+        assert_eq!(
+            usage_cost_details.loaded_accounts_data_size_cost,
+            CostModel::calculate_pages_cost(1),
+        );
+    }
+
+    #[test]
+    fn test_requested_zero_loaded_accounts_data_size_refund() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+        ));
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+
+        {
+            let txs_costs = QosService::compute_transaction_costs(
+                &FeatureSet::all_enabled(),
+                txs.iter(),
+                std::iter::repeat(Ok(())),
+            );
+            let total_txs_cost: u64 = txs_costs
+                .iter()
+                .map(|cost| cost.as_ref().unwrap().sum())
+                .sum();
+            let (qos_cost_results, _num_included) =
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+            // transaction is committed with actual loaded account size == 0.
+            let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
+                .iter()
+                .map(|tx_cost| CommitTransactionDetails::Committed {
+                    compute_units: tx_cost.as_ref().unwrap().programs_execution_cost(),
+                    loaded_accounts_data_size: 0,
+                    result: Ok(()),
+                    fee_payer_post_balance: 0,
+                })
+                .collect();
+            QosService::remove_or_update_costs(
+                qos_cost_results.iter(),
+                Some(&committed_status),
+                &bank,
+            );
+            // should refund cost of 1 page it over reserved
+            let final_txs_cost = total_txs_cost - CostModel::calculate_pages_cost(1);
+            assert_eq!(
+                final_txs_cost,
+                bank.read_cost_tracker().unwrap().block_cost()
+            );
+        }
+    }
+
+    #[test]
+    fn test_requested_zero_loaded_accounts_data_size_no_refund() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+        ));
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+
+        {
+            let txs_costs = QosService::compute_transaction_costs(
+                &FeatureSet::all_enabled(),
+                txs.iter(),
+                std::iter::repeat(Ok(())),
+            );
+            let total_txs_cost: u64 = txs_costs
+                .iter()
+                .map(|cost| cost.as_ref().unwrap().sum())
+                .sum();
+            let (qos_cost_results, _num_included) =
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+            // transaction is committed with actual loaded account size == 1.
+            let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
+                .iter()
+                .map(|tx_cost| CommitTransactionDetails::Committed {
+                    compute_units: tx_cost.as_ref().unwrap().programs_execution_cost(),
+                    loaded_accounts_data_size: 1,
+                    result: Ok(()),
+                    fee_payer_post_balance: 0,
+                })
+                .collect();
+            QosService::remove_or_update_costs(
+                qos_cost_results.iter(),
+                Some(&committed_status),
+                &bank,
+            );
+            // should be no refund, since the loaded size is same
+            assert_eq!(
+                total_txs_cost,
+                bank.read_cost_tracker().unwrap().block_cost()
             );
         }
     }

@@ -52,8 +52,10 @@ pub struct Stats {
     pub bg_throttling_wait_us: AtomicU64,
     pub count_in_mem: AtomicUsize,
     pub capacity_in_mem: AtomicUsize,
-    pub flush_entries_updated_on_disk: AtomicU64,
-    pub flush_entries_evicted_from_mem: AtomicU64,
+    pub flush_entries_updated_on_disk_immediate: AtomicU64,
+    pub flush_entries_updated_on_disk_background: AtomicU64,
+    pub flush_entries_evicted_from_mem_immediate: AtomicU64,
+    pub flush_entries_evicted_from_mem_background: AtomicU64,
     pub active_threads: AtomicU64,
     last_age: AtomicAge,
     last_ages_flushed: AtomicU64,
@@ -66,6 +68,10 @@ pub struct Stats {
     bins: u64,
     pub flush_should_evict_us: AtomicU64,
     pub flush_read_lock_us: AtomicU64,
+    pub num_hashmap_reallocates: AtomicU64,
+    pub hashmap_reallocate_us: AtomicU64,
+    pub evict_triggered_by_low_free_entries: AtomicU64,
+    pub evict_triggered_by_high_count: AtomicU64,
 }
 
 impl Stats {
@@ -437,6 +443,28 @@ impl Stats {
                     i64
                 ),
                 (
+                    "num_hashmap_reallocates",
+                    self.num_hashmap_reallocates.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "hashmap_reallocate_us",
+                    self.hashmap_reallocate_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "evict_triggered_by_low_free_entries",
+                    self.evict_triggered_by_low_free_entries
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "evict_triggered_by_high_count",
+                    self.evict_triggered_by_high_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
                     "disk_index_resizes",
                     disk.map(|disk| disk.stats.index.resizes.swap(0, Ordering::Relaxed))
                         .unwrap_or_default(),
@@ -553,14 +581,26 @@ impl Stats {
                     i64
                 ),
                 (
-                    "flush_entries_updated_on_disk",
-                    self.flush_entries_updated_on_disk
+                    "flush_entries_updated_on_disk_immediate",
+                    self.flush_entries_updated_on_disk_immediate
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "flush_entries_evicted_from_mem",
-                    self.flush_entries_evicted_from_mem
+                    "flush_entries_updated_on_disk_background",
+                    self.flush_entries_updated_on_disk_background
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_entries_evicted_from_mem_immediate",
+                    self.flush_entries_evicted_from_mem_immediate
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_entries_evicted_from_mem_background",
+                    self.flush_entries_evicted_from_mem_background
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),

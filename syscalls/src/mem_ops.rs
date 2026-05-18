@@ -100,9 +100,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let cmp_result_ref_mut: &mut i32 = map(cmp_result_addr)?;
+            let cmp_result_ref_mut: (&mut std::mem::MaybeUninit<i32>) = map(cmp_result_addr)?;
         );
-        *cmp_result_ref_mut = result;
+        cmp_result_ref_mut.write(result);
 
         Ok(0)
     }
@@ -126,9 +126,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let s: &mut [u8] = map(dst_addr, n)?;
+            let s: (&mut [MaybeUninit<u8>]) = map(dst_addr, n)?;
         );
-        s.fill(c as u8);
+        s.fill(MaybeUninit::new(c as u8));
         Ok(0)
     }
 );
@@ -141,15 +141,19 @@ fn memmove(
 ) -> Result<u64, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-    translate_mut!(
+    // In a rare exception to the rule we manually translate addresses to a raw pointer rather than
+    // using `translate_mut!` because the src and dst memory regions may overlap for this syscall.
+    touch_slice_mut::<MaybeUninit<u8>>(memory_mapping, dst_addr, n)?;
+    let slice = translate_slice_inner!(
         memory_mapping,
+        AccessType::Store,
+        dst_addr,
+        n,
+        MaybeUninit<u8>,
         check_aligned,
-        let dst_ref_mut: &mut [u8] = map(dst_addr, n)?;
-    );
-    let dst_ptr = dst_ref_mut.as_mut_ptr();
+    )?;
     let src_ptr = translate_slice::<u8>(memory_mapping, src_addr, n, check_aligned)?.as_ptr();
-
-    unsafe { std::ptr::copy(src_ptr, dst_ptr, n as usize) };
+    unsafe { std::ptr::copy(src_ptr.cast(), slice as *mut MaybeUninit<u8>, n as usize) };
     Ok(0)
 }
 

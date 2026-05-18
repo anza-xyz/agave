@@ -299,6 +299,11 @@ impl Node {
         let (alpenglow_port, alpenglow) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("Alpenglow port bind should succeed");
+
+        let (_, block_id_repair) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
+                .expect("Block ID repair port bind should succeed");
+
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
 
@@ -406,6 +411,7 @@ impl Node {
             serve_repair,
             ip_echo: ip_echo_sockets.into_iter().next(),
             ancestor_hashes_requests,
+            block_id_repair,
             tpu_quic,
             tpu_forwards_quic,
             tpu_vote_quic,

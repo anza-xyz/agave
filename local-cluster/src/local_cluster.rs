@@ -454,7 +454,6 @@ impl LocalCluster {
                 Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
                 vec![],
                 &leader_config,
-                true, // should_check_duplicate_instance
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
@@ -662,7 +661,6 @@ impl LocalCluster {
             Arc::new(RwLock::new(vec![voting_keypair.clone()])),
             vec![self.entry_point_info.clone()],
             &config,
-            true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
@@ -728,7 +726,6 @@ impl LocalCluster {
                 Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
                 vec![],
                 &leader_config,
-                true, // should_check_duplicate_instance
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
@@ -789,7 +786,6 @@ impl LocalCluster {
                     Arc::new(RwLock::new(vec![voting_keypair.clone()])),
                     entry_points,
                     &config,
-                    true, // should_check_duplicate_instance
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     socket_addr_space,
@@ -1420,7 +1416,6 @@ impl Cluster for LocalCluster {
             Arc::new(RwLock::new(vec![validator_info.voting_keypair.clone()])),
             entry_point_infos,
             &safe_clone_config(&cluster_validator_info.config),
-            true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,

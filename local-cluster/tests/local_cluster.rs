@@ -44,7 +44,10 @@ use {
         blockstore::{Blockstore, PurgeType, entries_to_test_shreds},
         blockstore_processor::{self, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{
+            ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+            filter::{TurbineMode, TurbineModeKind},
+        },
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
@@ -351,14 +354,14 @@ fn test_restart_node() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster.exit_restart_node(&nodes[0], validator_config, SocketAddrSpace::Unspecified);
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(
@@ -1007,11 +1010,12 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         .unwrap();
 
         // Now get the same full snapshot on the LEADER that we just got from the validator
-        let mut leader_full_snapshots = snapshot_paths::get_full_snapshot_archives(
+        let mut leader_full_snapshots = snapshot_paths::full_snapshot_archives_iter(
             leader_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
-        );
+        )
+        .collect::<Vec<_>>();
         leader_full_snapshots.retain(|full_snapshot| {
             full_snapshot.slot() == validator_full_snapshot.slot()
                 && full_snapshot.hash() == validator_full_snapshot.hash()
@@ -1141,11 +1145,12 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // Check to make sure that the full snapshot the validator created during startup is the same
     // or one greater than the snapshot the leader created.
-    let validator_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
+    let validator_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .path(),
-    );
+    )
+    .collect::<Vec<_>>();
     info!("validator full snapshot archives: {validator_full_snapshot_archives:#?}");
     let validator_full_snapshot_archive_for_comparison = validator_full_snapshot_archives
         .into_iter()
@@ -5001,9 +5006,10 @@ fn test_boot_from_local_state() {
             );
             std::thread::yield_now();
         }
-        let other_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
-            &other_validator_config.full_snapshot_archives_dir,
-        );
+        let other_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
+            other_validator_config.full_snapshot_archives_dir.path(),
+        )
+        .collect::<Vec<_>>();
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
         assert!(
             other_full_snapshot_archives
@@ -5026,9 +5032,13 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives = snapshot_paths::get_incremental_snapshot_archives(
-            &other_validator_config.incremental_snapshot_archives_dir,
-        );
+        let other_incremental_snapshot_archives =
+            snapshot_paths::incremental_snapshot_archives_iter(
+                other_validator_config
+                    .incremental_snapshot_archives_dir
+                    .path(),
+            )
+            .collect::<Vec<_>>();
         debug!(
             "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
         );
@@ -5116,12 +5126,14 @@ fn test_boot_from_local_state_missing_archive() {
     );
     debug!(
         "snapshot archives:\n\tfull: {:?}\n\tincr: {:?}",
-        snapshot_paths::get_full_snapshot_archives(
+        snapshot_paths::full_snapshot_archives_iter(
             validator_config.full_snapshot_archives_dir.path()
-        ),
-        snapshot_paths::get_incremental_snapshot_archives(
+        )
+        .collect::<Vec<_>>(),
+        snapshot_paths::incremental_snapshot_archives_iter(
             validator_config.incremental_snapshot_archives_dir.path()
-        ),
+        )
+        .collect::<Vec<_>>(),
     );
     info!("Waiting for validator to create snapshots... DONE");
 
@@ -5216,9 +5228,9 @@ fn test_duplicate_shreds_switch_failure() {
         dup_shred1: &Shred,
         dup_shred2: &Shred,
     ) {
-        let disable_turbine = Arc::new(AtomicBool::new(true));
+        let turbine_mode = TurbineMode::new(TurbineModeKind::TurbineAndRepairDisabled);
         duplicate_fork_validator_info.config.voting_disabled = false;
-        duplicate_fork_validator_info.config.turbine_disabled = disable_turbine.clone();
+        duplicate_fork_validator_info.config.turbine_mode = turbine_mode.clone();
         info!("Restarting node: {pubkey}");
         cluster.restart_node(
             pubkey,
@@ -5239,7 +5251,7 @@ fn test_duplicate_shreds_switch_failure() {
             }
             sleep(Duration::from_millis(1000));
         }
-        disable_turbine.store(false, Ordering::Relaxed);
+        turbine_mode.set(TurbineModeKind::Enabled);
 
         // Send the validator the other version of the shred so they realize it's duplicate
         info!("Resending duplicate shreds to duplicate fork validator");
@@ -5927,7 +5939,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     info!("Restarting node");
@@ -5935,7 +5947,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(

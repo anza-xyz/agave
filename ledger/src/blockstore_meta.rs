@@ -1,6 +1,7 @@
 use {
     crate::{
         bit_vec::BitVec,
+        blockstore::ParentInfo,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
             merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
@@ -42,6 +43,7 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
+        // Parent is connected; the slot becomes CONNECTED once it is also full.
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -144,16 +146,16 @@ pub struct SlotMetaBase<T> {
     pub completed_data_indexes: T,
 }
 
-pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexes>;
 
-/// SlotMetaV3 extends SlotMeta with two additional fields: `parent_block_id`
-/// and `replay_fec_set_index`. The SlotMeta type will continue to be used
-/// (written) for now, but a SlotMetaV3 can be read from the Blockstore and
-/// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
-/// SlotMeta enables this software to read a Blockstore modified by a future
-/// version where the SlotMetaV3 format is persisted.
+/// Slot metadata persisted by blockstore.
+///
+/// V3 adds `parent_block_id` and `replay_fec_set_index` so replay can validate
+/// and restart slots that switch parent through an UpdateParent marker. The new
+/// fields default on old ledger reads, preserving backward-compatible reads of
+/// V2 data.
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
-pub(crate) struct SlotMetaV3 {
+pub struct SlotMetaV3 {
     pub slot: Slot,
     pub consumed: u64,
     pub received: u64,
@@ -166,40 +168,33 @@ pub(crate) struct SlotMetaV3 {
     #[wincode(with = "PodConnectedFlags")]
     pub connected_flags: ConnectedFlags,
     pub completed_data_indexes: CompletedDataIndexes,
-    /// The block id of the parent block.
-    /// Populated from the block header / update parent marker.
+    /// Block id paired with `parent_slot`.
+    ///
+    /// Populated by the block header initially, then replaced if an UpdateParent
+    /// marker changes the replay parent for this slot.
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Hash>")]
     pub parent_block_id: Hash,
-    /// The FEC set index from which replay should start for this block.
-    /// Populated from the block header / update parent marker.
+    /// Shred/FEC-set index where replay should start for this slot.
+    ///
+    /// A value of zero means replay starts from the block header. A non-zero
+    /// value means an UpdateParent marker was observed and replay must skip the
+    /// optimistic-parent prefix before this FEC set.
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<u32>")]
     pub replay_fec_set_index: u32,
 }
 
-impl From<SlotMetaV3> for SlotMeta {
-    fn from(v3: SlotMetaV3) -> Self {
-        SlotMeta {
-            slot: v3.slot,
-            consumed: v3.consumed,
-            received: v3.received,
-            first_shred_timestamp: v3.first_shred_timestamp,
-            last_index: v3.last_index,
-            parent_slot: v3.parent_slot,
-            next_slots: v3.next_slots,
-            connected_flags: v3.connected_flags,
-            completed_data_indexes: v3.completed_data_indexes,
-        }
-    }
-}
+pub type SlotMeta = SlotMetaV3;
 
 // Wincode implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod wincode_compat {
     use {
         super::*,
-        std::mem::MaybeUninit,
+        std::{marker::PhantomData, mem::MaybeUninit},
         wincode::{
-            ReadResult, WriteResult,
+            ReadError, ReadResult, WriteResult,
             config::ConfigCore,
-            io::{Reader, Writer},
+            io::{ReadError as IoReadError, Reader, Writer},
         },
     };
 
@@ -228,6 +223,49 @@ mod wincode_compat {
 
         fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             <Slot as SchemaWrite<C>>::write(writer, &src.unwrap_or(Slot::MAX))
+        }
+    }
+
+    /// Deserializes using `T` normally, but returns `T::Dst::default()` if the
+    /// reader is exhausted (EOF). Useful for backward compatibility when
+    /// trailing fields are appended to persisted structs.
+    pub(crate) struct DefaultOnEmptyRead<T>(PhantomData<T>);
+
+    // TYPE_META intentionally left dynamic: decoding may read either 0 bytes
+    // (EOF fallback) or the full encoded representation.
+    unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for DefaultOnEmptyRead<T>
+    where
+        T: SchemaRead<'de, C>,
+        T::Dst: Default,
+    {
+        type Dst = T::Dst;
+
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            match <T as SchemaRead<'de, C>>::read(reader, dst) {
+                Ok(()) => Ok(()),
+                Err(ReadError::Io(IoReadError::ReadSizeLimit(_))) => {
+                    dst.write(Self::Dst::default());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+
+    unsafe impl<C: ConfigCore, T> SchemaWrite<C> for DefaultOnEmptyRead<T>
+    where
+        T: SchemaWrite<C>,
+    {
+        type Src = T::Src;
+
+        const TYPE_META: wincode::TypeMeta = T::TYPE_META;
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            <T as SchemaWrite<C>>::size_of(src)
+        }
+
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+            <T as SchemaWrite<C>>::write(writer, src)
         }
     }
 }
@@ -437,7 +475,7 @@ impl ShredIndex {
         }
     }
 
-    pub(crate) fn contains(&self, idx: u64) -> bool {
+    pub fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
 
@@ -550,6 +588,15 @@ impl SlotMeta {
         self.is_connected()
     }
 
+    /// Clear the meta's parent_connected and connected flags.
+    /// Returns true if the meta was connected, indicating children need clearing.
+    pub fn clear_parent_connected(&mut self) -> bool {
+        let originally_connected = self.is_connected();
+        self.connected_flags
+            .remove(ConnectedFlags::PARENT_CONNECTED | ConnectedFlags::CONNECTED);
+        originally_connected
+    }
+
     /// Dangerous.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn unset_parent(&mut self) {
@@ -579,6 +626,22 @@ impl SlotMeta {
 
     pub(crate) fn new_orphan(slot: Slot) -> Self {
         Self::new(slot, /*parent_slot:*/ None)
+    }
+
+    pub(crate) fn update_from_parent_info(&mut self, parent_info: ParentInfo) {
+        self.parent_slot = Some(parent_info.parent_slot);
+        self.parent_block_id = parent_info.parent_block_id;
+        self.replay_fec_set_index = parent_info.replay_fec_set_index;
+    }
+
+    pub(crate) fn populated_from_block_header(&self) -> bool {
+        self.replay_fec_set_index == 0
+    }
+
+    /// Returns true once this slot's replay parent has been changed by an
+    /// `UpdateParent` marker.
+    pub fn has_update_parent(&self) -> bool {
+        self.replay_fec_set_index > 0
     }
 }
 
@@ -625,6 +688,10 @@ impl ErasureMeta {
 
     pub(crate) fn config(&self) -> ErasureConfig {
         self.config
+    }
+
+    pub(crate) fn fec_set_index(&self) -> u32 {
+        self.fec_set_index
     }
 
     pub(crate) fn data_shreds_indices(&self) -> Range<u64> {

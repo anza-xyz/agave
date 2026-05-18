@@ -20,6 +20,8 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) received_certificates: Saturating<usize>,
     pub(super) standstill: bool,
     pub(super) prune_old_state_called: Saturating<usize>,
+    pub(crate) pending_safe_to_notar_repair_sent: Saturating<usize>,
+    pub(crate) pending_safe_to_notar_resolved: Saturating<usize>,
     last_request_time: Instant,
 }
 
@@ -36,6 +38,8 @@ impl ConsensusPoolServiceStats {
             received_certificates: Saturating(0),
             standstill: false,
             prune_old_state_called: Saturating(0),
+            pending_safe_to_notar_repair_sent: Saturating(0),
+            pending_safe_to_notar_resolved: Saturating(0),
             last_request_time: Instant::now(),
         }
     }
@@ -52,7 +56,9 @@ impl ConsensusPoolServiceStats {
             received_certificates: Saturating(received_certificates),
             standstill,
             prune_old_state_called: Saturating(prune_old_state_called),
-            ..
+            pending_safe_to_notar_repair_sent: Saturating(pending_safe_to_notar_repair_sent),
+            pending_safe_to_notar_resolved: Saturating(pending_safe_to_notar_resolved),
+            last_request_time: _,
         } = self;
         datapoint_info!(
             "consensus_pool_service",
@@ -74,6 +80,16 @@ impl ConsensusPoolServiceStats {
             ("received_certificates", received_certificates, i64),
             ("in_standstill_bool", standstill, bool),
             ("prune_old_state_called", prune_old_state_called, i64),
+            (
+                "pending_safe_to_notar_repair_sent",
+                pending_safe_to_notar_repair_sent,
+                i64
+            ),
+            (
+                "pending_safe_to_notar_resolved",
+                pending_safe_to_notar_resolved,
+                i64
+            ),
         );
     }
 

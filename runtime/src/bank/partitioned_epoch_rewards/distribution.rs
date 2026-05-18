@@ -14,10 +14,15 @@ use {
     serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
     solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
+    solana_clock::Epoch,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_reward_info::RewardType,
-    solana_stake_interface::state::{Delegation, StakeStateV2},
+    solana_stake_interface::{
+        stake_history::StakeHistory,
+        state::{Delegation, StakeStateV2},
+    },
     std::sync::{Arc, atomic::Ordering::Relaxed},
     thiserror::Error,
 };
@@ -190,8 +195,13 @@ impl Bank {
     }
 
     fn build_updated_stake_reward(
+        distribution_epoch: u64,
+        stake_history: &StakeHistory,
+        new_warmup_cooldown_rate_epoch: Option<Epoch>,
         stakes_cache_accounts: &imbl::HashMap<Pubkey, StakeAccount<Delegation>>,
         partitioned_stake_reward: &PartitionedStakeReward,
+        rent: &Rent,
+        adjust_delegations_for_rent: bool,
     ) -> Result<StakeReward, DistributionError> {
         let stake_account = stakes_cache_accounts
             .get(&partitioned_stake_reward.stake_pubkey)
@@ -209,13 +219,25 @@ impl Bank {
         account
             .checked_add_lamports(partitioned_stake_reward.stake_reward)
             .map_err(|_| DistributionError::ArithmeticOverflow)?;
-        assert_eq!(
-            stake
+        if adjust_delegations_for_rent {
+            let minimum_balance = rent.minimum_balance(account.data().len());
+            assert!(
+                partitioned_stake_reward.stake.delegation.stake
+                    <= account.lamports().saturating_sub(minimum_balance),
+                "stake reward delegation must be consistent with the updated stake account \
+                 lamport balance"
+            );
+        } else {
+            let expected_delegation = stake
                 .delegation
                 .stake
-                .saturating_add(partitioned_stake_reward.stake_reward),
-            partitioned_stake_reward.stake.delegation.stake
-        );
+                .saturating_add(partitioned_stake_reward.stake_reward);
+            assert_eq!(
+                expected_delegation, partitioned_stake_reward.stake.delegation.stake,
+                "stake reward delegation must be consistent with the updated stake account \
+                 lamport balance"
+            );
+        }
         account
             .set_state(&StakeStateV2::Stake(
                 meta,
@@ -223,10 +245,21 @@ impl Bank {
                 flags,
             ))
             .map_err(|_| DistributionError::UnableToSetState)?;
+
+        let reward_type = if partitioned_stake_reward.stake.delegation.stake(
+            distribution_epoch,
+            stake_history,
+            new_warmup_cooldown_rate_epoch,
+        ) == 0
+        {
+            RewardType::DeactivatedStake
+        } else {
+            RewardType::Staking
+        };
         Ok(StakeReward {
             stake_pubkey: partitioned_stake_reward.stake_pubkey,
             stake_reward_info: StakeRewardInfo {
-                reward_type: RewardType::Staking,
+                reward_type,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
                 commission_bps: Some(partitioned_stake_reward.commission_bps),
@@ -249,6 +282,11 @@ impl Bank {
         partition_rewards: &StartBlockHeightAndPartitionedRewards,
         partition_index: u64,
     ) -> DistributionResults {
+        let feature_snapshot = self.feature_set.snapshot();
+        // Name intentionally doesn't match -- "adjust delegations for rent" is
+        // part of relaxing post-exec min balance checks.
+        let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
+
         let mut lamports_distributed = 0;
         let mut lamports_burned = 0;
         let indices = partition_rewards
@@ -263,6 +301,9 @@ impl Bank {
         let mut updated_stake_rewards = Vec::with_capacity(indices.len());
         let stakes_cache = self.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
+        let stake_history = stakes_cache.history();
+        let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let rent = &self.rent_collector.rent;
         for index in indices {
             let partitioned_stake_reward = partition_rewards
                 .all_stake_rewards
@@ -279,8 +320,15 @@ impl Bank {
                 });
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward;
-            match Self::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
-            {
+            match Self::build_updated_stake_reward(
+                self.epoch,
+                stake_history,
+                new_warmup_cooldown_rate_epoch,
+                stakes_cache_accounts,
+                partitioned_stake_reward,
+                rent,
+                adjust_delegations_for_rent,
+            ) {
                 Ok(stake_reward) => {
                     lamports_distributed += reward_amount;
                     updated_stake_rewards.push(stake_reward);
@@ -329,12 +377,14 @@ mod tests {
         solana_reward_info::RewardType,
         solana_stake_interface::{
             stake_flags::StakeFlags,
+            stake_history::StakeHistoryEntry,
             state::{Meta, Stake},
         },
         solana_sysvar as sysvar,
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
         std::sync::Arc,
+        test_case::test_case,
     };
 
     #[test]
@@ -618,10 +668,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_updated_stake_reward() {
+    #[test_case(true; "adjust_delegations_for_rent")]
+    #[test_case(false; "no_adjust_delegations_for_rent")]
+    fn test_build_updated_stake_reward(adjust_delegations_for_rent: bool) {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
+        // add an entry so we can get full deactivation one epoch later
+        let mut stake_history = StakeHistory::default();
+        stake_history.add(
+            0,
+            StakeHistoryEntry {
+                effective: 1_000_000 * LAMPORTS_PER_SOL,
+                activating: LAMPORTS_PER_SOL,
+                deactivating: LAMPORTS_PER_SOL,
+            },
+        );
+
+        let distribution_epoch = bank.epoch + 1;
+        let new_warmup_cooldown_rate_epoch = bank.new_warmup_cooldown_rate_epoch();
+        let mut rent = bank.rent_collector.rent.clone();
+        let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+
+        // Adjust rent down, no impact at all
+        if adjust_delegations_for_rent {
+            rent.lamports_per_byte /= 2;
+        }
 
         let voter_pubkey = Pubkey::new_unique();
         let new_stake = Stake {
@@ -645,13 +716,19 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
-                .unwrap_err(),
+            Bank::build_updated_stake_reward(
+                distribution_epoch,
+                &stake_history,
+                new_warmup_cooldown_rate_epoch,
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                &rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap_err(),
             DistributionError::AccountNotFound
         );
         drop(stakes_cache);
-
-        let rent_exempt_reserve = 2_282_880;
 
         let overflowing_account = Pubkey::new_unique();
         let mut stake_account = AccountSharedData::new(
@@ -676,8 +753,16 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
-                .unwrap_err(),
+            Bank::build_updated_stake_reward(
+                distribution_epoch,
+                &stake_history,
+                new_warmup_cooldown_rate_epoch,
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                &rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap_err(),
             DistributionError::ArithmeticOverflow
         );
         drop(stakes_cache);
@@ -739,8 +824,97 @@ mod tests {
             },
         };
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
-                .unwrap(),
+            Bank::build_updated_stake_reward(
+                distribution_epoch,
+                &stake_history,
+                new_warmup_cooldown_rate_epoch,
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                &rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap(),
+            expected_stake_reward
+        );
+        drop(stakes_cache);
+
+        let deactivating_account = Pubkey::new_unique();
+        let deactivating_stake = Stake {
+            delegation: Delegation {
+                voter_pubkey,
+                stake: 55_555,
+                deactivation_epoch: bank.epoch,
+                ..Delegation::default()
+            },
+            credits_observed: 42,
+        };
+        let starting_stake = deactivating_stake.delegation.stake - stake_reward;
+        let starting_lamports = rent_exempt_reserve + starting_stake;
+        let mut stake_account = AccountSharedData::new(
+            starting_lamports,
+            StakeStateV2::size_of(),
+            &solana_stake_interface::program::id(),
+        );
+        let other_stake = Stake {
+            delegation: Delegation {
+                voter_pubkey,
+                stake: starting_stake,
+                deactivation_epoch: bank.epoch,
+                ..Delegation::default()
+            },
+            credits_observed: 11,
+        };
+        stake_account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                other_stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+        bank.store_account(&deactivating_account, &stake_account);
+        let partitioned_stake_reward = PartitionedStakeReward {
+            stake_pubkey: deactivating_account,
+            stake: deactivating_stake,
+            stake_reward,
+            commission_bps,
+        };
+        let stakes_cache = bank.stakes_cache.stakes();
+        let stakes_cache_accounts = stakes_cache.stake_delegations();
+        let expected_lamports = starting_lamports + stake_reward;
+        let mut expected_stake_account = AccountSharedData::new(
+            expected_lamports,
+            StakeStateV2::size_of(),
+            &solana_stake_interface::program::id(),
+        );
+        expected_stake_account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                deactivating_stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+
+        let expected_stake_reward = StakeReward {
+            stake_pubkey: deactivating_account,
+            stake_account: expected_stake_account,
+            stake_reward_info: StakeRewardInfo {
+                reward_type: RewardType::DeactivatedStake,
+                lamports: stake_reward as i64,
+                post_balance: expected_lamports,
+                commission_bps: Some(commission_bps),
+            },
+        };
+        assert_eq!(
+            Bank::build_updated_stake_reward(
+                distribution_epoch,
+                &stake_history,
+                new_warmup_cooldown_rate_epoch,
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                &rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap(),
             expected_stake_reward
         );
         drop(stakes_cache);
@@ -807,5 +981,100 @@ mod tests {
             ..
         } = bank.store_stake_accounts_in_partition(&partitioned_rewards, 0);
         assert_eq!(expected_total, lamports_distributed);
+    }
+
+    #[test]
+    fn test_distribute_with_increased_rent() {
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        // Set up epoch_rewards sysvar with rewards with 10e9 lamports to distribute.
+        let total_rewards = 10 * LAMPORTS_PER_SOL;
+        let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
+        let total_points = (total_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
+        bank.create_epoch_rewards_sysvar(
+            0,
+            42,
+            num_partitions,
+            &PointValue {
+                rewards: total_rewards,
+                points: total_points,
+            },
+        );
+        let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
+        let expected_balance =
+            bank.get_minimum_balance_for_rent_exemption(pre_epoch_rewards_account.data().len());
+        // Expected balance is the sysvar rent-exempt balance
+        assert_eq!(pre_epoch_rewards_account.lamports(), expected_balance);
+
+        // Use lower lamports per byte for creating, bank has higher amount
+        let mut lower_rent = bank.rent_collector.rent.clone();
+        lower_rent.lamports_per_byte /= 10;
+        let higher_rent = &bank.rent_collector.rent;
+
+        // Set up a partition of rewards to distribute
+        let stake_rewards = [
+            // Zero stake -> destaked
+            StakeReward::new_with_pre_stake_account(0, 0, &lower_rent),
+            // Below new minimum, small reward -> destaked
+            StakeReward::new_with_pre_stake_account(1, 1, &lower_rent),
+            // Below new minimum, no reward -> delegation modified
+            StakeReward::new_with_pre_stake_account(0, LAMPORTS_PER_SOL, &lower_rent),
+            // Below new minimum, small reward -> delegation modified
+            StakeReward::new_with_pre_stake_account(1, LAMPORTS_PER_SOL, &lower_rent),
+            // Below new minimum, big reward -> delegation modified
+            StakeReward::new_with_pre_stake_account(
+                LAMPORTS_PER_SOL as i64,
+                LAMPORTS_PER_SOL,
+                &lower_rent,
+            ),
+            // Above new minimum, small reward -> delegation capped
+            StakeReward::new_with_pre_stake_account(1, LAMPORTS_PER_SOL, higher_rent),
+            // Above new minimum, big reward -> delegation capped
+            StakeReward::new_with_pre_stake_account(
+                LAMPORTS_PER_SOL as i64,
+                LAMPORTS_PER_SOL,
+                higher_rent,
+            ),
+        ]
+        .into_iter()
+        .map(|r| {
+            bank.store_account(&r.1.stake_pubkey, &r.0);
+            r.1
+        })
+        .collect::<Vec<_>>();
+
+        let expected_num = stake_rewards.len();
+        let rewards_to_distribute = stake_rewards
+            .iter()
+            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
+            .sum::<i64>() as u64;
+        let all_rewards = convert_rewards(stake_rewards);
+
+        let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
+            distribution_starting_block_height: bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            all_stake_rewards: Arc::new(all_rewards),
+            partition_indices: vec![(0..expected_num).collect::<Vec<_>>()],
+        };
+
+        // Distribute rewards
+        let pre_cap = bank.capitalization();
+        bank.distribute_epoch_rewards_in_partition(&partitioned_rewards, 0);
+        let post_cap = bank.capitalization();
+        let post_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
+
+        // Assert that epoch rewards sysvar lamports balance does not change
+        assert_eq!(post_epoch_rewards_account.lamports(), expected_balance);
+
+        let epoch_rewards: sysvar::epoch_rewards::EpochRewards =
+            from_account(&post_epoch_rewards_account).unwrap();
+        assert_eq!(epoch_rewards.total_rewards, total_rewards);
+        assert_eq!(epoch_rewards.distributed_rewards, rewards_to_distribute,);
+
+        // Assert that the bank total capital changed by the amount of rewards
+        // distributed
+        assert_eq!(pre_cap + rewards_to_distribute, post_cap);
     }
 }

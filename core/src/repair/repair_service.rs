@@ -65,7 +65,7 @@ const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(250);
 // This is the amount of time we will wait for a repair request to be fulfilled
 // before making another request. Value is based on reasonable upper bound of
 // expected network delays in requesting repairs and receiving shreds.
-const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
+pub(crate) const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
 
 // When requesting repair for a specific shred through the admin RPC, we will
 // request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
@@ -149,8 +149,10 @@ impl Default for RepairMetrics {
 }
 
 impl RepairMetrics {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
     pub fn maybe_report(&mut self) {
-        if self.last_report.elapsed().as_secs() > 2 {
+        if self.last_report.elapsed() > Self::REPORT_INTERVAL {
             self.stats.report();
             self.timing.report();
             self.best_repairs_stats.report();
@@ -425,7 +427,7 @@ struct RepairTracker {
 
 pub struct RepairService {
     t_repair: JoinHandle<()>,
-    ancestor_hashes_service: AncestorHashesService,
+    ancestor_hashes_service: Option<AncestorHashesService>,
 }
 
 impl RepairService {
@@ -1198,7 +1200,10 @@ impl RepairService {
 
     pub fn join(self) -> thread::Result<()> {
         self.t_repair.join()?;
-        self.ancestor_hashes_service.join()
+        if let Some(ancestor_hashes_service) = self.ancestor_hashes_service {
+            ancestor_hashes_service.join()?;
+        }
+        Ok(())
     }
 }
 

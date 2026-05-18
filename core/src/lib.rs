@@ -12,7 +12,6 @@ pub mod admin_rpc_post_init;
 pub mod banking_simulation;
 pub mod banking_stage;
 pub mod banking_trace;
-#[allow(dead_code)]
 mod block_creation_loop;
 pub mod bls_sigverify;
 pub mod cluster_info_vote_listener;
@@ -44,6 +43,7 @@ pub mod stats_reporter_service;
 pub mod system_monitor_service;
 pub mod tpu;
 mod tpu_entry_notifier;
+mod transaction_priority;
 pub mod tvu;
 pub mod unfrozen_gossip_verified_vote_hashes;
 pub mod validator;

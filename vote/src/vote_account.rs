@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::field_qualifiers;
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
@@ -20,6 +18,18 @@ use {
         sync::{Arc, OnceLock},
     },
     thiserror::Error,
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    qualifier_attr::field_qualifiers,
+    rand::Rng,
+    solana_bls_signatures::Keypair as BLSKeypair,
+    solana_clock::Clock,
+    solana_keypair::Keypair,
+    solana_signer::Signer,
+    solana_vote_interface::state::{
+        BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, VoteInitV2, VoteStateV4, VoteStateVersions,
+    },
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -100,20 +110,21 @@ impl VoteAccount {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_random() -> VoteAccount {
-        use {
-            rand::Rng as _,
-            solana_clock::Clock,
-            solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
-        };
+        const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
         let mut rng = rand::rng();
-        let vote_pubkey = Pubkey::new_unique();
-
-        let vote_init = VoteInit {
+        let authorized_voter_bls_proof_of_possession = [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE];
+        let keypair = Keypair::new();
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+        let vote_init = VoteInitV2 {
             node_pubkey: Pubkey::new_unique(),
-            authorized_voter: Pubkey::new_unique(),
+            authorized_voter: keypair.pubkey(),
+            authorized_voter_bls_pubkey: bls_keypair.public.to_bytes_compressed(),
+            authorized_voter_bls_proof_of_possession,
             authorized_withdrawer: Pubkey::new_unique(),
-            commission: rng.random(),
+            inflation_rewards_commission_bps: rng.random_range(0..10_000),
+            block_revenue_commission_bps: rng.random_range(0..10_000),
         };
         let clock = Clock {
             slot: rng.random(),
@@ -122,14 +133,18 @@ impl VoteAccount {
             leader_schedule_epoch: rng.random(),
             unix_timestamp: rng.random(),
         };
-        let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
+        let vote_state = VoteStateV4::new(
+            &vote_init,
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &clock,
+        );
         let account = AccountSharedData::new_data(
             rng.random(), // lamports
             &VoteStateVersions::new_v4(vote_state),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
-
         VoteAccount::try_from(account).unwrap()
     }
 }

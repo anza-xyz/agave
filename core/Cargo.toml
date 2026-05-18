@@ -43,6 +43,7 @@ frozen-abi = [
 agave-banking-stage-ingress-types = { workspace = true }
 agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
+agave-fs = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
@@ -72,7 +73,6 @@ log = { workspace = true }
 min-max-heap = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
-prio-graph = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -173,6 +173,9 @@ tokio-util = { workspace = true }
 trees = { workspace = true }
 wincode = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemalloc-ctl = { workspace = true }
+
 [target."cfg(unix)".dependencies]
 sysctl = { workspace = true }
 
@@ -184,7 +187,7 @@ bitvec = { workspace = true }
 criterion = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
-solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
+solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }

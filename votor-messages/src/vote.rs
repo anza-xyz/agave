@@ -131,11 +131,6 @@ impl Vote {
         matches!(self, Self::Genesis(_))
     }
 
-    /// Whether the vote is a notarization or finalization
-    pub fn is_notarization_or_finalization(&self) -> bool {
-        matches!(self, Self::Notarize(_) | Self::Finalize(_))
-    }
-
     /// Returns the [`VoteType`] for the vote.
     pub fn get_type(&self) -> VoteType {
         match self {

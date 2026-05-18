@@ -29,11 +29,13 @@ fn message_passing_on_all_queues() {
     };
     let progress_tracker = ProgressMessage {
         leader_state: agave_scheduler_bindings::LEADER_READY,
+        current_slot_progress: 32,
+        epoch: 7,
         current_slot: 3,
         next_leader_slot: 12,
         leader_range_end: 16,
         remaining_cost_units: 12_000_000,
-        current_slot_progress: 32,
+        latest_blockhash: [42; 32],
     };
     let pack_to_worker = PackToWorkerMessage {
         flags: 123,

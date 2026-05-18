@@ -1671,6 +1671,10 @@ pub async fn process_show_stakes(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(stake_state) = stake_account.state() {
+            let rent_exempt_balance = rpc_client
+                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
+                .await?;
+
             match stake_state {
                 StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
                     stake_accounts.push(CliKeyedStakeState {
@@ -1682,6 +1686,7 @@ pub async fn process_show_stakes(
                             &stake_history,
                             &clock,
                             new_rate_activation_epoch,
+                            rent_exempt_balance,
                             false,
                         ),
                     });
@@ -1699,6 +1704,7 @@ pub async fn process_show_stakes(
                             &stake_history,
                             &clock,
                             new_rate_activation_epoch,
+                            rent_exempt_balance,
                             false,
                         ),
                     });

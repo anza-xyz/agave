@@ -6,13 +6,13 @@ pub struct SVMFeatureSet {
     pub virtual_address_space_adjustments: bool,
     pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
-    pub enable_loader_v4: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub abort_on_invalid_curve: bool,
     pub blake3_syscall_enabled: bool,
     pub curve25519_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
     pub disable_sbpf_v0_execution: bool,
+    pub disable_sbpf_v0_v1_v2_deployment: bool,
     pub enable_alt_bn128_compression_syscall: bool,
     pub enable_alt_bn128_syscall: bool,
     pub enable_big_mod_exp_syscall: bool,
@@ -51,6 +51,8 @@ pub struct SVMFeatureSet {
     pub direct_account_pointers_in_program_input: bool,
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
+    pub relax_post_exec_min_balance_check: bool,
+    pub define_ltds_fee_only_semantics: bool,
 }
 
 impl SVMFeatureSet {
@@ -61,13 +63,13 @@ impl SVMFeatureSet {
             virtual_address_space_adjustments: true,
             account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
-            enable_loader_v4: true,
             deplete_cu_meter_on_vm_failure: true,
             abort_on_invalid_curve: true,
             blake3_syscall_enabled: true,
             curve25519_syscall_enabled: true,
             disable_fees_sysvar: true,
             disable_sbpf_v0_execution: true,
+            disable_sbpf_v0_v1_v2_deployment: true,
             enable_alt_bn128_compression_syscall: true,
             enable_alt_bn128_syscall: true,
             enable_big_mod_exp_syscall: true,
@@ -106,6 +108,8 @@ impl SVMFeatureSet {
             direct_account_pointers_in_program_input: true,
             loader_v3_minimum_extend_program_size: true,
             enable_sha512_syscall: true,
+            relax_post_exec_min_balance_check: true,
+            define_ltds_fee_only_semantics: true,
         }
     }
 }

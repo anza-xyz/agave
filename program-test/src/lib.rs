@@ -44,7 +44,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader_ex},
@@ -1335,6 +1335,7 @@ impl ProgramTestContext {
     /// Force the working bank ahead to a new slot
     pub fn warp_to_slot(&mut self, warp_slot: Slot) -> Result<(), ProgramTestError> {
         let bank = self.bank_forks.read().unwrap().working_bank();
+        let leader = *bank.leader();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1354,7 +1355,7 @@ impl ProgramTestContext {
             bank.freeze();
             bank
         } else {
-            let warped = Bank::warp_from_parent(bank, SlotLeader::default(), pre_warp_slot);
+            let warped = Bank::warp_from_parent(bank, leader, pre_warp_slot);
             self.bank_forks
                 .write()
                 .unwrap()
@@ -1369,7 +1370,7 @@ impl ProgramTestContext {
         );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
-        let bank_at_warp_slot = Bank::new_from_parent(warp_bank, SlotLeader::default(), warp_slot);
+        let bank_at_warp_slot = Bank::new_from_parent(warp_bank, leader, warp_slot);
         self.bank_forks.write().unwrap().insert(bank_at_warp_slot);
 
         // Update block commitment cache, otherwise banks server will poll at
@@ -1397,6 +1398,7 @@ impl ProgramTestContext {
     /// warp forward one more slot and force reward interval end
     pub fn warp_forward_force_reward_interval_end(&mut self) -> Result<(), ProgramTestError> {
         let bank = self.bank_forks.read().unwrap().working_bank();
+        let leader = *bank.leader();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1411,7 +1413,7 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
-        let mut warp_bank = Bank::new_from_parent(bank, SlotLeader::default(), warp_slot);
+        let mut warp_bank = Bank::new_from_parent(bank, leader, warp_slot);
 
         warp_bank.force_reward_interval_end_for_tests();
         self.bank_forks.write().unwrap().insert(warp_bank);

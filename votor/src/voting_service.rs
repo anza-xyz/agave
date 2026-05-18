@@ -254,7 +254,7 @@ mod tests {
             consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        solana_bls_signatures::Signature as BLSSignature,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -324,25 +324,25 @@ mod tests {
     #[test_case(BLSOp::PushVote {
         message: Arc::new(ConsensusMessage::Vote(VoteMessage {
             vote: Vote::new_skip_vote(5),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
         })),
         slot: 5,
         saved_vote_history: SavedVoteHistoryVersions::Current(SavedVoteHistory::default()),
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(5),
-        signature: BLSSignature::default(),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
     }))]
     #[test_case(BLSOp::PushCertificate {
         certificate: Arc::new(Certificate {
             cert_type: CertificateType::Skip(5),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: Vec::new(),
         }),
     }, ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
-        signature: BLSSignature::default(),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {

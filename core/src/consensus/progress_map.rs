@@ -81,8 +81,17 @@ impl RetransmitInfo {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeadSlotReason {
+    /// Dead and cannot be brought back to life by an `UpdateParent` marker.
+    Hard,
+    /// Replay execution failed, but an `UpdateParent` marker could still make
+    /// the failed prefix obsolete.
+    ReplayFailureBeforeUpdateParent,
+}
+
 pub struct ForkProgress {
-    pub is_dead: bool,
+    pub dead_reason: Option<DeadSlotReason>,
     pub fork_stats: ForkStats,
     pub propagated_stats: PropagatedStats,
     pub replay_stats: Arc<RwLock<ReplaySlotStats>>,
@@ -131,7 +140,7 @@ impl ForkProgress {
             .unwrap_or((false, 0, HashSet::new(), false, 0));
 
         Self {
-            is_dead: false,
+            dead_reason: None,
             fork_stats: ForkStats::default(),
             replay_stats: Arc::new(RwLock::new(ReplaySlotStats::default())),
             replay_progress: Arc::new(RwLock::new(
@@ -189,6 +198,10 @@ impl ForkProgress {
             new_progress.fork_stats.bank_hash = Some(bank.hash());
         }
         new_progress
+    }
+
+    pub fn mark_dead(&mut self, reason: DeadSlotReason) {
+        self.dead_reason = Some(reason);
     }
 }
 
@@ -338,7 +351,13 @@ impl ProgressMap {
     pub fn is_dead(&self, slot: Slot) -> Option<bool> {
         self.progress_map
             .get(&slot)
-            .map(|fork_progress| fork_progress.is_dead)
+            .map(|fork_progress| fork_progress.dead_reason.is_some())
+    }
+
+    pub fn dead_reason(&self, slot: Slot) -> Option<&DeadSlotReason> {
+        self.progress_map
+            .get(&slot)
+            .and_then(|fork_progress| fork_progress.dead_reason.as_ref())
     }
 
     pub fn get_hash(&self, slot: Slot) -> Option<Hash> {

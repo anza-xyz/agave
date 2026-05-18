@@ -223,7 +223,13 @@ pub struct CallerAccount<'a> {
 }
 
 impl<'a> CallerAccount<'a> {
-    pub fn get_serialized_data(
+    /// # Safety
+    ///
+    /// * The caller must ensure that this function does not violate mutable reference uniqueness
+    ///   constraints;
+    /// * The caller must ensure that the lifetime of the returned slice does not outlive the
+    ///   backing data.
+    pub unsafe fn get_serialized_data(
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         check_aligned: bool,
         vm_addr: u64,
@@ -250,27 +256,31 @@ impl<'a> CallerAccount<'a> {
             Ok(&mut [])
         } else if virtual_address_space_adjustments {
             // Workaround the memory permissions (as these are from the PoV of being inside the VM)
-            let serialization_ptr = translate_slice_mut_for_cpi::<u8>(
-                memory_mapping,
-                solana_sbpf::ebpf::MM_INPUT_START,
-                1,
-                false, // Don't care since it is byte aligned
-            )?
-            .as_mut_ptr();
             unsafe {
+                // SAFETY: Invariants for constructing a mutable reference delegated to the caller.
+                let serialization_ptr: &'a mut [u8] = translate_slice_mut_for_cpi::<u8>(
+                    memory_mapping,
+                    solana_sbpf::ebpf::MM_INPUT_START,
+                    1,
+                    false, // Don't care since it is byte aligned
+                )?;
                 Ok(std::slice::from_raw_parts_mut(
                     serialization_ptr
+                        .as_mut_ptr()
                         .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
                     len,
                 ))
             }
         } else {
-            translate_slice_mut_for_cpi::<u8>(
-                memory_mapping,
-                vm_addr,
-                len as u64,
-                false, // Don't care since it is byte aligned
-            )
+            unsafe {
+                // SAFETY: Invariants for constructing a mutable reference delegated to the caller.
+                translate_slice_mut_for_cpi::<u8>(
+                    memory_mapping,
+                    vm_addr,
+                    len as u64,
+                    false, // Don't care since it is byte aligned
+                )
+            }
         }
     }
 
@@ -381,20 +391,22 @@ impl<'a> CallerAccount<'a> {
             let ref_to_len_in_vm =
                 translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
-            let serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                check_aligned,
-                vm_data_addr,
-                account_metadata.original_data_len,
-                if syscall_parameter_address_restrictions {
-                    *ref_to_len_in_vm as usize
-                } else {
-                    data.len()
-                },
-                syscall_parameter_address_restrictions,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
+            let serialized_data = unsafe {
+                CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    check_aligned,
+                    vm_data_addr,
+                    account_metadata.original_data_len,
+                    if syscall_parameter_address_restrictions {
+                        *ref_to_len_in_vm as usize
+                    } else {
+                        data.len()
+                    },
+                    syscall_parameter_address_restrictions,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?
+            };
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
@@ -498,20 +510,22 @@ impl<'a> CallerAccount<'a> {
         }
         let ref_to_len_in_vm =
             translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
-        let serialized_data = CallerAccount::get_serialized_data(
-            memory_mapping,
-            check_aligned,
-            account_info.data_addr,
-            account_metadata.original_data_len,
-            if syscall_parameter_address_restrictions {
-                *ref_to_len_in_vm as usize
-            } else {
-                account_info.data_len as usize
-            },
-            syscall_parameter_address_restrictions,
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        )?;
+        let serialized_data = unsafe {
+            CallerAccount::get_serialized_data(
+                memory_mapping,
+                check_aligned,
+                account_info.data_addr,
+                account_metadata.original_data_len,
+                if syscall_parameter_address_restrictions {
+                    *ref_to_len_in_vm as usize
+                } else {
+                    account_info.data_len as usize
+                },
+                syscall_parameter_address_restrictions,
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            )?
+        };
 
         Ok(CallerAccount {
             lamports,
@@ -923,13 +937,19 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
             let mut callee_account = instruction_context
                 .try_borrow_instruction_account(translated_account.index_in_caller)?;
             if translated_account.update_caller_account_region {
-                update_caller_account_region(
-                    memory_mapping,
-                    check_aligned,
-                    &translated_account.caller_account,
-                    &mut callee_account,
-                    account_data_direct_mapping,
-                )?;
+                unsafe {
+                    // SAFETY: lifetime is valid by construction: we're resetting the caller memory
+                    // region back to the account that was here before the CPI call, meaning that
+                    // the memory region was guaranteed to be live for sufficient duration upon
+                    // call of this function.
+                    update_caller_account_region(
+                        memory_mapping,
+                        check_aligned,
+                        &translated_account.caller_account,
+                        &mut callee_account,
+                        account_data_direct_mapping,
+                    )?;
+                }
             }
         }
     }
@@ -1028,7 +1048,7 @@ where
     // only outside syscalls
     let accounts_metadata = &invoke_context
         .memory_contexts
-        .memory_context()
+        .memory_context_abi_v1()
         .unwrap()
         .accounts_metadata;
 
@@ -1174,16 +1194,18 @@ fn update_callee_account(
             if !account_data_direct_mapping && post_len < prev_len {
                 // If the account has been shrunk, we're going to zero the unused memory
                 // *that was previously used*.
-                let serialized_data = CallerAccount::get_serialized_data(
-                    memory_mapping,
-                    check_aligned,
-                    caller_account.vm_data_addr,
-                    caller_account.original_data_len,
-                    prev_len,
-                    syscall_parameter_address_restrictions,
-                    virtual_address_space_adjustments,
-                    account_data_direct_mapping,
-                )?;
+                let serialized_data = unsafe {
+                    CallerAccount::get_serialized_data(
+                        memory_mapping,
+                        check_aligned,
+                        caller_account.vm_data_addr,
+                        caller_account.original_data_len,
+                        prev_len,
+                        syscall_parameter_address_restrictions,
+                        virtual_address_space_adjustments,
+                        account_data_direct_mapping,
+                    )?
+                };
                 serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall) as Error)?
@@ -1217,7 +1239,11 @@ fn update_callee_account(
     Ok(must_update_caller)
 }
 
-fn update_caller_account_region(
+/// # Safety
+///
+/// The the account data pointed to by `callee_account` must outlive the uses of the
+/// [`MemoryMapping`].
+unsafe fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
@@ -1248,7 +1274,13 @@ fn update_caller_account_region(
         } else {
             new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
         }
-        memory_mapping.replace_region(region_index, new_region)?;
+        unsafe {
+            // SAFETY: the lifetime invariants are delegated to the callers of this function. Both
+            // `modify_memory_region_of_account` and `create_memory_region_of_account` create memory
+            // regions pointing to valid buffers by the virtue of the region being produced out of
+            // an intermediate slice, which itself must be wholly valid.
+            memory_mapping.replace_region(region_index, new_region)?;
+        }
     }
 
     Ok(())
@@ -1317,16 +1349,18 @@ fn update_caller_account(
                     .fill(0);
             }
             // Set the length of caller_account.serialized_data to post_len.
-            caller_account.serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                check_aligned,
-                caller_account.vm_data_addr,
-                caller_account.original_data_len,
-                post_len,
-                syscall_parameter_address_restrictions,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
+            unsafe {
+                caller_account.serialized_data = CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    check_aligned,
+                    caller_account.vm_data_addr,
+                    caller_account.original_data_len,
+                    post_len,
+                    syscall_parameter_address_restrictions,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?;
+            }
         }
         // this is the len field in the AccountInfo::data slice
         *caller_account.ref_to_len_in_vm = post_len as u64;
@@ -1489,17 +1523,17 @@ mod tests {
             }
 
             // create a region for [len][data+realloc if !virtual_address_space_adjustments]
-            regions.push(MemoryRegion::new_writable(&mut d[..region_len], vm_addr));
+            regions.push(MemoryRegion::new(&raw mut d[..region_len], vm_addr));
             region_addr += region_len as u64;
 
             if virtual_address_space_adjustments {
                 // create a region for the directly mapped data
-                regions.push(MemoryRegion::new_readonly(data, region_addr));
+                regions.push(MemoryRegion::new(&raw const data[..], region_addr));
                 region_addr += data.len() as u64;
 
                 // create a region for the realloc padding
-                regions.push(MemoryRegion::new_writable(
-                    &mut d[mem::size_of::<u64>()..],
+                regions.push(MemoryRegion::new(
+                    &raw mut d[mem::size_of::<u64>()..],
                     region_addr,
                 ));
             } else {
@@ -1632,7 +1666,7 @@ mod tests {
                 data[data_addr - vm_addr..].copy_from_slice(self.data);
             }
 
-            let region = MemoryRegion::new_writable(data.as_mut_slice(), vm_addr as u64);
+            let region = MemoryRegion::new(&raw mut data[..], vm_addr as u64);
             (
                 data,
                 region,
@@ -1689,7 +1723,7 @@ mod tests {
                 data[data_addr - vm_addr..].copy_from_slice(&self.data);
             }
 
-            let region = MemoryRegion::new_writable(data.as_mut_slice(), vm_addr as u64);
+            let region = MemoryRegion::new(&raw mut data[..], vm_addr as u64);
             (data, region)
         }
     }
@@ -1819,7 +1853,7 @@ mod tests {
             p2 += signer_length;
         }
 
-        let region = MemoryRegion::new_writable(data.as_mut_slice(), vm_addr as u64);
+        let region = MemoryRegion::new(&raw mut data[..], vm_addr as u64);
         (data, region)
     }
 
@@ -1855,10 +1889,11 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+        let memory_mapping =
+            unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let ins = translate_instruction_rust(vm_addr, &invoke_context).unwrap();
         assert_eq!(ins.program_id, program_id);
@@ -1889,8 +1924,16 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        *invoke_context.memory_contexts.memory_mapping_mut().unwrap() =
-            MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+        let mapping =
+            unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(0),
+                Vec::new(),
+                mapping,
+            ))
+            .unwrap();
 
         let signers = translate_signers_rust(&program_id, vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(signers[0], derived_key);
@@ -1912,7 +1955,8 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+        let memory_mapping =
+            unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
 
         mock_invoke_context!(
             invoke_context,
@@ -1925,7 +1969,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .set_memory_context(MemoryContext::new(
+            .set_memory_context_abi_v1(MemoryContext::new(
                 BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                 vec![account_metadata],
                 memory_mapping,
@@ -1969,19 +2013,27 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
-
-        assert_matches!(
+        let memory_mapping =
+            unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
+        let serialized_data = unsafe {
             CallerAccount::get_serialized_data(
                 &memory_mapping,
                 true, // check_aligned
                 MM_INPUT_START,
                 account.data().len(),
-                account.data().len().saturating_add(MAX_PERMITTED_DATA_INCREASE).saturating_add(1),
-                true, // syscall_parameter_address_restrictions
-                true, // virtual_address_space_adjustments
+                account
+                    .data()
+                    .len()
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+                    .saturating_add(1),
+                true,  // syscall_parameter_address_restrictions
+                true,  // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
-            ),
+            )
+        };
+
+        assert_matches!(
+            serialized_data,
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
         );
     }
@@ -2009,13 +2061,14 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+        let memory_mapping =
+            unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
 
         let account_info = translate_type::<AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
         let caller_account = CallerAccount::from_account_info(
@@ -2064,15 +2117,17 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.split_off(0),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                mock_caller_account.regions.split_off(0),
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let mut caller_account = mock_caller_account.caller_account();
         let instruction_context = invoke_context
@@ -2125,15 +2180,17 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.clone(),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                mock_caller_account.regions.clone(),
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let data_slice = mock_caller_account.data_slice();
         let len_ptr = unsafe {
@@ -2261,12 +2318,14 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.clone(),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                mock_caller_account.regions.clone(),
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
         let caller_account = mock_caller_account.caller_account();
 
         borrow_instruction_account!(callee_account, invoke_context, 0);
@@ -2318,12 +2377,14 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.clone(),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                mock_caller_account.regions.clone(),
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
         let mut caller_account = mock_caller_account.caller_account();
         borrow_instruction_account!(callee_account, invoke_context, 0);
 
@@ -2428,12 +2489,14 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.clone(),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                mock_caller_account.regions.clone(),
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
         let mut caller_account = mock_caller_account.caller_account();
         borrow_instruction_account!(callee_account, invoke_context, 0);
 

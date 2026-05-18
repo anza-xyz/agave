@@ -780,8 +780,10 @@ impl JsonRpcRequestProcessor {
                 first_confirmed_block_in_epoch,
                 &addresses,
                 &|reward_type| -> bool {
+                    let is_staking_reward = reward_type == RewardType::Staking
+                        || reward_type == RewardType::DeactivatedStake;
                     reward_type == RewardType::Voting
-                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
+                        || (!epoch_has_partitioned_rewards && is_staking_reward)
                 },
             )
             .collect()
@@ -861,7 +863,10 @@ impl JsonRpcRequestProcessor {
                     block.rewards,
                     slot,
                     addresses,
-                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                    &|reward_type| -> bool {
+                        reward_type == RewardType::Staking
+                            || reward_type == RewardType::DeactivatedStake
+                    },
                 );
                 reward_map.extend(index_reward_map);
             }
@@ -1884,7 +1889,7 @@ impl JsonRpcRequestProcessor {
                 .collect()
         };
 
-        if results.len() < limit || !found_until {
+        if results.len() < limit || (until.is_some() && !found_until) {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 let mut bigtable_before = before;
                 if !results.is_empty() {
@@ -4363,8 +4368,11 @@ fn rpc_perf_sample_from_perf_sample(slot: u64, sample: PerfSample) -> RpcPerfSam
     }
 }
 
-const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
-const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
+// Encoded-size caps sized for the largest supported raw transaction
+// (V1 transactions, up to 4096 bytes). The raw cap is
+// applied per-version after decoding.
+const MAX_BASE58_SIZE: usize = 5594; // ceil(4096 * log_58(256))
+const MAX_BASE64_SIZE: usize = 5464; // ceil(4096 / 3) * 4
 fn decode_and_deserialize<T>(
     encoded: String,
     encoding: TransactionBinaryEncoding,
@@ -4381,7 +4389,7 @@ where
                     type_name::<T>(),
                     encoded.len(),
                     MAX_BASE58_SIZE,
-                    PACKET_DATA_SIZE,
+                    solana_message::v1::MAX_TRANSACTION_SIZE,
                 )));
             }
             bs58::decode(encoded)
@@ -4396,7 +4404,7 @@ where
                     type_name::<T>(),
                     encoded.len(),
                     MAX_BASE64_SIZE,
-                    PACKET_DATA_SIZE,
+                    solana_message::v1::MAX_TRANSACTION_SIZE,
                 )));
             }
             BASE64_STANDARD
@@ -4404,12 +4412,19 @@ where
                 .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?
         }
     };
-    if wire_output.len() > PACKET_DATA_SIZE {
+    // V1 transactions/messages start with V1_PREFIX (0x81) and may be up to
+    // 4096 bytes; legacy/v0 are still capped at PACKET_DATA_SIZE (1232).
+    let max_raw_size = if wire_output.first().copied() == Some(solana_message::v1::V1_PREFIX) {
+        solana_message::v1::MAX_TRANSACTION_SIZE
+    } else {
+        PACKET_DATA_SIZE
+    };
+    if wire_output.len() > max_raw_size {
         return Err(Error::invalid_params(format!(
             "decoded {} too large: {} bytes (max: {} bytes)",
             type_name::<T>(),
             wire_output.len(),
-            PACKET_DATA_SIZE
+            max_raw_size
         )));
     }
 
@@ -5047,7 +5062,8 @@ pub mod tests {
 
         fn advance_bank_to_confirmed_slot(&self, slot: Slot) -> Arc<Bank> {
             let parent_bank = self.working_bank();
-            let child_bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
+            let leader = *parent_bank.leader();
+            let child_bank = Bank::new_from_parent(parent_bank, leader, slot);
             let bank = self
                 .bank_forks
                 .write()
@@ -7115,7 +7131,7 @@ pub mod tests {
             EpochSchedule::custom(TEST_SLOTS_PER_EPOCH, TEST_SLOTS_PER_EPOCH, false);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(TEST_SIGNATURE_FEE, 0);
 
-        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
+        let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
 
         // Add the test builtin.
         bank.add_builtin(
@@ -9107,7 +9123,7 @@ pub mod tests {
 
     #[test]
     fn test_worst_case_encoded_tx_goldens() {
-        let ff_tx = vec![0xffu8; PACKET_DATA_SIZE];
+        let ff_tx = vec![0xffu8; solana_message::v1::MAX_TRANSACTION_SIZE];
         let tx58 = bs58::encode(&ff_tx).into_string();
         assert_eq!(tx58.len(), MAX_BASE58_SIZE);
         let tx64 = BASE64_STANDARD.encode(&ff_tx);
@@ -9116,8 +9132,8 @@ pub mod tests {
 
     #[test]
     fn test_decode_and_deserialize_too_large_payloads_fail() {
-        // +2 because +1 still fits in base64 encoded worst-case
-        let too_big = PACKET_DATA_SIZE + 2;
+        // +3 to exceed both MAX_BASE58_SIZE and MAX_BASE64_SIZE for a V1-sized payload.
+        let too_big = solana_message::v1::MAX_TRANSACTION_SIZE + 3;
         let tx_ser = vec![0xffu8; too_big];
 
         let tx58 = bs58::encode(&tx_ser).into_string();
@@ -9127,7 +9143,8 @@ pub mod tests {
                 .unwrap_err(),
             Error::invalid_params(format!(
                 "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: \
-                 encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
+                 encoded/raw {MAX_BASE58_SIZE}/{})",
+                solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
 
@@ -9138,7 +9155,8 @@ pub mod tests {
                 .unwrap_err(),
             Error::invalid_params(format!(
                 "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
+                 encoded/raw {MAX_BASE64_SIZE}/{})",
+                solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
 
@@ -9200,6 +9218,49 @@ pub mod tests {
                 "invalid base58 encoding: InvalidCharacter { character: '!', index: 1680 }"
                     .to_string(),
             )
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_v1_sized_payload_passes_size_checks() {
+        // V1-prefixed payload at the V1 max size. Random bytes will fail
+        // wincode deserialization, but should pass the size gates — proving
+        // V1 transactions above PACKET_DATA_SIZE are accepted by the decoder.
+        let mut tx_ser = vec![0xffu8; solana_message::v1::MAX_TRANSACTION_SIZE];
+        tx_ser[0] = solana_message::v1::V1_PREFIX;
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        let err =
+            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(
+            err.message.starts_with(
+                "failed to deserialize solana_transaction::versioned::VersionedTransaction"
+            ),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_v1_oversize_payload_fails() {
+        // V1-prefixed payload one byte over the V1 max. Uses base64 because a
+        // base58-encoded V1-prefixed payload of this size would trip the
+        // encoded-size cap first.
+        let too_big = solana_message::v1::MAX_TRANSACTION_SIZE + 1;
+        let mut tx_ser = vec![0xffu8; too_big];
+        tx_ser[0] = solana_message::v1::V1_PREFIX;
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        assert_eq!(
+            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
+            Error::invalid_params(format!(
+                "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
+                 bytes (max: {} bytes)",
+                solana_message::v1::MAX_TRANSACTION_SIZE,
+            ))
         );
     }
 

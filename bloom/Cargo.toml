@@ -18,6 +18,8 @@ name = "solana_bloom"
 
 [features]
 agave-unstable-api = []
+conformance = []
+dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

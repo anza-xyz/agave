@@ -22,7 +22,6 @@ pub struct FeatureSnapshot {
     pub disable_fees_sysvar: bool,
     pub curve25519_syscall_enabled: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
-    pub stake_minimum_delegation_for_rewards: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
     pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
@@ -36,7 +35,6 @@ pub struct FeatureSnapshot {
     pub last_restart_slot_sysvar: bool,
     pub enable_poseidon_syscall: bool,
     pub remaining_compute_units_syscall_enabled: bool,
-    pub enable_loader_v4: bool,
     pub enable_alt_bn128_compression_syscall: bool,
     pub abort_on_invalid_curve: bool,
     pub get_sysvar_syscall_enabled: bool,
@@ -49,6 +47,7 @@ pub struct FeatureSnapshot {
     pub enable_sbpf_v1_deployment_and_execution: bool,
     pub enable_sbpf_v2_deployment_and_execution: bool,
     pub enable_sbpf_v3_deployment_and_execution: bool,
+    pub disable_sbpf_v0_v1_v2_deployment: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub formalize_loaded_transaction_data_size: bool,
@@ -85,6 +84,9 @@ pub struct FeatureSnapshot {
     pub upgrade_bpf_stake_program_to_v5: bool,
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
+    pub relax_post_exec_min_balance_check: bool,
+    pub enable_tx_v1: bool,
+    pub define_ltds_fee_only_semantics: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -96,9 +98,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             curve25519_syscall_enabled: is_active(&curve25519_syscall_enabled::ID),
             stake_raise_minimum_delegation_to_1_sol: is_active(
                 &stake_raise_minimum_delegation_to_1_sol::ID,
-            ),
-            stake_minimum_delegation_for_rewards: is_active(
-                &stake_minimum_delegation_for_rewards::ID,
             ),
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
@@ -125,7 +124,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             remaining_compute_units_syscall_enabled: is_active(
                 &remaining_compute_units_syscall_enabled::ID,
             ),
-            enable_loader_v4: is_active(&enable_loader_v4::ID),
             enable_alt_bn128_compression_syscall: is_active(
                 &enable_alt_bn128_compression_syscall::ID,
             ),
@@ -148,6 +146,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_sbpf_v3_deployment_and_execution: is_active(
                 &enable_sbpf_v3_deployment_and_execution::ID,
             ),
+            disable_sbpf_v0_v1_v2_deployment: is_active(&disable_sbpf_v0_v1_v2_deployment::ID),
             deplete_cu_meter_on_vm_failure: is_active(&deplete_cu_meter_on_vm_failure::ID),
             fix_alt_bn128_multiplication_input_length: is_active(
                 &fix_alt_bn128_multiplication_input_length::ID,
@@ -198,6 +197,9 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &loader_v3_minimum_extend_program_size::ID,
             ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
+            relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
+            enable_tx_v1: is_active(&enable_tx_v1::ID),
+            define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
         }
     }
 }
@@ -311,27 +313,27 @@ impl FeatureSet {
             account_data_direct_mapping: snapshot.account_data_direct_mapping,
             enable_bpf_loader_set_authority_checked_ix: snapshot
                 .enable_bpf_loader_set_authority_checked_ix,
-            enable_loader_v4: snapshot.enable_loader_v4,
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
             abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
             curve25519_syscall_enabled: snapshot.curve25519_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
-            disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
             enable_big_mod_exp_syscall: snapshot.enable_big_mod_exp_syscall,
             enable_get_epoch_stake_syscall: snapshot.enable_get_epoch_stake_syscall,
             enable_poseidon_syscall: snapshot.enable_poseidon_syscall,
+            disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
+            reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
             enable_sbpf_v1_deployment_and_execution: snapshot
                 .enable_sbpf_v1_deployment_and_execution,
             enable_sbpf_v2_deployment_and_execution: snapshot
                 .enable_sbpf_v2_deployment_and_execution,
             enable_sbpf_v3_deployment_and_execution: snapshot
                 .enable_sbpf_v3_deployment_and_execution,
+            disable_sbpf_v0_v1_v2_deployment: snapshot.disable_sbpf_v0_v1_v2_deployment,
             get_sysvar_syscall_enabled: snapshot.get_sysvar_syscall_enabled,
             last_restart_slot_sysvar: snapshot.last_restart_slot_sysvar,
-            reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
             remaining_compute_units_syscall_enabled: snapshot
                 .remaining_compute_units_syscall_enabled,
             remove_bpf_loader_incorrect_program_id: snapshot.remove_bpf_loader_incorrect_program_id,
@@ -362,6 +364,8 @@ impl FeatureSet {
                 .direct_account_pointers_in_program_input,
             loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
+            relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
+            define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
         }
     }
 }
@@ -732,10 +736,6 @@ pub mod stake_raise_minimum_delegation_to_1_sol {
     solana_pubkey::declare_id!("9onWzzvCzNC2jfhxxeqRgs5q7nFAAKpCUvkj6T6GJK9i");
 }
 
-pub mod stake_minimum_delegation_for_rewards {
-    solana_pubkey::declare_id!("G6ANXD6ptCSyNd9znZm7j4dEczAJCfx7Cy43oBx3rKHJ");
-}
-
 pub mod add_set_compute_unit_price_ix {
     solana_pubkey::declare_id!("98std1NSHqXi9WYvFShfVepRdCoq1qvsp8fsR2XZtG8g");
 }
@@ -1037,7 +1037,7 @@ pub mod remaining_compute_units_syscall_enabled {
 }
 
 pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("LoaderV4Wi11BeDe1eted1111111111111111111111");
+    solana_pubkey::declare_id!("LoaderV4WasAbandoned11111111111111111111111");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1228,6 +1228,10 @@ pub mod enable_sbpf_v3_deployment_and_execution {
     solana_pubkey::declare_id!("5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC");
 }
 
+pub mod disable_sbpf_v0_v1_v2_deployment {
+    solana_pubkey::declare_id!("B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g");
+}
+
 pub mod remove_accounts_executable_flag_checks {
     solana_pubkey::declare_id!("FXs1zh47QbNnhXcnB6YiAQoJ4sGB91tKF3UFHLcKT7PM");
 }
@@ -1377,7 +1381,7 @@ pub mod static_instruction_limit {
 }
 
 pub mod discard_unexpected_data_complete_shreds {
-    solana_pubkey::declare_id!("dcomRRWHXP1FVWPqi9Mm4oxJhF4ehC795SvAtUdA9os");
+    solana_pubkey::declare_id!("disCA4efguFL6Wqa4pGdG7jpjC7C5uiKzKnhEBqchBe");
 }
 
 pub mod vote_state_v4 {
@@ -1425,7 +1429,7 @@ pub mod alt_bn128_little_endian {
 }
 
 pub mod bls_pubkey_management_in_vote_account {
-    solana_pubkey::declare_id!("2uxQgtKa2ECHGs67Zdj7dgmzn2w9HiqhdcedwCWfYzzq");
+    solana_pubkey::declare_id!("AnAP9zPV4KL7czAPQbFhpDKV2tx7g4UGNbK9wvXwjaRo");
 }
 
 pub mod relax_programdata_account_check_migration {
@@ -1521,6 +1525,18 @@ pub mod upgrade_bpf_stake_program_to_v5 {
 
 pub mod enable_sha512_syscall {
     solana_pubkey::declare_id!("s512oDwgx8hjMnaQjXfqqrZroVj4HvC6TkN3iSSWXCh");
+}
+
+pub mod relax_post_exec_min_balance_check {
+    solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
+}
+
+pub mod enable_tx_v1 {
+    solana_pubkey::declare_id!("txv1hPU76QFBVeq3942jJ65e9Em2xbdbCJrzX8sM4U4");
+}
+
+pub mod define_ltds_fee_only_semantics {
+    solana_pubkey::declare_id!("LTDSzjZKFJMKHYpNycG1FrWwGGTaFFwqEFjB5GGLNVD");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1836,10 +1852,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             stake_raise_minimum_delegation_to_1_sol::id(),
             "Raise minimum stake delegation to 1.0 SOL #24357",
-        ),
-        (
-            stake_minimum_delegation_for_rewards::id(),
-            "stakes must be at least the minimum delegation to earn rewards",
         ),
         (
             add_set_compute_unit_price_ix::id(),
@@ -2322,6 +2334,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
              programs",
         ),
         (
+            disable_sbpf_v0_v1_v2_deployment::id(),
+            "SIMD-0500: Disable deployment of SBPF v0, v1 and v2 programs",
+        ),
+        (
             remove_accounts_executable_flag_checks::id(),
             "SIMD-0162: Remove checks of accounts is_executable flag",
         ),
@@ -2568,6 +2584,15 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0431: Loader V3 minimum extend program size",
         ),
         (enable_sha512_syscall::id(), "SIMD-0512: SHA512 Syscall"),
+        (
+            relax_post_exec_min_balance_check::id(),
+            "SIMD-0392: Relaxation of post-execution min_balance check",
+        ),
+        (enable_tx_v1::id(), "SIMD-0385: Transaction V1"),
+        (
+            define_ltds_fee_only_semantics::id(),
+            "SIMD-0186 Amendment: Define fee-only semantics",
+        ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]

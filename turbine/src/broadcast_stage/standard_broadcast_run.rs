@@ -7,8 +7,8 @@ use {
     },
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::migration::MigrationStatus,
-    solana_entry::block_component::BlockComponent,
+    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    solana_entry::block_component::{BlockComponent, VersionedBlockMarker, VersionedUpdateParent},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
@@ -24,8 +24,13 @@ use {
 #[derive(Clone)]
 pub struct StandardBroadcastRun {
     slot: Slot,
+    // Parent encoded in shred headers. This must remain stable for the slot
+    // because it is used to derive PARENT_OFFSET.
     parent: Slot,
     parent_block_id: Hash,
+    // Parent slot and block id committed into the double-merkle block id. This
+    // can change after an UpdateParent marker.
+    parent_for_double_merkle: Block,
     chained_merkle_root: Hash,
     carryover_entry: Option<WorkingBankEntryOrMarker>,
     double_merkle_leaves: Vec<Hash>,
@@ -68,6 +73,7 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             parent_block_id: Hash::default(),
+            parent_for_double_merkle: (Slot::MAX, Hash::default()),
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
             carryover_entry: None,
@@ -100,35 +106,32 @@ impl StandardBroadcastRun {
     ) {
         debug_assert_ne!(bank.slot(), self.slot);
 
+        let parent_block_id = bank
+            .parent_block_id()
+            .expect("All banks frozen (including snapshot banks) must have a block id");
+
         let chained_merkle_root = if self.slot == bank.parent_slot() {
             self.chained_merkle_root
         } else {
-            broadcast_utils::get_chained_merkle_root_from_parent(
+            match broadcast_utils::get_chained_merkle_root_from_parent(
                 bank.slot(),
                 bank.parent_slot(),
                 blockstore,
-            )
-            .unwrap_or_else(|err: Error| {
-                error!("Unknown chained Merkle root: {err:?}");
-                process_stats.err_unknown_chained_merkle_root += 1;
-                Hash::default()
-            })
+            ) {
+                Ok(chained_merkle_root) => chained_merkle_root,
+                // This is a snapshot slot that we don't have the shreds for. Use the block id from the snapshot
+                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => parent_block_id,
+                Err(e) => panic!(
+                    "Unexpected error while producing leader block for {}: {e:?}",
+                    bank.slot()
+                ),
+            }
         };
-
-        let parent_block_id = bank.parent_block_id().unwrap_or_else(|| {
-            // Once SIMD-0333 is active, we can just hard unwrap here.
-            error!(
-                "Parent block id missing for slot {} parent {}",
-                bank.slot(),
-                bank.parent_slot()
-            );
-            process_stats.err_unknown_parent_block_id += 1;
-            Hash::default()
-        });
 
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
         self.parent_block_id = parent_block_id;
+        self.parent_for_double_merkle = (bank.parent_slot(), parent_block_id);
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
         self.next_shred_index = 0u32;
@@ -206,16 +209,23 @@ impl StandardBroadcastRun {
                 })
                 .collect();
 
-        let fec_set_roots = shreds
-            .iter()
-            .unique_by(|shred| shred.fec_set_index())
-            .sorted_unstable_by_key(|shred| shred.fec_set_index())
-            .map(|shred| shred.merkle_root().expect("no more legacy shreds"));
-        // If necessary for perf, these leaves could start being joined in the background
-        self.double_merkle_leaves.extend(fec_set_roots);
+        if self
+            .migration_status
+            .should_use_double_merkle_block_id(self.slot)
+        {
+            let fec_set_roots = shreds
+                .iter()
+                .unique_by(|shred| shred.fec_set_index())
+                .sorted_unstable_by_key(|shred| shred.fec_set_index())
+                .map(|shred| shred.merkle_root().expect("no more legacy shreds"));
+            // If necessary for perf, these leaves could start being joined in the background
+            self.double_merkle_leaves.extend(fec_set_roots);
 
-        if let Some(fec_set_root) = self.double_merkle_leaves.last() {
-            self.chained_merkle_root = *fec_set_root;
+            if let Some(fec_set_root) = self.double_merkle_leaves.last() {
+                self.chained_merkle_root = *fec_set_root;
+            }
+        } else if let Some(shred) = shreds.last() {
+            self.chained_merkle_root = shred.merkle_root().expect("no more legacy shreds");
         }
         if self.next_shred_index > self.max_data_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
@@ -224,6 +234,34 @@ impl StandardBroadcastRun {
             return Err(BroadcastError::TooManyShreds);
         }
         Ok(shreds)
+    }
+
+    /// Update only the double-merkle parent commitment after an UpdateParent marker.
+    ///
+    /// The shred-header parent remains `self.parent` for the whole slot so
+    /// PARENT_OFFSET stays stable and receivers do not see parent mismatches.
+    fn maybe_update_parent_from_component(&mut self, component: &BlockComponent) {
+        let Some(VersionedBlockMarker::V1(marker)) = component.as_marker() else {
+            return;
+        };
+        let Some(update_parent) = marker.as_update_parent() else {
+            return;
+        };
+        let parent_for_double_merkle = match update_parent {
+            VersionedUpdateParent::V1(update_parent) => (
+                update_parent.new_parent_slot,
+                update_parent.new_parent_block_id,
+            ),
+        };
+        self.parent_for_double_merkle = parent_for_double_merkle;
+    }
+
+    /// Leaf that binds the current replay parent into the double-merkle block id.
+    fn parent_info_leaf(&self) -> Hash {
+        hashv(&[
+            &self.parent_for_double_merkle.0.to_le_bytes(),
+            self.parent_for_double_merkle.1.as_bytes(),
+        ])
     }
 
     #[cfg(test)]
@@ -336,6 +374,7 @@ impl StandardBroadcastRun {
                 process_stats,
             )
             .unwrap();
+        self.maybe_update_parent_from_component(&component);
 
         let shreds = if maybe_send_header {
             header_shreds.extend(shreds);
@@ -404,9 +443,7 @@ impl StandardBroadcastRun {
                 // Block id is the double merkle root
                 let fec_set_count = self.double_merkle_leaves.len();
                 // Add the final leaf (parent info)
-                let parent_info_leaf =
-                    hashv(&[&self.parent.to_le_bytes(), Hash::default().as_bytes()]);
-                self.double_merkle_leaves.push(parent_info_leaf);
+                self.double_merkle_leaves.push(self.parent_info_leaf());
 
                 // Compute the double merkle root
                 // Blockstore population of the DoubleMerkleMeta happens asynchronously when shreds are inserted
@@ -630,6 +667,8 @@ mod test {
         genesis_config.ticks_per_slot = max_ticks_per_n_shreds(num_shreds_per_slot, None) + 1;
 
         let bank = Bank::new_for_tests(&genesis_config);
+        bank.set_tick_height(bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().root_bank();
         (
@@ -641,6 +680,15 @@ mod test {
             socket,
             bank_forks,
         )
+    }
+
+    fn new_child_bank(parent: &Arc<Bank>, slot: Slot) -> Arc<Bank> {
+        assert!(parent.block_id().is_some());
+        Arc::new(Bank::new_from_parent(
+            parent.clone(),
+            *parent.leader(),
+            slot,
+        ))
     }
 
     #[test]
@@ -687,14 +735,14 @@ mod test {
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1));
+        let bank1 = new_child_bank(&bank0, 1);
 
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
             component: BlockComponent::EntryBatch(ticks0.clone()),
             bank: bank1.clone(),
-            last_tick_height: (ticks0.len() - 1) as u64,
+            last_tick_height: bank1.tick_height() + ticks0.len() as u64,
         };
 
         // Step 1: Make an incomplete transmission for slot 1
@@ -761,7 +809,8 @@ mod test {
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
         // slot 1
-        let bank2 = Arc::new(Bank::new_from_parent(bank1, *bank0.leader(), 2));
+        bank1.set_block_id(Some(Hash::new_unique()));
+        let bank2 = new_child_bank(&bank1, 2);
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset
         let num_shreds = 1;
@@ -773,8 +822,8 @@ mod test {
         );
         let receive_results = ReceiveResults {
             component: BlockComponent::EntryBatch(ticks1.clone()),
-            bank: bank2,
-            last_tick_height: (ticks1.len() - 1) as u64,
+            bank: bank2.clone(),
+            last_tick_height: bank2.tick_height() + ticks1.len() as u64,
         };
         standard_broadcast_run
             .test_process_receive_results(
@@ -837,17 +886,25 @@ mod test {
     #[test]
     fn test_buffer_data_shreds() {
         let num_shreds_per_slot = 2;
-        let (blockstore, genesis_config, _cluster_info, bank, leader_keypair, _socket, _bank_forks) =
-            setup(num_shreds_per_slot);
+        let (
+            blockstore,
+            genesis_config,
+            _cluster_info,
+            parent_bank,
+            leader_keypair,
+            _socket,
+            _bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
         let (bsend, brecv) = unbounded();
         let (ssend, _srecv) = unbounded();
         let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut last_tick_height = 0;
+        let mut last_tick_height = bank.tick_height();
         let mut standard_broadcast_run =
             StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
-            last_tick_height += (ticks.len() - 1) as u64;
+            last_tick_height += ticks.len() as u64;
             let receive_results = ReceiveResults {
                 component: BlockComponent::EntryBatch(ticks),
                 bank: bank.clone(),
@@ -892,15 +949,23 @@ mod test {
     fn test_slot_finish() {
         // Setup
         let num_shreds_per_slot = 2;
-        let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
-            setup(num_shreds_per_slot);
+        let (
+            blockstore,
+            genesis_config,
+            cluster_info,
+            parent_bank,
+            leader_keypair,
+            socket,
+            bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
 
         // Insert complete slot of ticks needed to finish the slot
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
             component: BlockComponent::EntryBatch(ticks.clone()),
-            bank: bank0,
-            last_tick_height: ticks.len() as u64,
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + ticks.len() as u64,
         };
 
         let (votor_event_sender, _votor_event_receiver) = unbounded();
@@ -950,5 +1015,67 @@ mod test {
         let component = BlockComponent::new_entry_batch(entries).unwrap();
         let r = bs.component_to_shreds(&keypair, &component, 0, false, &mut stats);
         assert_matches!(r, Err(BroadcastError::TooManyShreds));
+    }
+
+    #[test]
+    fn test_update_parent() {
+        let keypair = Keypair::new();
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::post_migration_status()),
+            votor_event_sender,
+        );
+        bs.slot = 12;
+        bs.parent = 10;
+        let original_parent_block_id = Hash::new_unique();
+        bs.parent_block_id = original_parent_block_id;
+        bs.parent_for_double_merkle = (bs.parent, bs.parent_block_id);
+
+        let new_parent_slot = 7;
+        let new_parent_block_id = Hash::new_unique();
+        let component = BlockComponent::new_block_marker(VersionedBlockMarker::new_update_parent(
+            solana_entry::block_component::UpdateParentV1 {
+                new_parent_slot,
+                new_parent_block_id,
+            },
+        ));
+        let mut stats = ProcessShredsStats::default();
+        let shreds = bs
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
+            .unwrap();
+        assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .all(|shred| shred.parent().unwrap() == 10)
+        );
+
+        bs.maybe_update_parent_from_component(&component);
+        assert_eq!(bs.parent, 10);
+        assert_eq!(bs.parent_block_id, original_parent_block_id);
+        assert_eq!(
+            bs.parent_for_double_merkle,
+            (new_parent_slot, new_parent_block_id)
+        );
+        assert_eq!(
+            bs.parent_info_leaf(),
+            hashv(&[
+                &new_parent_slot.to_le_bytes(),
+                new_parent_block_id.as_bytes()
+            ])
+        );
+
+        let entries = create_ticks(1, 0, Hash::default());
+        let component = BlockComponent::new_entry_batch(entries).unwrap();
+        let shreds = bs
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
+            .unwrap();
+        assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .all(|shred| shred.parent().unwrap() == 10)
+        );
     }
 }

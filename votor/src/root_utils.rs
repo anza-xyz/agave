@@ -11,7 +11,9 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
+        bank_forks::BankForks,
+        bank_forks_controller::{BankForksController, BankForksControllerError},
+        installed_scheduler_pool::BankWithScheduler,
         snapshot_controller::SnapshotController,
     },
     solana_time_utils::timestamp,
@@ -24,10 +26,8 @@ use {
 /// Structures that are not used in the event loop, but need to be updated
 /// or notified when setting root
 pub(crate) struct RootContext {
-    pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
-    pub(crate) snapshot_controller: Option<Arc<SnapshotController>>,
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
-    pub(crate) drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    pub(crate) bank_forks_controller: Arc<dyn BankForksController>,
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -41,27 +41,15 @@ pub(crate) fn set_root(
     pending_blocks: &mut PendingBlocks,
     finalized_blocks: &mut BTreeSet<Block>,
     received_shred: &mut BTreeSet<Slot>,
-) {
+) -> Result<(), BankForksControllerError> {
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
     *pending_blocks = pending_blocks.split_off(&new_root);
     *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
     *received_shred = received_shred.split_off(&new_root);
 
-    check_and_handle_new_root(
-        new_root,
-        new_root,
-        rctx.snapshot_controller.as_deref(),
-        Some(new_root),
-        &rctx.bank_notification_sender,
-        &rctx.drop_bank_sender,
-        &ctx.blockstore,
-        &rctx.leader_schedule_cache,
-        &ctx.bank_forks,
-        ctx.rpc_subscriptions.as_deref(),
-        my_pubkey,
-        |_| {},
-    );
+    rctx.bank_forks_controller
+        .set_root(*my_pubkey, new_root, new_root, Some(new_root))?;
 
     // Distinguish between duplicate versions of same slot
     let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
@@ -90,6 +78,7 @@ pub(crate) fn set_root(
             dependency_work,
         ));
     }
+    Ok(())
 }
 
 /// Sets the new root, additionally performs the callback after setting the bank forks root

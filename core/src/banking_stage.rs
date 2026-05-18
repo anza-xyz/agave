@@ -1,8 +1,6 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
 //! to construct a software pipeline.
 
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
@@ -12,7 +10,6 @@ use {
         banking_stage::{
             consume_worker::ConsumeWorker,
             transaction_scheduler::{
-                prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
                     DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS, SchedulerConfig, SchedulerController,
                 },
@@ -40,6 +37,7 @@ use {
     solana_time_utils::AtomicInterval,
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
+        collections::HashSet,
         num::{NonZeroU64, NonZeroUsize},
         ops::Deref,
         sync::{
@@ -53,45 +51,29 @@ use {
     tokio_util::sync::CancellationToken,
     transaction_scheduler::{
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
-        prio_graph_scheduler::PrioGraphSchedulerConfig,
         receive_and_buffer::TransactionViewReceiveAndBuffer,
     },
     vote_worker::VoteWorker,
 };
 
-// Below modules are pub to allow use by banking_stage bench
-pub mod committer;
-pub mod consumer;
-pub mod leader_slot_metrics;
-pub mod qos_service;
-pub mod vote_storage;
-
-mod consume_worker;
-mod vote_worker;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod decision_maker;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod decision_maker;
-
-mod latest_validator_vote_packet;
-mod leader_slot_timing_metrics;
-mod read_write_account_set;
-mod vote_packet_receiver;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod scheduler_messages;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod scheduler_messages;
-
 pub mod transaction_scheduler;
 
-#[cfg(feature = "dev-context-only-utils")]
-pub mod unified_scheduler;
-#[cfg(not(feature = "dev-context-only-utils"))]
-pub(crate) mod unified_scheduler;
+mod committer;
+mod consume_worker;
+mod consumer;
+mod decision_maker;
+mod latest_validator_vote_packet;
+mod leader_slot_metrics;
+mod leader_slot_timing_metrics;
+mod qos_service;
+mod scheduler_messages;
+mod vote_packet_receiver;
+mod vote_storage;
+mod vote_worker;
 
+#[cfg(unix)]
 mod progress_tracker;
+#[cfg(unix)]
 mod tpu_to_pack;
 
 /// The maximum number of worker threads that can be spawned by banking stage.
@@ -100,7 +82,6 @@ mod tpu_to_pack;
 const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
@@ -354,6 +335,7 @@ pub struct BankingStage {
     bank_forks: Arc<RwLock<BankForks>>,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
+    filter_keys: Arc<HashSet<Pubkey>>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
 
@@ -374,6 +356,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        filter_keys: Arc<HashSet<Pubkey>>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -395,6 +378,7 @@ impl BankingStage {
             bank_forks,
             committer,
             log_messages_bytes_limit,
+            filter_keys,
             threads: FuturesUnordered::default(),
         };
 
@@ -487,11 +471,9 @@ impl BankingStage {
                 num_workers,
                 config,
             } => match block_production_method {
-                BlockProductionMethod::CentralScheduler => {
-                    self.spawn_internal_central(false, num_workers, config)
-                }
-                BlockProductionMethod::CentralSchedulerGreedy => {
-                    self.spawn_internal_central(true, num_workers, config)
+                BlockProductionMethod::CentralScheduler
+                | BlockProductionMethod::CentralSchedulerGreedy => {
+                    self.spawn_internal_central(num_workers, config)
                 }
             },
             #[cfg(unix)]
@@ -510,14 +492,10 @@ impl BankingStage {
 
     fn spawn_internal_central(
         &self,
-        use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
     ) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal central scheduler");
-        // Toggling unified scheduler into the disabled state should always be a safe and idempotent
-        // operation.
-        assert!(self.toggle_internal_unified(false));
 
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
@@ -529,6 +507,7 @@ impl BankingStage {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver: self.non_vote_receiver.clone(),
             sharable_banks: sharable_banks.clone(),
+            filter_keys: self.filter_keys.clone(),
         };
 
         // Spawn vote worker.
@@ -571,80 +550,57 @@ impl BankingStage {
             )
         }
 
-        // Macro to spawn the scheduler. Different type on `scheduler` and thus
-        // scheduler_controller mean we cannot have an easy if for `scheduler`
-        // assignment without introducing `dyn`.
-        macro_rules! spawn_scheduler {
-            ($scheduler:ident) => {
-                let exit = exit.clone();
-                let shutdown_signal = self.banking_shutdown_signal.clone();
-                threads.push(
-                    Builder::new()
-                        .name("solBnkTxSched".to_string())
-                        .spawn(move || {
-                            let mut scheduler_controller = SchedulerController::new(
-                                exit,
-                                scheduler_config,
-                                decision_maker,
-                                receive_and_buffer,
-                                sharable_banks,
-                                $scheduler,
-                                worker_metrics,
-                            );
+        // Both block production methods currently route to the greedy scheduler.
+        let scheduler = GreedyScheduler::new(
+            work_senders,
+            finished_work_receiver,
+            GreedySchedulerConfig::default(),
+        );
+        let exit = exit.clone();
+        let shutdown_signal = self.banking_shutdown_signal.clone();
+        threads.push(
+            Builder::new()
+                .name("solBnkTxSched".to_string())
+                .spawn(move || {
+                    let mut scheduler_controller = SchedulerController::new(
+                        exit,
+                        scheduler_config,
+                        decision_maker,
+                        receive_and_buffer,
+                        sharable_banks,
+                        scheduler,
+                        worker_metrics,
+                    );
 
-                            match scheduler_controller.run() {
-                                Ok(_) => info!("Scheduler exiting without error"),
-                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {
-                                    info!("Upstream disconnected, shutting down banking");
+                    match scheduler_controller.run() {
+                        Ok(_) => info!("Scheduler exiting without error"),
+                        Err(SchedulerError::DisconnectedRecvChannel(_)) => {
+                            info!("Upstream disconnected, shutting down banking");
 
-                                    // NB: We must signal shutdown before dropping the scheduler
-                                    //     controller, else, the workers may exit with an error and
-                                    //     trigger a new spawn before we have a chance to issue the
-                                    //     cancel.
-                                    shutdown_signal.cancel();
-                                    drop(scheduler_controller);
-                                }
-                                Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                                    warn!("Unexpected worker disconnect from scheduler")
-                                }
-                            }
-                        })
-                        .unwrap(),
-                );
-            };
-        }
-
-        // Spawn the central scheduler thread
-        if use_greedy_scheduler {
-            let scheduler = GreedyScheduler::new(
-                work_senders,
-                finished_work_receiver,
-                GreedySchedulerConfig::default(),
-            );
-            spawn_scheduler!(scheduler);
-        } else {
-            let scheduler = PrioGraphScheduler::new(
-                work_senders,
-                finished_work_receiver,
-                PrioGraphSchedulerConfig::default(),
-            );
-            spawn_scheduler!(scheduler);
-        }
+                            // NB: We must signal shutdown before dropping the scheduler
+                            //     controller, else, the workers may exit with an error and
+                            //     trigger a new spawn before we have a chance to issue the
+                            //     cancel.
+                            shutdown_signal.cancel();
+                            drop(scheduler_controller);
+                        }
+                        Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                            warn!("Unexpected worker disconnect from scheduler")
+                        }
+                    }
+                })
+                .unwrap(),
+        );
 
         Ok(threads)
     }
 
-    fn toggle_internal_unified(&self, enable: bool) -> bool {
-        self.bank_forks
-            .read()
-            .unwrap()
-            .toggle_unified_scheduler_block_production_mode(enable)
-    }
-
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
         let vote_storage = VoteStorage::new(&self.bank_forks.read().unwrap().working_bank());
-        let tpu_receiver = VotePacketReceiver::new(self.tpu_vote_receiver.clone());
-        let gossip_receiver = VotePacketReceiver::new(self.gossip_vote_receiver.clone());
+        let tpu_receiver =
+            VotePacketReceiver::new(self.tpu_vote_receiver.clone(), self.filter_keys.clone());
+        let gossip_receiver =
+            VotePacketReceiver::new(self.gossip_vote_receiver.clone(), self.filter_keys.clone());
         let consumer = Consumer::new(
             self.committer.clone(),
             self.transaction_recorder.clone(),
@@ -706,9 +662,6 @@ mod external {
             }: AgaveSession,
         ) -> Result<Vec<JoinHandle<()>>, ()> {
             info!("Spawning external scheduler");
-            // Toggling unified scheduler into the disabled state should always be a safe and
-            // idempotent operation.
-            assert!(self.toggle_internal_unified(false));
 
             static_assertions::const_assert!(
                 agave_scheduling_utils::handshake::MAX_WORKERS
@@ -812,7 +765,6 @@ pub enum BankingControlMsg {
     },
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
     poh_controller: &mut PohController,
@@ -823,18 +775,10 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
         .unwrap()
         .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
     let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
-    let set_bank_res = if tpu_bank.has_installed_active_bp_scheduler() {
-        // Waiting here is needed because unified scheduler assumes bank exists in poh immediately
-        // after calling unpause_new_block_production_scheduler(). Otherwise, it wrongly thinks poh
-        // reached to the max tick height.
-        poh_controller.set_bank_sync(tpu_bank_for_poh)
-    } else {
-        poh_controller.set_bank(tpu_bank_for_poh)
-    };
+    let set_bank_res = poh_controller.set_bank(tpu_bank_for_poh);
     if set_bank_res.is_err() {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
-    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[derive(Debug)]
@@ -950,7 +894,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
+            BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -966,6 +910,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            Arc::default(),
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1010,7 +955,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
+            BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
@@ -1026,6 +971,7 @@ mod tests {
             None,
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
+            Arc::default(),
         );
 
         // good tx, and no verify
@@ -1164,7 +1110,7 @@ mod tests {
                 entry_receiver,
             ) = create_test_recorder(bank.clone(), blockstore, None, None);
             let banking_stage = BankingStage::new_num_threads(
-                BlockProductionMethod::CentralScheduler,
+                BlockProductionMethod::CentralSchedulerGreedy,
                 poh_recorder,
                 transaction_recorder,
                 non_vote_receiver,
@@ -1180,6 +1126,7 @@ mod tests {
                 None,
                 bank_forks,
                 None,
+                Arc::default(),
             );
 
             // wait for banking_stage to eat the packets
@@ -1317,7 +1264,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
+            BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -1333,6 +1280,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            Arc::default(),
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
