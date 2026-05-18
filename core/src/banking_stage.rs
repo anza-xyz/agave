@@ -701,6 +701,7 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
+                            solana_metrics::mark_thread_nonfatal();
                             if let Err(err) = consume_worker.run(pack_to_worker) {
                                 error!("External consume worker error; err={err}");
                             }
