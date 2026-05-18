@@ -3683,16 +3683,14 @@ pub mod rpc_full {
             debug!("get_cluster_nodes rpc request received");
             let cluster_info = &meta.cluster_info;
             let socket_addr_space = cluster_info.socket_addr_space();
-            let my_shred_version = cluster_info.my_shred_version();
             Ok(cluster_info
                 .all_peers()
                 .iter()
                 .filter_map(|(contact_info, _)| {
-                    if my_shred_version == contact_info.shred_version()
-                        && contact_info
-                            .gossip()
-                            .map(|addr| socket_addr_space.check(&addr))
-                            .unwrap_or_default()
+                    if contact_info
+                        .gossip()
+                        .map(|addr| socket_addr_space.check(&addr))
+                        .unwrap_or_default()
                     {
                         let (version, feature_set, client_id) = if let Some(version) =
                             cluster_info.get_node_version(contact_info.pubkey())
@@ -3734,7 +3732,7 @@ pub mod rpc_full {
                             version,
                             client_id: client_id.map(|id| format!("{id}")),
                             feature_set,
-                            shred_version: Some(my_shred_version),
+                            shred_version: Some(contact_info.shred_version()),
                         })
                     } else {
                         None // Exclude spy nodes

@@ -379,8 +379,15 @@ impl ClusterInfo {
             filename.display()
         );
         let now = timestamp();
+        let self_shred_version = self.my_shred_version();
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         for node in nodes {
+            if node
+                .contact_info()
+                .is_none_or(|contact_info| contact_info.shred_version() != self_shred_version)
+            {
+                continue;
+            }
             if let Err(err) = gossip_crds.insert(node, now, GossipRoute::LocalMessage) {
                 warn!("crds insert failed {err:?}");
             }
@@ -537,7 +544,6 @@ impl ClusterInfo {
             .collect();
         let now = timestamp();
         let my_pubkey = self.id();
-        let my_shred_version = self.my_shred_version();
         let nodes: Vec<_> = self
             .all_peers()
             .into_iter()
@@ -546,9 +552,6 @@ impl ClusterInfo {
                     .rpc()
                     .filter(|addr| self.socket_addr_space.check(addr))?;
                 let node_version = self.get_node_version(node.pubkey());
-                if node.shred_version() != my_shred_version {
-                    return None;
-                }
                 let rpc_addr = node_rpc.ip();
                 Some(format!(
                     format_string!(),
@@ -618,80 +621,58 @@ impl ClusterInfo {
             .collect();
 
         let now = timestamp();
-        let mut shred_spy_nodes = 0usize;
         let mut total_spy_nodes = 0usize;
-        let mut different_shred_nodes = 0usize;
         let my_pubkey = self.id();
-        let my_shred_version = self.my_shred_version();
         let nodes: Vec<_> = self
             .all_peers()
             .into_iter()
-            .filter_map(|(node, last_updated)| {
+            .map(|(node, last_updated)| {
                 let is_spy_node = Self::is_spy_node(&node, &self.socket_addr_space);
                 if is_spy_node {
                     total_spy_nodes = total_spy_nodes.saturating_add(1);
                 }
 
                 let node_version = self.get_node_version(node.pubkey());
-                if node.shred_version() != my_shred_version {
-                    different_shred_nodes = different_shred_nodes.saturating_add(1);
-                    None
-                } else {
-                    if is_spy_node {
-                        shred_spy_nodes = shred_spy_nodes.saturating_add(1);
-                    }
-                    let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
-                    Some(format!(
-                        format_string!(),
-                        node.gossip()
-                            .filter(|addr| self.socket_addr_space.check(addr))
-                            .as_ref()
-                            .map(SocketAddr::ip)
-                            .as_ref()
-                            .map(IpAddr::to_string)
-                            .unwrap_or_else(|| String::from("none")),
-                        if node.pubkey() == &my_pubkey {
-                            "me"
-                        } else {
-                            ""
-                        },
-                        now.saturating_sub(last_updated),
-                        node.pubkey().to_string(),
-                        if let Some(node_version) = node_version {
-                            node_version.to_string()
-                        } else {
-                            "-".to_string()
-                        },
-                        self.addr_to_string(&ip_addr, &node.gossip()),
-                        self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
-                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
-                        self.addr_to_string(
-                            &ip_addr,
-                            &node.tpu_forwards(contact_info::Protocol::QUIC)
-                        ),
-                        self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
-                        self.addr_to_string(
-                            &ip_addr,
-                            &node.serve_repair(contact_info::Protocol::UDP)
-                        ),
-                        self.addr_to_string(&ip_addr, &node.alpenglow()),
-                        node.shred_version(),
-                    ))
-                }
+                let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
+                format!(
+                    format_string!(),
+                    node.gossip()
+                        .filter(|addr| self.socket_addr_space.check(addr))
+                        .as_ref()
+                        .map(SocketAddr::ip)
+                        .as_ref()
+                        .map(IpAddr::to_string)
+                        .unwrap_or_else(|| String::from("none")),
+                    if node.pubkey() == &my_pubkey {
+                        "me"
+                    } else {
+                        ""
+                    },
+                    now.saturating_sub(last_updated),
+                    node.pubkey().to_string(),
+                    if let Some(node_version) = node_version {
+                        node_version.to_string()
+                    } else {
+                        "-".to_string()
+                    },
+                    self.addr_to_string(&ip_addr, &node.gossip()),
+                    self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
+                    self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
+                    self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::QUIC)),
+                    self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
+                    self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
+                    self.addr_to_string(&ip_addr, &node.alpenglow()),
+                    node.shred_version(),
+                )
             })
             .collect();
 
         format!(
-            "{header}{header_bottom}{}Nodes: {}{}{}",
+            "{header}{header_bottom}{}Nodes: {}{}",
             nodes.join(""),
-            nodes.len().saturating_sub(shred_spy_nodes),
+            nodes.len().saturating_sub(total_spy_nodes),
             if total_spy_nodes > 0 {
                 format!("\nSpies: {total_spy_nodes}")
-            } else {
-                "".to_string()
-            },
-            if different_shred_nodes > 0 {
-                format!("\nNodes with different shred version: {different_shred_nodes}")
             } else {
                 "".to_string()
             }
@@ -1044,17 +1025,14 @@ impl ClusterInfo {
             .unwrap_or_default()
     }
 
-    /// all validators that have a valid rpc port and are on the same `shred_version`.
+    /// all validators that have a valid rpc port.
     pub fn rpc_peers(&self) -> Vec<ContactInfo> {
         let self_pubkey = self.id();
-        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
             .filter(|node| {
-                node.pubkey() != &self_pubkey
-                    && self.check_socket_addr_space(&node.rpc())
-                    && node.shred_version() == self_shred_version
+                node.pubkey() != &self_pubkey && self.check_socket_addr_space(&node.rpc())
             })
             .cloned()
             .collect()
@@ -1062,42 +1040,33 @@ impl ClusterInfo {
 
     // All nodes in gossip (including spy nodes) and the last time we heard about them
     pub fn all_peers(&self) -> Vec<(ContactInfo, u64)> {
-        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes()
             .filter_map(|node| {
                 let contact_info = node.value.contact_info()?;
-                (contact_info.shred_version() == self_shred_version)
-                    .then(|| (contact_info.clone(), node.local_timestamp))
+                Some((contact_info.clone(), node.local_timestamp))
             })
             .collect()
     }
 
     pub fn gossip_peers(&self) -> Vec<ContactInfo> {
         let me = self.id();
-        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
-            .filter(|node| {
-                node.pubkey() != &me
-                    && self.check_socket_addr_space(&node.gossip())
-                    && node.shred_version() == self_shred_version
-            })
+            .filter(|node| node.pubkey() != &me && self.check_socket_addr_space(&node.gossip()))
             .cloned()
             .collect()
     }
 
-    /// all validators that have a valid tvu port and are on the same `shred_version`.
+    /// all validators that have a valid tvu port.
     pub fn tvu_peers<R>(&self, query: impl ContactInfoQuery<R>) -> Vec<R> {
         let self_pubkey = self.id();
-        let self_shred_version = self.my_shred_version();
         self.time_gossip_read_lock("tvu_peers", &self.stats.tvu_peers)
             .get_nodes_contact_info()
             .filter(|node| {
                 node.pubkey() != &self_pubkey
-                    && node.shred_version() == self_shred_version
                     && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
             })
             .map(query)
@@ -1108,13 +1077,11 @@ impl ClusterInfo {
     pub fn repair_peers(&self, slot: Slot) -> Vec<ContactInfo> {
         let _st = ScopedTimer::from(&self.stats.repair_peers);
         let self_pubkey = self.id();
-        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
             .filter(|node| {
                 node.pubkey() != &self_pubkey
-                    && node.shred_version() == self_shred_version
                     && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
                     && self.check_socket_addr_space(&node.serve_repair(contact_info::Protocol::UDP))
                     && match gossip_crds.get::<&LowestSlot>(*node.pubkey()) {
