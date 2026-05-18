@@ -12,7 +12,7 @@ use {
         },
         validator::BlockProductionMethod,
     },
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::assert_matches,
     bincode::deserialize_from,
@@ -855,6 +855,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             None,
             Arc::default(),
+            Arc::new(SchedulerPriorityFloor::default()),
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

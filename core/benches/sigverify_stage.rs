@@ -88,6 +88,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         NonZeroUsize::new(sigverify::threadpool_for_benches().current_num_threads()).unwrap(),
         false,
         sharable_banks,
+        None,
     );
     let packet_s = packet_s;
     let packet_s_for_bench = packet_s.clone();

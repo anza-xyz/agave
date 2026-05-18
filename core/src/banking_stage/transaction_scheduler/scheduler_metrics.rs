@@ -188,7 +188,7 @@ impl SchedulerCountMetricsInner {
             ),
             ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
             ("min_priority", self.get_min_priority(), i64),
-            ("max_priority", self.get_max_priority(), i64)
+            ("max_priority", self.get_max_priority(), i64),
         );
         if let Some(slot) = slot {
             datapoint.add_field_i64("slot", slot as i64);
