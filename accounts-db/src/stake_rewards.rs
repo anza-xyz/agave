@@ -226,14 +226,20 @@ fn create_stake_account(
         ..Meta::default()
     };
 
-    let mut stake = Stake {
-        delegation: Delegation::new(voter_pubkey, stake_amount, Epoch::MAX),
+    let stake = Stake {
+        delegation: Delegation {
+            voter_pubkey: *voter_pubkey,
+            stake: stake_amount,
+            activation_epoch: Epoch::MAX,
+            deactivation_epoch: if stake_amount == 0 {
+                last_epoch
+            } else {
+                Epoch::MAX
+            },
+            ..Default::default()
+        },
         credits_observed,
     };
-
-    if stake_amount == 0 {
-        stake.delegation.deactivation_epoch = last_epoch;
-    }
 
     stake_account
         .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
