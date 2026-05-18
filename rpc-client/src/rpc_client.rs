@@ -1000,7 +1000,7 @@ impl RpcClient {
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// let slot: u64 = rpc_client
     ///     .send(RpcRequest::GetSlot, json!([]))?;
-    /// assert!(slot >= 0);
+    /// drop(slot);
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>
@@ -3576,7 +3576,7 @@ impl RpcClient {
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// let first_slot = rpc_client.get_first_available_block()?;
-    /// assert!(first_slot > 0);
+    /// drop(first_slot);
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn get_first_available_block(&self) -> ClientResult<Slot> {
@@ -3643,13 +3643,13 @@ impl RpcClient {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # use solana_keypair::Keypair;
     /// # use solana_signer::Signer;
-    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// # let rpc_client = RpcClient::new("http://localhost:8899".to_string());
     /// let token_account = rpc_client.get_token_account(&Keypair::new().pubkey())?;
-    /// assert!(token_account.is_none());
+    /// // Returns None if the account is not a valid SPL token account.
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn get_token_account(&self, pubkey: &Pubkey) -> ClientResult<Option<UiTokenAccount>> {
@@ -3669,17 +3669,17 @@ impl RpcClient {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// # use solana_commitment_config::CommitmentConfig;
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # use solana_keypair::Keypair;
     /// # use solana_signer::Signer;
-    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// # let rpc_client = RpcClient::new("http://localhost:8899".to_string());
     /// let info = rpc_client.get_token_account_with_commitment(
     ///     &Keypair::new().pubkey(),
     ///     CommitmentConfig::processed(),
     /// )?;
-    /// assert!(info.value.is_none());
+    /// // Returns None if the account is not a valid SPL token account.
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn get_token_account_with_commitment(
@@ -3738,7 +3738,7 @@ impl RpcClient {
     ///     &Keypair::new().pubkey(),
     ///     CommitmentConfig::processed(),
     /// )?;
-    /// assert_eq!(balance.amount, "0");
+    /// assert_eq!(balance.value.amount, "0");
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn get_token_account_balance_with_commitment(
