@@ -33,6 +33,8 @@ pub enum Error {
     Decode(DecodeError),
     #[error("wrong encoding base")]
     WrongEncoding,
+    #[error("overlapping primary and fallback bitmaps")]
+    BitmapOverlap,
 }
 
 /// Verifies an Alpenglow `Certificate` and calculates the total signing stake.
@@ -178,12 +180,7 @@ fn verify_base3(
     match ranks {
         Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
         Decoded::Base3(ranks, fallback_ranks) => {
-            // Ensure no validator is double-counted by appearing in both bitmaps.
-            // We enforce this local invariant so we do not rely exclusively on the
-            // out-of-tree `solana-signer-store` crate to prevent double-counting stake.
-            if (ranks.clone() & &fallback_ranks).any() {
-                return Err(Error::WrongEncoding);
-            }
+            check_disjoint(&ranks, &fallback_ranks)?;
 
             // Must run sequentially because `rank_map` captures `total_stake` (FnMut).
             // We pass a mutable reference for the first call so we can reuse the
@@ -253,6 +250,14 @@ pub fn collect_pubkeys(
         pubkeys.push(pubkey);
     }
     Ok(pubkeys)
+}
+
+/// Ensures that no validator appears in both the primary and fallback bitmaps.
+fn check_disjoint(ranks: &BitVec<u8>, fallback_ranks: &BitVec<u8>) -> Result<(), Error> {
+    if (ranks.clone() & fallback_ranks).any() {
+        return Err(Error::BitmapOverlap);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -411,6 +416,26 @@ mod test {
             })
             .unwrap(),
             per_validator_stake * max_validators as u64
+        );
+    }
+
+    #[test]
+    fn test_check_disjoint() {
+        let mut ranks = BitVec::<u8>::new();
+        let mut fallback_ranks = BitVec::<u8>::new();
+        ranks.resize(10, false);
+        fallback_ranks.resize(10, false);
+
+        // Honest disjoint bitmaps
+        ranks.set(0, true);
+        fallback_ranks.set(1, true);
+        assert_eq!(check_disjoint(&ranks, &fallback_ranks), Ok(()));
+
+        // Malicious overlapping bitmaps
+        fallback_ranks.set(0, true);
+        assert_eq!(
+            check_disjoint(&ranks, &fallback_ranks),
+            Err(Error::BitmapOverlap)
         );
     }
 }
