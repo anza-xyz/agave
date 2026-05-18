@@ -357,12 +357,12 @@ fn test_bank_update_epoch_stakes() {
     assert_eq!(initial_epochs, vec![0, 1]);
 
     for existing_epoch in &initial_epochs {
-        bank.update_epoch_stakes(*existing_epoch);
+        bank.update_epoch_stakes(*existing_epoch, None);
         assert_eq!(bank.epoch_stake_keys(), initial_epochs);
     }
 
     for epoch in (initial_epochs.len() as Epoch)..(MAX_LEADER_SCHEDULE_STAKES - 1) {
-        bank.update_epoch_stakes(dbg!(epoch));
+        bank.update_epoch_stakes(dbg!(epoch), None);
         assert_eq!(bank.epoch_stakes.len() as Epoch, epoch + 1);
     }
 
@@ -375,7 +375,7 @@ fn test_bank_update_epoch_stakes() {
         )
     );
 
-    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES - 1);
+    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES - 1, None);
     assert_eq!(
         bank.epoch_stake_key_info(),
         (
@@ -385,7 +385,7 @@ fn test_bank_update_epoch_stakes() {
         )
     );
 
-    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES);
+    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES, None);
     assert_eq!(
         bank.epoch_stake_key_info(),
         (
