@@ -198,22 +198,40 @@ impl VoteStorage {
             self.deprecate_legacy_vote_ixs = bank.feature_set.snapshot().deprecate_legacy_vote_ixs;
         }
 
-        // Evict any now unstaked pubkeys
+        // Evict entries that are now unstaked or have a stale authorized voter
         let mut unstaked_votes = 0;
+        let mut evicted_stale_authority_votes = 0;
+        let mut total_evicted = 0;
         self.latest_vote_per_vote_pubkey
             .retain(|vote_pubkey, vote| {
                 let is_present = !vote.is_vote_taken();
-                let should_evict = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+                let has_no_stake = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+                let has_stale_authority = self
+                    .cached_epoch_authorized_voters
+                    .get(vote_pubkey)
+                    .is_none_or(|auth| *auth != vote.authorized_voter_pubkey());
+                let should_evict = has_no_stake || has_stale_authority;
                 if is_present && should_evict {
-                    unstaked_votes += 1;
+                    total_evicted += 1;
+                    if has_no_stake {
+                        unstaked_votes += 1;
+                    }
+                    if has_stale_authority {
+                        evicted_stale_authority_votes += 1;
+                    }
                 }
                 !should_evict
             });
-        self.num_unprocessed_votes -= unstaked_votes;
+        self.num_unprocessed_votes -= total_evicted;
         datapoint_info!(
             "latest_unprocessed_votes-epoch-boundary",
             ("epoch", bank.epoch(), i64),
-            ("evicted_unstaked_votes", unstaked_votes, i64)
+            ("evicted_unstaked_votes", unstaked_votes, i64),
+            (
+                "evicted_stale_authority_votes",
+                evicted_stale_authority_votes,
+                i64
+            )
         );
     }
 
@@ -412,6 +430,32 @@ pub(crate) mod tests {
         .unwrap();
 
         solana_vote::vote_account::VoteAccount::try_from(account).unwrap()
+    }
+
+    /// Create epoch stakes with a specific authorized voter for each vote account
+    fn epoch_stakes_with_authorized_voters(
+        epoch: solana_clock::Epoch,
+        vote_pubkeys_and_authorized_voters: &[(Pubkey, Pubkey)],
+    ) -> VersionedEpochStakes {
+        VersionedEpochStakes::new_for_tests(
+            vote_pubkeys_and_authorized_voters
+                .iter()
+                .map(|(vote_pubkey, authorized_voter)| {
+                    (
+                        *vote_pubkey,
+                        (
+                            100,
+                            vote_account_with_authorized_voter(
+                                vote_pubkey,
+                                authorized_voter,
+                                epoch,
+                            ),
+                        ),
+                    )
+                })
+                .collect(),
+            epoch,
+        )
     }
 
     pub(crate) fn packet_from_slots(
@@ -983,5 +1027,142 @@ pub(crate) mod tests {
             vote_storage.get_latest_vote_slot(keypair_c.vote_keypair.pubkey()),
             Some(vote_c_slot)
         );
+    }
+
+    #[test]
+    fn test_epoch_boundary_evicts_stale_authorized_voter_votes() {
+        let keypair_a = ValidatorVoteKeypairs::new_rand();
+        let keypair_b = ValidatorVoteKeypairs::new_rand();
+        let vote_pubkey_a = keypair_a.vote_keypair.pubkey();
+        let vote_pubkey_b = keypair_b.vote_keypair.pubkey();
+        let new_authorized_voter_a = Keypair::new();
+
+        let genesis_config = genesis_utils::create_genesis_config_with_vote_accounts(
+            100,
+            &[&keypair_a, &keypair_b],
+            vec![200, 200],
+        )
+        .genesis_config;
+
+        // Epoch 1: A and B are both staked, and their current votes are valid
+        let (bank_0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let mut bank =
+            Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
+        assert_eq!(bank.epoch(), 1);
+
+        bank.set_epoch_stakes_for_test(
+            1,
+            epoch_stakes_with_authorized_voters(
+                1,
+                &[
+                    (vote_pubkey_a, keypair_a.vote_keypair.pubkey()),
+                    (vote_pubkey_b, keypair_b.vote_keypair.pubkey()),
+                ],
+            ),
+        );
+        bank.set_epoch_stakes_for_test(
+            2,
+            epoch_stakes_with_authorized_voters(
+                2,
+                &[
+                    (vote_pubkey_a, new_authorized_voter_a.pubkey()),
+                    (vote_pubkey_b, keypair_b.vote_keypair.pubkey()),
+                ],
+            ),
+        );
+
+        let mut vote_storage = VoteStorage::new(&bank);
+
+        let vote_a = packet_from_slots_with_authorized_voter(
+            vec![(1, 1)],
+            &keypair_a,
+            &keypair_a.vote_keypair,
+            None,
+        );
+        let vote_b = packet_from_slots_with_authorized_voter(
+            vec![(2, 1)],
+            &keypair_b,
+            &keypair_b.vote_keypair,
+            None,
+        );
+        vote_storage.insert_batch(
+            VoteSource::Tpu,
+            vec![to_sanitized_view(vote_a), to_sanitized_view(vote_b)].into_iter(),
+        );
+
+        assert_eq!(2, vote_storage.len());
+        assert_eq!(Some(1), vote_storage.get_latest_vote_slot(vote_pubkey_a));
+        assert_eq!(Some(2), vote_storage.get_latest_vote_slot(vote_pubkey_b));
+
+        // Move to the next epoch where A has rotated its authorized voter but remains staked
+        // B remains unchanged.
+        //
+        // Use warp_from_parent for the same reason as test_insert_batch_unstaked:
+        // it populates epoch_stakes(bank.epoch()) with the key cache_epoch_boundary_info expects
+        let (bank_0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let mut bank = Bank::warp_from_parent(
+            bank_0,
+            SlotLeader::new_unique(),
+            3 * MINIMUM_SLOTS_PER_EPOCH,
+        );
+        assert_eq!(bank.epoch(), 2);
+
+        bank.set_epoch_stakes_for_test(
+            2,
+            epoch_stakes_with_authorized_voters(
+                2,
+                &[
+                    (vote_pubkey_a, new_authorized_voter_a.pubkey()),
+                    (vote_pubkey_b, keypair_b.vote_keypair.pubkey()),
+                ],
+            ),
+        );
+        bank.set_epoch_stakes_for_test(
+            3,
+            epoch_stakes_with_authorized_voters(
+                3,
+                &[
+                    (vote_pubkey_a, new_authorized_voter_a.pubkey()),
+                    (vote_pubkey_b, keypair_b.vote_keypair.pubkey()),
+                ],
+            ),
+        );
+
+        vote_storage.cache_epoch_boundary_info(&bank);
+
+        // Only A should be evicted because its cached vote was signed by a stale authority
+        assert_eq!(1, vote_storage.len());
+        assert_eq!(None, vote_storage.get_latest_vote_slot(vote_pubkey_a));
+        assert_eq!(Some(2), vote_storage.get_latest_vote_slot(vote_pubkey_b));
+
+        // Old authority should no longer be accepted
+        let stale_vote_a = packet_from_slots_with_authorized_voter(
+            vec![(3, 1)],
+            &keypair_a,
+            &keypair_a.vote_keypair,
+            None,
+        );
+        vote_storage.insert_batch(
+            VoteSource::Tpu,
+            std::iter::once(to_sanitized_view(stale_vote_a)),
+        );
+        assert_eq!(1, vote_storage.len());
+        assert_eq!(None, vote_storage.get_latest_vote_slot(vote_pubkey_a));
+
+        // New authority should be accepted
+        let fresh_vote_a = packet_from_slots_with_authorized_voter(
+            vec![(4, 1)],
+            &keypair_a,
+            &new_authorized_voter_a,
+            None,
+        );
+        vote_storage.insert_batch(
+            VoteSource::Tpu,
+            std::iter::once(to_sanitized_view(fresh_vote_a)),
+        );
+        assert_eq!(2, vote_storage.len());
+        assert_eq!(Some(4), vote_storage.get_latest_vote_slot(vote_pubkey_a));
     }
 }

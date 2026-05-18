@@ -40,9 +40,4 @@ pub static SVM_BUILTINS: &[SvmBuiltinPrototype] = &[
         name: "compute_budget_program",
         register_fn: solana_compute_budget_program::Entrypoint::register,
     },
-    SvmBuiltinPrototype {
-        program_id: solana_sdk_ids::loader_v4::id(),
-        name: "loader_v4",
-        register_fn: solana_loader_v4_program::Entrypoint::register,
-    },
 ];

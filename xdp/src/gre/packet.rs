@@ -78,8 +78,6 @@ fn write_gre_outer_headers(
 ) -> Result<(), PacketError> {
     write_eth_header(packet, &gre_src_mac.0, &gre_dst_mac.0);
 
-    let dont_fragment = info.pmtudisc != 0;
-
     // Write outer IP header (protocol = GRE = 47)
     let gre_payload_len = GRE_HEADER_BASE_SIZE + inner_packet_len;
     let outer_ttl = (info.ttl != 0).then_some(info.ttl);
@@ -92,7 +90,9 @@ fn write_gre_outer_headers(
         &outer_remote,
         gre_payload_len as u16,
         IPPROTO_GRE as u8,
-        dont_fragment,
+        // GRE fragmentation is not supported. The outer IP header is always written with the Don't
+        // Fragment (DF) flag set.
+        true,
         outer_ttl,
         Some(info.tos),
     );

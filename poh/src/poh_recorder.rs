@@ -17,13 +17,17 @@ use {
         poh_controller::PohController, poh_service::PohService, record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{
+        migration::MigrationStatus, reward_certificate::BuildRewardCertsRespError,
+    },
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
     solana_entry::{
+        block_component::{BlockFooterV1, VersionedBlockMarker},
         entry::Entry,
+        entry_or_marker::EntryOrMarker,
         poh::{Poh, PohEntry},
     },
     solana_hash::Hash,
@@ -32,7 +36,11 @@ use {
     solana_measure::measure_us,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    solana_runtime::{
+        bank::Bank, block_component_processor::BankFooterError,
+        installed_scheduler_pool::BankWithScheduler,
+        validated_reward_certificate::Error as ValidatedRewardCertError,
+    },
     solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
@@ -40,7 +48,7 @@ use {
             Arc, Mutex, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
-        time::Instant,
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -48,7 +56,7 @@ use {
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Debug, Error)]
 pub enum PohRecorderError {
     #[error("max height reached")]
     MaxHeightReached,
@@ -57,18 +65,39 @@ pub enum PohRecorderError {
     MinHeightNotReached,
 
     #[error("send WorkingBankEntry error")]
-    SendError(#[from] SendError<WorkingBankEntry>),
+    SendError(#[from] Box<SendError<WorkingBankEntryOrMarker>>),
 
     #[error("channel full")]
     ChannelFull,
 
     #[error("channel disconnected")]
     ChannelDisconnected,
+
+    #[error("producing reward certs failed with {0}")]
+    BuildRewardCerts(#[from] BuildRewardCertsRespError),
+
+    #[error("constructing validated reward cert failed with {0}")]
+    ValidatedRewardCert(#[from] ValidatedRewardCertError),
+
+    #[error("updating bank footer failed with \"{0}\"")]
+    UpdateBankFooter(#[from] BankFooterError),
+
+    #[error("bank {0} did not freeze before block footer timeout")]
+    BankFreezeTimeout(Slot),
+
+    #[error("couldn't reset bank during fast leader handover slot {0} -> slot {1}")]
+    ResetBankError(Slot, Slot),
+
+    #[error("couldn't reschedule pre-UpdateParent transactions for slot {0}")]
+    RescheduleTransactionsError(Slot),
+
+    #[error("leader window moved past slot {0}")]
+    WindowMovedOn(Slot),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;
 
-pub type WorkingBankEntry = (Arc<Bank>, (Entry, u64));
+pub type WorkingBankEntryOrMarker = (Arc<Bank>, (EntryOrMarker, u64));
 
 #[derive(Debug)]
 pub struct RecordSummary {
@@ -176,7 +205,7 @@ pub struct PohRecorder {
     /// This field MUST be kept consistent with the `shared_leader_state` field.
     working_bank: Option<WorkingBank>,
     shared_leader_state: SharedLeaderState,
-    working_bank_sender: Sender<WorkingBankEntry>,
+    working_bank_sender: Sender<WorkingBankEntryOrMarker>,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
     blockstore: Arc<Blockstore>,
@@ -210,7 +239,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>) {
+    ) -> (Self, Receiver<WorkingBankEntryOrMarker>) {
         let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,
@@ -240,7 +269,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>) {
+    ) -> (Self, Receiver<WorkingBankEntryOrMarker>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -304,6 +333,24 @@ impl PohRecorder {
         self.leader_last_tick_height = leader_last_tick_height;
     }
 
+    /// Send the block marker to be broadcast
+    pub fn send_marker(&mut self, marker: VersionedBlockMarker) -> Result<()> {
+        let tick_height = self.tick_height();
+        let working_bank = self
+            .working_bank
+            .as_mut()
+            .ok_or(PohRecorderError::MaxHeightReached)?;
+
+        self.working_bank_sender
+            .send((
+                working_bank.bank.clone(),
+                (EntryOrMarker::Marker(marker), tick_height),
+            ))
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
     pub fn record(
         &mut self,
@@ -329,7 +376,7 @@ impl PohRecorder {
         }
 
         loop {
-            let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false));
+            let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false, None));
             self.metrics.flush_cache_no_tick_us += flush_cache_us;
             flush_cache_res?;
 
@@ -356,20 +403,22 @@ impl PohRecorder {
             if mixed_in {
                 debug_assert_eq!(self.entries.len(), mixins.len());
                 for (entry, transactions) in self.entries.drain(..).zip(transaction_batches) {
-                    let (send_entry_res, send_batches_us) =
-                        measure_us!(self.working_bank_sender.send((
+                    let (send_entry_res, send_batches_us) = measure_us!(
+                        self.working_bank_sender.send((
                             working_bank.bank.clone(),
                             (
                                 Entry {
                                     num_hashes: entry.num_hashes,
                                     hash: entry.hash,
                                     transactions,
-                                },
+                                }
+                                .into(),
                                 tick_height, // `record_batches` guarantees that mixins are **not** split across ticks.
                             ),
-                        )));
+                        ))
+                    );
                     self.metrics.send_entry_us += send_batches_us;
-                    send_entry_res?;
+                    send_entry_res.map_err(Box::new)?;
                 }
 
                 return Ok(RecordSummary {
@@ -414,7 +463,7 @@ impl PohRecorder {
                 self.tick_height(),
             ));
 
-            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true, None));
             self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
         }
     }
@@ -458,14 +507,28 @@ impl PohRecorder {
 
         // TODO: adjust the working_bank.start time based on number of ticks
         // that have already elapsed based on current tick height.
-        let _ = self.flush_cache(false);
+        let _ = self.flush_cache(false, None);
+    }
+
+    fn notify_replay_wakeup(&self) {
+        if let Some(signal) = &self.clear_bank_signal {
+            match signal.try_send(true) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    trace!("replay wake up signal channel is full.")
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    trace!("replay wake up signal channel is disconnected.")
+                }
+            }
+        }
     }
 
     /// Clears the working bank.
     /// Updates [`Self::shared_leader_state`] if `set_shared_state` is true.
     /// Otherwise the caller is responsible for setting the state before
     /// releasing the lock.
-    fn clear_bank(&mut self, set_shared_state: bool) {
+    pub fn clear_bank(&mut self, set_shared_state: bool) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
                 bank.leader_id(),
@@ -498,17 +561,7 @@ impl PohRecorder {
             );
         }
 
-        if let Some(ref signal) = self.clear_bank_signal {
-            match signal.try_send(true) {
-                Ok(_) => {}
-                Err(TrySendError::Full(_)) => {
-                    trace!("replay wake up signal channel is full.")
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    trace!("replay wake up signal channel is disconnected.")
-                }
-            }
-        }
+        self.notify_replay_wakeup();
     }
 
     /// Returns tick_height - does not update the internal state for tick_height.
@@ -546,10 +599,66 @@ impl PohRecorder {
         tick_height
     }
 
+    /// Waits for the bank to freeze and sends the block footer with the bank hash.
+    /// Returns once the footer has been handed to broadcast, or errors if the
+    /// bank cannot freeze quickly enough to populate the footer's bank hash.
+    fn wait_for_freeze_and_send_footer(
+        &self,
+        mut footer: BlockFooterV1,
+        working_bank: &WorkingBank,
+    ) -> Result<()> {
+        // Wake replay as soon as the slot reaches max tick height so it can freeze the bank
+        // before we block on the footer/bank-hash handoff.
+        self.notify_replay_wakeup();
+
+        // Wait for the bank to be frozen with timeout
+        // TODO: change this to use DELTA_BLOCK from votor instead.
+        let start = Instant::now();
+        while !working_bank.bank.is_frozen() && !self.is_exited.load(Ordering::Relaxed) {
+            if start.elapsed() > Duration::from_millis(400) {
+                break;
+            }
+            std::hint::spin_loop();
+        }
+
+        // If the bank still isn't frozen, we've timed out
+        if !working_bank.bank.is_frozen() {
+            if self.is_exited.load(Ordering::Relaxed) {
+                return Err(PohRecorderError::ChannelDisconnected);
+            }
+            error!(
+                "slot = {} block production failure. bank freezing timed out.",
+                working_bank.bank.slot()
+            );
+            return Err(PohRecorderError::BankFreezeTimeout(
+                working_bank.bank.slot(),
+            ));
+        }
+
+        // Send out the block footer - we now have the bank hash
+        footer.bank_hash = working_bank.bank.hash();
+
+        let footer = VersionedBlockMarker::new_block_footer(footer);
+        let footer_entry_marker = (
+            EntryOrMarker::Marker(footer),
+            working_bank.max_tick_height - 1,
+        );
+
+        self.working_bank_sender
+            .send((working_bank.bank.clone(), footer_entry_marker))
+            .map_err(|err| {
+                error!(
+                    "slot = {} block production failure. failed to broadcast footer",
+                    working_bank.bank.slot()
+                );
+                PohRecorderError::SendError(Box::new(err))
+            })
+    }
+
     // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
     // On a record flush will flush the cache at the WorkingBank::min_tick_height, since a record
     // occurs after the min_tick_height was generated
-    fn flush_cache(&mut self, tick: bool) -> Result<()> {
+    fn flush_cache(&mut self, tick: bool, footer: Option<BlockFooterV1>) -> Result<()> {
         // check_tick_height is called before flush cache, so it cannot overrun the bank
         // so a bank that is so late that it's slot fully generated before it starts recording
         // will fail instead of broadcasting any ticks
@@ -569,7 +678,8 @@ impl PohRecorder {
             .iter()
             .take_while(|x| x.1 <= working_bank.max_tick_height)
             .count();
-        let mut send_result: std::result::Result<(), SendError<WorkingBankEntry>> = Ok(());
+        let has_footer = footer.is_some();
+        let mut send_result = Ok(());
 
         if entry_count > 0 {
             trace!(
@@ -580,37 +690,51 @@ impl PohRecorder {
                 entry_count,
             );
 
-            for tick in &self.tick_cache[..entry_count] {
-                working_bank.bank.register_tick(&tick.0.hash);
+            for (entry, tick_height) in &self.tick_cache[..entry_count] {
+                working_bank.bank.register_tick(&entry.hash);
+
+                if let Some(footer) = footer.clone() {
+                    if let Err(err) = self.wait_for_freeze_and_send_footer(footer, working_bank) {
+                        send_result = Err(err);
+                        break;
+                    }
+                }
+
+                let tick = (EntryOrMarker::from(entry.clone()), *tick_height);
+
                 send_result = self
                     .working_bank_sender
-                    .send((working_bank.bank.clone(), tick.clone()));
+                    .send((working_bank.bank.clone(), tick))
+                    .map_err(|err| PohRecorderError::SendError(Box::new(err)));
                 if send_result.is_err() {
                     break;
                 }
             }
         }
-        if self.tick_height() >= working_bank.max_tick_height {
-            info!(
-                "poh_record: max_tick_height {} reached, clearing working_bank {}",
-                working_bank.max_tick_height,
-                working_bank.bank.slot()
-            );
-            self.start_bank = working_bank.bank.clone();
-            let working_slot = self.start_slot();
-            self.start_tick_height = working_slot * self.ticks_per_slot + 1;
-            self.clear_bank(true);
-        }
-        if send_result.is_err() {
-            info!("WorkingBank::sender disconnected {send_result:?}");
-            // revert the cache, but clear the working bank
-            self.clear_bank(true);
-        } else {
+        if send_result.is_ok() {
+            if self.tick_height() >= working_bank.max_tick_height {
+                info!(
+                    "poh_record: max_tick_height {} reached, clearing working_bank {}",
+                    working_bank.max_tick_height,
+                    working_bank.bank.slot()
+                );
+                self.start_bank = working_bank.bank.clone();
+                let working_slot = self.start_slot();
+                self.start_tick_height = working_slot * self.ticks_per_slot + 1;
+                self.clear_bank(true);
+            }
             // commit the flush
             let _ = self.tick_cache.drain(..entry_count);
+        } else {
+            info!("WorkingBank::sender disconnected or footer failed {send_result:?}");
+            // Alpenglow block completion errors must leave the bank attached so
+            // BlockCreationLoop can clear PoH and BankForks atomically.
+            if !has_footer {
+                self.clear_bank(true);
+            }
         }
 
-        Ok(())
+        send_result
     }
 
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
@@ -916,7 +1040,11 @@ impl PohRecorder {
         self.clear_bank(true);
     }
 
-    pub fn tick_alpenglow(&mut self, slot_max_tick_height: u64) {
+    pub fn tick_alpenglow(
+        &mut self,
+        slot_max_tick_height: u64,
+        footer: BlockFooterV1,
+    ) -> Result<()> {
         let (poh_entry, tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
             poh_l.tick()
@@ -945,9 +1073,12 @@ impl PohRecorder {
                     .load(Ordering::Acquire),
             ));
 
-            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            let (flush_res, flush_cache_and_tick_us) =
+                measure_us!(self.flush_cache(true, Some(footer)));
             self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
+            flush_res?;
         }
+        Ok(())
     }
 
     pub fn enable_alpenglow(&mut self) {
@@ -976,7 +1107,7 @@ fn do_create_test_recorder(
     PohController,
     TransactionRecorder,
     PohService,
-    Receiver<WorkingBankEntry>,
+    Receiver<WorkingBankEntryOrMarker>,
 ) {
     let leader_schedule_cache = match leader_schedule_cache {
         Some(provided_cache) => provided_cache,
@@ -1041,7 +1172,7 @@ pub fn create_test_recorder(
     PohController,
     TransactionRecorder,
     PohService,
-    Receiver<WorkingBankEntry>,
+    Receiver<WorkingBankEntryOrMarker>,
 ) {
     do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
 }
@@ -1249,6 +1380,126 @@ mod tests {
     }
 
     #[test]
+    fn test_send_marker_error() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let prev_hash = bank.last_blockhash();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            0,
+            prev_hash,
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+        poh_recorder.set_bank_for_test(bank);
+        drop(entry_receiver);
+
+        let marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: 0,
+            block_user_agent: vec![],
+            final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        });
+        let err = poh_recorder.send_marker(marker).unwrap_err();
+        assert!(matches!(err, PohRecorderError::SendError(_)));
+    }
+
+    fn test_footer() -> BlockFooterV1 {
+        BlockFooterV1 {
+            bank_hash: Hash::default(),
+            block_producer_time_nanos: 0,
+            block_user_agent: vec![],
+            final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        }
+    }
+
+    fn new_alpenglow_recorder_for_bank(
+        bank: Arc<Bank>,
+        blockstore: Arc<Blockstore>,
+    ) -> (PohRecorder, Receiver<WorkingBankEntryOrMarker>) {
+        let prev_hash = bank.last_blockhash();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            prev_hash,
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            blockstore,
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+        poh_recorder.enable_alpenglow();
+        bank.set_tick_height(bank.max_tick_height() - 1);
+        poh_recorder.set_bank_for_test(bank);
+        (poh_recorder, entry_receiver)
+    }
+
+    #[test]
+    fn test_alpenglow_tick_send_error() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path()).expect("Expected to be able to open ledger"),
+        );
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_recorder, entry_receiver) =
+            new_alpenglow_recorder_for_bank(bank.clone(), blockstore);
+        drop(entry_receiver);
+
+        let bank_to_freeze = bank.clone();
+        let freezer = std::thread::spawn(move || {
+            while bank_to_freeze.tick_height() < bank_to_freeze.max_tick_height() {
+                std::hint::spin_loop();
+            }
+            bank_to_freeze.freeze();
+        });
+
+        let err = poh_recorder
+            .tick_alpenglow(bank.max_tick_height(), test_footer())
+            .unwrap_err();
+        freezer.join().unwrap();
+
+        assert!(matches!(err, PohRecorderError::SendError(_)));
+        assert!(poh_recorder.has_bank());
+        assert!(!poh_recorder.tick_cache.is_empty());
+    }
+
+    #[test]
+    fn test_alpenglow_tick_timeout() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path()).expect("Expected to be able to open ledger"),
+        );
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_recorder, _entry_receiver) =
+            new_alpenglow_recorder_for_bank(bank.clone(), blockstore);
+
+        let err = poh_recorder
+            .tick_alpenglow(bank.max_tick_height(), test_footer())
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            PohRecorderError::BankFreezeTimeout(slot) if slot == bank.slot()
+        ));
+        assert!(poh_recorder.has_bank());
+        assert!(!poh_recorder.tick_cache.is_empty());
+    }
+
+    #[test]
     fn test_poh_recorder_tick_verifies() {
         // Setup
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -1278,9 +1529,11 @@ mod tests {
 
         // Collect the tick entries produced.
         let mut entries = vec![];
-        while let Ok((_bank, (entry, _tick_height))) = entry_receiver.try_recv() {
-            assert!(entry.is_tick());
-            entries.push(entry);
+        while let Ok((_bank, (entry_or_marker, _tick_height))) = entry_receiver.try_recv() {
+            if let EntryOrMarker::Entry(entry) = entry_or_marker {
+                assert!(entry.is_tick());
+                entries.push(entry);
+            }
         }
 
         // Confirm correct number of entries received.
@@ -1542,11 +1795,11 @@ mod tests {
         //tick in the cache + entry
         for _ in 0..min_tick_height {
             let (_bank, (e, _tick_height)) = entry_receiver.recv().unwrap();
-            assert!(e.is_tick());
+            assert!(e.unwrap_entry().is_tick());
         }
 
         let (_bank, (e, _tick_height)) = entry_receiver.recv().unwrap();
-        assert!(!e.is_tick());
+        assert!(!e.unwrap_entry().is_tick());
     }
 
     #[test]
@@ -1583,7 +1836,7 @@ mod tests {
         );
         for _ in 0..num_ticks_to_max {
             let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
-            assert!(entry.is_tick());
+            assert!(entry.unwrap_entry().is_tick());
         }
     }
 

@@ -25,7 +25,7 @@ const NUM_TRANSACTIONS: usize = 1024;
 fn serialize_transactions(transactions: Vec<VersionedTransaction>) -> Vec<Vec<u8>> {
     transactions
         .into_iter()
-        .map(|transaction| bincode::serialize(&transaction).unwrap())
+        .map(|transaction| wincode::serialize(&transaction).unwrap())
         .collect()
 }
 
@@ -37,7 +37,7 @@ fn bench_transactions_parsing(
     group.bench_function("VersionedTransaction", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = bincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
+                let _ = wincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
             }
         });
     });
@@ -46,7 +46,7 @@ fn bench_transactions_parsing(
     group.bench_function("SanitizedVersionedTransaction", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let tx = bincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
+                let tx = wincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
                 let _ = SanitizedVersionedTransaction::try_new(tx).unwrap();
             }
         });

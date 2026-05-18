@@ -1,8 +1,5 @@
 use {
-    crate::{
-        account_info::Offset, account_storage_entry::AccountStorageEntry,
-        accounts_file::InternalsForArchive,
-    },
+    crate::{account_info::Offset, account_storage_entry::AccountStorageEntry},
     solana_clock::Slot,
     std::{
         fs::File,
@@ -12,19 +9,18 @@ use {
 
 /// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
 /// This type skips over the data in accounts contained in the obsolete accounts structure
-pub struct AccountStorageReader<'a> {
+pub struct AccountStorageReader {
     sorted_obsolete_accounts: Vec<(Offset, usize)>,
     current_offset: usize,
-    file: Option<File>,
-    internals: InternalsForArchive<'a>,
+    file: File,
     num_alive_bytes: usize,
     num_total_bytes: usize,
 }
 
-impl<'a> AccountStorageReader<'a> {
+impl AccountStorageReader {
     /// Creates a new `AccountStorageReader` from an `AccountStorageEntry`.
     /// The obsolete accounts structure is sorted during initialization.
-    pub fn new(storage: &'a AccountStorageEntry, snapshot_slot: Option<Slot>) -> io::Result<Self> {
+    pub fn new(storage: &AccountStorageEntry, snapshot_slot: Option<Slot>) -> io::Result<Self> {
         let internals = storage.accounts.internals_for_archive();
         let num_total_bytes = storage.accounts.len();
         let num_alive_bytes = num_total_bytes - storage.get_obsolete_bytes(snapshot_slot);
@@ -44,16 +40,12 @@ impl<'a> AccountStorageReader<'a> {
         sorted_obsolete_accounts
             .sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
 
-        let file = match internals {
-            InternalsForArchive::Mmap(_internals) => None,
-            InternalsForArchive::FileIo(path) => Some(File::open(path)?),
-        };
+        let file = File::open(internals.path)?;
 
         Ok(Self {
             sorted_obsolete_accounts,
             current_offset: 0,
             file,
-            internals,
             num_alive_bytes,
             num_total_bytes,
         })
@@ -68,7 +60,7 @@ impl<'a> AccountStorageReader<'a> {
     }
 }
 
-impl Read for AccountStorageReader<'_> {
+impl Read for AccountStorageReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut total_read = 0;
         let buf_len = buf.len();
@@ -95,20 +87,9 @@ impl Read for AccountStorageReader<'_> {
 
             let bytes_to_read = bytes_left_in_buffer.min(bytes_to_read_from_file);
 
-            let read_size = match self.internals {
-                InternalsForArchive::Mmap(data) => (&data
-                    [self.current_offset..self.current_offset + bytes_to_read])
-                    .read(&mut buf[total_read..][..bytes_to_read])?,
-
-                InternalsForArchive::FileIo(_) => {
-                    let file = &mut self
-                        .file
-                        .as_mut()
-                        .expect("File is opened during initialization");
-                    file.seek(SeekFrom::Start(self.current_offset as u64))?;
-                    file.read(&mut buf[total_read..][..bytes_to_read])?
-                }
-            };
+            self.file
+                .seek(SeekFrom::Start(self.current_offset as u64))?;
+            let read_size = self.file.read(&mut buf[total_read..][..bytes_to_read])?;
 
             if read_size == 0 {
                 break; // EOF
@@ -130,7 +111,7 @@ mod tests {
             ObsoleteAccounts,
             account_storage_entry::AccountStorageEntry,
             accounts_db::get_temp_accounts_paths,
-            accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
+            accounts_file::{AccountsFile, AccountsFileProvider},
         },
         log::*,
         rand::{
@@ -147,24 +128,19 @@ mod tests {
     fn create_storage_for_storage_reader(
         slot: Slot,
         provider: AccountsFileProvider,
-        storage_access: StorageAccess,
     ) -> (AccountStorageEntry, Vec<tempfile::TempDir>) {
         let id = 0;
         let (temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
         let file_size = 1024 * 1024;
         (
-            AccountStorageEntry::new(&paths[0], slot, id, file_size, provider, storage_access),
+            AccountStorageEntry::new(&paths[0], slot, id, file_size, provider),
             temp_dirs,
         )
     }
 
-    #[test_case(AccountsFileProvider::AppendVec, #[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(AccountsFileProvider::AppendVec, StorageAccess::File)]
-    fn test_account_storage_reader_no_obsolete_accounts(
-        provider: AccountsFileProvider,
-        storage_access: StorageAccess,
-    ) {
-        let (storage, _temp_dirs) = create_storage_for_storage_reader(0, provider, storage_access);
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_account_storage_reader_no_obsolete_accounts(provider: AccountsFileProvider) {
+        let (storage, _temp_dirs) = create_storage_for_storage_reader(0, provider);
 
         let account = AccountSharedData::new(1, 10, &Pubkey::default());
         let account2 = AccountSharedData::new(1, 10, &Pubkey::default());
@@ -181,26 +157,19 @@ mod tests {
         assert_eq!(reader.len(), storage.accounts.len());
     }
 
-    #[test_case(0, 0, StorageAccess::File)]
-    #[test_case(1, 0, StorageAccess::File)]
-    #[test_case(1, 1, StorageAccess::File)]
-    #[test_case(100, 0, StorageAccess::File)]
-    #[test_case(100, 10, StorageAccess::File)]
-    #[test_case(100, 100, StorageAccess::File)]
-    #[test_case(0, 0, #[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(1, 0, #[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(1, 1, #[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(100, 0, #[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(100, 10, #[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(100, 100, #[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(0, 0)]
+    #[test_case(1, 0)]
+    #[test_case(1, 1)]
+    #[test_case(100, 0)]
+    #[test_case(100, 10)]
+    #[test_case(100, 100)]
     fn test_account_storage_reader_with_obsolete_accounts(
         total_accounts: usize,
         number_of_accounts_to_remove: usize,
-        storage_access: StorageAccess,
     ) {
         agave_logger::setup();
         let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec, storage_access);
+            create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
 
         let slot = 0;
 
@@ -248,22 +217,7 @@ mod tests {
             .unwrap()
             .mark_accounts_obsolete(obsolete_account_offset.into_iter().zip(data_lens), 0);
 
-        let storage = storage
-            .reopen_as_readonly(storage_access)
-            .unwrap_or(storage);
-
-        // Assert that storage.accounts was reopened with the specified access type
-        match storage_access {
-            StorageAccess::File => assert!(matches!(
-                storage.accounts.internals_for_archive(),
-                InternalsForArchive::FileIo(_)
-            )),
-            #[allow(deprecated)]
-            StorageAccess::Mmap => assert!(matches!(
-                storage.accounts.internals_for_archive(),
-                InternalsForArchive::Mmap(_)
-            )),
-        }
+        let storage = storage.reopen_as_readonly().unwrap_or(storage);
 
         // Create the reader and check the length
         let mut reader = AccountStorageReader::new(&storage, None).unwrap();
@@ -285,8 +239,7 @@ mod tests {
         // and verify that the number of accounts in the new file is correct
         if (total_accounts - number_of_accounts_to_remove) != 0 {
             let (accounts_file, num_accounts) =
-                AccountsFile::new_from_file(temp_file_path, current_len, StorageAccess::File)
-                    .unwrap();
+                AccountsFile::new_from_file(temp_file_path, current_len).unwrap();
 
             // Verify that the correct number of accounts were found in the file
             assert_eq!(
@@ -307,11 +260,10 @@ mod tests {
         }
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_account_storage_reader_filter_by_slot(storage_access: StorageAccess) {
+    #[test]
+    fn test_account_storage_reader_filter_by_slot() {
         let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(10, AccountsFileProvider::AppendVec, storage_access);
+            create_storage_for_storage_reader(10, AccountsFileProvider::AppendVec);
         let total_accounts = 30;
 
         let slot = 0;
@@ -398,8 +350,7 @@ mod tests {
             drop(output_file);
 
             let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(temp_file_path, current_len, StorageAccess::File)
-                    .unwrap();
+                AccountsFile::new_from_file(temp_file_path, current_len).unwrap();
 
             // Create a new AccountStorageEntry from the output file
             let new_storage = AccountStorageEntry::new_existing(

@@ -4,8 +4,9 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
+        common::DELTA_FIRST_SLICE,
         consensus_metrics::ConsensusMetricsEvent,
-        event::{CompletedBlock, VotorEvent, VotorEventReceiver},
+        event::{CompletedBlock, RepairEvent, RepairEventSender, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
@@ -15,7 +16,7 @@ use {
         votor::SharedContext,
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
-    crossbeam_channel::{RecvError, SendError, select},
+    crossbeam_channel::{RecvError, SendError, TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -23,6 +24,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
+        bank_forks_controller::BankForksControllerError,
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -73,6 +75,9 @@ enum EventLoopError {
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
+
+    #[error("Bank forks controller error")]
+    BankForksControllerError(#[from] BankForksControllerError),
 }
 
 pub(crate) struct EventHandler {
@@ -85,6 +90,10 @@ struct LocalContext {
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
     pub(crate) stats: EventHandlerStats,
+    /// When in standstill, tracks the highest finalized slot at the time standstill was detected.
+    /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
+    /// Reset to `None` when a new finalization event is received.
+    pub(crate) standstill_slot: Option<Slot>,
 }
 
 impl EventHandler {
@@ -119,6 +128,7 @@ impl EventHandler {
             finalized_blocks: BTreeSet::default(),
             received_shred: BTreeSet::default(),
             stats: EventHandlerStats::new(),
+            standstill_slot: None,
         };
 
         // Wait until migration has completed
@@ -210,7 +220,15 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
-            timer_manager.write().set_timeouts(slot);
+            // TODO: configure delta_first_slice in bank
+            let delta_first_slice = DELTA_FIRST_SLICE;
+            let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
+            timer_manager.write().set_timeouts(
+                slot,
+                local_context.standstill_slot,
+                delta_first_slice,
+                delta_block,
+            );
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -238,6 +256,7 @@ impl EventHandler {
             ref mut finalized_blocks,
             ref mut received_shred,
             ref mut stats,
+            ref mut standstill_slot,
         } = local_context;
         match event {
             // Block has completed replay
@@ -283,7 +302,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                );
+                )?;
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -304,6 +323,12 @@ impl EventHandler {
                 info!("{my_pubkey}: Block Notarized {block:?}");
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+            }
+
+            VotorEvent::BlockNotarFallback(block) => {
+                info!("{my_pubkey}: Block notar-fallback {block:?}");
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
             }
 
             VotorEvent::FirstShred(slot) => {
@@ -402,6 +427,8 @@ impl EventHandler {
             VotorEvent::Finalized(block, is_fast_finalization) => {
                 info!("{my_pubkey}: Finalized {block:?} fast: {is_fast_finalization}");
                 finalized_blocks.insert(block);
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+
                 Self::check_rootable_blocks(
                     my_pubkey,
                     ctx,
@@ -411,7 +438,19 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                );
+                )?;
+
+                if let Some(slot) = *standstill_slot {
+                    if block.0 > slot {
+                        *standstill_slot = None;
+                        info!(
+                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
+                             at slot={}. Ending timeout extension",
+                            block.0
+                        );
+                    }
+                }
+
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -436,7 +475,26 @@ impl EventHandler {
             // We have not observed a finalization certificate in a while, refresh our votes
             VotorEvent::Standstill(highest_finalized_slot) => {
                 info!("{my_pubkey}: Standstill {highest_finalized_slot}");
-                // certs refresh happens in CertificatePoolService
+                // Record the highest finalized slot for dynamic timeout extension.
+                match *standstill_slot {
+                    Some(old_slot) => {
+                        debug_assert_eq!(highest_finalized_slot, old_slot);
+                        if highest_finalized_slot != old_slot {
+                            warn!(
+                                "{my_pubkey}: Standstill for slot {highest_finalized_slot}
+                                 issued while standstill for slot {old_slot} active."
+                            );
+                        }
+                    }
+                    None => {
+                        *standstill_slot = Some(highest_finalized_slot);
+                        info!(
+                            "{my_pubkey}: Extending timeouts starting at slot \
+                             {highest_finalized_slot}"
+                        );
+                    }
+                }
+                // certs refresh happens in ConsensusPoolService
                 Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
             }
 
@@ -753,7 +811,7 @@ impl EventHandler {
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
         stats: &mut EventHandlerStats,
-    ) {
+    ) -> Result<(), BankForksControllerError> {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root();
         let Some(new_root) = finalized_blocks
@@ -769,7 +827,7 @@ impl EventHandler {
             .max()
         else {
             // No rootable banks
-            return;
+            return Ok(());
         };
         drop(bank_forks_r);
         root_utils::set_root(
@@ -781,12 +839,40 @@ impl EventHandler {
             pending_blocks,
             finalized_blocks,
             received_shred,
-        );
+        )?;
         stats.set_root(new_root);
+        Ok(())
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_event_handler.join()
+    }
+}
+
+/// Sends a repair event to the block ID repair service.
+/// Tries non-blocking send first; if the channel is full, logs an error and blocks.
+/// Returns an error if the channel is disconnected.
+fn request_repair(
+    sender: &RepairEventSender,
+    my_pubkey: Pubkey,
+    block: Block,
+) -> Result<(), EventLoopError> {
+    let (slot, block_id) = block;
+    let event = RepairEvent::FetchBlock { slot, block_id };
+    match sender.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(event)) => {
+            error!(
+                "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
+                 send event for slot {slot}"
+            );
+            sender
+                .send(event)
+                .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            Err(EventLoopError::SenderDisconnected(SendError(())))
+        }
     }
 }
 
@@ -797,7 +883,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             consensus_metrics::ConsensusMetricsEventReceiver,
-            event::LeaderWindowInfo,
+            event::{LeaderWindowInfo, RepairEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
                 VoteHistoryStorage,
@@ -808,7 +894,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::{Receiver, TryRecvError, unbounded},
+        crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -823,6 +909,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
+            bank_forks_controller::{BankForksController, BankForksControllerError},
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
@@ -849,11 +936,60 @@ mod tests {
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
+        #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
+        repair_event_receiver: RepairEventReceiver,
         shared_context: SharedContext,
         voting_context: VotingContext,
         root_context: RootContext,
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
+    }
+
+    struct DirectBankForksController {
+        bank_forks: Arc<RwLock<BankForks>>,
+        blockstore: Arc<Blockstore>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    }
+
+    impl BankForksController for DirectBankForksController {
+        fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError> {
+            Ok(self.bank_forks.write().unwrap().insert(bank))
+        }
+
+        fn set_root(
+            &self,
+            my_pubkey: Pubkey,
+            parent_slot: Slot,
+            new_root: Slot,
+            highest_super_majority_root: Option<Slot>,
+        ) -> Result<(), BankForksControllerError> {
+            root_utils::check_and_handle_new_root(
+                parent_slot,
+                new_root,
+                None,
+                highest_super_majority_root,
+                &None,
+                &self.drop_bank_sender,
+                &self.blockstore,
+                &self.leader_schedule_cache,
+                &self.bank_forks,
+                None,
+                &my_pubkey,
+                |_| {},
+            );
+            Ok(())
+        }
+
+        fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
+            let bank_to_clear = self.bank_forks.read().unwrap().get_with_scheduler(slot);
+            if let Some(bank) = bank_to_clear {
+                let _ = bank.wait_for_completed_scheduler();
+            }
+
+            self.bank_forks.write().unwrap().clear_bank(slot, false);
+            Ok(())
+        }
     }
 
     fn setup() -> EventHandlerTestContext {
@@ -865,6 +1001,7 @@ mod tests {
         let (event_sender, _event_receiver) = unbounded();
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (repair_event_sender, repair_event_receiver) = unbounded();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender,
             exit,
@@ -904,6 +1041,15 @@ mod tests {
             )
             .unwrap(),
         );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks.read().unwrap().root_bank(),
+        ));
+        let bank_forks_controller = Arc::new(DirectBankForksController {
+            bank_forks: bank_forks.clone(),
+            blockstore: blockstore.clone(),
+            leader_schedule_cache,
+            drop_bank_sender: drop_bank_sender.clone(),
+        });
         let highest_parent_ready = Arc::new(RwLock::default());
 
         let shared_context = SharedContext {
@@ -911,9 +1057,9 @@ mod tests {
             bank_forks: bank_forks.clone(),
             vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
             leader_window_info_sender,
-            blockstore,
-            rpc_subscriptions: None,
+            blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
+            repair_event_sender,
         };
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
@@ -927,18 +1073,13 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             consensus_metrics_sender,
         };
 
         let root_context = RootContext {
-            leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(
-                &bank_forks.read().unwrap().root_bank(),
-            )),
-            snapshot_controller: None,
             bank_notification_sender: None,
-            drop_bank_sender,
+            bank_forks_controller,
         };
 
         let local_context = LocalContext {
@@ -947,6 +1088,7 @@ mod tests {
             finalized_blocks: BTreeSet::new(),
             received_shred: BTreeSet::new(),
             stats: EventHandlerStats::default(),
+            standstill_slot: None,
         };
 
         EventHandlerTestContext {
@@ -960,6 +1102,7 @@ mod tests {
             drop_bank_receiver,
             cluster_info,
             consensus_metrics_receiver,
+            repair_event_receiver,
             highest_parent_ready,
             shared_context,
             voting_context,
@@ -1085,7 +1228,7 @@ mod tests {
                     start_slot,
                     end_slot,
                     parent_block,
-                    skip_timer: Instant::now(),
+                    block_timer: Instant::now(),
                 }),
                 &self.timer_manager,
                 &self.shared_context,
@@ -1588,7 +1731,7 @@ mod tests {
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
 
-        // Send a standstill event with highest parent ready at 0, we should refresh all the votes
+        // Send a standstill event with highest finalized at 0, we should refresh all the votes
         test_context.send_standstill_event(0);
 
         test_context.check_for_votes(&[
@@ -1597,7 +1740,11 @@ mod tests {
             Vote::new_skip_vote(3),
         ]);
 
-        // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
+        // Finalize block 1, should deactivate standstill
+        test_context.send_finalized_event((1, block_id_1), true);
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Send another standstill event with highest finalized at 1, we should refresh votes for 2 and 3 only
         test_context.send_standstill_event(1);
 
         test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
@@ -1646,5 +1793,42 @@ mod tests {
         for file in files_to_remove {
             let _ = remove_file(file);
         }
+    }
+
+    #[test]
+    fn test_standstill_slot_tracking() {
+        let mut test_context = setup();
+
+        // Initially standstill_slot should be None
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Set up some state
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let block_id_1 = bank1.block_id().unwrap();
+        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+
+        // Send standstill event - should record the standstill slot
+        test_context.send_standstill_event(0);
+
+        // The standstill_slot should now be set to the highest finalized
+        assert!(test_context.local_context.standstill_slot.is_some());
+        let standstill_slot = test_context.local_context.standstill_slot.unwrap();
+        // The highest finalized should be 0 since we haven't finalized a slot after genesis
+        assert_eq!(standstill_slot, 0);
+
+        // Send another standstill event - should not change the existing standstill_slot
+        test_context.send_standstill_event(0);
+        assert_eq!(test_context.local_context.standstill_slot, Some(0));
+
+        // Send a finalized event - should reset standstill_slot
+        test_context.send_finalized_event((1, block_id_1), false);
+        assert!(test_context.local_context.standstill_slot.is_none());
     }
 }

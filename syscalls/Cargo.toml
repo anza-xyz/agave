@@ -37,6 +37,7 @@ solana-clock = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
 solana-hash = { workspace = true }
+solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-poseidon = { workspace = true }
@@ -47,6 +48,7 @@ solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-sha512-hasher = { workspace = true, features = ["sha2"] }
 solana-stable-layout = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-feature-set = { workspace = true }

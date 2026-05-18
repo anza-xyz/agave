@@ -16,6 +16,7 @@ use {
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    solana_address::Address,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Clock, Epoch, Slot},
@@ -43,7 +44,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader_ex},
@@ -82,7 +83,7 @@ pub use {
         error::EbpfError,
         memory_region::MemoryMapping,
         program::BuiltinFunctionDefinition,
-        vm::{EbpfVm, get_runtime_environment_key},
+        vm::{EbpfVm, EncryptedHostAddressToEbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
 };
@@ -122,7 +123,7 @@ pub fn invoke_builtin_function(
     let instruction_account_indices = 0..instruction_context.get_number_of_instruction_accounts();
 
     // mock builtin program must consume units
-    invoke_context.consume_checked(1)?;
+    invoke_context.compute_meter.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
     let program_id = instruction_context.get_program_key()?;
@@ -222,27 +223,25 @@ macro_rules! processor {
                 _: u64,
                 _: u64,
                 _: u64,
-                _: &mut $crate::MemoryMapping,
             ) -> Result<u64, Box<dyn std::error::Error>> {
                 unreachable!()
             }
             fn vm(
-                vm: *mut $crate::EbpfVm<$crate::InvokeContext>,
+                mut vm: $crate::EncryptedHostAddressToEbpfVm<$crate::InvokeContext>,
                 _: u64,
                 _: u64,
                 _: u64,
                 _: u64,
                 _: u64,
             ) {
-                let vm = unsafe {
-                    &mut *((vm as *mut u64)
-                        .offset(-($crate::get_runtime_environment_key() as isize))
-                        as *mut $crate::EbpfVm<$crate::InvokeContext>)
-                };
-                vm.program_result =
-                    $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
-                        .map_err(|err| $crate::EbpfError::SyscallError(err))
-                        .into();
+                unsafe {
+                    vm.with_vm(|vm| {
+                        vm.program_result =
+                            $crate::invoke_builtin_function($builtin_function, vm.context())
+                                .map_err(|err| $crate::EbpfError::SyscallError(err))
+                                .into();
+                    });
+                }
             }
         };
         Some(<Converter as $crate::BuiltinFunctionDefinition<_>>::register)
@@ -255,6 +254,7 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
 ) -> u64 {
     let invoke_context = get_invoke_context();
     if invoke_context
+        .compute_meter
         .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + T::size_of() as u64)
         .is_err()
     {
@@ -293,6 +293,7 @@ impl SyscallStubs {
         let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
 
         if invoke_context
+            .compute_meter
             .consume_checked(
                 sysvar_base_cost
                     .saturating_add(sysvar_id_cost)
@@ -304,7 +305,7 @@ impl SyscallStubs {
         }
 
         // Fetch the sysvar from the cache.
-        let Ok(sysvar) = fetch(get_invoke_context().get_sysvar_cache()) else {
+        let Ok(sysvar) = fetch(get_invoke_context().environment_config.sysvar_cache()) else {
             return UNSUPPORTED_SYSVAR;
         };
 
@@ -467,38 +468,60 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
 
     fn sol_get_clock_sysvar(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
-            get_invoke_context().get_sysvar_cache().get_clock(),
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_clock(),
             var_addr,
         )
     }
 
     fn sol_get_epoch_schedule_sysvar(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
-            get_invoke_context().get_sysvar_cache().get_epoch_schedule(),
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_schedule(),
             var_addr,
         )
     }
 
     fn sol_get_epoch_rewards_sysvar(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
-            get_invoke_context().get_sysvar_cache().get_epoch_rewards(),
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_rewards(),
             var_addr,
         )
     }
 
     #[allow(deprecated)]
     fn sol_get_fees_sysvar(&self, var_addr: *mut u8) -> u64 {
-        get_sysvar(get_invoke_context().get_sysvar_cache().get_fees(), var_addr)
+        get_sysvar(
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_fees(),
+            var_addr,
+        )
     }
 
     fn sol_get_rent_sysvar(&self, var_addr: *mut u8) -> u64 {
-        get_sysvar(get_invoke_context().get_sysvar_cache().get_rent(), var_addr)
+        get_sysvar(
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_rent(),
+            var_addr,
+        )
     }
 
     fn sol_get_last_restart_slot(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
             get_invoke_context()
-                .get_sysvar_cache()
+                .environment_config
+                .sysvar_cache()
                 .get_last_restart_slot(),
             var_addr,
         )
@@ -1220,6 +1243,15 @@ impl ProgramTestContext {
         &self.genesis_config
     }
 
+    pub fn is_active(&self, feature: &Address) -> bool {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .feature_set
+            .is_active(feature)
+    }
+
     /// Manually increment vote credits for the current epoch in the specified vote account to simulate validator voting activity
     pub fn increment_vote_account_credits(
         &mut self,
@@ -1303,6 +1335,7 @@ impl ProgramTestContext {
     /// Force the working bank ahead to a new slot
     pub fn warp_to_slot(&mut self, warp_slot: Slot) -> Result<(), ProgramTestError> {
         let bank = self.bank_forks.read().unwrap().working_bank();
+        let leader = *bank.leader();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1322,7 +1355,7 @@ impl ProgramTestContext {
             bank.freeze();
             bank
         } else {
-            let warped = Bank::warp_from_parent(bank, SlotLeader::default(), pre_warp_slot);
+            let warped = Bank::warp_from_parent(bank, leader, pre_warp_slot);
             self.bank_forks
                 .write()
                 .unwrap()
@@ -1337,7 +1370,7 @@ impl ProgramTestContext {
         );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
-        let bank_at_warp_slot = Bank::new_from_parent(warp_bank, SlotLeader::default(), warp_slot);
+        let bank_at_warp_slot = Bank::new_from_parent(warp_bank, leader, warp_slot);
         self.bank_forks.write().unwrap().insert(bank_at_warp_slot);
 
         // Update block commitment cache, otherwise banks server will poll at
@@ -1365,6 +1398,7 @@ impl ProgramTestContext {
     /// warp forward one more slot and force reward interval end
     pub fn warp_forward_force_reward_interval_end(&mut self) -> Result<(), ProgramTestError> {
         let bank = self.bank_forks.read().unwrap().working_bank();
+        let leader = *bank.leader();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1379,7 +1413,7 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
-        let mut warp_bank = Bank::new_from_parent(bank, SlotLeader::default(), warp_slot);
+        let mut warp_bank = Bank::new_from_parent(bank, leader, warp_slot);
 
         warp_bank.force_reward_interval_end_for_tests();
         self.bank_forks.write().unwrap().insert(warp_bank);

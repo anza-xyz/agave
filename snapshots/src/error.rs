@@ -21,6 +21,9 @@ pub enum SnapshotError {
     #[error("serialization error: {0}")]
     Serialize(#[from] bincode::Error),
 
+    #[error("deserialization error: {0}")]
+    DeserializeWincode(#[from] wincode::ReadError),
+
     #[error("crossbeam send error: {0}")]
     CrossbeamSend(#[from] crossbeam_channel::SendError<PathBuf>),
 

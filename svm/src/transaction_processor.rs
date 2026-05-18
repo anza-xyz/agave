@@ -1,24 +1,28 @@
 use {
     crate::{
         account_loader::{
-            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, ValidatedTransactionDetails, load_transaction,
-            update_rent_exempt_status_for_account, validate_fee_payer,
+            AccountLoader, CheckedTransactionDetails, LoadedTransaction, PROGRAM_OWNERS,
+            TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
+            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
         nonce_info::NonceInfo,
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
-        transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_account_state_info::{
+            TransactionAccountStateInfo, get_uninitialized_accounts_size, verify_changes,
+        },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+        transaction_execution_result::{
+            AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+        },
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
     percentage::Percentage,
-    solana_account::{AccountSharedData, PROGRAM_OWNERS, ReadableAccount, state_traits::StateMut},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -457,6 +461,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &environment.blockhash,
                         environment.blockhash_lamports_per_signature,
                         &environment.rent,
+                        environment.feature_set.relax_post_exec_min_balance_check,
                         &mut error_metrics,
                     )
                 }));
@@ -660,6 +665,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment_blockhash: &Hash,
         next_lamports_per_signature: u64,
         rent: &Rent,
+        relax_post_exec_min_balance_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
@@ -691,6 +697,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             nonce_info,
             compute_budget_and_limits,
             rent,
+            relax_post_exec_min_balance_check,
             error_counters,
         )
     }
@@ -704,6 +711,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_info: Option<NonceInfo>,
         compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
         rent: &Rent,
+        relax_post_exec_min_balance_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let fee_payer_address = message.fee_payer();
@@ -723,12 +731,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_index = 0;
         validate_fee_payer(
-            fee_payer_address,
             &mut loaded_fee_payer.account,
             fee_payer_index,
             error_counters,
             rent,
             compute_budget_and_limits.fee_details.total_fee(),
+            relax_post_exec_min_balance_check,
         )?;
 
         // Capture fee-subtracted fee payer account and next nonce account state
@@ -959,8 +967,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             tx.num_instructions(),
         );
 
-        let pre_account_state_info =
-            TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
+        let relax_post_exec_min_balance_check =
+            environment.feature_set.relax_post_exec_min_balance_check;
+        let pre_account_state_info = TransactionAccountStateInfo::new_pre_exec(
+            &transaction_context,
+            tx,
+            &environment.rent,
+            relax_post_exec_min_balance_check,
+        );
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -1006,16 +1020,21 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
-        let mut status = process_result
-            .and_then(|info| {
-                let post_account_state_info =
-                    TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
-                TransactionAccountStateInfo::verify_changes(
+        let mut post_account_state_info_result = process_result
+            .and_then(|_info| {
+                let post_account_state_info = TransactionAccountStateInfo::new_post_exec(
+                    &transaction_context,
+                    tx,
+                    &pre_account_state_info,
+                    &environment.rent,
+                    relax_post_exec_min_balance_check,
+                );
+                verify_changes(
                     &pre_account_state_info,
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| info)
+                .map(|_| post_account_state_info)
             })
             .map_err(|err| {
                 match err {
@@ -1049,17 +1068,32 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts,
             return_data,
             touched_account_count,
-            accounts_resize_delta: accounts_data_len_delta,
+            accounts_resize_delta,
         } = execution_record;
 
-        if status.is_ok()
+        if post_account_state_info_result.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
                 .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
                 .is_none()
         {
-            status = Err(TransactionError::UnbalancedTransaction);
+            post_account_state_info_result = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = status.map(|_| ());
+
+        // accounts_resize_delta and accounts_uninitialized_size must be set to None
+        // in the result if status is an error
+        let (status, accounts_deltas) = post_account_state_info_result
+            .map(|post_state_info| {
+                (
+                    Ok(()),
+                    Some(AccountsDeltas {
+                        accounts_resize_delta,
+                        accounts_uninitialized_size: get_uninitialized_accounts_size(
+                            &post_state_info,
+                        ),
+                    }),
+                )
+            })
+            .unwrap_or_else(|err| (Err(err), None));
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
@@ -1080,7 +1114,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 inner_instructions,
                 return_data,
                 executed_units,
-                accounts_data_len_delta,
+                accounts_deltas,
             },
             loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
@@ -2189,6 +2223,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2240,6 +2275,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2280,6 +2316,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2324,6 +2361,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2366,6 +2404,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2552,6 +2591,7 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2612,6 +2652,7 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 &mut error_counters,
             );
 
@@ -2660,6 +2701,7 @@ mod tests {
             &Hash::default(),
             lamports_per_signature,
             &Rent::default(),
+            mock_bank.feature_set.relax_post_exec_min_balance_check,
             &mut TransactionErrorMetrics::default(),
         )
         .unwrap();

@@ -2,18 +2,18 @@
 
 use {
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::Keypair,
     solana_message::Message,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_client::BankClient,
         epoch_stakes::VersionedEpochStakes,
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
         },
-        loader_utils::load_program_of_loader_v4,
+        loader_utils::create_program,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
     solana_transaction::Transaction,
     solana_vote::vote_account::VoteAccount,
@@ -50,20 +50,20 @@ fn test_syscall_get_epoch_stake() {
             .iter()
             .map(|keypair| {
                 let node_id = keypair.node_keypair.pubkey();
-                let authorized_voter = keypair.vote_keypair.pubkey();
+                let vote_pubkey = keypair.vote_keypair.pubkey();
                 let vote_account = VoteAccount::try_from(create_v4_account_with_authorized(
                     &node_id,
-                    &authorized_voter,
+                    &vote_pubkey,
                     [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                     &node_id,
                     0,
-                    &node_id,
+                    &vote_pubkey,
                     0,
                     &node_id,
                     100,
                 ))
                 .unwrap();
-                (authorized_voter, (0, vote_account)) // No stake.
+                (vote_pubkey, (0, vote_account)) // No stake.
             })
             .collect::<HashMap<_, _>>(),
         0, // Leader schedule epoch 0
@@ -71,16 +71,15 @@ fn test_syscall_get_epoch_stake() {
     bank.set_epoch_stakes_for_test(0, epoch_stakes_epoch_0);
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank);
-
-    let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
+    let program_id = create_program(
+        &bank,
+        &bpf_loader_upgradeable::id(),
         "solana_sbf_syscall_get_epoch_stake",
     );
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let bank = bank_client
+        .advance_slot(1, &bank_forks, SlotLeader::default())
+        .unwrap();
     bank.freeze();
 
     let instruction = Instruction::new_with_bytes(

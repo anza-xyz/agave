@@ -79,7 +79,7 @@ pub fn fund_keys<T: 'static + TpsClient + Send + Sync + ?Sized>(
             let dests: Vec<_> = not_funded.drain(start..).collect();
             let spends: Vec<_> = dests.iter().map(|k| (k.pubkey(), to_lamports)).collect();
             to_fund.push((f, spends));
-            new_funded.extend(dests.into_iter());
+            new_funded.extend(dests);
         }
 
         to_fund.chunks(FUND_CHUNK_LEN).for_each(|chunk| {

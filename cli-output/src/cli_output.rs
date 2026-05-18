@@ -1716,6 +1716,7 @@ impl fmt::Display for CliValidatorInfoVec {
 pub struct CliValidatorInfo {
     pub identity_pubkey: String,
     pub info_pubkey: String,
+    pub is_signed: bool,
     pub info: Map<String, Value>,
 }
 
@@ -1726,6 +1727,7 @@ impl fmt::Display for CliValidatorInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln_name_value(f, "Validator Identity:", &self.identity_pubkey)?;
         writeln_name_value(f, "  Info Address:", &self.info_pubkey)?;
+
         for (key, value) in self.info.iter() {
             writeln_name_value(
                 f,
@@ -1733,6 +1735,14 @@ impl fmt::Display for CliValidatorInfo {
                 value.as_str().unwrap_or("?"),
             )?;
         }
+
+        if !self.is_signed {
+            writeln!(
+                f,
+                "/!\\ This validator info account is NOT verified as owned by the validator"
+            )?;
+        }
+
         Ok(())
     }
 }

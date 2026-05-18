@@ -6,7 +6,7 @@ fn mem_op_consume(invoke_context: &mut InvokeContext, n: u64) -> Result<(), Erro
         n.checked_div(compute_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX),
     );
-    consume_compute_meter(invoke_context, cost)
+    invoke_context.compute_meter.consume_checked(cost)
 }
 
 /// Check that two regions do not overlap.
@@ -33,7 +33,6 @@ declare_builtin_function!(
         n: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
 
@@ -42,7 +41,7 @@ declare_builtin_function!(
         }
 
         // host addresses can overlap so we always invoke memmove
-        memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
+        memmove(invoke_context, dst_addr, src_addr, n)
     }
 );
 
@@ -56,11 +55,9 @@ declare_builtin_function!(
         n: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
-
-        memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
+        memmove(invoke_context, dst_addr, src_addr, n)
     }
 );
 
@@ -74,21 +71,22 @@ declare_builtin_function!(
         n: u64,
         cmp_result_addr: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
+        let check_aligned = invoke_context.get_check_aligned();
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
 
         let s1 = translate_slice::<u8>(
             memory_mapping,
             s1_addr,
             n,
-            invoke_context.get_check_aligned(),
+            check_aligned,
         )?;
         let s2 = translate_slice::<u8>(
             memory_mapping,
             s2_addr,
             n,
-            invoke_context.get_check_aligned(),
+            check_aligned,
         )?;
 
         debug_assert_eq!(s1.len(), n as usize);
@@ -101,10 +99,10 @@ declare_builtin_function!(
 
         translate_mut!(
             memory_mapping,
-            invoke_context.get_check_aligned(),
-            let cmp_result_ref_mut: &mut i32 = map(cmp_result_addr)?;
+            check_aligned,
+            let cmp_result_ref_mut: (&mut std::mem::MaybeUninit<i32>) = map(cmp_result_addr)?;
         );
-        *cmp_result_ref_mut = result;
+        cmp_result_ref_mut.write(result);
 
         Ok(0)
     }
@@ -120,16 +118,17 @@ declare_builtin_function!(
         n: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
 
+        let check_aligned = invoke_context.get_check_aligned();
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         translate_mut!(
             memory_mapping,
-            invoke_context.get_check_aligned(),
-            let s: &mut [u8] = map(dst_addr, n)?;
+            check_aligned,
+            let s: (&mut [MaybeUninit<u8>]) = map(dst_addr, n)?;
         );
-        s.fill(c as u8);
+        s.fill(MaybeUninit::new(c as u8));
         Ok(0)
     }
 );
@@ -139,23 +138,22 @@ fn memmove(
     dst_addr: u64,
     src_addr: u64,
     n: u64,
-    memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
-    translate_mut!(
+    let check_aligned = invoke_context.get_check_aligned();
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+    // In a rare exception to the rule we manually translate addresses to a raw pointer rather than
+    // using `translate_mut!` because the src and dst memory regions may overlap for this syscall.
+    touch_slice_mut::<MaybeUninit<u8>>(memory_mapping, dst_addr, n)?;
+    let slice = translate_slice_inner!(
         memory_mapping,
-        invoke_context.get_check_aligned(),
-        let dst_ref_mut: &mut [u8] = map(dst_addr, n)?;
-    );
-    let dst_ptr = dst_ref_mut.as_mut_ptr();
-    let src_ptr = translate_slice::<u8>(
-        memory_mapping,
-        src_addr,
+        AccessType::Store,
+        dst_addr,
         n,
-        invoke_context.get_check_aligned(),
-    )?
-    .as_ptr();
-
-    unsafe { std::ptr::copy(src_ptr, dst_ptr, n as usize) };
+        MaybeUninit<u8>,
+        check_aligned,
+    )?;
+    let src_ptr = translate_slice::<u8>(memory_mapping, src_addr, n, check_aligned)?.as_ptr();
+    unsafe { std::ptr::copy(src_ptr.cast(), slice as *mut MaybeUninit<u8>, n as usize) };
     Ok(0)
 }
 

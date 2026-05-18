@@ -39,13 +39,16 @@ pub struct BlockstoreInsertionMetrics {
     pub num_coding_shreds_exists: usize,
     pub num_coding_shreds_invalid: usize,
     pub num_coding_shreds_invalid_erasure_config: usize,
+    pub num_coding_shreds_blockstore_error: usize,
     pub num_coding_shreds_inserted: usize,
 }
 
 impl BlockstoreInsertionMetrics {
-    pub fn report_metrics(&self, metric_name: &'static str) {
+    const NAME: &str = "blockstore-insert-shreds";
+
+    pub fn report_metrics(&self) {
         datapoint_info!(
-            metric_name,
+            Self::NAME,
             ("num_shreds", self.num_shreds as i64, i64),
             ("total_elapsed_us", self.total_elapsed_us as i64, i64),
             (
@@ -126,6 +129,11 @@ impl BlockstoreInsertionMetrics {
             (
                 "num_coding_shreds_invalid_erasure_config",
                 self.num_coding_shreds_invalid_erasure_config,
+                i64
+            ),
+            (
+                "num_coding_shreds_blockstore_error",
+                self.num_coding_shreds_blockstore_error,
                 i64
             ),
             (

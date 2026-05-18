@@ -67,6 +67,30 @@ all eligible deprecated symbols have been removed. Our policy is to deprecate
 for at least one full minor version before removal.
 
 ### Create the new branch
+
+#### Cutting a branch without promoting channels
+
+By default, pushing a new `vX.Y` head auto-promotes it to `BETA_CHANNEL` and
+demotes the prior beta to stable, because `ci/channel-info.sh` picks the top-2
+`vX.Y` heads. To cut a branch without that promotion (e.g. to begin backports
+while keeping the current beta in place), set the pins in
+`ci/channel-overrides` on master *before* pushing the new branch:
+
+```
+# current beta, to be held
+PINNED_BETA_CHANNEL=vX.Y
+# current stable, to be held
+PINNED_STABLE_CHANNEL=vX.Y-1
+```
+
+Only the file that lives on master is used; every branch's CI fetches it from there, so no
+backport is needed.
+
+When ready to promote, open a PR on master that clears or updates the pins.
+Then proceed with the usual "Miscellaneous Clean up" steps below.
+
+#### Steps
+
 1. Check out the latest commit on `master` branch:
     ```
     git fetch --all
@@ -100,6 +124,8 @@ Alternatively use the Github UI.
     ```
     ci/channel-info.sh
     ```
+   Note: if `ci/channel-overrides` on master has `PINNED_BETA_CHANNEL` /
+   `PINNED_STABLE_CHANNEL` set, those values override auto-detect everywhere.
 
 ### Update the Changelog
 
@@ -127,13 +153,16 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 
 ### Create the Release Tag on GitHub
 
-1. Check out relevant branch, create release tag and push it. The release tag must exactly match the `version` field in `/Cargo.toml` prefixed by `v`.
+1. Dispatch [Bump Version](https://github.com/anza-xyz/agave/actions/workflows/bump-version.yml) pipeline to create the version bump PR.
+1. Verify CI checks pass. Verify that the change is correct: it only contains version bump changes and only expected version is changed. Approve it.
+1. Wait for approvals required to merge and merge it.
+1. Check out relevant branch, create release tag pointing to the version bump merge commit from the previous step. The release tag must exactly match the `version` field in `/Cargo.toml` prefixed by `v` from the version bump.
     ```
     git checkout v4.0
-    git tag v4.0.1
+    git tag v4.0.1 123abc...
     git push upstream v4.0.1
     ```
-1. [The automation](https://github.com/anza-xyz/agave/blob/master/.github/workflows/release.yml) will create the new draft release, start `agave-secondary` Buildkite pipeline and create a PR to bump the version in the branch.
+1. [The automation](https://github.com/anza-xyz/agave/blob/master/.github/workflows/release.yml) will create the new draft release and start `agave-secondary` Buildkite pipeline.
 1. Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) and edit the draft release just made by the automation.
 1. Fill the release notes.
    1.  If this is the first release on the branch (e.g. v0.13.**0**), paste in [this

@@ -40,17 +40,6 @@ pub enum AccountsFileError {
     AppendVecError(#[from] AppendVecError),
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum StorageAccess {
-    /// storages should be accessed by Mmap
-    #[deprecated(since = "4.0.0")]
-    Mmap,
-    /// storages should be accessed by File I/O
-    /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
-    #[default]
-    File,
-}
-
 #[derive(Debug)]
 /// An enum for accessing an accounts file which can be implemented
 /// under different formats.
@@ -64,12 +53,8 @@ impl AccountsFile {
     /// The second element of the returned tuple is the number of accounts in the
     /// accounts file.
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_from_file(
-        path: impl Into<PathBuf>,
-        current_len: usize,
-        storage_access: StorageAccess,
-    ) -> Result<(Self, usize)> {
-        let (av, num_accounts) = AppendVec::new_from_file(path, current_len, storage_access)?;
+    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
+        let (av, num_accounts) = AppendVec::new_from_file(path, current_len)?;
         Ok((Self::AppendVec(av), num_accounts))
     }
 
@@ -78,12 +63,8 @@ impl AccountsFile {
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
     /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
     /// accounts verification to ensure it is valid.
-    pub fn new_for_startup(
-        file_info: FileInfo,
-        current_len: usize,
-        storage_access: StorageAccess,
-    ) -> Result<Self> {
-        let av = AppendVec::new_for_startup(file_info, current_len, storage_access)?;
+    pub fn new_for_startup(file_info: FileInfo, current_len: usize) -> Result<Self> {
+        let av = AppendVec::new_for_startup(file_info, current_len)?;
         Ok(Self::AppendVec(av))
     }
 
@@ -280,30 +261,20 @@ pub enum AccountsFileProvider {
 }
 
 impl AccountsFileProvider {
-    pub fn new_writable(
-        &self,
-        path: impl Into<PathBuf>,
-        file_size: u64,
-        storage_access: StorageAccess,
-    ) -> AccountsFile {
+    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
         match self {
-            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(
-                path,
-                true,
-                file_size as usize,
-                storage_access,
-            )),
+            Self::AppendVec => {
+                AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
+            }
         }
     }
 }
 
 /// The access method to use when archiving an AccountsFile
 #[derive(Debug)]
-pub enum InternalsForArchive<'a> {
-    /// Accessing the internals is done via Mmap
-    Mmap(&'a [u8]),
-    /// Accessing the internals is done via File I/O
-    FileIo(&'a Path),
+pub struct InternalsForArchive<'a> {
+    /// Path to the backing file used to archive the contents
+    pub path: &'a Path,
 }
 
 /// Information after storing accounts

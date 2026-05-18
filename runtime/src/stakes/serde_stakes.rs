@@ -1,7 +1,9 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
-    im::HashMap as ImHashMap,
+    imbl::HashMap as ImblHashMap,
     serde::{Deserialize, Serialize, Serializer, ser::SerializeMap},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -70,6 +72,7 @@ impl Serialize for SerdeStakesToStakeFormat {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn serialize_stake_accounts_to_delegation_format<S: Serializer>(
     stakes: &Stakes<StakeAccount>,
     serializer: S,
@@ -145,7 +148,7 @@ struct SerdeStakeAccountsToStakeFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToDelegationFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToDelegationFormat(ImblHashMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -160,7 +163,7 @@ impl Serialize for SerdeStakeAccountMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToStakeFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToStakeFormat(ImblHashMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToStakeFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -177,9 +180,10 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 /// Simplified, intermediate representation of [`Stakes<T>`]
 ///
 /// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
-/// deserialization without creating im::HashMap (such conversion is deferred until
+/// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableStakes<T> {
     pub vote_accounts: VoteAccounts,
     pub stake_delegations: Vec<(Pubkey, T)>,
@@ -203,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_serde_stakes_to_stake_format() {
-        let mut stake_delegations = ImHashMap::new();
+        let mut stake_delegations = ImblHashMap::new();
         let vote_pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
         stake_delegations.insert(
@@ -219,7 +223,7 @@ mod tests {
                     0,
                     &vote_pubkey,
                     0,
-                    &vote_pubkey,
+                    &node_pubkey,
                     1_000_000_000,
                 ),
                 &Rent::default(),
@@ -281,7 +285,7 @@ mod tests {
                 commission_bps,
                 &vote_pubkey,
                 0,
-                &vote_pubkey,
+                &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);

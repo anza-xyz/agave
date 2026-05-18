@@ -5,21 +5,30 @@
 //! transaction. All processing is done on the CPU by default.
 
 use {
-    crate::sigverify,
+    crate::{
+        banking_trace::BankingPacketSender,
+        sigverify::{
+            GossipSigVerifier, GossipVerifiedVoteBatch, SigVerifyWorkerPool, SigVerifyWorkerStats,
+            TransactionSigVerifier,
+        },
+    },
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     core::time::Duration,
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError},
-    itertools::Itertools,
-    rayon::ThreadPool,
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
         packet::PacketBatch,
-        sigverify::count_valid_packets,
     },
+    solana_runtime::bank_forks::SharableBanks,
     solana_streamer::streamer::{self, StreamerError},
-    solana_time_utils as timing,
+    solana_transaction::Transaction,
     std::{
-        sync::Arc,
+        num::NonZeroUsize,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         thread::{self, Builder, JoinHandle},
         time::Instant,
     },
@@ -27,35 +36,30 @@ use {
 };
 
 #[derive(Error, Debug)]
-pub enum SigVerifyServiceError<SendType> {
-    #[error("send packets batch error")]
-    Send(#[from] SendError<SendType>),
-
+pub enum SigVerifyServiceError {
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
+    #[error("sigverify worker queue closed")]
+    WorkerQueueClosed,
 }
 
-type Result<T, SendType> = std::result::Result<T, SigVerifyServiceError<SendType>>;
+type Result<T> = std::result::Result<T, SigVerifyServiceError>;
 
 pub struct SigVerifyStage {
-    thread_hdl: JoinHandle<()>,
+    non_vote_thread_hdl: JoinHandle<()>,
+    tpu_vote_thread_hdl: JoinHandle<()>,
+    // pool held so workers stay alive. If dropped, workers in pool shut down.
+    _worker_pool: SigVerifyWorkerPool,
 }
 
-pub trait SigVerifier {
-    type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
-    fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
-}
-
-#[derive(Clone)]
-pub struct DisabledSigVerifier {
-    pub thread_pool: Arc<ThreadPool>,
+pub struct GossipSigVerifyHandle {
+    verifier: GossipSigVerifier,
+    verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
 }
 
 #[derive(Default)]
 struct SigVerifierStats {
     recv_batches_us_hist: histogram::Histogram, // time to call recv_batch
-    verify_batches_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
     dedup_packets_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
     batches_hist: histogram::Histogram,         // number of packet batches per verify call
     packets_hist: histogram::Histogram,         // number of packets per verify call
@@ -63,13 +67,16 @@ struct SigVerifierStats {
     total_batches: usize,
     total_packets: usize,
     total_dedup: usize,
-    total_valid_packets: usize,
+    total_valid_packets: Arc<AtomicUsize>,
     total_dedup_time_us: usize,
-    total_verify_time_us: usize,
+    total_verify_time_us: Arc<AtomicUsize>,
+    total_dropped_on_capacity: usize,
 }
 
 impl SigVerifierStats {
-    fn maybe_report(&self, name: &'static str) {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
+    fn maybe_report_and_reset(&mut self, name: &'static str) {
         // No need to report a datapoint if no batches/packets received
         if self.total_batches == 0 {
             return;
@@ -95,26 +102,6 @@ impl SigVerifierStats {
             (
                 "recv_batches_us_mean",
                 self.recv_batches_us_hist.mean().unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_batches_pp_us_90pct",
-                self.verify_batches_pp_us_hist.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_batches_pp_us_min",
-                self.verify_batches_pp_us_hist.minimum().unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_batches_pp_us_max",
-                self.verify_batches_pp_us_hist.maximum().unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_batches_pp_us_mean",
-                self.verify_batches_pp_us_hist.mean().unwrap_or(0),
                 i64
             ),
             (
@@ -153,141 +140,161 @@ impl SigVerifierStats {
             ("packets_min", self.packets_hist.minimum().unwrap_or(0), i64),
             ("packets_max", self.packets_hist.maximum().unwrap_or(0), i64),
             ("packets_mean", self.packets_hist.mean().unwrap_or(0), i64),
-            ("num_deduper_saturations", self.num_deduper_saturations, i64),
-            ("total_batches", self.total_batches, i64),
-            ("total_packets", self.total_packets, i64),
-            ("total_dedup", self.total_dedup, i64),
-            ("total_valid_packets", self.total_valid_packets, i64),
-            ("total_dedup_time_us", self.total_dedup_time_us, i64),
-            ("total_verify_time_us", self.total_verify_time_us, i64),
+            (
+                "num_deduper_saturations",
+                core::mem::take(&mut self.num_deduper_saturations),
+                i64
+            ),
+            (
+                "total_batches",
+                core::mem::take(&mut self.total_batches),
+                i64
+            ),
+            (
+                "total_packets",
+                core::mem::take(&mut self.total_packets),
+                i64
+            ),
+            ("total_dedup", core::mem::take(&mut self.total_dedup), i64),
+            (
+                "total_dedup_time_us",
+                core::mem::take(&mut self.total_dedup_time_us),
+                i64
+            ),
+            (
+                "total_dropped_on_capacity",
+                core::mem::take(&mut self.total_dropped_on_capacity),
+                i64
+            ),
+            (
+                "total_valid_packets",
+                self.total_valid_packets.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "total_verify_time_us",
+                self.total_verify_time_us.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
         );
-    }
-}
 
-impl SigVerifier for DisabledSigVerifier {
-    type SendType = ();
-    fn verify_batches(
-        &self,
-        mut batches: Vec<PacketBatch>,
-        _valid_packets: usize,
-    ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify_disabled(&self.thread_pool, &mut batches);
-        batches
-    }
-
-    fn send_packets(&mut self, _packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType> {
-        Ok(())
+        self.recv_batches_us_hist = histogram::Histogram::new();
+        self.dedup_packets_pp_us_hist = histogram::Histogram::new();
+        self.batches_hist = histogram::Histogram::new();
+        self.packets_hist = histogram::Histogram::new();
     }
 }
 
 impl SigVerifyStage {
-    pub fn new<T: SigVerifier + 'static + Send>(
+    pub fn new(
         packet_receiver: Receiver<PacketBatch>,
-        verifier: T,
-        thread_name: &'static str,
-        metrics_name: &'static str,
-    ) -> Self {
-        let thread_hdl =
-            Self::verifier_service(packet_receiver, verifier, thread_name, metrics_name);
-        Self { thread_hdl }
+        vote_packet_receiver: Receiver<PacketBatch>,
+        non_vote_sender: BankingPacketSender,
+        tpu_vote_sender: BankingPacketSender,
+        forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
+        num_workers: NonZeroUsize,
+        forward_non_votes: bool,
+        sharable_banks: SharableBanks,
+    ) -> (Self, GossipSigVerifyHandle) {
+        let (gossip_verified_vote_sender, verified_vote_receiver) = unbounded();
+        let non_vote_stats = SigVerifierStats::default();
+        let tpu_vote_stats = SigVerifierStats::default();
+        let worker_pool = SigVerifyWorkerPool::new(
+            num_workers,
+            non_vote_sender,
+            tpu_vote_sender,
+            gossip_verified_vote_sender,
+            forward_stage_sender,
+            forward_non_votes,
+            sharable_banks,
+            SigVerifyWorkerStats {
+                total_valid_packets: non_vote_stats.total_valid_packets.clone(),
+                total_verify_time_us: non_vote_stats.total_verify_time_us.clone(),
+            },
+            SigVerifyWorkerStats {
+                total_valid_packets: tpu_vote_stats.total_valid_packets.clone(),
+                total_verify_time_us: tpu_vote_stats.total_verify_time_us.clone(),
+            },
+        );
+        let non_vote_thread_hdl = Self::verifier_service(
+            packet_receiver,
+            worker_pool.non_vote_verifier(),
+            "solSigVerTpu",
+            "tpu-verifier",
+            non_vote_stats,
+        );
+        let tpu_vote_thread_hdl = Self::verifier_service(
+            vote_packet_receiver,
+            worker_pool.tpu_vote_verifier(),
+            "solSigVerTpuVot",
+            "tpu-vote-verifier",
+            tpu_vote_stats,
+        );
+        let gossip_sigverify_handle = GossipSigVerifyHandle {
+            verifier: worker_pool.gossip_verifier(),
+            verified_vote_receiver,
+        };
+
+        (
+            Self {
+                non_vote_thread_hdl,
+                tpu_vote_thread_hdl,
+                _worker_pool: worker_pool,
+            },
+            gossip_sigverify_handle,
+        )
     }
 
-    pub fn discard_excess_packets(batches: &mut [PacketBatch], mut max_packets: usize) {
-        // Group packets by their incoming IP address.
-        let mut addrs = batches
-            .iter_mut()
-            .rev()
-            .flat_map(|batch| batch.iter_mut().rev())
-            .filter(|packet| !packet.meta().discard())
-            .map(|packet| (packet.meta().addr, packet))
-            .into_group_map();
-        // Allocate max_packets evenly across addresses.
-        while max_packets > 0 && !addrs.is_empty() {
-            let num_addrs = addrs.len();
-            addrs.retain(|_, packets| {
-                let cap = max_packets.div_ceil(num_addrs);
-                max_packets -= packets.len().min(cap);
-                packets.truncate(packets.len().saturating_sub(cap));
-                !packets.is_empty()
-            });
-        }
-        // Discard excess packets from each address.
-        for mut packet in addrs.into_values().flatten() {
-            packet.meta_mut().set_discard(true);
-        }
+    pub fn join(self) -> thread::Result<()> {
+        let non_vote_result = self.non_vote_thread_hdl.join();
+        let tpu_vote_result = self.tpu_vote_thread_hdl.join();
+        non_vote_result?;
+        tpu_vote_result?;
+        Ok(())
     }
 
-    fn verifier<const K: usize, T: SigVerifier>(
+    fn verifier<const K: usize>(
         deduper: &Deduper<K, [u8]>,
         recvr: &Receiver<PacketBatch>,
-        verifier: &mut T,
+        verifier: &mut TransactionSigVerifier,
         stats: &mut SigVerifierStats,
-    ) -> Result<(), T::SendType> {
+    ) -> Result<()> {
         const SOFT_RECEIVE_CAP: usize = 5_000;
         let (mut batches, num_packets, recv_duration) =
             streamer::recv_packet_batches(recvr, SOFT_RECEIVE_CAP)?;
 
         let batches_len = batches.len();
-        debug!(
-            "@{:?} verifier: verifying: {}",
-            timing::timestamp(),
-            num_packets,
-        );
-
-        let mut dedup_time = Measure::start("sigverify_dedup_time");
-        let discard_or_dedup_fail =
-            deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
-        dedup_time.stop();
-        let num_unique = num_packets.saturating_sub(discard_or_dedup_fail);
-        let num_packets_to_verify = num_unique;
-
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        let batches = verifier.verify_batches(batches, num_packets_to_verify);
-        let num_valid_packets = count_valid_packets(&batches);
-        verify_time.stop();
-
-        verifier.send_packets(batches)?;
-
-        debug!(
-            "@{:?} verifier: done. batches: {} total verify time: {:?} verified: {} v/s {}",
-            timing::timestamp(),
-            batches_len,
-            verify_time.as_ms(),
-            num_packets,
-            (num_packets as f32 / verify_time.as_s())
-        );
-
         stats
             .recv_batches_us_hist
             .increment(recv_duration.as_micros() as u64)
-            .unwrap();
-        stats
-            .verify_batches_pp_us_hist
-            .increment(verify_time.as_us() / (num_packets as u64))
-            .unwrap();
-        stats
-            .dedup_packets_pp_us_hist
-            .increment(dedup_time.as_us() / (num_packets as u64))
             .unwrap();
         stats.batches_hist.increment(batches_len as u64).unwrap();
         stats.packets_hist.increment(num_packets as u64).unwrap();
         stats.total_batches += batches_len;
         stats.total_packets += num_packets;
+
+        let mut dedup_time = Measure::start("sigverify_dedup_time");
+        let discard_or_dedup_fail =
+            deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
+        dedup_time.stop();
+        stats.total_dropped_on_capacity += verifier.send_packets_to_worker_pool(batches)?;
+        stats
+            .dedup_packets_pp_us_hist
+            .increment(dedup_time.as_us() / (num_packets as u64))
+            .unwrap();
         stats.total_dedup += discard_or_dedup_fail;
-        stats.total_valid_packets += num_valid_packets;
         stats.total_dedup_time_us += dedup_time.as_us() as usize;
-        stats.total_verify_time_us += verify_time.as_us() as usize;
 
         Ok(())
     }
 
-    fn verifier_service<T: SigVerifier + 'static + Send>(
+    fn verifier_service(
         packet_receiver: Receiver<PacketBatch>,
-        mut verifier: T,
+        mut verifier: TransactionSigVerifier,
         thread_name: &'static str,
         metrics_name: &'static str,
+        mut stats: SigVerifierStats,
     ) -> JoinHandle<()> {
-        let mut stats = SigVerifierStats::default();
         let mut last_print = Instant::now();
         const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
         const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
@@ -311,24 +318,62 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                                 RecvTimeoutError::Timeout,
                             )) => (),
-                            SigVerifyServiceError::Send(_) => {
-                                break;
-                            }
                             _ => error!("{e:?}"),
                         }
                     }
-                    if last_print.elapsed().as_secs() > 2 {
-                        stats.maybe_report(metrics_name);
-                        stats = SigVerifierStats::default();
+                    if last_print.elapsed() > SigVerifierStats::REPORT_INTERVAL {
+                        stats.maybe_report_and_reset(metrics_name);
                         last_print = Instant::now();
                     }
                 }
             })
             .unwrap()
     }
+}
 
-    pub fn join(self) -> thread::Result<()> {
-        self.thread_hdl.join()
+impl GossipSigVerifyHandle {
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(
+        worker_sender: Sender<crate::sigverify::GossipVerifyTask>,
+        verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
+    ) -> Self {
+        Self {
+            verifier: GossipSigVerifier::new_for_tests(worker_sender),
+            verified_vote_receiver,
+        }
+    }
+
+    /// Submit gossip votes for signature verification and collect the corresponding responses.
+    ///
+    /// This takes `&mut self` because responses for all submitted gossip tasks share one receiver.
+    /// Allowing concurrent callers would make it possible for one caller to consume another caller's
+    /// verification results.
+    pub(crate) fn verify_and_receive_votes(
+        &mut self,
+        votes: Vec<Transaction>,
+        packet_batches: Vec<PacketBatch>,
+    ) -> std::result::Result<(Vec<Transaction>, Vec<PacketBatch>), crossbeam_channel::RecvError>
+    {
+        let num_batches = match self
+            .verifier
+            .send_votes_to_worker_pool(votes, packet_batches)
+        {
+            Ok(num_batches) => num_batches,
+            Err(err) => {
+                error!("gossip sigverify enqueue failed: {err:?}");
+                return Ok((Vec::new(), Vec::new()));
+            }
+        };
+        let mut verified_vote_txs = Vec::with_capacity(num_batches);
+        let mut verified_packet_batches = Vec::with_capacity(num_batches);
+
+        for _ in 0..num_batches {
+            let verified_vote_batch = self.verified_vote_receiver.recv()?;
+            verified_vote_txs.push(verified_vote_batch.transaction);
+            verified_packet_batches.push(verified_vote_batch.packet_batch);
+        }
+
+        Ok((verified_vote_txs, verified_packet_batches))
     }
 }
 
@@ -336,42 +381,31 @@ impl SigVerifyStage {
 mod tests {
     use {
         super::*,
-        crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
+        crate::banking_trace::BankingTracer,
         crossbeam_channel::unbounded,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{VersionedMessage, v1},
         solana_perf::{
-            packet::{Packet, RecycledPacketBatch, to_packet_batches},
-            sigverify,
+            packet::{BytesPacket, BytesPacketBatch, to_packet_batches},
             test_tx::test_tx,
         },
-        std::sync::Arc,
+        solana_pubkey::Pubkey,
+        solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::versioned::VersionedTransaction,
+        test_case::test_case,
     };
 
-    fn count_non_discard(packet_batches: &[PacketBatch]) -> usize {
-        packet_batches
-            .iter()
-            .flatten()
-            .filter(|p| !p.meta().discard())
-            .count()
-    }
+    fn test_tx_v1() -> VersionedTransaction {
+        let payer = Keypair::new();
+        let recipient = Pubkey::new_unique();
+        let instruction = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
+        let message =
+            v1::Message::try_compile(&payer.pubkey(), &[instruction], Hash::new_unique()).unwrap();
 
-    #[test]
-    fn test_packet_discard() {
-        agave_logger::setup();
-        let batch_size = 10;
-        let mut batch = RecycledPacketBatch::with_capacity(batch_size);
-        let packet = Packet::default();
-        batch.resize(batch_size, packet);
-        batch[3].meta_mut().addr = std::net::IpAddr::from([1u16; 8]);
-        batch[3].meta_mut().set_discard(true);
-        batch[4].meta_mut().addr = std::net::IpAddr::from([2u16; 8]);
-        let mut batches = vec![PacketBatch::from(batch)];
-        let max = 3;
-        SigVerifyStage::discard_excess_packets(&mut batches, max);
-        let total_non_discard = count_non_discard(&batches);
-        assert_eq!(total_non_discard, max);
-        assert!(!batches[0].get(0).unwrap().meta().discard());
-        assert!(batches[0].get(3).unwrap().meta().discard());
-        assert!(!batches[0].get(4).unwrap().meta().discard());
+        VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
     }
 
     fn gen_batches(
@@ -401,11 +435,24 @@ mod tests {
     fn test_sigverify_stage(use_same_tx: bool) {
         agave_logger::setup();
         trace!("start");
+        let (_bank, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let (packet_s, packet_r) = unbounded();
+        let (vote_packet_s, vote_packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let threadpool = Arc::new(sigverify::threadpool_for_tests());
-        let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
-        let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerTest", "test");
+        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+            packet_r,
+            vote_packet_r,
+            verified_s,
+            tpu_vote_s,
+            forward_stage_s,
+            NonZeroUsize::new(4).unwrap(),
+            false,
+            sharable_banks,
+        );
 
         let now = Instant::now();
         let packets_per_batch = 128;
@@ -424,11 +471,11 @@ mod tests {
             assert_eq!(batch.len(), packets_per_batch);
             packet_s.send(batch).unwrap();
         }
-        let mut packet_s = Some(packet_s);
         let mut valid_received = 0;
         trace!("sent: {sent_len}");
+        drop(packet_s);
         loop {
-            if let Ok(verifieds) = verified_r.recv() {
+            if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_secs(30)) {
                 valid_received += verifieds
                     .iter()
                     .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
@@ -437,11 +484,8 @@ mod tests {
                 break;
             }
 
-            // Check if all the sent batches have been picked up by sigverify stage.
-            // Drop sender to exit the loop on next receive call, once the channel is
-            // drained.
-            if packet_s.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-                packet_s.take();
+            if valid_received >= if use_same_tx { 1 } else { total_packets } {
+                break;
             }
         }
         trace!("received: {valid_received}");
@@ -451,6 +495,57 @@ mod tests {
         } else {
             assert_eq!(valid_received, total_packets);
         }
+        drop(vote_packet_s);
+        drop(gossip_sigverify_handle);
+        stage.join().unwrap();
+    }
+
+    #[test_case(false, false; "tx_v1_disabled")]
+    #[test_case(true, true; "tx_v1_enabled")]
+    fn test_sigverify_stage_tx_v1_feature_gate(enable_tx_v1: bool, expected_valid: bool) {
+        let genesis_config = create_genesis_config(1).genesis_config;
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if enable_tx_v1 {
+            bank.activate_feature(&agave_feature_set::enable_tx_v1::id());
+        } else {
+            bank.deactivate_feature(&agave_feature_set::enable_tx_v1::id());
+        }
+        let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let (packet_s, packet_r) = unbounded();
+        let (vote_packet_s, vote_packet_r) = unbounded();
+        let (verified_s, verified_r) = BankingTracer::channel_for_test();
+        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+            packet_r,
+            vote_packet_r,
+            verified_s,
+            tpu_vote_s,
+            forward_stage_s,
+            NonZeroUsize::new(1).unwrap(),
+            false,
+            sharable_banks,
+        );
+
+        let mut bytes_batch = BytesPacketBatch::with_capacity(1);
+        bytes_batch.push(BytesPacket::from_bytes(
+            None,
+            wincode::serialize(&test_tx_v1()).unwrap(),
+        ));
+        packet_s.send(PacketBatch::from(bytes_batch)).unwrap();
+        drop(packet_s);
+        drop(vote_packet_s);
+
+        let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert_eq!(verified_batch.len(), 1);
+        assert_eq!(verified_batch[0].len(), 1);
+        assert_eq!(
+            !verified_batch[0].get(0).unwrap().meta().discard(),
+            expected_valid
+        );
+
+        drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }
 }

@@ -102,19 +102,23 @@ impl ConsensusRewards {
     /// Runs a loop receiving and handling messages over different channels.
     fn run(&mut self) {
         while !self.exit.load(Ordering::Relaxed) {
+            let my_pubkey = self.cluster_info.id();
             // bias messages to build certificates as that is on the critical path
             select_biased! {
                 recv(self.build_reward_certs_receiver) -> msg => {
                     match msg {
                         Ok(msg) => {
-                            let resp = self.build_certs(msg.bank_slot);
+                            let resp = BuildRewardCertsResponse {
+                                bank_slot: msg.bank_slot,
+                                result: self.build_certs(msg.bank_slot),
+                            };
                             if self.reward_certs_sender.send(resp).is_err() {
-                                warn!("cert sender channel is disconnected; exiting.");
+                                error!("{my_pubkey}: cert sender channel is disconnected; exiting.");
                                 break;
                             }
                         }
                         Err(_) => {
-                            warn!("build reward certs channel is disconnected; exiting.");
+                            error!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
                             break;
                         }
                     }
@@ -128,7 +132,7 @@ impl ConsensusRewards {
                             }
                         }
                         Err(_) => {
-                            warn!("votes receiver channel is disconnected; exiting.");
+                            error!("{my_pubkey}: votes receiver channel is disconnected; exiting.");
                             break;
                         }
                     }
@@ -164,11 +168,11 @@ impl ConsensusRewards {
         let max_validators = rank_map.len();
         let root_slot = root_bank.slot();
         // drop state that is too old based on how the root slot has progressed
-        self.votes = self.votes.split_off(
-            &(root_slot
-                .saturating_add(NUM_SLOTS_FOR_REWARD)
-                .saturating_add(1)),
-        );
+        // TODO: if this actually purges state, that probably indicates that the leader missed its
+        // window.  We should have a metric for this.
+        self.votes = self
+            .votes
+            .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
 
         if !self.wants_vote(root_slot, vote) {
             return;

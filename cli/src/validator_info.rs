@@ -129,20 +129,20 @@ fn parse_args(matches: &ArgMatches<'_>) -> Value {
 }
 
 fn parse_validator_info(
-    pubkey: &Pubkey,
     account: &Account,
-) -> Result<(Pubkey, Map<String, serde_json::value::Value>), Box<dyn error::Error>> {
+) -> Option<(Pubkey, bool, Map<String, serde_json::value::Value>)> {
     if account.owner != solana_config_interface::id() {
-        return Err(format!("{pubkey} is not a validator info account").into());
+        return None;
     }
-    let key_list: ConfigKeys = deserialize(&account.data)?;
-    if !key_list.keys.is_empty() {
-        let (validator_pubkey, _) = key_list.keys[1];
-        let validator_info_string: String = deserialize(get_config_data(&account.data)?)?;
-        let validator_info: Map<_, _> = serde_json::from_str(&validator_info_string)?;
-        Ok((validator_pubkey, validator_info))
+    let key_list: ConfigKeys = deserialize(&account.data).ok()?;
+    if key_list.keys.len() > 1 {
+        let (validator_pubkey, is_signed) = key_list.keys[1];
+        let validator_info_string: String =
+            get_config_data(&account.data).and_then(deserialize).ok()?;
+        let validator_info: Map<_, _> = serde_json::from_str(&validator_info_string).ok()?;
+        Some((validator_pubkey, is_signed, validator_info))
     } else {
-        Err(format!("{pubkey} could not be parsed as a validator info account").into())
+        None
     }
 }
 
@@ -242,7 +242,7 @@ impl ValidatorInfoSubCommands for App<'_, '_> {
     }
 }
 
-pub fn parse_validator_info_command(
+pub fn parse_publish_validator_info_command(
     matches: &ArgMatches<'_>,
     default_signer: &DefaultSigner,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
@@ -252,7 +252,7 @@ pub fn parse_validator_info_command(
     // Prepare validator info
     let validator_info = parse_args(matches);
     Ok(CliCommandInfo {
-        command: CliCommand::SetValidatorInfo {
+        command: CliCommand::PublishValidatorInfo {
             validator_info,
             force_keybase: matches.is_present("force"),
             info_pubkey,
@@ -271,7 +271,7 @@ pub fn parse_get_validator_info_command(
     ))
 }
 
-pub async fn process_set_validator_info(
+pub async fn process_publish_validator_info(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     validator_info: &Value,
@@ -316,8 +316,10 @@ pub async fn process_set_validator_info(
                 Err(_) => false,
             },
         )
-        .find(|(pubkey, account)| {
-            let (validator_pubkey, _) = parse_validator_info(pubkey, account).unwrap();
+        .find(|(_, account)| {
+            let Some((validator_pubkey, true, _)) = parse_validator_info(account) else {
+                return false;
+            };
             validator_pubkey == config.signers[0].pubkey()
         });
 
@@ -456,18 +458,23 @@ pub async fn process_get_validator_info(
     };
 
     let mut validator_info_list: Vec<CliValidatorInfo> = vec![];
-    if validator_info.is_empty() {
-        println!("No validator info accounts found");
-    }
     for (validator_info_pubkey, validator_info_account) in validator_info.iter() {
-        let (validator_pubkey, validator_info) =
-            parse_validator_info(validator_info_pubkey, validator_info_account)?;
-        validator_info_list.push(CliValidatorInfo {
-            identity_pubkey: validator_pubkey.to_string(),
-            info_pubkey: validator_info_pubkey.to_string(),
-            info: validator_info,
-        });
+        let Some((validator_pubkey, is_signed, validator_info)) =
+            parse_validator_info(validator_info_account)
+        else {
+            continue;
+        };
+
+        if config.verbose || is_signed {
+            validator_info_list.push(CliValidatorInfo {
+                identity_pubkey: validator_pubkey.to_string(),
+                info_pubkey: validator_info_pubkey.to_string(),
+                is_signed,
+                info: validator_info,
+            });
+        }
     }
+
     Ok(config
         .output_format
         .formatted_string(&CliValidatorInfoVec::new(validator_info_list)))
@@ -594,32 +601,24 @@ mod tests {
         let data = serialize(&(config, validator_info)).unwrap();
 
         assert_eq!(
-            parse_validator_info(
-                &Pubkey::default(),
-                &Account {
-                    owner: solana_config_interface::id(),
-                    data,
-                    ..Account::default()
-                }
-            )
+            parse_validator_info(&Account {
+                owner: solana_config_interface::id(),
+                data,
+                ..Account::default()
+            })
             .unwrap(),
-            (pubkey, info)
+            (pubkey, true, info)
         );
     }
 
     #[test]
     fn test_parse_validator_info_not_validator_info_account() {
         assert!(
-            parse_validator_info(
-                &Pubkey::default(),
-                &Account {
-                    owner: solana_pubkey::new_rand(),
-                    ..Account::default()
-                }
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("is not a validator info account")
+            parse_validator_info(&Account {
+                owner: solana_pubkey::new_rand(),
+                ..Account::default()
+            })
+            .is_none()
         );
     }
 
@@ -632,17 +631,12 @@ mod tests {
         let data = serialize(&(config, validator_info)).unwrap();
 
         assert!(
-            parse_validator_info(
-                &Pubkey::default(),
-                &Account {
-                    owner: solana_config_interface::id(),
-                    data,
-                    ..Account::default()
-                },
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("could not be parsed as a validator info account")
+            parse_validator_info(&Account {
+                owner: solana_config_interface::id(),
+                data,
+                ..Account::default()
+            },)
+            .is_none()
         );
     }
 

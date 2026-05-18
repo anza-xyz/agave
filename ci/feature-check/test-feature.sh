@@ -28,4 +28,5 @@ cargo +"$rust_nightly" hack check \
 	--each-feature \
 	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
+	--all-targets \
 	--partition "$partition"

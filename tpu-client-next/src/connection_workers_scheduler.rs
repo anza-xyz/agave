@@ -18,6 +18,7 @@ use {
     solana_keypair::Keypair,
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::Arc,
     },
     thiserror::Error,
@@ -85,7 +86,7 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub stake_identity: Option<StakeIdentity>,
 
     /// The number of connections to be maintained by the scheduler.
-    pub num_connections: usize,
+    pub num_connections: NonZeroUsize,
 
     /// Whether to skip checking the transaction blockhash expiration.
     pub skip_check_transaction_age: bool,

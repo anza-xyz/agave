@@ -9,7 +9,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
     solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
@@ -20,7 +20,7 @@ use {
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
@@ -36,6 +36,7 @@ use {
     solana_transaction_error::TransportError,
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -123,7 +124,7 @@ pub(crate) struct SpawnForwardingStageResult {
 
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
-    tpu_forwaring_client_config: ForwardingClientConfig<'_>,
+    tpu_forwarding_client_config: ForwardingClientConfig<'_>,
     vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
@@ -136,7 +137,7 @@ pub(crate) fn spawn_forwarding_stage(
         runtime_handle,
         cancel,
         node_multihoming,
-    } = tpu_forwaring_client_config;
+    } = tpu_forwarding_client_config;
 
     // Create TPU clients for each socket provided.
     // Number of clients is same as number of bind IP addresses.
@@ -540,7 +541,7 @@ impl TpuClientNextClient {
             stake_identity: stake_identity.map(StakeIdentity::new),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
-            num_connections: 128,
+            num_connections: NonZeroUsize::new(128).unwrap(),
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
@@ -593,15 +594,13 @@ fn calculate_priority(
     transaction: &RuntimeTransaction<SanitizedTransactionView<&[u8]>>,
     bank: &Bank,
 ) -> Option<u64> {
-    let compute_budget_limits = transaction
-        .compute_budget_instruction_details()
-        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+    let transaction_configuration = transaction
+        .transaction_configuration(&bank.feature_set)
         .ok()?;
-    let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
 
     // Manually estimate fee here since currently interface doesn't allow a on SVM type.
     // Doesn't need to be 100% accurate so long as close and consistent.
-    let prioritization_fee = fee_budget_limits.prioritization_fee;
+    let prioritization_fee = transaction_configuration.priority_fee_lamports;
     let signature_details = transaction.signature_details();
     let signature_fee = signature_details
         .total_signatures()

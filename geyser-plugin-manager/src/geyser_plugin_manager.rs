@@ -113,6 +113,26 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in deshred transaction data
+    pub fn deshred_transaction_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.deshred_transaction_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if there is any plugin interested in ALT resolution for deshred transactions
+    pub fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.deshred_transaction_alt_resolution_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Admin RPC request handler
     pub(crate) fn list_plugins(&self) -> JsonRpcResult<Vec<String>> {
         Ok(self.plugins.iter().map(|p| p.name().to_owned()).collect())
@@ -482,16 +502,26 @@ pub(crate) fn load_plugin_from_config(
 mod tests {
     use {
         crate::{
+            deshred_transaction_notifier::DeshredTransactionNotifierImpl,
             geyser_plugin_manager::{
                 GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN_CONFIG, TESTPLUGIN2_CONFIG,
             },
             geyser_plugin_service::ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION,
         },
-        agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
+        agave_geyser_plugin_interface::geyser_plugin_interface::{
+            GeyserPlugin, ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
+            Result as PluginResult,
+        },
         arc_swap::ArcSwap,
         libloading::Library,
+        solana_clock::Slot,
+        solana_ledger::deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+        solana_message::{Instruction, Message, VersionedMessage, v0::LoadedAddresses},
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_transaction::versioned::VersionedTransaction,
         std::sync::{
-            Arc, RwLock,
+            Arc, Mutex, RwLock,
             atomic::{AtomicBool, Ordering},
         },
     };
@@ -559,6 +589,78 @@ mod tests {
 
         fn on_unload(&mut self) {
             self.loaded.store(false, Ordering::Relaxed)
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RecordedDeshredNotification {
+        slot: Slot,
+        completed_data_set_starting_shred_index: u32,
+        completed_data_set_ending_shred_index_exclusive: u32,
+        signature: Signature,
+        is_vote: bool,
+        transaction: VersionedTransaction,
+        loaded_addresses: Option<LoadedAddresses>,
+    }
+
+    #[derive(Clone, Debug)]
+    struct DeshredTestPlugin {
+        name: &'static str,
+        enabled: bool,
+        alt_resolution_enabled: bool,
+        notifications: Arc<Mutex<Vec<RecordedDeshredNotification>>>,
+    }
+
+    impl GeyserPlugin for DeshredTestPlugin {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn notify_deshred_transaction(
+            &self,
+            transaction: ReplicaDeshredTransactionInfoVersions,
+            slot: Slot,
+        ) -> PluginResult<()> {
+            let ReplicaDeshredTransactionInfoVersions::V0_0_2(transaction) = transaction else {
+                panic!("expected V0_0_2 deshred transaction info");
+            };
+            self.notifications
+                .lock()
+                .unwrap()
+                .push(RecordedDeshredNotification {
+                    slot,
+                    completed_data_set_starting_shred_index: transaction
+                        .completed_data_set_starting_shred_index,
+                    completed_data_set_ending_shred_index_exclusive: transaction
+                        .completed_data_set_ending_shred_index_exclusive,
+                    signature: *transaction.signature,
+                    is_vote: transaction.is_vote,
+                    transaction: transaction.transaction.clone(),
+                    loaded_addresses: transaction.loaded_addresses.cloned(),
+                });
+            Ok(())
+        }
+
+        fn deshred_transaction_notifications_enabled(&self) -> bool {
+            self.enabled
+        }
+
+        fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
+            self.alt_resolution_enabled
+        }
+    }
+
+    fn sample_transaction() -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: vec![Signature::from([1; 64])],
+            message: VersionedMessage::Legacy(Message::new(
+                &[Instruction::new_with_bytes(
+                    Pubkey::new_unique(),
+                    &[],
+                    Vec::new(),
+                )],
+                Some(&Pubkey::new_unique()),
+            )),
         }
     }
 
@@ -649,6 +751,175 @@ mod tests {
         let unload_result = GeyserPluginManager::unload_plugin(&plugin_manager, DUMMY_NAME);
         assert!(unload_result.is_ok());
         assert_eq!(plugin_manager.load().plugins.len(), 0);
+    }
+
+    #[test]
+    fn test_deshred_transaction_notifications_enabled() {
+        let empty_manager = GeyserPluginManager::default();
+        assert!(!empty_manager.deshred_transaction_notifications_enabled());
+
+        let disabled_manager = GeyserPluginManager {
+            plugins: vec![Arc::new(
+                dummy_plugin_and_library(
+                    DeshredTestPlugin {
+                        name: DUMMY_NAME,
+                        enabled: false,
+                        alt_resolution_enabled: false,
+                        notifications: Arc::new(Mutex::new(Vec::new())),
+                    },
+                    DUMMY_CONFIG,
+                )
+                .0,
+            )],
+        };
+        assert!(!disabled_manager.deshred_transaction_notifications_enabled());
+
+        let enabled_manager = GeyserPluginManager {
+            plugins: vec![Arc::new(
+                dummy_plugin_and_library(
+                    DeshredTestPlugin {
+                        name: ANOTHER_DUMMY_NAME,
+                        enabled: true,
+                        alt_resolution_enabled: false,
+                        notifications: Arc::new(Mutex::new(Vec::new())),
+                    },
+                    DUMMY_CONFIG,
+                )
+                .0,
+            )],
+        };
+        assert!(enabled_manager.deshred_transaction_notifications_enabled());
+    }
+
+    #[test]
+    fn test_deshred_transaction_notifier_forwards_only_enabled_plugins() {
+        let enabled_notifications = Arc::new(Mutex::new(Vec::new()));
+        let disabled_notifications = Arc::new(Mutex::new(Vec::new()));
+        let plugin_manager = Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager {
+            plugins: vec![
+                Arc::new(
+                    dummy_plugin_and_library(
+                        DeshredTestPlugin {
+                            name: DUMMY_NAME,
+                            enabled: true,
+                            alt_resolution_enabled: false,
+                            notifications: enabled_notifications.clone(),
+                        },
+                        DUMMY_CONFIG,
+                    )
+                    .0,
+                ),
+                Arc::new(
+                    dummy_plugin_and_library(
+                        DeshredTestPlugin {
+                            name: ANOTHER_DUMMY_NAME,
+                            enabled: false,
+                            alt_resolution_enabled: false,
+                            notifications: disabled_notifications.clone(),
+                        },
+                        DUMMY_CONFIG,
+                    )
+                    .0,
+                ),
+            ],
+        })));
+        let notifier = DeshredTransactionNotifierImpl::new(plugin_manager);
+        let transaction = sample_transaction();
+        let loaded_addresses = LoadedAddresses::default();
+
+        notifier.notify_deshred_transaction(
+            11,
+            23,
+            31,
+            &transaction.signatures[0],
+            true,
+            &transaction,
+            Some(&loaded_addresses),
+        );
+
+        let enabled_notifications = enabled_notifications.lock().unwrap().clone();
+        assert_eq!(enabled_notifications.len(), 1);
+        assert_eq!(enabled_notifications[0].slot, 11);
+        assert_eq!(
+            enabled_notifications[0].completed_data_set_starting_shred_index,
+            23
+        );
+        assert_eq!(
+            enabled_notifications[0].completed_data_set_ending_shred_index_exclusive,
+            31
+        );
+        assert_eq!(
+            enabled_notifications[0].signature,
+            transaction.signatures[0]
+        );
+        assert!(enabled_notifications[0].is_vote);
+        assert_eq!(enabled_notifications[0].transaction, transaction);
+        assert_eq!(
+            enabled_notifications[0].loaded_addresses,
+            Some(loaded_addresses)
+        );
+        assert!(disabled_notifications.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "expected V0_0_2 deshred transaction info")]
+    fn test_deshred_test_plugin_panics_on_legacy_deshred_info_version() {
+        let plugin = DeshredTestPlugin {
+            name: DUMMY_NAME,
+            enabled: true,
+            alt_resolution_enabled: false,
+            notifications: Arc::new(Mutex::new(Vec::new())),
+        };
+        let transaction = sample_transaction();
+        let deshred_info = ReplicaDeshredTransactionInfo {
+            signature: &transaction.signatures[0],
+            is_vote: false,
+            transaction: &transaction,
+            loaded_addresses: None,
+        };
+
+        let _ = plugin.notify_deshred_transaction(
+            ReplicaDeshredTransactionInfoVersions::V0_0_1(&deshred_info),
+            11,
+        );
+    }
+
+    #[test]
+    fn test_deshred_transaction_alt_resolution_enabled() {
+        let empty_manager = GeyserPluginManager::default();
+        assert!(!empty_manager.deshred_transaction_alt_resolution_enabled());
+
+        let disabled_manager = GeyserPluginManager {
+            plugins: vec![Arc::new(
+                dummy_plugin_and_library(
+                    DeshredTestPlugin {
+                        name: DUMMY_NAME,
+                        enabled: true,
+                        alt_resolution_enabled: false,
+                        notifications: Arc::new(Mutex::new(Vec::new())),
+                    },
+                    DUMMY_CONFIG,
+                )
+                .0,
+            )],
+        };
+        assert!(!disabled_manager.deshred_transaction_alt_resolution_enabled());
+
+        let enabled_manager = GeyserPluginManager {
+            plugins: vec![Arc::new(
+                dummy_plugin_and_library(
+                    DeshredTestPlugin {
+                        name: ANOTHER_DUMMY_NAME,
+                        enabled: true,
+                        alt_resolution_enabled: true,
+                        notifications: Arc::new(Mutex::new(Vec::new())),
+                    },
+                    DUMMY_CONFIG,
+                )
+                .0,
+            )],
+        };
+        assert!(enabled_manager.deshred_transaction_alt_resolution_enabled());
     }
 
     #[test]

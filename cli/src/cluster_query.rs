@@ -1671,40 +1671,43 @@ pub async fn process_show_stakes(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(stake_state) = stake_account.state() {
+            let rent_exempt_balance = rpc_client
+                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
+                .await?;
+
             match stake_state {
-                StakeStateV2::Initialized(_) => {
-                    if vote_account_pubkeys.is_empty() {
-                        stake_accounts.push(CliKeyedStakeState {
-                            stake_pubkey: stake_pubkey.to_string(),
-                            stake_state: build_stake_state(
-                                stake_account.lamports,
-                                &stake_state,
-                                use_lamports_unit,
-                                &stake_history,
-                                &clock,
-                                new_rate_activation_epoch,
-                                false,
-                            ),
-                        });
-                    }
+                StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
+                    stake_accounts.push(CliKeyedStakeState {
+                        stake_pubkey: stake_pubkey.to_string(),
+                        stake_state: build_stake_state(
+                            stake_account.lamports,
+                            &stake_state,
+                            use_lamports_unit,
+                            &stake_history,
+                            &clock,
+                            new_rate_activation_epoch,
+                            rent_exempt_balance,
+                            false,
+                        ),
+                    });
                 }
-                StakeStateV2::Stake(_, stake, _) => {
+                StakeStateV2::Stake(_, stake, _)
                     if vote_account_pubkeys.is_empty()
-                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey)
-                    {
-                        stake_accounts.push(CliKeyedStakeState {
-                            stake_pubkey: stake_pubkey.to_string(),
-                            stake_state: build_stake_state(
-                                stake_account.lamports,
-                                &stake_state,
-                                use_lamports_unit,
-                                &stake_history,
-                                &clock,
-                                new_rate_activation_epoch,
-                                false,
-                            ),
-                        });
-                    }
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey) =>
+                {
+                    stake_accounts.push(CliKeyedStakeState {
+                        stake_pubkey: stake_pubkey.to_string(),
+                        stake_state: build_stake_state(
+                            stake_account.lamports,
+                            &stake_state,
+                            use_lamports_unit,
+                            &stake_history,
+                            &clock,
+                            new_rate_activation_epoch,
+                            rent_exempt_balance,
+                            false,
+                        ),
+                    });
                 }
                 _ => {}
             }

@@ -291,7 +291,9 @@ impl FinalCertificate {
             slot: 1234567890,
             block_id: Hash::new_from_array([1u8; 32]),
             final_aggregate: VotesAggregate {
-                signature: BLSSignatureCompressed::default(),
+                signature: BLSSignatureCompressed(
+                    [0; solana_bls_signatures::BLS_SIGNATURE_COMPRESSED_SIZE],
+                ),
                 bitmap: vec![42; 64],
             },
             notar_aggregate: None,
@@ -476,6 +478,14 @@ impl BlockComponent {
         Self::BlockMarker(marker)
     }
 
+    pub fn new_block_header(parent_slot: Slot, parent_block_id: Hash) -> Self {
+        let header = BlockHeaderV1 {
+            parent_slot,
+            parent_block_id,
+        };
+        Self::new_block_marker(VersionedBlockMarker::new_block_header(header))
+    }
+
     pub const fn as_marker(&self) -> Option<&VersionedBlockMarker> {
         match self {
             Self::BlockMarker(m) => Some(m),
@@ -546,7 +556,10 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::iter::repeat_n, wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT};
+    use {
+        super::*, solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE, std::iter::repeat_n,
+        wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT,
+    };
 
     fn mock_entries(n: usize) -> Vec<Entry> {
         repeat_n(Entry::default(), n).collect()
@@ -585,7 +598,7 @@ mod tests {
         let cert = GenesisCertificate {
             slot: 999,
             block_id: Hash::new_unique(),
-            bls_signature: BLSSignature::default(),
+            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![1, 2, 3],
         };
         let bytes = wincode::serialize(&cert).unwrap();

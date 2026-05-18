@@ -28,8 +28,8 @@ use {
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
-        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
-        SyscallMemset, SyscallSetReturnData,
+        SyscallGetSysvar, SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy,
+        SyscallMemmove, SyscallMemset, SyscallPanic, SyscallSetReturnData,
     },
     solana_sysvar_id::SysvarId,
     std::{
@@ -208,7 +208,8 @@ pub fn program_address(program_name: &str) -> Pubkey {
 }
 
 pub fn program_data_size(program_name: &str) -> usize {
-    load_program(program_name.to_string()).len()
+    UpgradeableLoaderState::size_of_programdata_metadata()
+        .saturating_add(load_program(program_name.to_string()).len())
 }
 
 pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankCallback) -> Pubkey {
@@ -351,7 +352,7 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_register_tracing: true,
-        enable_symbol_and_section_labels: true,
+        enable_symbol_and_section_labels: false,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
         sanitize_user_provided_values: true,
@@ -380,5 +381,7 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         .expect("Registration failed");
     SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
+    SyscallPanic::register(&mut loader, "sol_panic_").expect("Registration failed");
+    SyscallGetSysvar::register(&mut loader, "sol_get_sysvar").expect("Registration failed");
     ProgramRuntimeEnvironment::from(loader)
 }

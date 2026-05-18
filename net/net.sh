@@ -44,7 +44,6 @@ Operate a configured testnet
  stopnode     - Stop an individual node
  startclients - Start client nodes only
  prepare      - Prepare software deployment. (Build/download the software release)
- update       - Deploy a new software update to the cluster
  upgrade      - Upgrade software on bootstrap validator. (Restart bootstrap validator manually to run it)
 
  start-specific options:
@@ -119,7 +118,6 @@ Operate a configured testnet
 
  sanity/start-specific options:
    -F                   - Discard validator nodes that didn't bootup successfully
-   -o noInstallCheck    - Skip agave-install sanity
    -o rejectExtraNodes  - Require the exact number of nodes
 
  stop-specific options:
@@ -127,11 +125,6 @@ Operate a configured testnet
 
  logs-specific options:
    none
-
- update-specific options:
-   --platform linux|osx|windows       - Deploy the tarball using 'agave-install deploy ...' for the
-                                        given platform (multiple platforms may be specified)
-                                        (-t option must be supplied as well)
 
  startnode/stopnode-specific options:
    -i [ip address]                    - IP Address of the node to start or stop
@@ -488,37 +481,6 @@ sanity() {
   $metricsWriteDatapoint "testnet-deploy net-sanity-complete=1"
 }
 
-deployUpdate() {
-  if [[ -z $updatePlatforms ]]; then
-    echo "No update platforms"
-    return
-  fi
-  if [[ -z $releaseChannel ]]; then
-    echo "Release channel not specified (use -t option)"
-    exit 1
-  fi
-
-  declare ok=true
-  declare bootstrapLeader=${validatorIpList[0]}
-
-  for updatePlatform in $updatePlatforms; do
-    echo "--- Deploying agave-install update: $updatePlatform"
-    (
-      set -x
-
-      scripts/agave-install-update-manifest-keypair.sh "$updatePlatform"
-
-      timeout 30s scp "${sshOptions[@]}" \
-        update_manifest_keypair.json "$bootstrapLeader:solana/update_manifest_keypair.json"
-
-      # shellcheck disable=SC2029 # remote-deploy-update.sh args are expanded on client side intentionally
-      ssh "${sshOptions[@]}" "$bootstrapLeader" \
-        "./solana/net/remote/remote-deploy-update.sh $releaseChannel $updatePlatform"
-    ) || ok=false
-    $ok || exit 1
-  done
-}
-
 getNodeType() {
   echo "getNodeType: $nodeAddress"
   [[ -n $nodeAddress ]] || {
@@ -794,7 +756,6 @@ deployMethod=local
 deployIfNewer=
 sanityExtraArgs=
 skipSetup=false
-updatePlatforms=
 nodeAddress=
 numIdleClients=0
 numBenchTpsClients=0
@@ -883,9 +844,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --skip-setup ]]; then
       skipSetup=true
       shift 1
-    elif [[ $1 = --platform ]]; then
-      updatePlatforms="$updatePlatforms $2"
-      shift 2
     elif [[ $1 = --internal-nodes-stake-lamports ]]; then
       internalNodesStakeLamports="$2"
       shift 2
@@ -997,7 +955,7 @@ while getopts "h?T:t:o:f:rc:Fn:i:d" opt "${shortArgs[@]}"; do
     ;;
   o)
     case $OPTARG in
-    rejectExtraNodes|noInstallCheck)
+    rejectExtraNodes)
       sanityExtraArgs="$sanityExtraArgs -o $OPTARG"
       ;;
     *)
@@ -1119,9 +1077,6 @@ sanity)
   ;;
 stop)
   stop
-  ;;
-update)
-  deployUpdate
   ;;
 upgrade)
   bootstrapValidatorIp="${validatorIpList[0]}"

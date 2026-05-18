@@ -20,7 +20,6 @@ agave-unstable-api = []
 spinner = ["dep:indicatif", "dep:solana-message", "solana-rpc-client/spinner"]
 
 [dependencies]
-bincode = { workspace = true }
 futures-util = { workspace = true }
 indicatif = { workspace = true, optional = true }
 log = { workspace = true }
@@ -41,3 +40,4 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }

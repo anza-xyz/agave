@@ -9,17 +9,16 @@ use {
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
         stake_account::StakeAccount, stake_history::StakeHistory,
     },
-    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         stake_rewards::StakeReward,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{mem::MaybeUninit, sync::Arc},
+    std::{collections::HashMap, mem::MaybeUninit, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -149,6 +148,14 @@ pub(crate) enum EpochRewardPhase {
     Distribution(StartBlockHeightAndPartitionedRewards),
 }
 
+#[derive(Debug)]
+pub(super) struct RewardCommission {
+    pub(super) commission_bps: u16,
+    pub(super) commission_lamports: u64,
+}
+
+pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
+
 #[derive(Debug, Default)]
 pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
@@ -224,7 +231,7 @@ pub(super) struct StakeRewardCalculation {
 
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -232,51 +239,13 @@ struct CalculateValidatorRewardsResult {
 impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
-            reward_commission_accounts: RewardCommissionAccounts::default(),
+            reward_commissions: RewardCommissions::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
                 rewards: 0,
             },
         }
-    }
-}
-
-pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    min_stake_delegation: Option<u64>,
-}
-
-impl<'a> FilteredStakeDelegations<'a> {
-    pub(super) fn len(&self) -> usize {
-        self.stake_delegations.len()
-    }
-
-    pub(super) fn par_iter(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
-    {
-        self.stake_delegations
-            .par_iter()
-            // We yield `None` items instead of filtering them out to
-            // keep the number of elements predictable. It's better to
-            // let the callers deal with `None` elements and even store
-            // them in collections (that are allocated once with the
-            // size of `FilteredStakeDelegations::len`) rather than
-            // `collect` yet another time (which would take ~100ms).
-            .map(|(pubkey, stake_account)| {
-                match self.min_stake_delegation {
-                    Some(min_stake_delegation)
-                        if stake_account.delegation().stake < min_stake_delegation =>
-                    {
-                        None
-                    }
-                    _ => {
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))
-                    }
-                }
-            })
     }
 }
 
@@ -299,7 +268,7 @@ pub(super) struct CachedVoteAccounts<'a> {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
+    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
     pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 
@@ -308,10 +277,15 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_rewards: StakeRewardCalculation,
     capitalization: u64,
     point_value: PointValue,
+    /// Number of vote accounts in the distribution-epoch snapshot after
+    /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
+    /// Surfaced for the `epoch_rewards` datapoint without re-running the
+    /// filter at distribution time.
+    num_filtered_vote_accounts: usize,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -440,7 +414,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandle},
+        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
         std::sync::{Arc, RwLock},
     };
 
@@ -596,7 +570,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(SlotLeader::new_unique()),
+            None,
             Arc::default(),
             None,
             None,
@@ -645,23 +619,14 @@ mod tests {
             let mut vote_account = bank
                 .get_account(&vote_pubkey)
                 .unwrap_or_else(|| panic!("missing vote account {vote_pubkey:?}"));
-            let mut vote_state =
-                Some(VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap());
-            if let Some(state) = vote_state.as_mut() {
-                state.set_commission(commission);
-            }
+            let mut vote_state = VoteStateHandler::new_v4(
+                VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
+            );
+            vote_state.set_commission(commission);
             for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(state) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(state, i as u64);
-                }
-                let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+                vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
+                let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
                 vote_account.set_state(&versioned).unwrap();
-                match versioned {
-                    VoteStateVersions::V4(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type V4"),
-                };
             }
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
         }

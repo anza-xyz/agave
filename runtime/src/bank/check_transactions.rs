@@ -3,8 +3,8 @@ use {
     agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
+    solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_fee_structure::FeeBudgetLimits,
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -15,6 +15,7 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction::versioned::TransactionVersion,
     solana_transaction_error::{TransactionError, TransactionResult},
 };
 
@@ -69,9 +70,11 @@ impl Bank {
         collect_processed_slots: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
+        let lock_results = self.filter_v1_transactions(sanitized_txs, lock_results);
+
         let lock_results = self.check_age_and_compute_budget_limits(
             sanitized_txs,
-            lock_results,
+            &lock_results,
             max_age,
             error_counters,
         );
@@ -81,6 +84,28 @@ impl Bank {
             collect_processed_slots,
             error_counters,
         )
+    }
+
+    fn filter_v1_transactions<Tx: TransactionWithMeta>(
+        &self,
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
+        lock_results: &[TransactionResult<()>],
+    ) -> Vec<TransactionResult<()>> {
+        // Discard v1 transactions until feature gate is activated.
+        sanitized_txs
+            .iter()
+            .zip(lock_results)
+            .map(|(tx, lock_result)| match lock_result {
+                Err(err) => Err(err.clone()),
+                Ok(())
+                    if !self.feature_set.snapshot().enable_tx_v1
+                        && tx.borrow().version() == TransactionVersion::Number(1) =>
+                {
+                    Err(TransactionError::UnsupportedVersion)
+                }
+                Ok(()) => Ok(()),
+            })
+            .collect()
     }
 
     fn check_age_and_compute_budget_limits<Tx: TransactionWithMeta>(
@@ -107,14 +132,12 @@ impl Bank {
                 Ok(()) => {
                     let compute_budget_and_limits = tx
                         .borrow()
-                        .compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(feature_set)
-                        .map(|limit| {
-                            let fee_budget = FeeBudgetLimits::from(limit);
+                        .transaction_configuration(feature_set)
+                        .map(|config| {
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
                                 self.fee_structure.lamports_per_signature,
-                                fee_budget.prioritization_fee,
+                                config.priority_fee_lamports,
                                 fee_features,
                             );
                             if let Some(compute_budget) = self.compute_budget {
@@ -122,15 +145,22 @@ impl Bank {
                                 // It should be removed along with the change to favor transaction's compute budget limits
                                 // over configured compute budget in Bank.
                                 compute_budget.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                    config.loaded_accounts_data_size_limit,
                                     fee_details,
                                 )
                             } else {
-                                limit.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                SVMTransactionExecutionAndFeeBudgetLimits {
+                                    budget: SVMTransactionExecutionBudget {
+                                        compute_unit_limit: u64::from(config.compute_unit_limit),
+                                        heap_size: config.updated_heap_bytes,
+                                        ..SVMTransactionExecutionBudget::new_with_defaults(
+                                            raise_cpi_limit,
+                                        )
+                                    },
+                                    loaded_accounts_data_size_limit: config
+                                        .loaded_accounts_data_size_limit,
                                     fee_details,
-                                    raise_cpi_limit,
-                                )
+                                }
                             }
                         })
                         .inspect_err(|_err| {
@@ -262,9 +292,12 @@ impl Bank {
 mod tests {
     use {
         super::*,
-        crate::bank::tests::{
-            get_nonce_blockhash, get_nonce_data_from_account, new_sanitized_message,
-            setup_nonce_with_bank,
+        crate::bank::{
+            ReservedAccountKeys,
+            tests::{
+                get_nonce_blockhash, get_nonce_data_from_account, new_sanitized_message,
+                setup_nonce_with_bank,
+            },
         },
         solana_account::state_traits::StateMut,
         solana_hash::Hash,
@@ -274,13 +307,16 @@ mod tests {
             SimpleAddressLoader, VersionedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{self, LoadedAddresses, MessageAddressTableLookup},
+            v1,
         },
         solana_nonce::{state::State as NonceState, versions::Versions as NonceVersions},
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::{
             instruction::{self as system_instruction, SystemInstruction},
             program as system_program,
         },
+        solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         std::collections::HashSet,
     };
 
@@ -469,5 +505,138 @@ mod tests {
             bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
             None,
         );
+    }
+
+    fn make_test_tx(version: TransactionVersion) -> impl TransactionWithMeta {
+        let payer = Keypair::new();
+        let recipient = Pubkey::new_unique();
+        let recent_blockhash = Hash::new_unique();
+        let ix = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
+
+        let message = match version {
+            TransactionVersion::LEGACY => {
+                VersionedMessage::Legacy(Message::new(&[ix], Some(&payer.pubkey())))
+            }
+            TransactionVersion::Number(0) => VersionedMessage::V0(
+                v0::Message::try_compile(&payer.pubkey(), &[ix], &[], recent_blockhash).unwrap(),
+            ),
+            TransactionVersion::Number(1) => VersionedMessage::V1(
+                v1::Message::try_compile(&payer.pubkey(), &[ix], recent_blockhash).unwrap(),
+            ),
+            TransactionVersion::Number(other) => {
+                panic!("unsupported test transaction version: {other}")
+            }
+        };
+
+        let tx = VersionedTransaction::try_new(message, &[&payer]).unwrap();
+        // Note: enabled loader is needed to create v0 runtime-transaction
+        let address_loader =
+            solana_message::SimpleAddressLoader::Enabled(solana_message::v0::LoadedAddresses {
+                writable: vec![],
+                readonly: vec![],
+            });
+        let rt = RuntimeTransaction::try_create(
+            tx,
+            MessageHash::Compute,
+            None,
+            address_loader,
+            &ReservedAccountKeys::empty_key_set(),
+            true,
+        );
+        rt.unwrap()
+    }
+
+    #[test]
+    fn test_filter_v1_transactions_keeps_existing_errors() {
+        let txs = vec![
+            make_test_tx(TransactionVersion::LEGACY),
+            make_test_tx(TransactionVersion::Number(0)),
+            make_test_tx(TransactionVersion::Number(1)),
+        ];
+        let lock_results = vec![
+            Err(TransactionError::AccountInUse),
+            Err(TransactionError::TooManyAccountLocks),
+            Err(TransactionError::WouldExceedMaxBlockCostLimit),
+        ];
+
+        let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
+
+        assert!(matches!(filtered[0], Err(TransactionError::AccountInUse)));
+        assert!(matches!(
+            filtered[1],
+            Err(TransactionError::TooManyAccountLocks)
+        ));
+        assert!(matches!(
+            filtered[2],
+            Err(TransactionError::WouldExceedMaxBlockCostLimit)
+        ));
+    }
+
+    #[test]
+    fn test_filter_v1_transactions_rejects_v1_with_ok_lock_result() {
+        let txs = vec![make_test_tx(TransactionVersion::Number(1))];
+        let lock_results = vec![Ok(())];
+
+        let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
+
+        assert_eq!(filtered.len(), 1);
+        assert!(matches!(
+            filtered[0],
+            Err(TransactionError::UnsupportedVersion)
+        ));
+    }
+
+    #[test]
+    fn test_filter_v1_transactions_keeps_v1_when_feature_enabled() {
+        let txs = vec![make_test_tx(TransactionVersion::Number(1))];
+        let lock_results = vec![Ok(())];
+        let mut bank = Bank::default_for_tests();
+        bank.activate_feature(&agave_feature_set::enable_tx_v1::id());
+
+        let filtered = bank.filter_v1_transactions(&txs, &lock_results);
+
+        assert_eq!(filtered, vec![Ok(())]);
+    }
+
+    #[test]
+    fn test_filter_v1_transactions_keeps_legacy_and_v0_ok() {
+        let txs = vec![
+            make_test_tx(TransactionVersion::LEGACY),
+            make_test_tx(TransactionVersion::Number(0)),
+        ];
+        let lock_results = vec![Ok(()), Ok(())];
+
+        let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
+
+        assert_eq!(filtered, vec![Ok(()), Ok(())]);
+    }
+
+    #[test]
+    fn test_filter_v1_transactions_mixed_results() {
+        let txs = vec![
+            make_test_tx(TransactionVersion::LEGACY),
+            make_test_tx(TransactionVersion::Number(1)),
+            make_test_tx(TransactionVersion::Number(0)),
+            make_test_tx(TransactionVersion::Number(1)),
+        ];
+        let lock_results = vec![
+            Ok(()),
+            Ok(()),
+            Err(TransactionError::AccountInUse),
+            Err(TransactionError::TooManyAccountLocks),
+        ];
+
+        let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
+
+        assert!(matches!(filtered[0], Ok(())));
+        assert!(matches!(
+            filtered[1],
+            Err(TransactionError::UnsupportedVersion)
+        ));
+        assert!(matches!(filtered[2], Err(TransactionError::AccountInUse)));
+        assert!(matches!(
+            filtered[3],
+            Err(TransactionError::TooManyAccountLocks)
+        ));
     }
 }

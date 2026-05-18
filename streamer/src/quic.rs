@@ -88,6 +88,7 @@ pub struct SpawnServerResult {
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
+    quic_server_params: &QuicStreamerConfig,
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
     let cert_chain_pem_parts = vec![Pem {
@@ -111,10 +112,7 @@ pub(crate) fn configure_server(
 
     // Set STREAM_MAX_DATA to fit at most 1 transaction.
     // This should match the maximal TX size.
-    config.stream_receive_window((PACKET_DATA_SIZE as u32).into());
-    // set the receive window really small initially to prevent the fresh connections
-    // from slamming us with traffic.
-    config.receive_window((PACKET_DATA_SIZE as u32).into());
+    config.stream_receive_window((quic_server_params.stream_receive_window_size).into());
     // disable uni_streams until handshake is complete
     config.max_concurrent_uni_streams(0u32.into());
     config.receive_window(CONNECTION_RECEIVE_WINDOW_BYTES);
@@ -155,11 +153,12 @@ pub enum QuicServerError {
 
 pub struct EndpointKeyUpdater {
     endpoints: Vec<Endpoint>,
+    quic_server_params: QuicStreamerConfig,
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key)?;
+        let (config, _) = configure_server(key, &self.quic_server_params)?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }
@@ -553,6 +552,10 @@ pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
+    /// Per-stream QUIC receive window (flow control limit).
+    pub stream_receive_window_size: u32,
+    /// Maximum total bytes allowed per stream (hard cap).
+    pub max_stream_data_bytes: u32,
 }
 
 #[derive(Clone)]
@@ -573,6 +576,8 @@ impl Default for QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            stream_receive_window_size: PACKET_DATA_SIZE as u32,
+            max_stream_data_bytes: PACKET_DATA_SIZE as u32,
         }
     }
 }
@@ -616,7 +621,7 @@ where
             sockets,
             keypair,
             packet_sender,
-            quic_server_params,
+            quic_server_params.clone(),
             qos,
             cancel,
         )
@@ -631,6 +636,7 @@ where
         .unwrap();
     let updater = EndpointKeyUpdater {
         endpoints: result.endpoints.clone(),
+        quic_server_params,
     };
     Ok(SpawnServerResult {
         endpoints: result.endpoints,

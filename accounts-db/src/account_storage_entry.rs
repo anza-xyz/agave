@@ -2,7 +2,7 @@ use {
     crate::{
         account_info::Offset,
         accounts_db::AccountsFileId,
-        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider},
         obsolete_accounts::ObsoleteAccounts,
     },
     solana_clock::Slot,
@@ -27,9 +27,9 @@ pub struct AccountStorageEntry {
     pub accounts: AccountsFile,
 
     /// The number of alive accounts in this storage
-    pub(crate) count: AtomicUsize,
+    pub(crate) num_alive_accounts: AtomicUsize,
 
-    pub(crate) alive_bytes: AtomicUsize,
+    pub(crate) num_alive_bytes: AtomicUsize,
 
     /// offsets to accounts that are zero lamport single ref stored in this
     /// storage. These are still alive. But, shrink will be able to remove them.
@@ -37,7 +37,7 @@ pub struct AccountStorageEntry {
     /// NOTE: It's possible that one of these zero lamport single ref accounts
     /// could be written in a new transaction (and later rooted & flushed) and a
     /// later clean runs and marks this account dead before this storage gets a
-    /// chance to be shrunk, thus making the account dead in both "alive_bytes"
+    /// chance to be shrunk, thus making the account dead in both "num_alive_bytes"
     /// and as a zero lamport single ref. If this happens, we will count this
     /// account as "dead" twice. However, this should be fine. It just makes
     /// shrink more likely to visit this storage.
@@ -61,35 +61,29 @@ impl AccountStorageEntry {
         id: AccountsFileId,
         file_size: u64,
         provider: AccountsFileProvider,
-        storage_access: StorageAccess,
     ) -> Self {
         let tail = AccountsFile::file_name(slot, id);
         let path = Path::new(path).join(tail);
-        let accounts = provider.new_writable(path, file_size, storage_access);
+        let accounts = provider.new_writable(path, file_size);
 
         Self {
             id,
             slot,
             accounts,
-            count: AtomicUsize::new(0),
-            alive_bytes: AtomicUsize::new(0),
+            num_alive_accounts: AtomicUsize::new(0),
+            num_alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
             obsolete_accounts: RwLock::default(),
         }
     }
 
     /// open a new instance of the storage that is readonly
-    pub(crate) fn reopen_as_readonly(&self, storage_access: StorageAccess) -> Option<Self> {
-        if storage_access != StorageAccess::File {
-            // if we are only using mmap, then no reason to re-open
-            return None;
-        }
-
+    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
         self.accounts.reopen_as_readonly().map(|accounts| Self {
             id: self.id,
             slot: self.slot,
-            count: AtomicUsize::new(self.count()),
-            alive_bytes: AtomicUsize::new(self.alive_bytes()),
+            num_alive_accounts: AtomicUsize::new(self.count()),
+            num_alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
             zero_lamport_single_ref_offsets: RwLock::new(
                 self.zero_lamport_single_ref_offsets.read().unwrap().clone(),
@@ -108,8 +102,8 @@ impl AccountStorageEntry {
             id,
             slot,
             accounts,
-            count: AtomicUsize::new(0),
-            alive_bytes: AtomicUsize::new(0),
+            num_alive_accounts: AtomicUsize::new(0),
+            num_alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
             obsolete_accounts: RwLock::new(obsolete_accounts),
         }
@@ -117,11 +111,11 @@ impl AccountStorageEntry {
 
     /// Returns the number of alive accounts in this storage
     pub fn count(&self) -> usize {
-        self.count.load(Ordering::Acquire)
+        self.num_alive_accounts.load(Ordering::Acquire)
     }
 
     pub fn alive_bytes(&self) -> usize {
-        self.alive_bytes.load(Ordering::Acquire)
+        self.num_alive_bytes.load(Ordering::Acquire)
     }
 
     /// Returns the accounts that were marked obsolete as of the passed in slot
@@ -218,28 +212,32 @@ impl AccountStorageEntry {
     }
 
     pub(crate) fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {
-        self.count.fetch_add(num_accounts, Ordering::Release);
-        self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
+        self.num_alive_accounts
+            .fetch_add(num_accounts, Ordering::Release);
+        self.num_alive_bytes.fetch_add(num_bytes, Ordering::Release);
     }
 
     /// Removes `num_bytes` and `num_accounts` from the storage,
     /// and returns the remaining number of accounts.
     pub(crate) fn remove_accounts(&self, num_bytes: usize, num_accounts: usize) -> usize {
-        let prev_alive_bytes = self.alive_bytes.fetch_sub(num_bytes, Ordering::Release);
-        let prev_count = self.count.fetch_sub(num_accounts, Ordering::Release);
+        let prev_num_alive_bytes = self.num_alive_bytes.fetch_sub(num_bytes, Ordering::Release);
+        let prev_num_alive_accounts = self
+            .num_alive_accounts
+            .fetch_sub(num_accounts, Ordering::Release);
 
         // enforce invariant that we're not removing too many bytes or accounts
         assert!(
-            num_bytes <= prev_alive_bytes && num_accounts <= prev_count,
-            "Too many bytes or accounts removed from storage! slot: {}, id: {}, initial alive \
-             bytes: {prev_alive_bytes}, initial num accounts: {prev_count}, num bytes removed: \
-             {num_bytes}, num accounts removed: {num_accounts}",
+            num_bytes <= prev_num_alive_bytes && num_accounts <= prev_num_alive_accounts,
+            "Too many bytes or accounts removed from storage! slot: {}, id: {}, initial num alive \
+             bytes: {prev_num_alive_bytes}, initial num alive accounts: \
+             {prev_num_alive_accounts}, num bytes removed: {num_bytes}, num accounts removed: \
+             {num_accounts}",
             self.slot,
             self.id,
         );
 
         // SAFETY: subtraction is safe since we just asserted num_accounts <= prev_num_accounts
-        prev_count - num_accounts
+        prev_num_alive_accounts - num_accounts
     }
 
     /// Returns the path to the underlying accounts storage file

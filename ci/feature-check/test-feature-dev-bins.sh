@@ -18,3 +18,5 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-D warnings"
 
 cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check
 cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-features
+cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets
+cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets --all-features

@@ -1,4 +1,5 @@
 use {
+    agave_votor::event::VotorEvent,
     crossbeam_channel::Sender,
     jsonrpc_core::{BoxFuture, ErrorCode, MetaIoHandler, Metadata, Result},
     jsonrpc_core_client::{RpcError, transports::ipc},
@@ -8,6 +9,7 @@ use {
     },
     log::*,
     serde::{Deserialize, Serialize, de::Deserializer},
+    solana_clock::Slot,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         banking_stage::{
@@ -284,6 +286,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "isGeneratingSnapshots")]
     fn is_generating_snapshots(&self, meta: Self::Metadata) -> Result<bool>;
+
+    #[rpc(meta, name = "blockstorePurge")]
+    fn blockstore_purge(&self, meta: Self::Metadata, maximum_purge_slot: Slot) -> Result<()>;
 }
 
 pub struct AdminRpcImpl;
@@ -836,6 +841,19 @@ impl AdminRpc for AdminRpcImpl {
             ))
         }
     }
+
+    fn blockstore_purge(&self, meta: Self::Metadata, maximum_purge_slot: Slot) -> Result<()> {
+        meta.with_post_init(|post_init| {
+            post_init
+                .blockstore
+                .send_manual_purge_request(maximum_purge_slot)
+                .map_err(|err| jsonrpc_core::Error {
+                    code: ErrorCode::InvalidRequest,
+                    message: format!("{err}"),
+                    data: None,
+                })
+        })
+    }
 }
 
 impl AdminRpcImpl {
@@ -894,6 +912,15 @@ impl AdminRpcImpl {
             post_init
                 .cluster_info
                 .set_keypair(Arc::new(identity_keypair));
+            post_init
+                .votor_event_sender
+                .send(VotorEvent::SetIdentity)
+                .map_err(|err| jsonrpc_core::error::Error {
+                    code: ErrorCode::InternalError,
+                    message: format!("Failed to send SetIdentity event: {err}").to_string(),
+                    data: None,
+                })?;
+
             warn!("Identity set to {new_identity}");
             Ok(())
         })
@@ -1027,6 +1054,8 @@ mod tests {
     use {
         super::*,
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor::event::VotorEventSender,
+        assert_matches::assert_matches,
         crossbeam_channel::unbounded,
         serde_json::Value,
         solana_accounts_db::{
@@ -1040,10 +1069,12 @@ mod tests {
         },
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_ledger::{
+            blockstore::Blockstore,
             create_new_tmp_ledger,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
+            get_tmp_ledger_path_auto_delete,
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_rpc::rpc::create_validator_exit,
@@ -1058,6 +1089,7 @@ mod tests {
     #[derive(Default)]
     struct TestConfig {
         account_indexes: AccountSecondaryIndexes,
+        votor_event_sender: Option<VotorEventSender>,
     }
 
     struct RpcHandler {
@@ -1097,9 +1129,16 @@ mod tests {
                 bank_forks.read().unwrap().root(),
             ));
 
+            let ledger_path = get_tmp_ledger_path_auto_delete!();
+            let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+
             let vote_account = vote_keypair.pubkey();
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::new()));
+            let votor_event_sender = config.votor_event_sender.unwrap_or_else(|| {
+                let (votor_event_sender, _) = unbounded();
+                votor_event_sender
+            });
             let meta = AdminRpcRequestMetadata {
                 rpc_addr: None,
                 start_time: SystemTime::now(),
@@ -1124,6 +1163,8 @@ mod tests {
                     node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,
+                    blockstore,
+                    votor_event_sender,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1144,7 +1185,7 @@ mod tests {
             ..
         } = create_genesis_config(1_000_000_000);
 
-        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
+        let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
         (BankForks::new_rw_arc(bank), Arc::new(voting_keypair))
     }
 
@@ -1152,7 +1193,11 @@ mod tests {
     // Bank but without validator.
     #[test]
     fn test_set_identity() {
-        let rpc = RpcHandler::start_with_config(TestConfig::default());
+        let (votor_event_sender, votor_event_receiver) = unbounded();
+        let rpc = RpcHandler::start_with_config(TestConfig {
+            account_indexes: AccountSecondaryIndexes::default(),
+            votor_event_sender: Some(votor_event_sender),
+        });
 
         let RpcHandler { io, meta, .. } = rpc;
 
@@ -1189,6 +1234,10 @@ mod tests {
             actual_validator_id,
             expected_validator_id.pubkey().to_string()
         );
+        let event = votor_event_receiver
+            .recv()
+            .expect("Failed to receive SetIdentity event");
+        assert_matches!(event, VotorEvent::SetIdentity);
     }
 
     struct TestValidatorWithAdminRpc {
@@ -1243,7 +1292,6 @@ mod tests {
                 authorized_voter_keypairs,
                 vec![leader_node.info],
                 &validator_config,
-                true, // should_check_duplicate_instance
                 None, // rpc_to_plugin_manager_receiver
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,

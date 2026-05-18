@@ -6,7 +6,7 @@ use {
     std::time::{Duration, Instant},
 };
 
-/// Max number of root slots to wait before triggering reporting of stats.  At 400ms slot times, this is 4s.
+/// Max number of root slots to wait before triggering reporting of stats.
 const SLOTS_INTERVAL: Slot = 10;
 /// Max amount of seconds to wait before triggering reporting of stats.
 const DURATION_INTERVAL: Duration = Duration::from_secs(5);
@@ -30,7 +30,7 @@ impl Reporting {
 
     /// Returns `true` if reporting should be done else `false`.
     fn should_report(&self, root_slot: Slot) -> bool {
-        self.slot + SLOTS_INTERVAL >= root_slot || self.time.elapsed() > DURATION_INTERVAL
+        root_slot >= self.slot + SLOTS_INTERVAL || self.time.elapsed() > DURATION_INTERVAL
     }
 }
 
