@@ -600,14 +600,12 @@ impl BlockIdRepairService {
                 state.sent_requests.remove(&msg);
                 state.pending_repair_requests.push(msg);
                 debug!(
-                    "{my_pubkey}: verify_response failed for nonce {nonce} from {}, \
-                     re-queued {failed_request:?}",
+                    "{my_pubkey}: verify_response failed for nonce {nonce} from {}, re-queued
+                     {failed_request:?}",
                     packet.meta().socket_addr(),
                 );
             } else {
-                debug!(
-                    "{my_pubkey}: unknown/expired nonce {nonce} for {response:?}"
-                );
+                debug!("{my_pubkey}: unknown/expired nonce {nonce} for {response:?}");
             }
             return;
         };
