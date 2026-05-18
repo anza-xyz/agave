@@ -264,26 +264,60 @@ impl From<EpochRewards> for UiEpochRewards {
 #[cfg(test)]
 mod test {
     #[allow(deprecated)]
-    use solana_sysvar::recent_blockhashes::IterItem;
+    use solana_sysvar::recent_blockhashes::{
+        IterItem, MAX_ENTRIES as RECENT_BLOCKHASHES_MAX_ENTRIES,
+    };
     use {
         super::*, solana_account::Account, solana_fee_calculator::FeeCalculator, solana_hash::Hash,
+        solana_slot_hashes::MAX_ENTRIES as SLOT_HASHES_MAX_ENTRIES,
+        solana_stake_interface::stake_history::MAX_ENTRIES as STAKE_HISTORY_MAX_ENTRIES,
     };
 
-    fn create_account_for_test<T: Serialize>(sysvar_data: &T) -> Account {
-        Account {
+    fn serialized_size<T: Serialize>(sysvar_data: &T) -> usize {
+        bincode::serialized_size(sysvar_data).unwrap() as usize
+    }
+
+    fn create_account_for_test<T: Serialize>(sysvar_data: &T, data_len: usize) -> Account {
+        let mut account = Account {
             lamports: 1,
-            data: bincode::serialize(sysvar_data).unwrap(),
+            data: vec![0; data_len],
             owner: sysvar::id(),
             executable: false,
             rent_epoch: 0,
+        };
+        bincode::serialize_into(&mut account.data[..], sysvar_data).unwrap();
+        account
+    }
+
+    #[allow(deprecated)]
+    fn recent_blockhashes_account_size(hash: &Hash) -> usize {
+        let recent_blockhashes = (0..RECENT_BLOCKHASHES_MAX_ENTRIES as u64)
+            .map(|block_height| IterItem(block_height, hash, block_height))
+            .collect::<RecentBlockhashes>();
+        serialized_size(&recent_blockhashes)
+    }
+
+    fn slot_hashes_account_size(hash: &Hash) -> usize {
+        let slot_hashes = (0..SLOT_HASHES_MAX_ENTRIES as u64)
+            .map(|slot| (slot, *hash))
+            .collect::<SlotHashes>();
+        serialized_size(&slot_hashes)
+    }
+
+    fn stake_history_account_size(stake_history_entry: &StakeHistoryEntry) -> usize {
+        let mut stake_history = StakeHistory::default();
+        for epoch in 0..STAKE_HISTORY_MAX_ENTRIES as u64 {
+            stake_history.add(epoch, stake_history_entry.clone());
         }
+        serialized_size(&stake_history)
     }
 
     #[test]
     fn test_parse_sysvars() {
         let hash = Hash::new_from_array([1; 32]);
 
-        let clock_sysvar = create_account_for_test(&Clock::default());
+        let clock = Clock::default();
+        let clock_sysvar = create_account_for_test(&clock, serialized_size(&clock));
         assert_eq!(
             parse_sysvar(&clock_sysvar.data, &sysvar::clock::id()).unwrap(),
             SysvarAccountType::Clock(UiClock::default()),
@@ -296,7 +330,8 @@ mod test {
             first_normal_epoch: 1,
             first_normal_slot: 12,
         };
-        let epoch_schedule_sysvar = create_account_for_test(&epoch_schedule);
+        let epoch_schedule_sysvar =
+            create_account_for_test(&epoch_schedule, serialized_size(&epoch_schedule));
         assert_eq!(
             parse_sysvar(&epoch_schedule_sysvar.data, &sysvar::epoch_schedule::id()).unwrap(),
             SysvarAccountType::EpochSchedule(epoch_schedule),
@@ -304,7 +339,8 @@ mod test {
 
         #[allow(deprecated)]
         {
-            let fees_sysvar = create_account_for_test(&Fees::default());
+            let fees = Fees::default();
+            let fees_sysvar = create_account_for_test(&fees, serialized_size(&fees));
             assert_eq!(
                 parse_sysvar(&fees_sysvar.data, &sysvar::fees::id()).unwrap(),
                 SysvarAccountType::Fees(UiFees::default()),
@@ -312,7 +348,10 @@ mod test {
 
             let recent_blockhashes: RecentBlockhashes =
                 vec![IterItem(0, &hash, 10)].into_iter().collect();
-            let recent_blockhashes_sysvar = create_account_for_test(&recent_blockhashes);
+            let recent_blockhashes_sysvar = create_account_for_test(
+                &recent_blockhashes,
+                recent_blockhashes_account_size(&hash),
+            );
             assert_eq!(
                 parse_sysvar(
                     &recent_blockhashes_sysvar.data,
@@ -330,13 +369,14 @@ mod test {
             lamports_per_byte: 10,
             ..Default::default()
         };
-        let rent_sysvar = create_account_for_test(&rent);
+        let rent_sysvar = create_account_for_test(&rent, serialized_size(&rent));
         assert_eq!(
             parse_sysvar(&rent_sysvar.data, &sysvar::rent::id()).unwrap(),
             SysvarAccountType::Rent(rent.into()),
         );
 
-        let rewards_sysvar = create_account_for_test(&Rewards::default());
+        let rewards = Rewards::default();
+        let rewards_sysvar = create_account_for_test(&rewards, serialized_size(&rewards));
         assert_eq!(
             parse_sysvar(&rewards_sysvar.data, &sysvar::rewards::id()).unwrap(),
             SysvarAccountType::Rewards(UiRewards::default()),
@@ -344,7 +384,8 @@ mod test {
 
         let mut slot_hashes = SlotHashes::default();
         slot_hashes.add(1, hash);
-        let slot_hashes_sysvar = create_account_for_test(&slot_hashes);
+        let slot_hashes_sysvar =
+            create_account_for_test(&slot_hashes, slot_hashes_account_size(&hash));
         assert_eq!(
             parse_sysvar(&slot_hashes_sysvar.data, &sysvar::slot_hashes::id()).unwrap(),
             SysvarAccountType::SlotHashes(vec![UiSlotHashEntry {
@@ -355,7 +396,8 @@ mod test {
 
         let mut slot_history = SlotHistory::default();
         slot_history.add(42);
-        let slot_history_sysvar = create_account_for_test(&slot_history);
+        let slot_history_sysvar =
+            create_account_for_test(&slot_history, serialized_size(&slot_history));
         assert_eq!(
             parse_sysvar(&slot_history_sysvar.data, &sysvar::slot_history::id()).unwrap(),
             SysvarAccountType::SlotHistory(UiSlotHistory {
@@ -371,7 +413,10 @@ mod test {
             deactivating: 3,
         };
         stake_history.add(1, stake_history_entry.clone());
-        let stake_history_sysvar = create_account_for_test(&stake_history);
+        let stake_history_sysvar = create_account_for_test(
+            &stake_history,
+            stake_history_account_size(&stake_history_entry),
+        );
         assert_eq!(
             parse_sysvar(&stake_history_sysvar.data, &sysvar::stake_history::id()).unwrap(),
             SysvarAccountType::StakeHistory(vec![UiStakeHistoryEntry {
@@ -389,7 +434,8 @@ mod test {
         let last_restart_slot = LastRestartSlot {
             last_restart_slot: 1282,
         };
-        let last_restart_slot_account = create_account_for_test(&last_restart_slot);
+        let last_restart_slot_account =
+            create_account_for_test(&last_restart_slot, serialized_size(&last_restart_slot));
         assert_eq!(
             parse_sysvar(
                 &last_restart_slot_account.data,
@@ -408,7 +454,8 @@ mod test {
             active: true,
             ..EpochRewards::default()
         };
-        let epoch_rewards_sysvar = create_account_for_test(&epoch_rewards);
+        let epoch_rewards_sysvar =
+            create_account_for_test(&epoch_rewards, serialized_size(&epoch_rewards));
         assert_eq!(
             parse_sysvar(&epoch_rewards_sysvar.data, &sysvar::epoch_rewards::id()).unwrap(),
             SysvarAccountType::EpochRewards(epoch_rewards.into()),
