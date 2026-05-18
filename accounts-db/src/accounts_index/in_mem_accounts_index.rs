@@ -3208,15 +3208,18 @@ mod tests {
     /// tombstones consuming `growth_left`.
     #[test]
     fn test_reallocate_to_clear_tombstones_preserves_entries() {
-        // Reallocate only runs in Threshold mode. Pick high_water_mark=99 so
-        // target_entries=100, matching the natural backing size for 100 inserts.
+        // Reallocate only runs in Threshold mode. For this test HWM must be less
+        // than the number of inserts to ensure the calculated bucket size is
+        // the same for hwm and num_inserts
         let hwm = 99;
         let lwm = 70;
         let index = new_should_write_through_for_test(Some((hwm, lwm)));
 
-        // Insert enough entries to settle the bin's hashmap at a stable capacity.
-        let num_inserts = 100;
-        let num_removes = 30;
+        // Fill the bin's hashmap exactly to hashbrown's max_load (7/8 of 128 buckets).
+        // At 100% load every remove is guaranteed to create a tombstone
+        let num_inserts = 112;
+        // Then remove enough entries to drop down to the low water mark
+        let num_removes = 42;
         let pubkeys: Vec<_> = (0..num_inserts)
             .map(|_| solana_pubkey::new_rand())
             .collect();
