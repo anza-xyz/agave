@@ -1225,7 +1225,7 @@ mod tests {
         let rent = Rent::default();
         let mut program_account =
             AccountSharedData::new(rent.minimum_balance(elf.len()), 0, loader_id);
-        program_account.set_data(elf);
+        program_account.set_data_from_slice(&elf);
         program_account.set_executable(true);
         program_account
     }
@@ -1690,7 +1690,7 @@ mod tests {
     fn truncate_data(account: &mut AccountSharedData, len: usize) {
         let mut data = account.data().to_vec();
         data.truncate(len);
-        account.set_data(data);
+        account.set_data_from_slice(&data);
     }
 
     #[test]
@@ -3842,7 +3842,7 @@ mod tests {
             0..255,
             |bytes: &mut [u8]| {
                 let mut program_account = AccountSharedData::new(1, 0, &loader_id);
-                program_account.set_data(bytes.to_vec());
+                program_account.set_data_from_slice(bytes);
                 program_account.set_executable(true);
                 process_instruction(
                     &program_id,
