@@ -58,7 +58,11 @@ use {
         MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, OpenGenesisConfigError, open_genesis_config,
     },
     solana_geyser_plugin_manager::{
-        GeyserPluginManagerRequest, geyser_plugin_service::GeyserPluginService,
+        GeyserPluginManagerRequest,
+        contact_info_notifier::{
+            self as geyser_contact_info_notifier, ContactInfoNotifier as GeyserContactInfoNotifier,
+        },
+        geyser_plugin_service::GeyserPluginService,
     },
     solana_gossip::{
         cluster_info::{
@@ -657,6 +661,10 @@ pub struct Validator {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub blockstore: Arc<Blockstore>,
     geyser_plugin_service: Option<GeyserPluginService>,
+    /// Held for the lifetime of the validator so the dispatch thread keeps
+    /// running. `None` when no loaded plugin opted into contact info
+    /// notifications.
+    _contact_info_notifier: Option<GeyserContactInfoNotifier>,
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
     xdp_transmitter: Option<Transmitter>,
@@ -990,6 +998,17 @@ impl Validator {
         let cluster_info = Arc::new(cluster_info);
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
+
+        // Opt-in Geyser notifications for gossip contact info changes. If
+        // no loaded plugin opts in, this returns `None` and gossip's hot
+        // path performs no work for these notifications.
+        let contact_info_notifier = geyser_plugin_service.as_ref().and_then(|service| {
+            geyser_contact_info_notifier::attach(
+                service.plugin_manager_handle(),
+                cluster_info.as_ref(),
+                geyser_contact_info_notifier::DEFAULT_CHANNEL_CAPACITY,
+            )
+        });
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
@@ -1789,6 +1808,7 @@ impl Validator {
             bank_forks,
             blockstore,
             geyser_plugin_service,
+            _contact_info_notifier: contact_info_notifier,
             blockstore_metric_report_service,
             accounts_background_service,
             xdp_transmitter,

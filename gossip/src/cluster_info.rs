@@ -269,6 +269,20 @@ impl ClusterInfo {
         self.known_validators.set(pubkeys)
     }
 
+    /// Attach a channel that receives an owned `ContactInfoSnapshot` for
+    /// every contact info update accepted into the underlying CRDS table.
+    /// See [`crate::contact_info_notifier`] for the snapshot type and
+    /// channel construction. Intended to be called once at startup when
+    /// at least one Geyser plugin has opted into contact info
+    /// notifications; leaving it unset is the zero-cost default.
+    pub fn set_contact_info_sender(&self, sender: crate::contact_info_notifier::ContactInfoSender) {
+        self.gossip
+            .crds
+            .write()
+            .unwrap()
+            .set_contact_info_sender(sender);
+    }
+
     pub fn save_contact_info(&self) {
         let _st = ScopedTimer::from(&self.stats.save_contact_info_time);
         let nodes = {

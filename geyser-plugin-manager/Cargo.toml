@@ -22,6 +22,7 @@ bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 json5 = { workspace = true }
 jsonrpc-core = { workspace = true }
+lazy-lru = { workspace = true }
 libloading = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
@@ -29,6 +30,7 @@ solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
+solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }

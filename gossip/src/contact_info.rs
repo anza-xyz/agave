@@ -238,14 +238,13 @@ impl ContactInfo {
         self.shred_version
     }
 
-    #[cfg(any(test, feature = "conformance"))]
     #[inline]
-    pub(crate) fn outset(&self) -> u64 {
+    pub fn outset(&self) -> u64 {
         self.outset
     }
 
     #[inline]
-    pub(crate) fn version(&self) -> &solana_version::Version {
+    pub fn version(&self) -> &solana_version::Version {
         &self.version
     }
 
