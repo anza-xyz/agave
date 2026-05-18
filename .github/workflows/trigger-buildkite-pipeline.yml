@@ -51,6 +51,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "should_trigger=true" >> $GITHUB_OUTPUT
@@ -58,7 +59,7 @@ jobs:
           curl -sS -X DELETE \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/labels/CI" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI" \
             || echo "CI label was already removed."
 
   trigger:
