@@ -550,6 +550,8 @@ impl Bank {
                     let reward_commission = RewardCommission {
                         commission_bps: (!custom_commission_collector).then_some(0),
                         commission_lamports: 0,
+                        burned_lamports: 0,
+                        is_vote_account: true,
                     };
                     return Some(DelegationRewards {
                         stake_reward,
