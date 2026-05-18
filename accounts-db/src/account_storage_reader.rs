@@ -1,15 +1,14 @@
 use {
-    crate::{account_info::Offset, account_storage_entry::AccountStorageEntry},
+    crate::{
+        account_info::Offset, account_storage_entry::AccountStorageEntry,
+        accounts_file::OpenFileForArchive,
+    },
     agave_fs::{
         buffered_reader::{self, FileBufRead},
         io_setup::IoSetupState,
     },
     solana_clock::Slot,
-    std::{
-        fs::File,
-        io::{self, Read},
-        marker::PhantomData,
-    },
+    std::io::{self, Read},
 };
 
 // Read-ahead buffer capacity, sized as a multiple of the default io-uring
@@ -40,28 +39,46 @@ pub fn storage_file_buf_reader<'a>(
     Ok(reader)
 }
 
+/// Returns a file handle for each storage suitable for archive-style reads
+/// matching `use_direct_io` (see [`OpenFileForArchive`]).
+///
+/// Returned as a `Vec` so the handles outlive the buffered reader they'll be
+/// fed into.
+pub fn open_storage_files<'s>(
+    storages: impl IntoIterator<Item = &'s AccountStorageEntry>,
+    use_direct_io: bool,
+) -> io::Result<Vec<OpenFileForArchive<'s>>> {
+    storages
+        .into_iter()
+        .map(|storage| storage.accounts.open_file_for_archive(use_direct_io))
+        .collect()
+}
+
 /// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
-/// This type skips over the data in accounts contained in the obsolete accounts structure
-pub struct AccountStorageReader<'a, 'r, R: FileBufRead<'a>> {
+/// This type skips over the data in accounts contained in the obsolete accounts
+/// structure.
+///
+/// The caller is responsible for activating the storage's file on `file_reader`
+/// via `set_file` (typically using a file opened with [`open_storage_files`])
+/// before constructing the reader.
+pub struct AccountStorageReader<'r, R> {
     sorted_obsolete_accounts: Vec<(Offset, usize)>,
     reader: &'r mut R,
     num_alive_bytes: usize,
     num_total_bytes: usize,
-    _file: PhantomData<&'a File>,
 }
 
-impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'a, 'r, R> {
+impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
     /// Creates a new `AccountStorageReader` from an `AccountStorageEntry`.
     /// The obsolete accounts structure is sorted during initialization.
     ///
-    /// `file_reader` is a buffered reader supplied by the caller. It is reset and
-    /// associated with the storage's file.
+    /// Expects that the caller has already attached the storage's file to
+    /// `file_reader` via `set_file`.
     pub fn new(
-        storage: &'a AccountStorageEntry,
+        storage: &AccountStorageEntry,
         snapshot_slot: Option<Slot>,
         file_reader: &'r mut R,
     ) -> io::Result<Self> {
-        let internals = storage.accounts.internals_for_archive();
         let num_total_bytes = storage.accounts.len();
         let num_alive_bytes = num_total_bytes - storage.get_obsolete_bytes(snapshot_slot);
 
@@ -80,14 +97,11 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'a, 'r, R> {
         sorted_obsolete_accounts
             .sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
 
-        file_reader.set_file(internals.file, num_total_bytes as u64)?;
-
         Ok(Self {
             sorted_obsolete_accounts,
             reader: file_reader,
             num_alive_bytes,
             num_total_bytes,
-            _file: PhantomData,
         })
     }
 
@@ -100,7 +114,7 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'a, 'r, R> {
     }
 }
 
-impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'a, '_, R> {
+impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut total_read = 0;
         let buf_len = buf.len();
@@ -193,12 +207,16 @@ mod tests {
 
         storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
+        let files = open_storage_files(iter::once(&storage), false).unwrap();
         let mut buf_reader = storage_file_buf_reader(
             ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
             false,
             &IoSetupState::default(),
         )
         .unwrap();
+        buf_reader
+            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+            .unwrap();
         let reader = AccountStorageReader::new(&storage, None, &mut buf_reader).unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
     }
@@ -266,12 +284,16 @@ mod tests {
         let storage = storage.reopen_as_readonly().unwrap_or(storage);
 
         // Create the reader and check the length
+        let files = open_storage_files(iter::once(&storage), false).unwrap();
         let mut file_reader = storage_file_buf_reader(
             ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
             false,
             &IoSetupState::default(),
         )
         .unwrap();
+        file_reader
+            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+            .unwrap();
         let mut reader = AccountStorageReader::new(&storage, None, &mut file_reader).unwrap();
         let current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
         assert_eq!(reader.len(), current_len);
@@ -384,6 +406,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Now iterate through all the possible snapshot slots and verify correctness
+        let files = open_storage_files(iter::once(&storage), false).unwrap();
         let mut file_reader = storage_file_buf_reader(
             ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
             false,
@@ -391,6 +414,9 @@ mod tests {
         )
         .unwrap();
         for snapshot_slot in 0..slot_marked_dead {
+            file_reader
+                .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+                .unwrap();
             let mut reader =
                 AccountStorageReader::new(&storage, Some(snapshot_slot), &mut file_reader).unwrap();
             let current_len =
