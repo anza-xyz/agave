@@ -1115,7 +1115,9 @@ impl AtomicBankHashStats {
 
 struct NewEpochBundle {
     stake_history: CowStakeHistory,
-    vote_accounts: VoteAccounts,
+    /// Vote accounts computed from the stakes cache for the current
+    /// (distribution) epoch *before* applying any VAT filtering.
+    unfiltered_distribution_vote_accounts: VoteAccounts,
     rewards_calculation: Arc<PartitionedRewardsCalculation>,
     calculate_activated_stake_time_us: u64,
     update_rewards_with_thread_pool_time_us: u64,
@@ -1679,20 +1681,22 @@ impl Bank {
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = stakes.stake_delegations_vec();
-        let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
-            measure_us!(stakes.calculate_activated_stake(
-                self.epoch(),
-                thread_pool,
-                self.new_warmup_cooldown_rate_epoch(),
-                &stake_delegations
-            ));
+        let (
+            (stake_history, unfiltered_distribution_vote_accounts),
+            calculate_activated_stake_time_us,
+        ) = measure_us!(stakes.calculate_activated_stake(
+            self.epoch(),
+            thread_pool,
+            self.new_warmup_cooldown_rate_epoch(),
+            &stake_delegations
+        ));
 
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.
-        let distribution_epoch_vote_accounts =
-            self.maybe_filter_vote_accounts_for_vat(&vote_accounts);
+        let filtered_distribution_vote_accounts =
+            self.maybe_filter_vote_accounts_for_vat(&unfiltered_distribution_vote_accounts);
         let cached_vote_accounts =
-            self.get_cached_vote_accounts(rewarded_epoch, &distribution_epoch_vote_accounts);
+            self.get_cached_vote_accounts(rewarded_epoch, &filtered_distribution_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
@@ -1705,7 +1709,7 @@ impl Bank {
             ));
         NewEpochBundle {
             stake_history,
-            vote_accounts,
+            unfiltered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
@@ -1732,7 +1736,7 @@ impl Bank {
         let mut rewards_metrics = RewardsMetrics::default();
         let NewEpochBundle {
             stake_history,
-            vote_accounts,
+            unfiltered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
@@ -1743,8 +1747,11 @@ impl Bank {
             &mut rewards_metrics,
         );
 
-        self.stakes_cache
-            .activate_epoch(epoch, stake_history, vote_accounts);
+        self.stakes_cache.activate_epoch(
+            epoch,
+            stake_history,
+            unfiltered_distribution_vote_accounts,
+        );
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
