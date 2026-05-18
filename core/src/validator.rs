@@ -2057,7 +2057,9 @@ fn post_process_restored_tower(
 
     let restored_tower = restored_tower.and_then(|tower| {
         let root_bank = bank_forks.root_bank();
-        let slot_history = root_bank.get_slot_history();
+        let slot_history = root_bank
+            .get_slot_history()
+            .expect("slot history must exist");
         // make sure tower isn't corrupted first before the following hard fork check
         let tower = tower.adjust_lockouts_after_replay(root_bank.slot(), &slot_history);
 
