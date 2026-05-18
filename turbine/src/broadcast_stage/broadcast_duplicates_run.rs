@@ -376,7 +376,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .iter()
             .filter_map(|shred| {
                 let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
-                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
+                let addr = node.tvu(Protocol::UDP)?;
+                if !socket_addr_space.check_v4(&addr) {
                     return None;
                 }
                 if self
@@ -425,7 +426,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     );
                 }
 
-                Some(vec![(shred.payload(), node.tvu(Protocol::UDP)?)])
+                Some(vec![(shred.payload(), SocketAddr::V4(addr))])
             })
             .flatten()
             .collect();

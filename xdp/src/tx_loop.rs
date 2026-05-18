@@ -20,7 +20,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
-        net::{IpAddr, SocketAddr, SocketAddrV4},
+        net::{Ipv4Addr, SocketAddrV4},
         thread,
         time::Duration,
     },
@@ -190,7 +190,7 @@ pub struct TxLoop<U: Umem> {
 /// [`TxPacket`] represents a packet to transmit via XDP to a list of addresses with the provided
 /// `payload` and source address.
 pub trait TxPacket {
-    type Addrs: AsRef<[SocketAddr]>;
+    type Addrs: AsRef<[SocketAddrV4]>;
     type Payload: AsRef<[u8]>;
 
     /// List of destination addresses to which the packet should be sent.
@@ -204,7 +204,7 @@ pub trait TxPacket {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: TxPacket, R: Fn(&IpAddr) -> Option<NextHop>>(
+    pub fn run<T: TxPacket, R: Fn(&Ipv4Addr) -> Option<NextHop>>(
         self,
         receiver: Receiver<T>,
         drop_sender: Sender<T>,
@@ -309,15 +309,12 @@ impl<U: Umem> TxLoop<U> {
                     // at this point we're guaranteed to have a frame to write the next packet into and
                     // a slot in the ring to submit it
                     let mut frame = umem.reserve().unwrap();
-                    let IpAddr::V4(dst_ip) = addr.ip() else {
-                        panic!("IPv6 not supported");
-                    };
+                    let dst_ip = addr.ip();
 
                     let payload = item.payload().as_ref();
                     let len = payload.len();
 
-                    let dst = addr.ip();
-                    let Some(next_hop) = route_fn(&dst) else {
+                    let Some(next_hop) = route_fn(dst_ip) else {
                         log::warn!("dropping packet: no route for peer {addr}");
                         batched_packets -= 1;
                         umem.release(frame.offset());
@@ -364,7 +361,7 @@ impl<U: Umem> TxLoop<U> {
                             &src_mac,
                             &gre.mac_addr,
                             inner_src_ip,
-                            &dst_ip,
+                            dst_ip,
                             src_port,
                             addr.port(),
                             payload,
@@ -424,7 +421,7 @@ impl<U: Umem> TxLoop<U> {
                         write_ip_header_for_udp(
                             &mut packet[ETH_HEADER_SIZE..],
                             src_ip,
-                            &dst_ip,
+                            dst_ip,
                             (UDP_HEADER_SIZE + len) as u16,
                         );
 
@@ -432,7 +429,7 @@ impl<U: Umem> TxLoop<U> {
                             &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
                             src_ip,
                             src_port,
-                            &dst_ip,
+                            dst_ip,
                             addr.port(),
                             len as u16,
                             // don't do checksums

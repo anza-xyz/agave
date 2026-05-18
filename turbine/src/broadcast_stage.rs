@@ -30,7 +30,7 @@ use {
     solana_time_utils::{AtomicInterval, timestamp},
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         sync::{
             Arc, Mutex, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -488,7 +488,7 @@ pub fn broadcast_shreds(
                 let addr = cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(Protocol::UDP)
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
+                    .filter(|addr| socket_addr_space.check_v4(addr))?;
 
                 Some((shred.payload(), addr))
             })
@@ -501,6 +501,9 @@ pub fn broadcast_shreds(
     match socket {
         BroadcastSocket::Udp(s) => {
             let mut send_mmsg_time = Measure::start("send_mmsg");
+            let packets = packets
+                .iter()
+                .map(|(payload, addr)| (payload, SocketAddr::V4(*addr)));
             match batch_send(s, packets) {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {

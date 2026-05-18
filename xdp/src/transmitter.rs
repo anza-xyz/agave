@@ -14,18 +14,14 @@ use {
     aya::Ebpf,
     crossbeam_channel::TryRecvError,
     log::info,
-    std::{
-        net::{IpAddr, Ipv4Addr},
-        thread::Builder,
-        time::Duration,
-    },
+    std::{net::Ipv4Addr, thread::Builder, time::Duration},
 };
 use {
     bytes::Bytes,
     crossbeam_channel::{Sender, TrySendError},
     std::{
         error::Error,
-        net::{SocketAddr, SocketAddrV4},
+        net::SocketAddrV4,
         sync::{Arc, atomic::AtomicBool},
         thread,
     },
@@ -125,27 +121,27 @@ pub struct XdpSender {
 }
 
 pub enum XdpAddrs {
-    Single(SocketAddr),
-    Multi(Vec<SocketAddr>),
+    Single(SocketAddrV4),
+    Multi(Vec<SocketAddrV4>),
 }
 
-impl From<SocketAddr> for XdpAddrs {
+impl From<SocketAddrV4> for XdpAddrs {
     #[inline]
-    fn from(addr: SocketAddr) -> Self {
+    fn from(addr: SocketAddrV4) -> Self {
         XdpAddrs::Single(addr)
     }
 }
 
-impl From<Vec<SocketAddr>> for XdpAddrs {
+impl From<Vec<SocketAddrV4>> for XdpAddrs {
     #[inline]
-    fn from(addrs: Vec<SocketAddr>) -> Self {
+    fn from(addrs: Vec<SocketAddrV4>) -> Self {
         XdpAddrs::Multi(addrs)
     }
 }
 
-impl AsRef<[SocketAddr]> for XdpAddrs {
+impl AsRef<[SocketAddrV4]> for XdpAddrs {
     #[inline]
-    fn as_ref(&self) -> &[SocketAddr] {
+    fn as_ref(&self) -> &[SocketAddrV4] {
         match self {
             XdpAddrs::Single(addr) => std::slice::from_ref(addr),
             XdpAddrs::Multi(addrs) => addrs,
@@ -369,10 +365,7 @@ impl TransmitterBuilder {
                     .spawn(move || {
                         tx_loop.run(receiver, drop_sender, move |ip| {
                             let r = atomic_router.load();
-                            match ip {
-                                IpAddr::V4(ip) => r.route_v4(*ip).ok(),
-                                IpAddr::V6(_) => None,
-                            }
+                            r.route_v4(*ip).ok()
                         })
                     })
                     .unwrap(),
