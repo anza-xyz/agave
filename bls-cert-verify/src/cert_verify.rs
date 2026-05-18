@@ -178,6 +178,13 @@ fn verify_base3(
     match ranks {
         Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
         Decoded::Base3(ranks, fallback_ranks) => {
+            // Ensure no validator is double-counted by appearing in both bitmaps.
+            // We enforce this local invariant so we do not rely exclusively on the
+            // out-of-tree `solana-signer-store` crate to prevent double-counting stake.
+            if (ranks.clone() & &fallback_ranks).any() {
+                return Err(Error::WrongEncoding);
+            }
+
             // Must run sequentially because `rank_map` captures `total_stake` (FnMut).
             // We pass a mutable reference for the first call so we can reuse the
             // closure for the second.
