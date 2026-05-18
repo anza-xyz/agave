@@ -4173,8 +4173,14 @@ fn test_load_during_batched_flush_returns_latest() {
 
     // The reader must always see slot 1's value; we check lamports == 2 to
     // catch stale reads of slot 0 (lamports == 1).
-    let t_do_load =
-        start_load_thread(false, Ancestors::default(), db.clone(), exit.clone(), pubkey, |_| 2);
+    let t_do_load = start_load_thread(
+        false,
+        Ancestors::default(),
+        db.clone(),
+        exit.clone(),
+        pubkey,
+        |_| 2,
+    );
 
     db.flush_accounts_cache(true, None);
 
