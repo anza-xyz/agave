@@ -254,7 +254,14 @@ pub fn collect_pubkeys(
 
 /// Ensures that no validator appears in both the primary and fallback bitmaps.
 fn check_disjoint(ranks: &BitVec<u8>, fallback_ranks: &BitVec<u8>) -> Result<(), Error> {
-    if (ranks.clone() & fallback_ranks).any() {
+    // Ensure both bitmaps are exactly the same length.
+    if ranks.len() != fallback_ranks.len() {
+        return Err(Error::WrongEncoding);
+    }
+
+    // Ensure no validator appears in both bitmaps.
+    // We use `iter_ones` for an allocation-free O(popcount) check.
+    if ranks.iter_ones().any(|i| fallback_ranks[i]) {
         return Err(Error::BitmapOverlap);
     }
     Ok(())
@@ -436,6 +443,14 @@ mod test {
         assert_eq!(
             check_disjoint(&ranks, &fallback_ranks),
             Err(Error::BitmapOverlap)
+        );
+
+        // Mismatched lengths
+        let mut short_ranks = BitVec::<u8>::new();
+        short_ranks.resize(5, false);
+        assert_eq!(
+            check_disjoint(&short_ranks, &fallback_ranks),
+            Err(Error::WrongEncoding)
         );
     }
 }
