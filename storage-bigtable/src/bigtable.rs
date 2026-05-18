@@ -385,10 +385,10 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let started = Instant::now();
 
         while let Some(res) = rrr.message().await? {
-            if let Some(timeout) = self.timeout {
-                if Instant::now().duration_since(started) > timeout {
-                    return Err(Error::Timeout);
-                }
+            if let Some(timeout) = self.timeout
+                && Instant::now().duration_since(started) > timeout
+            {
+                return Err(Error::Timeout);
             }
             for (i, mut chunk) in res.chunks.into_iter().enumerate() {
                 // The comments for `read_rows_response::CellChunk` provide essential details for
@@ -723,12 +723,12 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
 
         while let Some(res) = response.message().await? {
             for entry in res.entries {
-                if let Some(status) = entry.status {
-                    if status.code != 0 {
-                        eprintln!("delete_rows error {}: {}", status.code, status.message);
-                        warn!("delete_rows error {}: {}", status.code, status.message);
-                        return Err(Error::RowDeleteFailed);
-                    }
+                if let Some(status) = entry.status
+                    && status.code != 0
+                {
+                    eprintln!("delete_rows error {}: {}", status.code, status.message);
+                    warn!("delete_rows error {}: {}", status.code, status.message);
+                    return Err(Error::RowDeleteFailed);
                 }
             }
         }
@@ -779,12 +779,12 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
 
         while let Some(res) = response.message().await? {
             for entry in res.entries {
-                if let Some(status) = entry.status {
-                    if status.code != 0 {
-                        eprintln!("put_row_data error {}: {}", status.code, status.message);
-                        warn!("put_row_data error {}: {}", status.code, status.message);
-                        return Err(Error::RowWriteFailed);
-                    }
+                if let Some(status) = entry.status
+                    && status.code != 0
+                {
+                    eprintln!("put_row_data error {}: {}", status.code, status.message);
+                    warn!("put_row_data error {}: {}", status.code, status.message);
+                    return Err(Error::RowWriteFailed);
                 }
             }
         }

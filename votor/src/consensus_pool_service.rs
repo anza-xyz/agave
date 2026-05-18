@@ -790,11 +790,10 @@ mod tests {
         // Verify skip certificate was forwarded
         let mut found_skip = false;
         while let Ok(event) = ctx.bls_receiver.try_recv() {
-            if let BLSOp::PushCertificate { certificate } = event {
-                if matches!(certificate.cert_type, CertificateType::Skip(slot) if slot == target_slot)
-                {
-                    found_skip = true;
-                }
+            if let BLSOp::PushCertificate { certificate } = event
+                && matches!(certificate.cert_type, CertificateType::Skip(slot) if slot == target_slot)
+            {
+                found_skip = true;
             }
         }
         assert!(found_skip, "Should have received the skip certificate");

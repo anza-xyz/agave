@@ -1016,11 +1016,11 @@ mod test {
             .await;
 
             // Rejection can happen at handshake or when opening streams.
-            if let Ok(connection) = post_ban {
-                if let Ok(mut stream) = connection.open_uni().await {
-                    let _ = stream.write_all(&[7u8]).await;
-                    let _ = stream.finish();
-                }
+            if let Ok(connection) = post_ban
+                && let Ok(mut stream) = connection.open_uni().await
+            {
+                let _ = stream.write_all(&[7u8]).await;
+                let _ = stream.finish();
             }
 
             // Ensure nothing from the post-ban attempt made it through.

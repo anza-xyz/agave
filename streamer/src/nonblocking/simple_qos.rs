@@ -326,22 +326,21 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
-                    if connection_table_l.total_size < self.config.max_staked_connections {
-                        if let Ok((last_update, cancel_connection, stream_counter)) = self
+                    if connection_table_l.total_size < self.config.max_staked_connections
+                        && let Ok((last_update, cancel_connection, stream_counter)) = self
                             .cache_new_connection(
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
                                 conn_context,
                             )
-                        {
-                            self.stats
-                                .connection_added_from_staked_peer
-                                .fetch_add(1, Ordering::Relaxed);
-                            conn_context.last_update = last_update;
-                            conn_context.stream_counter = Some(stream_counter);
-                            return Some(cancel_connection);
-                        }
+                    {
+                        self.stats
+                            .connection_added_from_staked_peer
+                            .fetch_add(1, Ordering::Relaxed);
+                        conn_context.last_update = last_update;
+                        conn_context.stream_counter = Some(stream_counter);
+                        return Some(cancel_connection);
                     }
                     None
                 }

@@ -1277,19 +1277,19 @@ fn show_votes_and_credits(
             entry.slots_in_epoch * u64::from(entry.max_credits_per_slot)
         )?;
     }
-    if let Some(oldest) = epoch_voting_history.iter().next() {
-        if oldest.prev_credits > 0 {
-            // Oldest entry doesn't start with 0. so history must be truncated...
+    if let Some(oldest) = epoch_voting_history.iter().next()
+        && oldest.prev_credits > 0
+    {
+        // Oldest entry doesn't start with 0. so history must be truncated...
 
-            // count of this combined pseudo credits range: (0..=oldest.prev_credits] like the above
-            // (or this is just [1..=oldest.prev_credits] for human's simpler minds)
-            let count = oldest.prev_credits;
+        // count of this combined pseudo credits range: (0..=oldest.prev_credits] like the above
+        // (or this is just [1..=oldest.prev_credits] for human's simpler minds)
+        let count = oldest.prev_credits;
 
-            writeln!(
-                f,
-                "- ... (omitting {count} past rooted votes, which have already been credited)"
-            )?;
-        }
+        writeln!(
+            f,
+            "- ... (omitting {count} past rooted votes, which have already been credited)"
+        )?;
     }
 
     Ok(())

@@ -585,10 +585,10 @@ fn responder_loop<P: SocketProvider>(
             last_print = now;
             errors = 0;
         }
-        if let Some(ref stats_reporter_sender) = stats_reporter_sender {
-            if let Some(ref mut stats) = stats {
-                stats.maybe_submit(name, stats_reporter_sender);
-            }
+        if let Some(ref stats_reporter_sender) = stats_reporter_sender
+            && let Some(ref mut stats) = stats
+        {
+            stats.maybe_submit(name, stats_reporter_sender);
         }
     }
 }

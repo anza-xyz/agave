@@ -226,10 +226,10 @@ impl Shredder {
                     shred::layout::get_index(shred)
                         .ok_or_else(|| Error::InvalidPayloadSize(shred.len()))?,
                 );
-                if let Some(prev) = prev {
-                    if prev.checked_add(1) != index {
-                        return Err(Error::from(TooFewDataShards));
-                    }
+                if let Some(prev) = prev
+                    && prev.checked_add(1) != index
+                {
+                    return Err(Error::from(TooFewDataShards));
                 }
                 data.extend_from_slice(shred::layout::get_data(shred)?);
                 let flags = shred::layout::get_flags(shred)?;

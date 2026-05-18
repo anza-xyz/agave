@@ -221,10 +221,10 @@ where
         while map.len() >= MAX_CONNECTIONS {
             let mut rng = rng();
             let n = rng.random_range(0..MAX_CONNECTIONS);
-            if let Some(index) = existing_index {
-                if n == index {
-                    continue;
-                }
+            if let Some(index) = existing_index
+                && n == index
+            {
+                continue;
             }
             map.swap_remove_index(n);
             num_evictions += 1;
