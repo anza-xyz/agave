@@ -380,10 +380,9 @@ fn update_accounts(
             Entry::Vacant(e) => {
                 if let Some(mut vote_state) =
                     VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
+                    && state.update_leader(&mut vote_state, leader_reward)
                 {
-                    if state.update_leader(&mut vote_state, leader_reward) {
-                        e.insert(vote_state);
-                    }
+                    e.insert(vote_state);
                 }
             }
         }
