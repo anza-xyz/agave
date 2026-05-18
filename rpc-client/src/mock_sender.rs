@@ -156,7 +156,36 @@ impl RpcSender for MockSender {
         let val = match method.as_str().unwrap() {
             "getAccountInfo" => serde_json::to_value(Response {
                 context: RpcResponseContext { slot: 1, api_version: None },
-                value: Value::Null,
+                value: json!({
+                    "lamports": 1_000_000,
+                    "data": {
+                        "program": "spl-token",
+                        "parsed": {
+                            "type": "account",
+                            "info": {
+                                "mint": PUBKEY,
+                                "owner": PUBKEY,
+                                "tokenAmount": {
+                                    "amount": "0",
+                                    "decimals": 9,
+                                    "uiAmount": 0.0,
+                                    "uiAmountString": "0"
+                                },
+                                "delegate": null,
+                                "state": "initialized",
+                                "isNative": false,
+                                "rentExemptReserve": null,
+                                "delegatedAmount": null,
+                                "closeAuthority": null
+                            }
+                        },
+                        "space": 165
+                    },
+                    "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    "executable": false,
+                    "rentEpoch": 0,
+                    "space": 165
+                }),
             })?,
             "getBalance" => serde_json::to_value(Response {
                 context: RpcResponseContext { slot: 1, api_version: None },
