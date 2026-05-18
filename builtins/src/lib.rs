@@ -34,7 +34,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         core_bpf_migration_config: None,
         #[cfg(feature = "dev-context-only-utils")]
         core_bpf_migration_config: Some(test_only::system_program::CONFIG),
-        name: "system_program",
+        name: "solana_system_program",
         enable_feature_id: None,
         program_id: solana_system_program::id(),
         register_fn: solana_system_program::system_processor::Entrypoint::register,
@@ -44,7 +44,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         core_bpf_migration_config: None,
         #[cfg(feature = "dev-context-only-utils")]
         core_bpf_migration_config: Some(test_only::vote_program::CONFIG),
-        name: "vote_program",
+        name: "solana_vote_program",
         enable_feature_id: None,
         program_id: solana_vote_program::id(),
         register_fn: solana_vote_program::vote_processor::Entrypoint::register,
@@ -54,7 +54,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         core_bpf_migration_config: None,
         #[cfg(feature = "dev-context-only-utils")]
         core_bpf_migration_config: Some(test_only::solana_bpf_loader_deprecated_program::CONFIG),
-        name: "solana_bpf_loader_deprecated_program",
+        name: "solana_bpf_loader_program",
         enable_feature_id: None,
         program_id: bpf_loader_deprecated::id(),
         register_fn: solana_bpf_loader_program::Entrypoint::register,

@@ -1967,7 +1967,7 @@ fn test_load_and_execute_commit_transactions_failure() {
             fee_details: FeeDetails::new(5000, 0),
             loaded_account_stats: TransactionLoadedAccountsStats {
                 loaded_accounts_count: 3,
-                loaded_accounts_data_size: 142, // size of system account (initially recipient does not exist)
+                loaded_accounts_data_size: 149, // size of system account (initially recipient does not exist)
             },
             fee_payer_post_balance: starting_balance - 5000,
         })]
@@ -2034,7 +2034,7 @@ fn test_load_and_execute_commit_transactions_success() {
             fee_details: FeeDetails::new(5000, 0),
             loaded_account_stats: TransactionLoadedAccountsStats {
                 loaded_accounts_count: 3,
-                loaded_accounts_data_size: 142, // size of system account (initially recipient does not exist)
+                loaded_accounts_data_size: 149, // size of system account (initially recipient does not exist)
             },
             fee_payer_post_balance: starting_balance - 5000 - transfer_amount,
         })]
@@ -5231,9 +5231,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "HLHFxvKMzPVeV1cPFZ7a15BZeBHjLKbBuMVWepwoY42Y"
+                    "5aBbXvZ6LXfuMEEG3KZ35U3JsJ8fhDVTsYgtDfjoNcfe"
                 } else {
-                    "FajfXWTy5KiU1NNEDi2faY8Cav1QnBKnQcwcQJADRYTG"
+                    "7oDjEoqPnjqyj1cSekUdNHrfmXhwvdxuZPy6ZqgiGvgy"
                 },
             );
         }
@@ -5243,9 +5243,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "DxyFxUsAXMtJUgB9SxgemBPg7jU8NcHoVgHMgihQ8xuB"
+                    "8xa8W2GxXP2fVXgY6EaTQFfWnL3jW9apWuu6FueGZPXs"
                 } else {
-                    "xq1FdoZAgR6xBMRG7ArTKptb1rE5VPYDhxU1UvDMt7h"
+                    "CeTjbRdS8Nt2Wb1QMuMf8rXQL3YGsUGLwsdT4Ahkvhut"
                 },
             );
         }
@@ -5254,9 +5254,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "A2zek43hceCKySHyYbNrHerdLGSBZAoj6Qf9UyBoMjTv"
+                    "748qUop2J7kyQjtYs9SDrxKRswjbeJPNT3mJqCJWmGfA"
                 } else {
-                    "BYUDXrsqms4Brvv4dNUUY8BJqpeoJuydCgN2jAn6auF1"
+                    "9Kr5dG4tSeS6gSboWMDHJ3GWs85uFXKh9yaHLHP73MJ4"
                 },
             );
             break;
