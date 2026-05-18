@@ -436,8 +436,8 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample, StableAbi),
     frozen_abi(
-        api_digest = "2wGmauKxLKD81QzmBo7CtW1tKVr9P5WgMs7RzJA9kvpd",
-        abi_digest = "BsMRWhu8GZNcZEbHMvaBJhw6emrd2nY5DwoxuHfRFjRx"
+        api_digest = "2j14Ywc3jWmohnXsEuMUQRPLf7JmxAVKvXKeKpYuzg7S",
+        abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c"
     )
 )]
 #[derive(Debug, Deserialize, Serialize)]
@@ -483,7 +483,6 @@ pub enum RepairProtocol {
         header: RepairRequestHeader,
         slot: Slot,
         shred_index: u32,
-        fec_set_merkle_root: Hash,
         block_id: Hash,
     },
 }
@@ -538,7 +537,6 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
                 header: rng.random(),
                 slot: rng.random(),
                 shred_index: rng.random(),
-                fec_set_merkle_root: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
                 block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
             },
             _ => unreachable!(),
@@ -884,7 +882,6 @@ impl ServeRepair {
                     header: RepairRequestHeader { nonce, .. },
                     slot,
                     shred_index,
-                    fec_set_merkle_root: _,
                     block_id,
                 } => {
                     stats.window_index_for_block_id += 1;
@@ -1727,13 +1724,13 @@ impl ServeRepair {
             ShredRepairType::ShredForBlockId {
                 slot,
                 index,
-                fec_set_merkle_root,
+                // Used locally in `verify_response`; not transmitted on the wire.
+                fec_set_merkle_root: _,
                 block_id,
             } => RepairProtocol::WindowIndexForBlockId {
                 header,
                 slot: *slot,
                 shred_index: *index,
-                fec_set_merkle_root: *fec_set_merkle_root,
                 block_id: *block_id,
             },
         };

@@ -20,7 +20,6 @@ name = "solana_storage_proto"
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 bs58 = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
@@ -35,6 +34,7 @@ solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["serde", "wincode"] }
 solana-transaction-error = { workspace = true, features = ["wincode"] }
 solana-transaction-status = { workspace = true }
+thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [build-dependencies]

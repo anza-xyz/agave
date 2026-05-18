@@ -707,9 +707,18 @@ pub mod test {
         let exit_sender = Arc::new(AtomicBool::new(false));
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().root_bank();
+        let root_bank = Bank::new_for_tests(&genesis_config);
+        root_bank.set_tick_height(root_bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&root_bank);
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let child_bank =
+            Bank::new_from_parent(root_bank.clone(), *root_bank.leader(), root_bank.slot() + 1);
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(child_bank)
+            .clone_without_scheduler();
 
         // Create votor event channel for test
         let (votor_event_sender, _votor_event_receiver) = bounded(100);
@@ -753,17 +762,22 @@ pub mod test {
         let start_tick_height;
         let max_tick_height;
         let ticks_per_slot;
+        let num_expected_entries;
         let slot;
         {
             let bank = broadcast_service.bank;
             start_tick_height = bank.tick_height();
             max_tick_height = bank.max_tick_height();
             ticks_per_slot = bank.ticks_per_slot();
+            num_expected_entries = (max_tick_height - start_tick_height) as usize;
             slot = bank.slot();
             let ticks = create_ticks(max_tick_height - start_tick_height, 0, Hash::default());
             for (i, tick) in ticks.into_iter().enumerate() {
                 entry_sender
-                    .send((bank.clone(), (EntryOrMarker::Entry(tick), i as u64 + 1)))
+                    .send((
+                        bank.clone(),
+                        (EntryOrMarker::Entry(tick), start_tick_height + i as u64 + 1),
+                    ))
                     .expect("Expect successful send to broadcast service");
             }
         }
@@ -779,12 +793,11 @@ pub mod test {
                 .blockstore
                 .get_slot_entries(slot, 0)
                 .expect("Expect entries to be present");
-            if entries.len() >= max_tick_height as usize {
+            if entries.len() >= num_expected_entries {
                 break;
             }
             sleep(Duration::from_millis(1000));
         }
-        assert_eq!(entries.len(), max_tick_height as usize);
 
         drop(entry_sender);
         drop(retransmit_slots_sender);
@@ -792,5 +805,6 @@ pub mod test {
             .broadcast_service
             .join()
             .expect("Expect successful join of broadcast service");
+        assert_eq!(entries.len(), num_expected_entries);
     }
 }

@@ -173,6 +173,9 @@ tokio-util = { workspace = true }
 trees = { workspace = true }
 wincode = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemalloc-ctl = { workspace = true }
+
 [target."cfg(unix)".dependencies]
 sysctl = { workspace = true }
 

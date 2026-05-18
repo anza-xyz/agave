@@ -48,8 +48,7 @@ use {
     solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
-        mem::{align_of, size_of},
-        slice::from_raw_parts_mut,
+        mem::{MaybeUninit, align_of, size_of},
         str::{Utf8Error, from_utf8},
     },
     thiserror::Error as ThisError,
@@ -583,7 +582,12 @@ fn translate_slice<T>(
         T,
         check_aligned,
     )
-    .map(|value| &*value)
+    .map(|value| unsafe {
+        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+        // This is producing a shared/read-only slice to the memory, so the uniqueness invariants
+        // aren't relevant.
+        &*value
+    })
 }
 
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
@@ -627,6 +631,12 @@ fn translate_slice_mut<T>(
         T,
         check_aligned,
     )
+    .map(|p| unsafe {
+        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+        // `translate_mut`, which is the only use of this function ensures that the ranges are
+        // non-overlapping.
+        &mut *p
+    })
 }
 
 fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result<(), Error> {
@@ -682,7 +692,7 @@ macro_rules! translate_mut {
             $vm_addr_and_element_count.1,
             $check_aligned,
         )?;
-        let host_addr = slice.as_ptr() as usize;
+        let host_addr = slice.as_ptr().addr();
         (slice, host_addr, std::mem::size_of::<$T>().saturating_mul($vm_addr_and_element_count.1 as usize))
     }};
     (internal, $memory_mapping:expr, $check_aligned:expr, &mut $T:ty, $vm_addr:expr) => {{
@@ -694,12 +704,12 @@ macro_rules! translate_mut {
         let host_addr = reference as *const _ as usize;
         (reference, host_addr, std::mem::size_of::<$T>())
     }};
-    ($memory_mapping:expr, $check_aligned:expr, $(let $binding:ident : &mut $T:tt = map($vm_addr:expr $(, $element_count:expr)?) $try:tt;)+) => {
+    ($memory_mapping:expr, $check_aligned:expr, $(let $binding:ident : (&mut $($T:tt)+) = map($vm_addr:expr $(, $element_count:expr)?) $try:tt;)+) => {
         // This ensures that all the parameters are collected first so that if they depend on previous translations
         $(let $binding = ($vm_addr $(, $element_count)?);)+
         // they are not invalidated by the following translations here:
-        $(translate_mut!(internal, $memory_mapping, &mut $T, $binding);)+
-        $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $T, $binding);)+
+        $(translate_mut!(internal, $memory_mapping, &mut $($T)+, $binding);)+
+        $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $($T)+, $binding);)+
         let host_ranges = [
             $(($binding.1, $binding.2),)+
         ];
@@ -851,9 +861,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let address: &mut [u8] = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
+            let address: (&mut [MaybeUninit<u8>]) = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
         );
-        address.copy_from_slice(new_address.as_ref());
+        address.write_copy_of_slice(new_address.as_ref());
         Ok(0)
     }
 );
@@ -896,11 +906,11 @@ declare_builtin_function!(
                     translate_mut!(
                         memory_mapping,
                         check_aligned,
-                        let bump_seed_ref: &mut u8 = map(bump_seed_addr)?;
-                        let address: &mut [u8] = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
+                        let bump_seed_ref: (&mut MaybeUninit<u8>) = map(bump_seed_addr)?;
+                        let address: (&mut [MaybeUninit<u8>]) = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
                     );
-                    *bump_seed_ref = bump_seed[0];
-                    address.copy_from_slice(new_address.as_ref());
+                    bump_seed_ref.write(bump_seed[0]);
+                    address.write_copy_of_slice(new_address.as_ref());
                     return Ok(0);
                 }
             }
@@ -930,7 +940,7 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let secp256k1_recover_result: &mut [u8] = map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
+            let secp256k1_recover_result: (&mut [MaybeUninit<u8>]) = map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
         );
         let hash = translate_slice::<u8>(
             memory_mapping,
@@ -965,7 +975,7 @@ declare_builtin_function!(
             }
         };
 
-        secp256k1_recover_result.copy_from_slice(&public_key[1..65]);
+        secp256k1_recover_result.write_copy_of_slice(&public_key[1..65]);
         Ok(SUCCESS)
     }
 );
@@ -1157,9 +1167,9 @@ declare_builtin_function!(
                     translate_mut!(
                         memory_mapping,
                         check_aligned,
-                        let result_ref_mut: &mut PodBLSG1Point = map(result_addr)?;
+                        let result_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_addr)?;
                     );
-                    *result_ref_mut = affine_point;
+                    result_ref_mut.write(affine_point);
                     Ok(SUCCESS)
                 } else {
                     Ok(1)
@@ -1192,9 +1202,9 @@ declare_builtin_function!(
                     translate_mut!(
                         memory_mapping,
                         check_aligned,
-                        let result_ref_mut: &mut PodBLSG2Point = map(result_addr)?;
+                        let result_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_addr)?;
                     );
-                    *result_ref_mut = affine_point;
+                    result_ref_mut.write(affine_point);
                     Ok(SUCCESS)
                 } else {
                     Ok(1)
@@ -1267,9 +1277,9 @@ declare_builtin_function!(
                         translate_mut!(
                             memory_mapping,
                             check_aligned,
-                            let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                            let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                         );
-                        *result_point_ref_mut = result_point;
+                        result_point_ref_mut.write(result_point);
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1297,9 +1307,9 @@ declare_builtin_function!(
                         translate_mut!(
                             memory_mapping,
                             check_aligned,
-                            let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                            let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                         );
-                        *result_point_ref_mut = result_point;
+                        result_point_ref_mut.write(result_point);
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1327,9 +1337,9 @@ declare_builtin_function!(
                         translate_mut!(
                             memory_mapping,
                             check_aligned,
-                            let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                            let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                         );
-                        *result_point_ref_mut = result_point;
+                        result_point_ref_mut.write(result_point);
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1367,9 +1377,9 @@ declare_builtin_function!(
                         translate_mut!(
                             memory_mapping,
                             check_aligned,
-                            let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                            let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                         );
-                        *result_point_ref_mut = result_point;
+                        result_point_ref_mut.write(result_point);
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1399,9 +1409,9 @@ declare_builtin_function!(
                         translate_mut!(
                             memory_mapping,
                             check_aligned,
-                            let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                            let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                         );
-                        *result_point_ref_mut = result_point;
+                        result_point_ref_mut.write(result_point);
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1429,9 +1439,9 @@ declare_builtin_function!(
                         translate_mut!(
                             memory_mapping,
                             check_aligned,
-                            let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                            let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                         );
-                        *result_point_ref_mut = result_point;
+                        result_point_ref_mut.write(result_point);
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1481,9 +1491,9 @@ declare_builtin_function!(
                             translate_mut!(
                                 memory_mapping,
                                 check_aligned,
-                                let result_point_ref_mut: &mut PodBLSG1Point = map(result_point_addr)?;
+                                let result_point_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_point_addr)?;
                             );
-                            *result_point_ref_mut = result_point;
+                            result_point_ref_mut.write(result_point);
                             Ok(SUCCESS)
                         } else {
                             Ok(1)
@@ -1518,9 +1528,9 @@ declare_builtin_function!(
                             translate_mut!(
                                 memory_mapping,
                                 check_aligned,
-                                let result_point_ref_mut: &mut PodBLSG1Point = map(result_point_addr)?;
+                                let result_point_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_point_addr)?;
                             );
-                            *result_point_ref_mut = result_point;
+                            result_point_ref_mut.write(result_point);
                             Ok(SUCCESS)
                         } else {
                             Ok(1)
@@ -1555,9 +1565,9 @@ declare_builtin_function!(
                             translate_mut!(
                                 memory_mapping,
                                 check_aligned,
-                                let result_point_ref_mut: &mut PodBLSG1Point = map(result_point_addr)?;
+                                let result_point_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_point_addr)?;
                             );
-                            *result_point_ref_mut = result_point;
+                            result_point_ref_mut.write(result_point);
                             Ok(SUCCESS)
                         } else {
                             Ok(1)
@@ -1603,9 +1613,9 @@ declare_builtin_function!(
                             translate_mut!(
                                 memory_mapping,
                                 check_aligned,
-                                let result_point_ref_mut: &mut PodBLSG2Point = map(result_point_addr)?;
+                                let result_point_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_point_addr)?;
                             );
-                            *result_point_ref_mut = result_point;
+                            result_point_ref_mut.write(result_point);
                             Ok(SUCCESS)
                         } else {
                             Ok(1)
@@ -1640,9 +1650,9 @@ declare_builtin_function!(
                             translate_mut!(
                                 memory_mapping,
                                 check_aligned,
-                                let result_point_ref_mut: &mut PodBLSG2Point = map(result_point_addr)?;
+                                let result_point_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_point_addr)?;
                             );
-                            *result_point_ref_mut = result_point;
+                            result_point_ref_mut.write(result_point);
                             Ok(SUCCESS)
                         } else {
                             Ok(1)
@@ -1677,9 +1687,9 @@ declare_builtin_function!(
                             translate_mut!(
                                 memory_mapping,
                                 check_aligned,
-                                let result_point_ref_mut: &mut PodBLSG2Point = map(result_point_addr)?;
+                                let result_point_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_point_addr)?;
                             );
-                            *result_point_ref_mut = result_point;
+                            result_point_ref_mut.write(result_point);
                             Ok(SUCCESS)
                         } else {
                             Ok(1)
@@ -1758,9 +1768,9 @@ declare_builtin_function!(
                     translate_mut!(
                         memory_mapping,
                         check_aligned,
-                        let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                        let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                     );
-                    *result_point_ref_mut = result_point;
+                    result_point_ref_mut.write(result_point);
                     Ok(0)
                 } else {
                     Ok(1)
@@ -1800,9 +1810,9 @@ declare_builtin_function!(
                     translate_mut!(
                         memory_mapping,
                         check_aligned,
-                        let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                        let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                     );
-                    *result_point_ref_mut = result_point;
+                    result_point_ref_mut.write(result_point);
                     Ok(0)
                 } else {
                     Ok(1)
@@ -1885,9 +1895,9 @@ declare_builtin_function!(
                     translate_mut!(
                         memory_mapping,
                         check_aligned,
-                        let result_ref_mut: &mut PodBLSGtElement = map(result_addr)?;
+                        let result_ref_mut: (&mut MaybeUninit<PodBLSGtElement>) = map(result_addr)?;
                     );
-                    *result_ref_mut = gt_element;
+                    result_ref_mut.write(gt_element);
                     Ok(SUCCESS)
                 } else {
                     Ok(1)
@@ -1977,19 +1987,18 @@ declare_builtin_function!(
             translate_mut!(
                 memory_mapping,
                 check_aligned,
-                let return_data_result: &mut [u8] = map(return_data_addr, length)?;
-                let program_id_result: &mut Pubkey = map(program_id_addr)?;
+                let to_slice: (&mut [MaybeUninit<u8>]) = map(return_data_addr, length)?;
+                let program_id_result: (&mut MaybeUninit<Pubkey>) = map(program_id_addr)?;
             );
 
-            let to_slice = return_data_result;
             let from_slice = return_data
                 .get(..length as usize)
                 .ok_or(SyscallError::InvokeContextBorrowFailed)?;
             if to_slice.len() != from_slice.len() {
                 return Err(SyscallError::InvalidLength.into());
             }
-            to_slice.copy_from_slice(from_slice);
-            *program_id_result = *program_id;
+            to_slice.write_copy_of_slice(from_slice);
+            program_id_result.write(*program_id);
         }
 
         // Return the actual length, rather the length returned
@@ -2054,7 +2063,7 @@ declare_builtin_function!(
             translate_mut!(
                 memory_mapping,
                 check_aligned,
-                let result_header: &mut ProcessedSiblingInstruction = map(meta_addr)?;
+                let result_header: (&mut ProcessedSiblingInstruction) = map(meta_addr)?;
             );
 
             if result_header.data_len == (instruction_context.get_instruction_data().len() as u64)
@@ -2064,17 +2073,16 @@ declare_builtin_function!(
                 translate_mut!(
                     memory_mapping,
                     check_aligned,
-                    let program_id: &mut Pubkey = map(program_id_addr)?;
-                    let data: &mut [u8] = map(data_addr, result_header.data_len)?;
-                    let accounts: &mut [AccountMeta] = map(accounts_addr, result_header.accounts_len)?;
-                    let result_header: &mut ProcessedSiblingInstruction = map(meta_addr)?;
+                    let program_id: (&mut MaybeUninit<Pubkey>) = map(program_id_addr)?;
+                    let data: (&mut [MaybeUninit<u8>]) = map(data_addr, result_header.data_len)?;
+                    let accounts: (&mut [MaybeUninit<AccountMeta>]) = map(accounts_addr, result_header.accounts_len)?;
+                    let result_header: (&mut ProcessedSiblingInstruction) = map(meta_addr)?;
                 );
                 // Marks result_header used. It had to be in translate_mut!() for the overlap checks.
                 let _ = result_header;
 
-                *program_id = *instruction_context
-                    .get_program_key()?;
-                data.clone_from_slice(instruction_context.get_instruction_data());
+                program_id.write(*instruction_context.get_program_key()?);
+                data.write_copy_of_slice(instruction_context.get_instruction_data());
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
                         Ok(AccountMeta {
@@ -2086,7 +2094,7 @@ declare_builtin_function!(
                         })
                     })
                     .collect::<Result<Vec<_>, InstructionError>>()?;
-                accounts.clone_from_slice(account_metas.as_slice());
+                accounts.write_clone_of_slice(account_metas.as_slice());
             } else {
                 result_header.data_len = instruction_context.get_instruction_data().len() as u64;
                 result_header.accounts_len =
@@ -2211,7 +2219,7 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let call_result: &mut [u8] = map(result_addr, output as u64)?;
+            let call_result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
         );
         let input = translate_slice::<u8>(
             memory_mapping,
@@ -2274,7 +2282,7 @@ declare_builtin_function!(
 
         match result_point {
             Ok(point) => {
-                call_result.copy_from_slice(&point);
+                call_result.write_copy_of_slice(&point);
                 Ok(SUCCESS)
             }
             Err(_) => {
@@ -2352,9 +2360,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let return_value_ref_mut: &mut [u8] = map(return_value, modulus_len)?;
+            let return_value_ref_mut: (&mut [MaybeUninit<u8>]) = map(return_value, modulus_len)?;
         );
-        return_value_ref_mut.copy_from_slice(value.as_slice());
+        return_value_ref_mut.write_copy_of_slice(value.as_slice());
 
         Ok(0)
     }
@@ -2401,7 +2409,7 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let hash_result: &mut [u8] = map(result_addr, poseidon::HASH_BYTES as u64)?;
+            let hash_result: (&mut [MaybeUninit<u8>]) = map(result_addr, poseidon::HASH_BYTES as u64)?;
         );
         let inputs =
             translate_slice::<VmSlice<u8>>(memory_mapping, vals_addr, vals_len, check_aligned)?;
@@ -2418,7 +2426,7 @@ declare_builtin_function!(
         let Ok(hash) = result else {
             return Ok(1);
         };
-        hash_result.copy_from_slice(&hash.to_bytes());
+        hash_result.write_copy_of_slice(&hash.to_bytes());
 
         Ok(SUCCESS)
     }
@@ -2511,7 +2519,7 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let call_result: &mut [u8] = map(result_addr, output as u64)?;
+            let call_result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
         );
         let input = translate_slice::<u8>(
             memory_mapping,
@@ -2525,49 +2533,49 @@ declare_builtin_function!(
                 let Ok(result_point) = alt_bn128_g1_compress_be(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G1_COMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g1_compress_le(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G1_DECOMPRESS_BE => {
                 let Ok(result_point) = alt_bn128_g1_decompress_be(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G1_DECOMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g1_decompress_le(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_COMPRESS_BE => {
                 let Ok(result_point) = alt_bn128_g2_compress_be(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_COMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g2_compress_le(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_DECOMPRESS_BE => {
                 let Ok(result_point) = alt_bn128_g2_decompress_be(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_DECOMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g2_decompress_le(input) else {
                     return Ok(1);
                 };
-                call_result.copy_from_slice(&result_point);
+                call_result.write_copy_of_slice(&result_point);
             }
             _ => return Err(SyscallError::InvalidAttribute.into()),
         }
@@ -2610,7 +2618,7 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let hash_result: &mut [u8] = map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
+            let hash_result: (&mut [MaybeUninit<u8>]) = map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
         );
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
@@ -2634,7 +2642,7 @@ declare_builtin_function!(
                 hasher.hash(bytes);
             }
         }
-        hash_result.copy_from_slice(hasher.result().as_ref());
+        hash_result.write_copy_of_slice(hasher.result().as_ref());
         Ok(0)
     }
 );

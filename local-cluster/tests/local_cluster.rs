@@ -354,14 +354,14 @@ fn test_restart_node() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster.exit_restart_node(&nodes[0], validator_config, SocketAddrSpace::Unspecified);
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(
@@ -5007,7 +5007,7 @@ fn test_boot_from_local_state() {
             std::thread::yield_now();
         }
         let other_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
-            &other_validator_config.full_snapshot_archives_dir,
+            other_validator_config.full_snapshot_archives_dir.path(),
         )
         .collect::<Vec<_>>();
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
@@ -5034,7 +5034,9 @@ fn test_boot_from_local_state() {
 
         let other_incremental_snapshot_archives =
             snapshot_paths::incremental_snapshot_archives_iter(
-                &other_validator_config.incremental_snapshot_archives_dir,
+                other_validator_config
+                    .incremental_snapshot_archives_dir
+                    .path(),
             )
             .collect::<Vec<_>>();
         debug!(
@@ -5937,7 +5939,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     info!("Restarting node");
@@ -5945,7 +5947,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(

@@ -238,7 +238,7 @@ impl ContactInfo {
         self.shred_version
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     #[inline]
     pub(crate) fn outset(&self) -> u64 {
         self.outset
@@ -249,12 +249,12 @@ impl ContactInfo {
         &self.version
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn addrs(&self) -> &[IpAddr] {
         &self.addrs
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn sockets(&self) -> &[SocketEntry] {
         &self.sockets
     }

@@ -10,6 +10,7 @@ pub mod accounts_background_service;
 pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
+pub mod bank_forks_controller;
 pub mod bank_utils;
 pub mod block_component_processor;
 pub mod commitment;

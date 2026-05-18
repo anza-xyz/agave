@@ -289,7 +289,6 @@ fn sample_storage_with_entries_id_fill_percentage(
     mark_alive: bool,
     account_data_size: Option<u64>,
     fill_percentage: u64,
-    storage_access: StorageAccess,
 ) -> Arc<AccountStorageEntry> {
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
     let file_size = account_data_size.unwrap_or(123) * 100 / fill_percentage;
@@ -300,13 +299,11 @@ fn sample_storage_with_entries_id_fill_percentage(
         id,
         size_aligned as u64,
         AccountsFileProvider::AppendVec,
-        storage_access,
     );
     let av = AccountsFile::AppendVec(AppendVec::new(
         &tf.path,
         true,
         (1024 * 1024).max(size_aligned),
-        storage_access,
     ));
     data.accounts = av;
 
@@ -322,7 +319,6 @@ fn sample_storage_with_entries_id(
     id: AccountsFileId,
     mark_alive: bool,
     account_data_size: Option<u64>,
-    storage_access: StorageAccess,
 ) -> Arc<AccountStorageEntry> {
     sample_storage_with_entries_id_fill_percentage(
         tf,
@@ -332,7 +328,6 @@ fn sample_storage_with_entries_id(
         mark_alive,
         account_data_size,
         100,
-        storage_access,
     )
 }
 
@@ -865,29 +860,10 @@ fn test_clean_zero_lamport_and_dead_slot() {
     accounts.store_for_tests((0, [(&pubkey1, &account)].as_slice()));
     accounts.store_for_tests((0, [(&pubkey2, &account)].as_slice()));
 
-    // Make sure both accounts are in the same AppendVec in slot 0, which
-    // will prevent pubkey1 from being cleaned up later even when it's a
-    // zero-lamport account
-    let ancestors = Ancestors::from(vec![0]);
-    let (slot1, account_info1) = accounts
-        .accounts_index
-        .get_with_and_then(&pubkey1, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
-        })
-        .unwrap();
-    let (slot2, account_info2) = accounts
-        .accounts_index
-        .get_with_and_then(&pubkey2, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
-        })
-        .unwrap();
-    assert_eq!(slot1, 0);
-    assert_eq!(slot1, slot2);
-    assert_eq!(account_info1.storage_location(), StorageLocation::Cached);
-    assert_eq!(
-        account_info1.storage_location(),
-        account_info2.storage_location()
-    );
+    // Make sure both accounts are in the same slot 0, which will prevent pubkey1
+    // from being cleaned up later even when it's a zero-lamport account
+    assert!(accounts.accounts_cache.load(0, &pubkey1).is_some());
+    assert!(accounts.accounts_cache.load(0, &pubkey2).is_some());
 
     // Update account 1 in slot 1
     accounts.store_for_tests((1, [(&pubkey1, &account)].as_slice()));
@@ -1136,13 +1112,11 @@ fn test_shrink_zero_lamport_single_ref_account() {
             [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
         ));
 
-        accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
-            let entry = entry.unwrap();
-            let slot_list = entry.slot_list_read_lock();
-            let (_, account_info) = slot_list.iter().max_by_key(|(s, _)| *s).cloned().unwrap();
-            assert!(account_info.is_zero_lamport());
-            (false, false)
-        });
+        // Verify the zero-lamport store landed.
+        let account = accounts
+            .get_account_at_slot(&pubkey_zero, slot)
+            .expect("pubkey_zero should be loadable");
+        assert_eq!(account.lamports(), 0);
 
         // Simulate rooting the zero-lamport account, should be a
         // candidate for cleaning
@@ -2221,9 +2195,8 @@ fn test_select_candidates_by_total_usage_no_candidates() {
     assert_eq!(0, next_candidates.len());
 }
 
-#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-#[test_case(StorageAccess::File)]
-fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: StorageAccess) {
+#[test]
+fn test_select_candidates_by_total_usage_3_way_split_condition() {
     // three candidates, one selected for shrink, one is put back to the candidate list and one is ignored
     agave_logger::setup();
     let mut candidates = ShrinkCandidates::default();
@@ -2239,7 +2212,6 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         store1_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
@@ -2252,7 +2224,6 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         store2_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
@@ -2267,7 +2238,6 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         store3_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
@@ -2288,9 +2258,8 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     assert!(next_candidates.contains(&store2_slot));
 }
 
-#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-#[test_case(StorageAccess::File)]
-fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: StorageAccess) {
+#[test]
+fn test_select_candidates_by_total_usage_2_way_split_condition() {
     // three candidates, 2 are selected for shrink, one is ignored
     agave_logger::setup();
     let db = AccountsDb::new_single_for_tests();
@@ -2306,7 +2275,6 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         store1_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
@@ -2319,7 +2287,6 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         store2_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
@@ -2334,7 +2301,6 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         store3_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
@@ -2352,9 +2318,8 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     assert_eq!(0, next_candidates.len());
 }
 
-#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-#[test_case(StorageAccess::File)]
-fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess) {
+#[test]
+fn test_select_candidates_by_total_usage_all_clean() {
     // 2 candidates, they must be selected to achieve the target alive ratio
     agave_logger::setup();
     let db = AccountsDb::new_single_for_tests();
@@ -2370,7 +2335,6 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
         store1_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store1));
     store1
@@ -2385,7 +2349,6 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
         store2_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
@@ -3497,8 +3460,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
     for key in &keys {
         assert!(
             accounts_db
-                .accounts_index
-                .get_with_and_then(key, &ancestors, false, |_| {})
+                .load_without_fixed_root(&ancestors, key)
                 .is_some()
         );
     }
@@ -3514,12 +3476,11 @@ fn test_accounts_db_cache_clean_dead_slots() {
         alive_slot,
     );
 
-    // Dead slots have been purged from the accounts index, so these keys should not be found.
+    // Dead slots have been purged, so these keys should not be findable in the database.
     for key in &keys {
         assert!(
             accounts_db
-                .accounts_index
-                .get_with_and_then(key, &ancestors, false, |_| {})
+                .load_without_fixed_root(&ancestors, key)
                 .is_none()
         );
     }
@@ -4271,9 +4232,8 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     assert!(candidates_contain(&pubkey3));
 }
 
-#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-#[test_case(StorageAccess::File)]
-fn test_shrink_productive(storage_access: StorageAccess) {
+#[test]
+fn test_shrink_productive() {
     agave_logger::setup();
     let path = Path::new("");
     let file_size = 100;
@@ -4285,7 +4245,6 @@ fn test_shrink_productive(storage_access: StorageAccess) {
         slot as AccountsFileId,
         file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     store.add_account(file_size as usize);
     assert!(!AccountsDb::is_shrinking_productive(&store));
@@ -4296,7 +4255,6 @@ fn test_shrink_productive(storage_access: StorageAccess) {
         slot as AccountsFileId,
         file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     store.add_account(file_size as usize / 2);
     store.add_account(file_size as usize / 4);
@@ -4307,9 +4265,8 @@ fn test_shrink_productive(storage_access: StorageAccess) {
     assert!(!AccountsDb::is_shrinking_productive(&store));
 }
 
-#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-#[test_case(StorageAccess::File)]
-fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
+#[test]
+fn test_is_candidate_for_shrink() {
     agave_logger::setup();
 
     let mut accounts = AccountsDb::new_single_for_tests();
@@ -4321,7 +4278,6 @@ fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
         1,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
@@ -5720,7 +5676,6 @@ pub(crate) fn create_storages_and_update_index(
             id,
             alive,
             account_data_size,
-            db.storage_access(),
         );
         insert_store(db, Arc::clone(&storage));
     }
@@ -5807,10 +5762,9 @@ fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
     db.storage.insert(append_vec);
 }
 
-#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-#[test_case(StorageAccess::File)]
+#[test]
 #[should_panic(expected = "self.storage.remove")]
-fn test_handle_dropped_roots_for_ancient_assert(storage_access: StorageAccess) {
+fn test_handle_dropped_roots_for_ancient_assert() {
     agave_logger::setup();
     let common_store_path = Path::new("");
     let store_file_size = 10_000;
@@ -5820,7 +5774,6 @@ fn test_handle_dropped_roots_for_ancient_assert(storage_access: StorageAccess) {
         1,
         store_file_size,
         AccountsFileProvider::AppendVec,
-        storage_access,
     ));
     let db = AccountsDb::new_single_for_tests();
     let slot0 = 0;

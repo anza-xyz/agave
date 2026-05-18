@@ -597,7 +597,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 // is expensive when the dirty entries are not being written through
                 // This is a rare case; background eviction clears the excess over time.
                 if self.should_write_through
-                    && self.storage.is_bin_at_threshold(map.len())
+                    && self.storage.should_evict_based_on_count(map.len())
                     && !map.contains_key(pubkey)
                 {
                     let evict_key = map.iter().find(|(_, v)| !v.dirty()).map(|(k, _)| *k);
@@ -1285,6 +1285,50 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         std::mem::take(&mut duplicates.duplicates_from_in_memory_only)
     }
 
+    /// Decide whether this bin needs flushing/eviction. Returns true if the caller should proceed.
+    ///
+    /// Fires on either of two conditions:
+    /// - Free-entry headroom is below the configured overhead. Tombstones left by prior evictions
+    ///   reduce capacity without being included in len, so a rehash can be imminent before the
+    ///   count crosses the high-water mark. This is the primary trigger in steady state.
+    /// - Entry count exceeds the high-water mark. This is a backstop for the case where the
+    ///   hashmap has already doubled in size, leaving plenty of headroom so the first condition
+    ///   would not fire on its own.
+    ///
+    /// Returns false for bins still in initial growth (capacity below `high_water_mark`).
+    fn check_flush_trigger(&self) -> bool {
+        let (entries_in_bin, capacity) = {
+            let map = self.map_internal.read().unwrap();
+            (map.len(), map.capacity())
+        };
+
+        // Skip during initial growth: below HWM, low free entries reflect a not-yet-grown
+        // table, not tombstones. If tombstones do force a doubling before len crosses HWM,
+        // the count check catches it later once len grows past HWM.
+        if let Some(thresholds) = &self.storage.threshold_entries_per_bin {
+            if capacity < thresholds.high_water_mark {
+                return false;
+            }
+        }
+
+        let high_count_triggered = self.storage.should_evict_based_on_count(entries_in_bin);
+        let low_free_entries_triggered = self
+            .storage
+            .should_evict_based_on_free_entries(capacity.saturating_sub(entries_in_bin));
+        if !high_count_triggered && !low_free_entries_triggered {
+            return false;
+        }
+        if low_free_entries_triggered {
+            // Primary case: low free-entry headroom (typically from tombstones).
+            Self::update_stat(&self.stats().evict_triggered_by_low_free_entries, 1);
+        } else {
+            // Backstop: bin is past the high-water mark while free-entry headroom
+            // still has slack — typically because the hashmap doubled in size.
+            Self::update_stat(&self.stats().evict_triggered_by_high_count, 1);
+        }
+        true
+    }
+
     /// synchronize the in-mem index with the disk index
     fn flush_internal(&self, flush_guard: &FlushGuard, can_advance_age: bool) {
         let current_age = self.storage.current_age();
@@ -1317,9 +1361,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // from this point forward, we know iterate_for_age == true
         debug_assert!(iterate_for_age);
 
-        let entries_in_bin = self.map_internal.read().unwrap().len();
-        if !self.storage.is_bin_at_threshold(entries_in_bin) {
-            // Entry count is below threshold, no need to flush or evict
+        if !self.check_flush_trigger() {
             // Still mark as aged to avoid infinite scanning
             assert_eq!(current_age, self.storage.current_age());
             self.set_has_aged(current_age, can_advance_age);
@@ -1408,6 +1450,42 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
+    /// Rebuild the bin's HashMap into a fresh allocation to clear tombstones left
+    /// behind by evictions. hashbrown counts tombstones against `capacity`, so
+    /// without this the bin's effective capacity drifts down over time and triggers
+    /// the hashmap to double in capacity.
+    ///
+    /// Only called in Threshold mode, where `capacity >= target_entries` is guaranteed
+    /// by the time eviction runs (`check_flush_trigger` gates on `high_water_mark`).
+    fn reallocate_to_clear_tombstones(&self) {
+        let stats = self.stats();
+        let m = Measure::start("reallocate_hashmap");
+
+        let target_entries = self
+            .storage
+            .threshold_entries_per_bin
+            .as_ref()
+            .expect("reallocate_to_clear_tombstones only runs in Threshold mode")
+            .target_entries;
+
+        let mut map = self.map_internal.write().unwrap();
+        let capacity_pre = map.capacity();
+
+        // Drain the old map into a fresh allocation sized to `target_entries` so the
+        // backing storage stays stable across eviction cycles. Building a brand-new
+        // map (rather than `shrink_to_fit`) guarantees a full rehash, which is what
+        // actually clears the tombstones.
+        let mut new_map = HashMap::with_capacity_and_hasher(target_entries, map.hasher().clone());
+        new_map.extend(map.drain());
+        *map = new_map;
+        let capacity_post = map.capacity();
+        drop(map);
+
+        stats.update_in_mem_capacity(capacity_pre, capacity_post);
+        Self::update_stat(&stats.num_hashmap_reallocates, 1);
+        Self::update_time_stat(&stats.hashmap_reallocate_us, m);
+    }
+
     // evict keys in 'evictions' from in-mem cache, likely due to age
     fn evict_from_cache(&self, evictions: &[Pubkey], current_age: Age, ages_flushing_now: Age) {
         if evictions.is_empty() {
@@ -1443,6 +1521,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             drop(map);
             stats.update_in_mem_capacity(capacity_pre, capacity_post);
         }
+
+        // Only Threshold mode cares about tombstone-driven capacity doublings; Minimal
+        // evicts everything each pass, so rebuilding every flush is wasted work.
+        if evicted > 0 && self.storage.threshold_entries_per_bin.is_some() {
+            self.reallocate_to_clear_tombstones();
+        }
+
         stats.sub_mem_count(evicted);
         Self::update_stat(
             &stats.flush_entries_evicted_from_mem_background,
@@ -1688,7 +1773,7 @@ mod tests {
         let mut holder = BucketMapHolder::new(BINS_FOR_TESTING, &config, 1);
         if let Some((high_water_mark, low_water_mark)) = threshold {
             holder.threshold_entries_per_bin = Some(ThresholdEntriesPerBin {
-                _target_entries: high_water_mark + 1,
+                target_entries: high_water_mark + 1,
                 high_water_mark,
                 low_water_mark,
             });
@@ -2836,7 +2921,7 @@ mod tests {
         let low_water_mark = 100;
         let high_water_mark = low_water_mark + num_entries_to_evict;
         holder.threshold_entries_per_bin = Some(ThresholdEntriesPerBin {
-            _target_entries: high_water_mark + num_entries_overhead,
+            target_entries: high_water_mark + num_entries_overhead,
             high_water_mark,
             low_water_mark,
         });
@@ -3033,6 +3118,192 @@ mod tests {
         assert!(
             index.load_from_disk(evicted_pubkey).is_some(),
             "evicted entry should still be on disk"
+        );
+    }
+
+    /// While the bin's hashmap is still in initial growth (capacity below `high_water_mark`),
+    /// the growth gate short-circuits check_flush_trigger to false even when the
+    /// low-free-entries check would otherwise fire.
+    #[test]
+    fn test_check_flush_trigger_below_hwm_gate() {
+        // 56 entries fill hashbrown's raw=64 table exactly: capacity=56 (below HWM=100)
+        // and free_entries=0 (below overhead=1, so low_free_entries would fire).
+        let hwm = 100;
+        let lwm = 50;
+        let index = new_should_write_through_for_test(Some((hwm, lwm)));
+        for _ in 0..56 {
+            let pubkey = solana_pubkey::new_rand();
+            let entry = Box::new(AccountMapEntry::new(
+                SlotList::from([(0, 0)]),
+                1,
+                AccountMapEntryMeta::new_dirty(&index.storage, true),
+            ));
+            index.map_internal.write().unwrap().insert(pubkey, entry);
+        }
+
+        let map = index.map_internal.read().unwrap();
+        let len = map.len();
+        let capacity = map.capacity();
+        let free_entries = capacity.saturating_sub(len);
+        drop(map);
+
+        // Confirm that without the gate that low free entries would fire
+        assert!(
+            index
+                .storage
+                .should_evict_based_on_free_entries(free_entries)
+        );
+
+        // But with the gate, check_flush_trigger returns false
+        assert!(!index.check_flush_trigger());
+    }
+
+    /// Once capacity has cleared the low-water mark, check_flush_trigger must still return
+    /// false when the entry count is below the high-water mark and free-entry headroom exceeds
+    /// the configured overhead.
+    #[test]
+    fn test_check_flush_trigger_below_thresholds() {
+        // 60 entries push capacity to 112 (above LWM=50), len stays below HWM=100,
+        // and free_entries (52) far exceeds overhead (1) — both conditions report false.
+        let hwm = 100;
+        let lwm = 50;
+        let index = new_should_write_through_for_test(Some((hwm, lwm)));
+        for _ in 0..60 {
+            let pubkey = solana_pubkey::new_rand();
+            let entry = Box::new(AccountMapEntry::new(
+                SlotList::from([(0, 0)]),
+                1,
+                AccountMapEntryMeta::new_dirty(&index.storage, true),
+            ));
+            index.map_internal.write().unwrap().insert(pubkey, entry);
+        }
+        assert!(index.map_internal.read().unwrap().capacity() > lwm);
+
+        assert!(!index.check_flush_trigger());
+    }
+
+    /// When the entry count crosses the high-water mark, check_flush_trigger returns true
+    /// and the count-based trigger stat is incremented.
+    #[test]
+    fn test_check_flush_trigger_high_count() {
+        let hwm = 2;
+        let lwm = 1;
+        // high_water_mark=2: inserting 4 entries puts the bin past the count threshold.
+        let index = new_should_write_through_for_test(Some((hwm, lwm)));
+        for _ in 0..4 {
+            let pubkey = solana_pubkey::new_rand();
+            let entry = Box::new(AccountMapEntry::new(
+                SlotList::from([(0, 0)]),
+                1,
+                AccountMapEntryMeta::new_dirty(&index.storage, true),
+            ));
+            index.map_internal.write().unwrap().insert(pubkey, entry);
+        }
+
+        assert!(index.check_flush_trigger());
+    }
+
+    /// reallocate_to_clear_tombstones must rebuild the bin's hashmap so that all
+    /// remaining entries survive and `capacity()` recovers from the drop caused by
+    /// tombstones consuming `growth_left`.
+    #[test]
+    fn test_reallocate_to_clear_tombstones_preserves_entries() {
+        // Reallocate only runs in Threshold mode. Pick high_water_mark=99 so
+        // target_entries=100, matching the natural backing size for 100 inserts.
+        let hwm = 99;
+        let lwm = 70;
+        let index = new_should_write_through_for_test(Some((hwm, lwm)));
+
+        // Insert enough entries to settle the bin's hashmap at a stable capacity.
+        let num_inserts = 100;
+        let num_removes = 30;
+        let pubkeys: Vec<_> = (0..num_inserts)
+            .map(|_| solana_pubkey::new_rand())
+            .collect();
+        {
+            let mut map = index.map_internal.write().unwrap();
+            for pubkey in &pubkeys {
+                let entry = Box::new(AccountMapEntry::new(
+                    SlotList::from([(0, 42)]),
+                    1,
+                    AccountMapEntryMeta::new_dirty(&index.storage, true),
+                ));
+                map.insert(*pubkey, entry);
+            }
+        }
+        let capacity_after_inserts = index.map_internal.read().unwrap().capacity();
+
+        // Remove a portion of the entries to create tombstones. Hashbrown reduces capacity
+        // for each tombstone created, so we should see a capacity drop here.
+        let mut map = index.map_internal.write().unwrap();
+        for pubkey in &pubkeys[..num_removes] {
+            map.remove(pubkey);
+        }
+        drop(map);
+
+        let capacity_after_removes = index.map_internal.read().unwrap().capacity();
+
+        // Verify that capacity dropped due to added tombstones
+        assert!(capacity_after_removes < capacity_after_inserts);
+
+        index.reallocate_to_clear_tombstones();
+
+        let map = index.map_internal.read().unwrap();
+
+        // All remaining entries should survive the realloc.
+        assert_eq!(map.len(), num_inserts - num_removes);
+        for pubkey in &pubkeys[num_removes..] {
+            assert!(map.contains_key(pubkey));
+        }
+
+        // Tombstones cleared: the new map sized for `len()` lands on the same raw
+        // bucket count as before the removes, so capacity is back to its post-insert
+        // value.
+        assert_eq!(map.capacity(), capacity_after_inserts);
+        drop(map);
+
+        assert_eq!(
+            index
+                .stats()
+                .num_hashmap_reallocates
+                .load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    /// Minimal mode evicts everything on every flush, so the per-pass HashMap
+    /// rebuild would be pure waste. Verify `evict_from_cache` skips it.
+    #[test]
+    fn test_reallocate_skipped_in_minimal_mode() {
+        let index = new_disk_buckets_for_test::<u64>();
+        assert!(index.storage.threshold_entries_per_bin.is_none());
+
+        let current_age = index.storage.current_age();
+        let pubkeys: Vec<_> = (0..100).map(|_| solana_pubkey::new_rand()).collect();
+        {
+            let mut map = index.map_internal.write().unwrap();
+            for pubkey in &pubkeys {
+                let entry = AccountMapEntry::new(
+                    SlotList::from([(/*slot*/ 0, /*info*/ 0)]),
+                    /*ref_count*/ 1,
+                    AccountMapEntryMeta::new_clean(&index.storage),
+                );
+                entry.set_age(current_age);
+                map.insert(*pubkey, Box::new(entry));
+            }
+        }
+
+        index.evict_from_cache(&pubkeys, current_age, /*ages_flushing_now*/ 0);
+
+        // All entries were evicted...
+        assert_eq!(index.map_internal.read().unwrap().len(), 0);
+        // ...but reallocate must not have run in Minimal mode.
+        assert_eq!(
+            index
+                .stats()
+                .num_hashmap_reallocates
+                .load(Ordering::Relaxed),
+            0
         );
     }
 }

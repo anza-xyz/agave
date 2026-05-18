@@ -108,13 +108,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         self.disk.is_some()
     }
 
-    /// Returns true when `entries_in_bin` exceeds the per-bin high-water mark, indicating
-    /// the bin is over the threshold and flush/eviction should occur.
-    pub fn is_bin_at_threshold(&self, entries_in_bin: usize) -> bool {
+    /// Returns true when a bin's entry count is high enough that eviction should begin.
+    /// The threshold is the configured `high_water_mark`.
+    pub fn should_evict_based_on_count(&self, count: usize) -> bool {
+        match &self.threshold_entries_per_bin {
+            None => self.is_disk_index_enabled(),
+            Some(threshold_entries_per_bin) => count > threshold_entries_per_bin.high_water_mark,
+        }
+    }
+
+    /// Returns true when a bin's HashMap free entries (`capacity - len`) are low
+    /// enough that eviction should begin to prevent an imminent capacity doubling.
+    /// The threshold is the overhead gap between `target_entries` and `high_water_mark`.
+    pub fn should_evict_based_on_free_entries(&self, free_entries: usize) -> bool {
         match &self.threshold_entries_per_bin {
             None => self.is_disk_index_enabled(),
             Some(threshold_entries_per_bin) => {
-                entries_in_bin > threshold_entries_per_bin.high_water_mark
+                let overhead = threshold_entries_per_bin
+                    .target_entries
+                    .saturating_sub(threshold_entries_per_bin.high_water_mark);
+                free_entries < overhead
             }
         }
     }
@@ -295,7 +308,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
                      low_water_mark_entries_per_bin: {low_water_mark}",
                 );
                 Some(ThresholdEntriesPerBin {
-                    _target_entries: target_entries_per_bin,
+                    target_entries: target_entries_per_bin,
                     high_water_mark,
                     low_water_mark,
                 })
@@ -506,7 +519,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
 #[derive(Clone, Copy, Debug)]
 pub struct ThresholdEntriesPerBin {
     /// Rounded target entries per bin used as the baseline for thresholds.
-    pub _target_entries: usize,
+    pub target_entries: usize,
     /// Entry count above which a bin triggers flushing to disk and eviction
     /// from in-memory index.
     pub high_water_mark: usize,
@@ -625,9 +638,9 @@ mod tests {
         assert!(test.is_disk_index_enabled());
     }
 
-    /// Ensure that is_bin_at_threshold() is correct when using IndexLimit::Threshold
+    /// Ensure that should_evict_based_on_count() is correct when using IndexLimit::Threshold
     #[test]
-    fn test_is_bin_at_threshold_with_threshold_limit() {
+    fn test_should_evict_based_on_count_with_threshold_limit() {
         let bins = 1;
         let num_entries_overhead = DEFAULT_NUM_ENTRIES_OVERHEAD;
         let num_entries_to_evict = DEFAULT_NUM_ENTRIES_TO_EVICT;
@@ -651,15 +664,15 @@ mod tests {
         // the low water mark must be non-zero and less than the high water mark
         assert!((1..thresholds.high_water_mark).contains(&thresholds.low_water_mark));
 
-        // Test: Below, at, and above the is_bin_at_threshold() boundary
-        assert!(!test.is_bin_at_threshold(thresholds.high_water_mark - 1));
-        assert!(!test.is_bin_at_threshold(thresholds.high_water_mark));
-        assert!(test.is_bin_at_threshold(thresholds.high_water_mark + 1));
+        // Test: Below, at, and above the should_evict_based_on_count() boundary
+        assert!(!test.should_evict_based_on_count(thresholds.high_water_mark - 1));
+        assert!(!test.should_evict_based_on_count(thresholds.high_water_mark));
+        assert!(test.should_evict_based_on_count(thresholds.high_water_mark + 1));
     }
 
-    /// Ensure that is_bin_at_threshold() is always true when using IndexLimit::Minimal
+    /// Ensure that should_evict_based_on_count() is always true when using IndexLimit::Minimal
     #[test]
-    fn test_is_bin_at_threshold_minimal() {
+    fn test_should_evict_based_on_count_minimal() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::Minimal,
@@ -667,14 +680,14 @@ mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        assert!(test.is_bin_at_threshold(0));
-        assert!(test.is_bin_at_threshold(1000));
-        assert!(test.is_bin_at_threshold(usize::MAX));
+        assert!(test.should_evict_based_on_count(0));
+        assert!(test.should_evict_based_on_count(1000));
+        assert!(test.should_evict_based_on_count(usize::MAX));
     }
 
-    /// Ensure that is_bin_at_threshold() is always false when using IndexLimit::InMemOnly
+    /// Ensure that should_evict_based_on_count() is always false when using IndexLimit::InMemOnly
     #[test]
-    fn test_is_bin_at_threshold_in_mem_only() {
+    fn test_should_evict_based_on_count_in_mem_only() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::InMemOnly,
@@ -682,9 +695,71 @@ mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        assert!(!test.is_bin_at_threshold(0));
-        assert!(!test.is_bin_at_threshold(1000));
-        assert!(!test.is_bin_at_threshold(usize::MAX));
+        assert!(!test.should_evict_based_on_count(0));
+        assert!(!test.should_evict_based_on_count(1000));
+        assert!(!test.should_evict_based_on_count(usize::MAX));
+    }
+
+    /// Ensure that should_evict_based_on_free_entries() is correct when using IndexLimit::Threshold
+    #[test]
+    fn test_should_evict_based_on_free_entries_with_threshold_limit() {
+        let bins = 1;
+        let num_entries_overhead = DEFAULT_NUM_ENTRIES_OVERHEAD;
+        let num_entries_to_evict = DEFAULT_NUM_ENTRIES_TO_EVICT;
+        let num_entries = (num_entries_overhead + num_entries_to_evict) * 3;
+        let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
+            + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes: (num_entries * bytes_per_entry) as u64,
+                num_entries_overhead,
+                num_entries_to_evict,
+            }),
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        let thresholds = test.threshold_entries_per_bin.unwrap();
+        let overhead = thresholds
+            .target_entries
+            .saturating_sub(thresholds.high_water_mark);
+        // overhead must be non-zero, otherwise the boundary checks below are meaningless
+        assert!(overhead > 0);
+
+        // Test: Below, at, and above the should_evict_based_on_free_entries() boundary
+        assert!(test.should_evict_based_on_free_entries(overhead - 1));
+        assert!(!test.should_evict_based_on_free_entries(overhead));
+        assert!(!test.should_evict_based_on_free_entries(overhead + 1));
+    }
+
+    /// Ensure that should_evict_based_on_free_entries() is always true when using IndexLimit::Minimal
+    #[test]
+    fn test_should_evict_based_on_free_entries_minimal() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Minimal,
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        assert!(test.should_evict_based_on_free_entries(0));
+        assert!(test.should_evict_based_on_free_entries(1000));
+        assert!(test.should_evict_based_on_free_entries(usize::MAX));
+    }
+
+    /// Ensure that should_evict_based_on_free_entries() is always false when using IndexLimit::InMemOnly
+    #[test]
+    fn test_should_evict_based_on_free_entries_in_mem_only() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::InMemOnly,
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        assert!(!test.should_evict_based_on_free_entries(0));
+        assert!(!test.should_evict_based_on_free_entries(1000));
+        assert!(!test.should_evict_based_on_free_entries(usize::MAX));
     }
 
     #[test]

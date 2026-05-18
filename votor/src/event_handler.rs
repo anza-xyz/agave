@@ -4,6 +4,7 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
+        common::DELTA_FIRST_SLICE,
         consensus_metrics::ConsensusMetricsEvent,
         event::{CompletedBlock, RepairEvent, RepairEventSender, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
@@ -23,6 +24,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
+        bank_forks_controller::BankForksControllerError,
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -73,6 +75,9 @@ enum EventLoopError {
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
+
+    #[error("Bank forks controller error")]
+    BankForksControllerError(#[from] BankForksControllerError),
 }
 
 pub(crate) struct EventHandler {
@@ -215,10 +220,15 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
+            // TODO: configure delta_first_slice in bank
+            let delta_first_slice = DELTA_FIRST_SLICE;
             let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
-            timer_manager
-                .write()
-                .set_timeouts(slot, local_context.standstill_slot, delta_block);
+            timer_manager.write().set_timeouts(
+                slot,
+                local_context.standstill_slot,
+                delta_first_slice,
+                delta_block,
+            );
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -292,7 +302,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                );
+                )?;
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -428,7 +438,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                );
+                )?;
 
                 if let Some(slot) = *standstill_slot {
                     if block.0 > slot {
@@ -801,7 +811,7 @@ impl EventHandler {
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
         stats: &mut EventHandlerStats,
-    ) {
+    ) -> Result<(), BankForksControllerError> {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root();
         let Some(new_root) = finalized_blocks
@@ -817,7 +827,7 @@ impl EventHandler {
             .max()
         else {
             // No rootable banks
-            return;
+            return Ok(());
         };
         drop(bank_forks_r);
         root_utils::set_root(
@@ -829,8 +839,9 @@ impl EventHandler {
             pending_blocks,
             finalized_blocks,
             received_shred,
-        );
+        )?;
         stats.set_root(new_root);
+        Ok(())
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -883,7 +894,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::{Receiver, TryRecvError, unbounded},
+        crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -898,6 +909,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
+            bank_forks_controller::{BankForksController, BankForksControllerError},
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
@@ -931,6 +943,53 @@ mod tests {
         root_context: RootContext,
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
+    }
+
+    struct DirectBankForksController {
+        bank_forks: Arc<RwLock<BankForks>>,
+        blockstore: Arc<Blockstore>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    }
+
+    impl BankForksController for DirectBankForksController {
+        fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError> {
+            Ok(self.bank_forks.write().unwrap().insert(bank))
+        }
+
+        fn set_root(
+            &self,
+            my_pubkey: Pubkey,
+            parent_slot: Slot,
+            new_root: Slot,
+            highest_super_majority_root: Option<Slot>,
+        ) -> Result<(), BankForksControllerError> {
+            root_utils::check_and_handle_new_root(
+                parent_slot,
+                new_root,
+                None,
+                highest_super_majority_root,
+                &None,
+                &self.drop_bank_sender,
+                &self.blockstore,
+                &self.leader_schedule_cache,
+                &self.bank_forks,
+                None,
+                &my_pubkey,
+                |_| {},
+            );
+            Ok(())
+        }
+
+        fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
+            let bank_to_clear = self.bank_forks.read().unwrap().get_with_scheduler(slot);
+            if let Some(bank) = bank_to_clear {
+                let _ = bank.wait_for_completed_scheduler();
+            }
+
+            self.bank_forks.write().unwrap().clear_bank(slot, false);
+            Ok(())
+        }
     }
 
     fn setup() -> EventHandlerTestContext {
@@ -982,6 +1041,15 @@ mod tests {
             )
             .unwrap(),
         );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks.read().unwrap().root_bank(),
+        ));
+        let bank_forks_controller = Arc::new(DirectBankForksController {
+            bank_forks: bank_forks.clone(),
+            blockstore: blockstore.clone(),
+            leader_schedule_cache,
+            drop_bank_sender: drop_bank_sender.clone(),
+        });
         let highest_parent_ready = Arc::new(RwLock::default());
 
         let shared_context = SharedContext {
@@ -989,8 +1057,7 @@ mod tests {
             bank_forks: bank_forks.clone(),
             vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
             leader_window_info_sender,
-            blockstore,
-            rpc_subscriptions: None,
+            blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
             repair_event_sender,
         };
@@ -1011,12 +1078,8 @@ mod tests {
         };
 
         let root_context = RootContext {
-            leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(
-                &bank_forks.read().unwrap().root_bank(),
-            )),
-            snapshot_controller: None,
             bank_notification_sender: None,
-            drop_bank_sender,
+            bank_forks_controller,
         };
 
         let local_context = LocalContext {

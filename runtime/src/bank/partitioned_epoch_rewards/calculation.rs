@@ -1,20 +1,20 @@
 use {
     super::{
         Bank, CachedVoteAccounts, CalculateValidatorRewardsResult, EpochRewardCalculateParamInfo,
-        FilteredStakeDelegations, PartitionedRewardsCalculation, PartitionedStakeReward,
-        PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS, RewardCommission,
-        RewardCommissionAccounts, RewardCommissionAccountsStorable, RewardCommissions,
-        StakeRewardCalculation, epoch_rewards_hasher::hash_rewards_into_partitions,
+        PartitionedRewardsCalculation, PartitionedStakeReward, PartitionedStakeRewards,
+        REWARD_CALCULATION_NUM_BLOCKS, RewardCommission, RewardCommissionAccounts,
+        RewardCommissionAccountsStorable, RewardCommissions, StakeRewardCalculation,
+        epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
         bank::{RewardCalcTracer, RewardCalculationEvent, RewardsMetrics, null_tracer},
         inflation_rewards::{
+            adjust_delegation_for_rent,
             points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
             redeem_rewards,
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
-        stake_utils,
         stakes::Stakes,
     },
     log::{debug, info},
@@ -25,7 +25,6 @@ use {
     solana_account::{ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
-    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
@@ -133,7 +132,6 @@ impl Bank {
         let stake_rewards = Arc::clone(&stake_rewards.stake_rewards);
 
         let num_partitions = self.get_reward_distribution_num_blocks(&stake_rewards);
-
         self.set_epoch_reward_status_calculation(distribution_starting_block_height, stake_rewards);
 
         self.create_epoch_rewards_sysvar(
@@ -189,10 +187,9 @@ impl Bank {
         let rewards_calculation = epoch_rewards_calculation_cache
             .entry(self.parent_hash)
             .or_insert_with(|| {
-                let stake_delegations = self.filter_stake_delegations(stake_delegations);
                 Arc::new(self.calculate_rewards_for_partitioning(
                     stake_history,
-                    &stake_delegations,
+                    stake_delegations,
                     cached_vote_accounts,
                     prev_epoch,
                     reward_calc_tracer,
@@ -219,6 +216,7 @@ impl Bank {
             stake_rewards,
             capitalization,
             point_value,
+            num_filtered_vote_accounts,
             ..
         } = rewards_calculation;
 
@@ -252,15 +250,8 @@ impl Bank {
             total_reward_commissions, point_value.rewards, total_stake_rewards_lamports
         );
 
-        let (num_stake_accounts, num_vote_accounts) = {
-            let stakes = self.stakes_cache.stakes();
-            let filtered_vote_accounts =
-                self.maybe_filter_vote_accounts_for_vat(stakes.vote_accounts());
-            (
-                stakes.stake_delegations().len(),
-                filtered_vote_accounts.len(),
-            )
-        };
+        let num_stake_accounts = self.stakes_cache.stakes().stake_delegations().len();
+        let num_vote_accounts = *num_filtered_vote_accounts;
         self.capitalization
             .fetch_add(total_reward_commissions, Relaxed);
 
@@ -309,7 +300,7 @@ impl Bank {
     pub(super) fn calculate_rewards_for_partitioning<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
@@ -319,6 +310,11 @@ impl Bank {
         let capitalization = self.capitalization();
         let validator_rewards_lamports =
             self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
+        // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
+        // produced upstream of this call (or unfiltered when VAT is off),
+        // so its length is the right value for the `epoch_rewards` metric.
+        let num_filtered_vote_accounts =
+            cached_vote_accounts.distribution_epoch_vote_accounts.len();
 
         let CalculateValidatorRewardsResult {
             reward_commissions,
@@ -347,6 +343,7 @@ impl Bank {
             stake_rewards,
             capitalization,
             point_value,
+            num_filtered_vote_accounts,
         }
     }
 
@@ -354,7 +351,7 @@ impl Bank {
     fn calculate_validator_rewards<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         rewards: u64,
@@ -364,7 +361,7 @@ impl Bank {
     ) -> Option<CalculateValidatorRewardsResult> {
         self.calculate_reward_points_partitioned(
             stake_history,
-            stake_delegations,
+            &stake_delegations,
             &cached_vote_accounts,
             rewards,
             thread_pool,
@@ -390,26 +387,6 @@ impl Bank {
         })
     }
 
-    pub(in crate::bank) fn filter_stake_delegations<'a>(
-        &self,
-        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    ) -> FilteredStakeDelegations<'a> {
-        let feature_snapshot = self.feature_set.snapshot();
-        let min_stake_delegation = if feature_snapshot.stake_minimum_delegation_for_rewards {
-            let min_stake_delegation = stake_utils::get_minimum_delegation(
-                feature_snapshot.upgrade_bpf_stake_program_to_v5,
-            )
-            .max(LAMPORTS_PER_SOL);
-            Some(min_stake_delegation)
-        } else {
-            None
-        };
-        FilteredStakeDelegations {
-            stake_delegations,
-            min_stake_delegation,
-        }
-    }
-
     /// Retrieves stake history and delegations for stake reward recalculation
     /// after snapshot restore.
     fn get_epoch_params_for_recalculation<'a>(
@@ -420,7 +397,6 @@ impl Bank {
         // Use `stakes` for stake-related info
         let stake_history = stakes.history().clone();
         let stake_delegations = stakes.stake_delegations_vec();
-        let stake_delegations = self.filter_stake_delegations(stake_delegations);
 
         // Use the vote-account snapshot from epoch_stakes, which is VAT-filtered
         // when admission filtering is enabled. Recalculation should match the
@@ -454,6 +430,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
+        adjust_delegations_for_rent: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -471,12 +448,53 @@ impl Bank {
 
         let stake_pubkey = *stake_pubkey;
         let vote_pubkey = stake_account.delegation().voter_pubkey;
+
+        let current_lamports = stake_account.lamports();
+        let minimum_lamports = self
+            .rent_collector
+            .rent
+            .minimum_balance(stake_account.data_len());
+        let mut stake = *stake_account.stake();
+
         let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey) else {
             debug!("could not find vote account {vote_pubkey} in cache");
-            return None;
+            // Even if the vote account doesn't exist, there might still be a
+            // need to adjust the stake delegation
+            if adjust_delegations_for_rent {
+                let delegation = stake.delegation.stake;
+                let stake_was_adjusted = adjust_delegation_for_rent(
+                    &mut stake.delegation,
+                    rewarded_epoch,
+                    delegation,
+                    current_lamports,
+                    minimum_lamports,
+                );
+                if stake_was_adjusted {
+                    debug!("delegation for stake {stake_pubkey} was adjusted");
+                    let stake_reward = PartitionedStakeReward {
+                        stake_pubkey,
+                        stake,
+                        stake_reward: 0,
+                        commission_bps: 0,
+                    };
+                    let reward_commission = RewardCommission {
+                        commission_bps: 0,
+                        commission_lamports: 0,
+                    };
+                    return Some(DelegationRewards {
+                        stake_reward,
+                        commission_pubkey: vote_pubkey,
+                        reward_commission,
+                    });
+                } else {
+                    debug!("delegation for stake {stake_pubkey} was not adjusted");
+                    return None;
+                }
+            } else {
+                return None;
+            }
         };
         let vote_state = vote_account.vote_state_view();
-        let stake_state = stake_account.stake_state();
 
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
@@ -502,7 +520,7 @@ impl Bank {
         };
 
         match redeem_rewards(
-            stake_state,
+            stake,
             commission_bps,
             DelegatedVoteState::from(vote_state),
             CalculationEnvironment {
@@ -511,9 +529,11 @@ impl Bank {
                 stake_history,
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
+                adjust_delegations_for_rent,
             },
             reward_calc_tracer,
-            stake_account.lamports(),
+            current_lamports,
+            minimum_lamports,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -544,7 +564,7 @@ impl Bank {
     fn calculate_stake_rewards_and_commissions<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         point_value: PointValue,
@@ -556,6 +576,9 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
+        // Name intentionally doesn't match -- "adjust delegations for rent" is
+        // part of relaxing post-exec min balance checks.
+        let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -573,22 +596,21 @@ impl Bank {
                 .par_iter()
                 .zip_eq(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
-                .filter_map(|(maybe_stake_delegation, stake_reward_ref)| {
-                    let maybe_reward_record =
-                        maybe_stake_delegation.and_then(|(stake_pubkey, stake_account)| {
-                            self.redeem_delegation_rewards(
-                                rewarded_epoch,
-                                stake_pubkey,
-                                stake_account,
-                                &point_value,
-                                stake_history,
-                                &cached_vote_accounts,
-                                reward_calc_tracer.as_ref(),
-                                new_warmup_cooldown_rate_epoch,
-                                delay_commission_updates,
-                                commission_rate_in_basis_points,
-                            )
-                        });
+                .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
+                    let maybe_reward_record = self.redeem_delegation_rewards(
+                        rewarded_epoch,
+                        stake_pubkey,
+                        stake_account,
+                        &point_value,
+                        stake_history,
+                        &cached_vote_accounts,
+                        reward_calc_tracer.as_ref(),
+                        new_warmup_cooldown_rate_epoch,
+                        delay_commission_updates,
+                        commission_rate_in_basis_points,
+                        adjust_delegations_for_rent,
+                    );
+
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
                         Some(res) => {
                             let DelegationRewards {
@@ -658,7 +680,7 @@ impl Bank {
     fn calculate_reward_points_partitioned<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: &Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: &CachedVoteAccounts<'_>,
         rewards: u64,
         thread_pool: &ThreadPool,
@@ -674,7 +696,6 @@ impl Bank {
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .filter_map(|stake_delegation| stake_delegation)
                 .map(|(_stake_pubkey, stake_account)| {
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
 
@@ -766,7 +787,7 @@ impl Bank {
         let (_, StakeRewardCalculation { stake_rewards, .. }) = self
             .calculate_stake_rewards_and_commissions(
                 &stake_history,
-                &stake_delegations,
+                stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
                 point_value,
@@ -893,6 +914,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
         solana_signer::Signer,
         solana_stake_interface::{
             stake_flags::StakeFlags,
@@ -991,14 +1013,9 @@ mod tests {
     fn test_rewards_computation() {
         agave_logger::setup();
 
-        // Delegations with sufficient stake to get rewards (2 SOL).
-        let delegations_with_rewards = 100;
-        // Delegations with insufficient stake (0.5 SOL).
-        let delegations_without_rewards = 10;
-        let stakes = (0..delegations_with_rewards)
-            .map(|_| 2_000_000_000)
-            .chain((0..delegations_without_rewards).map(|_| 500_000_000))
-            .collect::<Vec<_>>();
+        // Delegations to get rewards (2 SOL).
+        let delegations = 100;
+        let stakes = (0..delegations).map(|_| 2_000_000_000).collect::<Vec<_>>();
         let bank = create_reward_bank_with_specific_stakes(
             stakes,
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
@@ -1021,7 +1038,7 @@ mod tests {
         } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
         let calculated_rewards = bank.calculate_validator_rewards(
             &stake_history,
-            &stake_delegations,
+            stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
             expected_rewards,
@@ -1048,10 +1065,7 @@ mod tests {
         );
 
         // assert that number of stake rewards matches
-        assert_eq!(
-            stake_rewards.stake_rewards.num_rewards(),
-            delegations_with_rewards
-        );
+        assert_eq!(stake_rewards.stake_rewards.num_rewards(), delegations);
     }
 
     #[test]
@@ -1157,7 +1171,7 @@ mod tests {
 
         let (reward_commissions, ..) = bank.calculate_stake_rewards_and_commissions(
             &stake_history,
-            &stake_delegations,
+            stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
             point_value,
@@ -1180,6 +1194,37 @@ mod tests {
                 commission_bps: Some(rc.commission_bps),
             }
         })
+    }
+
+    fn create_stake_account(
+        lamports: u64,
+        delegation: u64,
+        vote_address: &Pubkey,
+        activation_epoch: Epoch,
+    ) -> AccountSharedData {
+        let mut stake_account = AccountSharedData::new(
+            lamports,
+            StakeStateV2::size_of(),
+            &solana_sdk_ids::stake::id(),
+        );
+        let rent_exempt_reserve = lamports.saturating_sub(delegation);
+
+        let meta = Meta {
+            authorized: Authorized::auto(&Pubkey::new_unique()),
+            #[expect(deprecated)]
+            rent_exempt_reserve,
+            ..Meta::default()
+        };
+
+        let stake = Stake {
+            delegation: Delegation::new(vote_address, delegation, activation_epoch),
+            credits_observed: 0,
+        };
+
+        stake_account
+            .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
+            .expect("set_state");
+        stake_account
     }
 
     fn apply_epoch_operations(
@@ -1224,25 +1269,8 @@ mod tests {
                 let size = StakeStateV2::size_of();
                 let rent_exempt_reserve = bank.rent_collector().rent.minimum_balance(size);
                 let lamports = rent_exempt_reserve + stake_amount;
-                let mut stake_account =
-                    AccountSharedData::new(lamports, size, &solana_sdk_ids::stake::id());
-
-                let meta = Meta {
-                    authorized: Authorized::auto(&Pubkey::new_unique()),
-                    #[expect(deprecated)]
-                    rent_exempt_reserve,
-                    ..Meta::default()
-                };
-
-                let stake = Stake {
-                    delegation: Delegation::new(vote_address, *stake_amount, bank.epoch()),
-                    credits_observed: 0,
-                };
-
-                stake_account
-                    .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-                    .expect("set_state");
-
+                let stake_account =
+                    create_stake_account(lamports, *stake_amount, vote_address, bank.epoch());
                 bank.store_account(&Pubkey::new_unique(), &stake_account);
             }
 
@@ -1524,6 +1552,85 @@ mod tests {
     }
 
     #[test]
+    fn test_adjust_delegation_for_prestaked_vote_account() {
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = genesis_utils::create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+        let genesis_vote_address = voting_keypair.pubkey();
+
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        genesis_config.rent = Rent::default();
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+
+        let old_delegation = LAMPORTS_PER_SOL;
+        let rent_exempt_amount = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
+
+        let vote_address = Pubkey::new_unique();
+
+        // No rent exemption at all
+        let stake_address_to_adjust = Pubkey::new_unique();
+        let stake_account =
+            create_stake_account(old_delegation, old_delegation, &vote_address, bank.epoch());
+        bank.store_account(&stake_address_to_adjust, &stake_account);
+
+        // Will be deactivated, below rent exemption
+        let stake_address_to_deactivate = Pubkey::new_unique();
+        let stake_account = create_stake_account(
+            rent_exempt_amount - 1,
+            rent_exempt_amount - 1,
+            &vote_address,
+            bank.epoch(),
+        );
+        bank.store_account(&stake_address_to_deactivate, &stake_account);
+
+        // Make a vote account earn points, otherwise stakes don't get updated
+        // at all
+        let bank = apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch: 0,
+                vote_operations: vec![(
+                    genesis_vote_address,
+                    VoteOperations {
+                        earned_credits: Some(1000),
+                        ..VoteOperations::default()
+                    },
+                )],
+            },
+        );
+
+        // Advance bank to next slot for distribution, see adjustment
+        let slot = bank.slot();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::new_unique(),
+            slot + 1,
+        );
+
+        let stake_account = bank.get_account(&stake_address_to_adjust).unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        let new_delegation = stake_state.stake().unwrap().delegation.stake;
+        assert_ne!(old_delegation, new_delegation);
+        assert_eq!(old_delegation, new_delegation + rent_exempt_amount);
+
+        let stake_account = bank.get_account(&stake_address_to_deactivate).unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        let new_delegation = stake_state.stake().unwrap().delegation;
+        assert_eq!(new_delegation.stake, 0);
+        assert_eq!(new_delegation.deactivation_epoch, 0);
+    }
+
+    #[test]
     fn test_calculate_stake_vote_rewards_genesis_vote_account() {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -1666,7 +1773,7 @@ mod tests {
         let (vote_rewards_accounts, stake_reward_calculation) = bank
             .calculate_stake_rewards_and_commissions(
                 &stake_history,
-                &stake_delegations,
+                stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
                 point_value,
@@ -1753,7 +1860,7 @@ mod tests {
             ..
         } = bank.calculate_rewards_for_partitioning(
             &stake_history,
-            &stake_delegations,
+            stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
             null_tracer(),
@@ -1874,7 +1981,7 @@ mod tests {
             ..
         } = bank.calculate_rewards_for_partitioning(
             &stake_history,
-            &stake_delegations,
+            stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
             null_tracer(),
@@ -1974,11 +2081,11 @@ mod tests {
 
     #[test]
     fn test_initialize_after_snapshot_restore() {
-        let expected_num_stake_rewards = 3;
+        let expected_num_stake_rewards = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
         let stakes = vec![
-            100_000_000,   // under min delegation
+            100_000_000,   // valid delegation
             2_000_000_000, // valid delegation
             3_000_000_000, // valid delegation
             4_000_000_000, // valid delegation

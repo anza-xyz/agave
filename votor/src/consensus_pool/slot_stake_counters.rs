@@ -7,7 +7,8 @@ use {
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
-    agave_votor_messages::{fraction::Fraction, vote::Vote},
+    agave_votor_messages::{consensus_message::Block, fraction::Fraction, vote::Vote},
+    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_hash::Hash,
     std::{collections::BTreeMap, num::NonZeroU64},
 };
@@ -32,12 +33,19 @@ impl SlotStakeCounters {
         }
     }
 
-    pub fn add_vote(
+    /// Adds a vote and checks for safe-to-notar and safe-to-skip thresholds.
+    ///
+    /// For intrawindow blocks (slot % NUM_CONSECUTIVE_LEADER_SLOTS != 0), instead of
+    /// immediately emitting SafeToNotar events, we add them to `pending_safe_to_notar`
+    /// which will be processed later in the consensus pool service to verify parent
+    /// certification status.
+    pub(super) fn add_vote(
         &mut self,
         vote: &Vote,
         entry_stake: Stake,
         is_my_own_vote: bool,
         events: &mut Vec<VotorEvent>,
+        pending_safe_to_notar: &mut Vec<Block>,
         stats: &mut ConsensusPoolStats,
     ) {
         match vote {
@@ -63,13 +71,23 @@ impl SlotStakeCounters {
             return;
         }
         let slot = vote.slot();
+        let is_first_in_leader_window =
+            slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS) || slot == 1;
+
         // Check safe to notar
         for (block_id, stake) in &self.notarize_entry_total {
             if !self.safe_to_notar_sent.contains(block_id) && self.is_safe_to_notar(block_id, stake)
             {
-                events.push(VotorEvent::SafeToNotar((slot, *block_id)));
-                stats.event_safe_to_notarize = stats.event_safe_to_notarize.saturating_add(1);
                 self.safe_to_notar_sent.push(*block_id);
+
+                if is_first_in_leader_window {
+                    // First block in leader window - emit event immediately
+                    events.push(VotorEvent::SafeToNotar((slot, *block_id)));
+                    stats.event_safe_to_notarize = stats.event_safe_to_notarize.saturating_add(1);
+                } else {
+                    // Intrawindow block - add to pending for later processing
+                    pending_safe_to_notar.push((slot, *block_id));
+                }
             }
         }
         // Check safe to skip
@@ -136,21 +154,25 @@ mod tests {
     use {super::*, agave_votor_messages::vote::Vote};
 
     #[test]
-    fn test_safe_to_notar() {
+    fn test_safe_to_notar_first_in_leader_window() {
         let mut counters = SlotStakeCounters::new(100);
 
         let mut events = vec![];
+        let mut pending_safe_to_notar = vec![];
         let mut stats = ConsensusPoolStats::default();
-        let slot = 2;
+        // Use slot 0 which is first in leader window (0 % 4 == 0)
+        let slot = 0;
         // I voted for skip
         counters.add_vote(
             &Vote::new_skip_vote(slot),
             10,
             true,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
+        assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 0);
 
         // 40% of stake holders voted notarize
@@ -159,12 +181,15 @@ mod tests {
             40,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
+        // First in leader window goes to events directly
         assert_eq!(events.len(), 1);
         assert!(
             matches!(events[0], VotorEvent::SafeToNotar((s, block_id)) if s == slot && block_id == Hash::default())
         );
+        assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 1);
         events.clear();
 
@@ -174,15 +199,19 @@ mod tests {
             20,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
+        assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 1);
 
-        // Reset counters
+        // Reset counters with slot 4 (first in next leader window)
         counters = SlotStakeCounters::new(100);
         events.clear();
+        pending_safe_to_notar.clear();
         stats = ConsensusPoolStats::default();
+        let slot = 4;
 
         // I voted for notarize b
         let hash_1 = Hash::new_unique();
@@ -191,9 +220,11 @@ mod tests {
             1,
             true,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
+        assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 0);
 
         // 25% of stake holders voted notarize b'
@@ -203,9 +234,11 @@ mod tests {
             25,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
+        assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 0);
 
         // 35% more of stake holders voted skip
@@ -214,13 +247,54 @@ mod tests {
             35,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert_eq!(events.len(), 1);
         assert!(
             matches!(events[0], VotorEvent::SafeToNotar((s, block_id)) if s == slot && block_id == hash_2)
         );
+        assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 1);
+    }
+
+    #[test]
+    fn test_safe_to_notar_intrawindow_block() {
+        let mut counters = SlotStakeCounters::new(100);
+
+        let mut events = vec![];
+        let mut pending_safe_to_notar = vec![];
+        let mut stats = ConsensusPoolStats::default();
+        // Use slot 2 which is NOT first in leader window (2 % 4 != 0)
+        let slot = 2;
+        // I voted for skip
+        counters.add_vote(
+            &Vote::new_skip_vote(slot),
+            10,
+            true,
+            &mut events,
+            &mut pending_safe_to_notar,
+            &mut stats,
+        );
+        assert!(events.is_empty());
+        assert!(pending_safe_to_notar.is_empty());
+
+        // 40% of stake holders voted notarize
+        let block_id = Hash::new_unique();
+        counters.add_vote(
+            &Vote::new_notarization_vote(slot, block_id),
+            40,
+            false,
+            &mut events,
+            &mut pending_safe_to_notar,
+            &mut stats,
+        );
+        // Intrawindow block goes to pending instead of events
+        assert!(events.is_empty());
+        assert_eq!(pending_safe_to_notar.len(), 1);
+        assert_eq!(pending_safe_to_notar[0], (slot, block_id));
+        // Stats are not updated for pending
+        assert_eq!(stats.event_safe_to_notarize, 0);
     }
 
     #[test]
@@ -228,6 +302,7 @@ mod tests {
         let mut counters = SlotStakeCounters::new(100);
 
         let mut events = vec![];
+        let mut pending_safe_to_notar = vec![];
         let mut stats = ConsensusPoolStats::default();
         let slot = 2;
         // I voted for notarize b
@@ -236,6 +311,7 @@ mod tests {
             10,
             true,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
@@ -247,6 +323,7 @@ mod tests {
             40,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert_eq!(events.len(), 1);
@@ -260,6 +337,7 @@ mod tests {
             20,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
@@ -268,6 +346,7 @@ mod tests {
         // Reset counters
         counters = SlotStakeCounters::new(100);
         events.clear();
+        pending_safe_to_notar.clear();
         stats = ConsensusPoolStats::default();
 
         // I voted for notarize b, 10% of stake holders voted with me
@@ -277,6 +356,7 @@ mod tests {
             10,
             true,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         // 20% of stake holders voted a different notarization b'
@@ -286,6 +366,7 @@ mod tests {
             20,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         // 30% of stake holders voted skip
@@ -294,6 +375,7 @@ mod tests {
             30,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert_eq!(events.len(), 1);
@@ -307,6 +389,7 @@ mod tests {
             10,
             false,
             &mut events,
+            &mut pending_safe_to_notar,
             &mut stats,
         );
         assert!(events.is_empty());
