@@ -320,7 +320,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut search_for: Vec<ProgramToLoad> = builtin_program_ids
             .iter()
             .map(|program_id| ProgramToLoad {
-                program_id: *program_id,
+                program_id,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             })
@@ -1702,7 +1702,7 @@ mod tests {
         batch_processor.replenish_program_cache(
             &account_loader,
             vec![ProgramToLoad {
-                program_id: key,
+                program_id: &key,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             }],
@@ -1740,7 +1740,7 @@ mod tests {
             batch_processor.replenish_program_cache(
                 &account_loader,
                 vec![ProgramToLoad {
-                    program_id: key,
+                    program_id: &key,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
@@ -1962,7 +1962,7 @@ mod tests {
             .unwrap()
             .extract(
                 &mut vec![ProgramToLoad {
-                    program_id: key,
+                    program_id: &key,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],

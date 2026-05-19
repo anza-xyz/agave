@@ -45,7 +45,7 @@ fn program_cache_execution(threads: usize) {
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     let batch_processor = TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None);
 
-    let programs = vec![
+    let programs = [
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
         deploy_program("simple-transfer".to_string(), 0, &mut mock_bank),
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
@@ -53,12 +53,16 @@ fn program_cache_execution(threads: usize) {
 
     let missing_programs: Vec<ProgramToLoad> = programs
         .iter()
-        .map(|key| ProgramToLoad {
-            program_id: *key,
+        .map(|program_id| ProgramToLoad {
+            program_id,
             match_criteria: ProgramCacheMatchCriteria::NoCriteria,
             last_modification_slot: 0,
         })
         .collect();
+
+    // Borrow checker does not understand that all threads are joined (thus terminated) before this function exits
+    let missing_programs: &[ProgramToLoad<'static>] =
+        unsafe { std::mem::transmute(missing_programs.as_slice()) };
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
@@ -68,8 +72,6 @@ fn program_cache_execution(threads: usize) {
                 batch_processor.slot,
                 batch_processor.epoch,
             );
-            let missing_programs = missing_programs.clone();
-            let programs = programs.clone();
             thread::spawn(move || {
                 let feature_set = SVMFeatureSet::all_enabled();
                 let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
@@ -83,14 +85,14 @@ fn program_cache_execution(threads: usize) {
                     processor.program_runtime_environment_for_epoch(processor.epoch);
                 processor.replenish_program_cache(
                     &account_loader,
-                    missing_programs,
+                    missing_programs.to_vec(),
                     &program_runtime_environment_for_execution,
                     &mut result,
                     &mut ExecuteTimings::default(),
                     true,
                     true,
                 );
-                for key in &programs {
+                for key in programs.iter() {
                     let cache_entry = result.find(key);
                     assert!(matches!(
                         cache_entry.unwrap().program,
