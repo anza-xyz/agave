@@ -2530,7 +2530,7 @@ mod tests {
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
-            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
         );
 
         // truncating resize
@@ -2548,7 +2548,7 @@ mod tests {
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
-            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
         );
     }
 }

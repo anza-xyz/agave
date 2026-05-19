@@ -3039,7 +3039,7 @@ fn test_program_sbf_realloc() {
                 )
                 .unwrap_err()
                 .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::AccountDataSizeChanged)
+            TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
         );
 
         // realloc and assign to self via cpi
@@ -3066,7 +3066,7 @@ fn test_program_sbf_realloc() {
                 )
                 .unwrap_err()
                 .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::AccountDataSizeChanged)
+            TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
         );
 
         // Assign to self and realloc via cpi
@@ -3344,7 +3344,7 @@ fn test_program_sbf_realloc_invoke() {
             )
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::AccountDataSizeChanged)
+        TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
     );
 
     // realloc and assign to self via system program
@@ -3375,7 +3375,7 @@ fn test_program_sbf_realloc_invoke() {
             )
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::AccountDataSizeChanged)
+        TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
     );
 
     // Assign to self and realloc via system program
@@ -4328,7 +4328,7 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::InvalidRealloc
                     } else {
-                        InstructionError::AccountDataSizeChanged
+                        InstructionError::ExternalAccountDataModified
                     }
                 )
             );
@@ -4371,7 +4371,7 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments && deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
-                        InstructionError::AccountDataSizeChanged
+                        InstructionError::ExternalAccountDataModified
                     }
                 )
             );
