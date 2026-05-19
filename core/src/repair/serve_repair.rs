@@ -1602,7 +1602,7 @@ impl ServeRepair {
         Self::repair_proto_to_bytes(&request, keypair)
     }
 
-    /// Finds a peer to send this repair request too and returns their address and the raw bytes to send.
+    /// Finds a peer to send this repair request to and returns their address and the raw bytes to send.
     ///
     /// For TowerBFT blocks we do a weighted selection where:
     /// - `x` is `1` if the peer has indicated they have the block via publishing an EpochSlots gossip message and `0` otherwise
