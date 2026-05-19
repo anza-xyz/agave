@@ -468,7 +468,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=4.3.0-alpha.0
 solana-runtime = { path = "runtime", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.21.1", default-features = false }
+solana-sbpf = { version = "=0.22.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.1"
 solana-secp256k1-recover = "3.1.1"
@@ -618,3 +618,4 @@ codegen-units = 1
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
+solana-sbpf = { git = "https://github.com/anza-xyz/sbpf", rev = "refs/pull/191/head" }

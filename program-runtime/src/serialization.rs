@@ -24,13 +24,19 @@ pub fn modify_memory_region_of_account(
     account: &mut BorrowedInstructionAccount<'_, '_>,
     region: &mut MemoryRegion,
 ) {
-    region.len = account.get_data().len() as u64;
+    let host_ptr = match region.host_buffer() {
+        solana_sbpf::memory_region::HostBuffer::Mutable(p) => p.cast::<u8>(),
+        solana_sbpf::memory_region::HostBuffer::Immutable(p) => p.cast::<u8>(),
+    };
+    let host_len = account.get_data().len();
+    let vm_addr = region.vm_addr_range().start;
     if account.can_data_be_changed().is_ok() {
-        region.writable = true;
+        let host_slice = std::ptr::slice_from_raw_parts_mut(host_ptr.cast_mut(), host_len);
+        *region = MemoryRegion::new_gapped(host_slice, vm_addr, region.gap_size());
         region.access_violation_handler_payload = Some(account.get_index_in_transaction());
     } else {
-        region.writable = false;
-        region.access_violation_handler_payload = None;
+        let host_slice = std::ptr::slice_from_raw_parts(host_ptr, host_len);
+        *region = MemoryRegion::new_gapped(host_slice, vm_addr, region.gap_size());
     }
 }
 
@@ -701,7 +707,7 @@ mod tests {
             cell::RefCell,
             mem::transmute,
             rc::Rc,
-            slice::{self, from_raw_parts, from_raw_parts_mut},
+            slice::{from_raw_parts, from_raw_parts_mut},
         },
         test_case::test_case,
     };
@@ -1437,15 +1443,18 @@ mod tests {
 
     fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
         let last_region = regions.last().unwrap();
+        let last_region_vm_addr = last_region.vm_addr_range().start;
         let mut mem = AlignedMemory::zero_filled(
-            (last_region.vm_addr - MM_INPUT_START + last_region.len) as usize,
+            (last_region_vm_addr - MM_INPUT_START + last_region.len() as u64) as usize,
         );
         for region in regions {
-            let host_slice = unsafe {
-                slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
+            let vm_start = region.vm_addr_range().start;
+            let buffer = match region.host_buffer() {
+                solana_sbpf::memory_region::HostBuffer::Immutable(buf) => buf,
+                solana_sbpf::memory_region::HostBuffer::Mutable(buf) => buf.cast_const(),
             };
-            mem.as_slice_mut()[(region.vm_addr - MM_INPUT_START) as usize..][..region.len as usize]
-                .copy_from_slice(host_slice)
+            mem.as_slice_mut()[(vm_start - MM_INPUT_START) as usize..][..buffer.len()]
+                .copy_from_slice(unsafe { &*buffer })
         }
         mem
     }

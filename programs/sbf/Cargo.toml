@@ -248,3 +248,6 @@ strip = true
 
 [lints]
 workspace = true
+
+[patch.crates-io]
+solana-sbpf = { git = "https://github.com/anza-xyz/sbpf", rev = "refs/pull/191/head" }

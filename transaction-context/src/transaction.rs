@@ -14,7 +14,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
-    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
+    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, HostBuffer, MemoryRegion},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 use {
@@ -529,8 +529,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     // This region is not a writable account.
                     return;
                 };
-                let requested_length =
-                    vm_addr.saturating_add(len).saturating_sub(region.vm_addr) as usize;
+                let region_vm_addr_start = region.vm_addr_range().start;
+                let requested_length = vm_addr
+                    .saturating_add(len)
+                    .saturating_sub(region_vm_addr_start)
+                    as usize;
                 if requested_length > address_space_reserved_for_account as usize {
                     // Requested access goes further than the account region.
                     return;
@@ -552,7 +555,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     .saturating_sub(accounts.resize_delta())
                     .max(0) as usize;
 
-                if requested_length > region.len as usize {
+                if requested_length > region.len() {
                     // Realloc immediately here to fit the requested access,
                     // then later in CPI or deserialization realloc again to the
                     // account length the program stored in AccountInfo.
@@ -568,14 +571,46 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     {
                         return;
                     }
-                    account.resize(new_len, 0);
-                    region.len = new_len as u64;
+                    unsafe {
+                        account.resize(new_len, 0);
+                        let data_ptr = match region.host_buffer() {
+                            HostBuffer::Immutable(p) => p.cast::<u8>().cast_mut(),
+                            HostBuffer::Mutable(p) => p.cast::<u8>(),
+                        };
+                        let data_slice = std::ptr::slice_from_raw_parts_mut(data_ptr, new_len);
+                        // SAFETY:
+                        //
+                        // Contract from `MemoryRegion::redirect`: MemoryRegion must point to a
+                        // valid object live for the duration of this `MemoryMapping`.
+                        //
+                        // Evidence: There are two distinct cases, when the account buffer is
+                        // serialized and when the account buffer is directly mapped.
+                        // * In the serialization case we continue pointing at the same buffer as
+                        // before, and the original buffer must have satisfied the liveness
+                        // condition before.
+                        // * In the direct mapping case `account.resize` invalidates the buffer this
+                        // region has been pointing at, but this is fixed up later in the "unshare"
+                        // branch later.
+                        //
+                        // Contract from `MemoryRegion::redirect`: For `MemoryRegion`s marked
+                        // writable, the host buffer must accept arbitrary bytes being overwritten
+                        // without it resulting in unsoundness.
+                        //
+                        // Evidence: The account payloads dont have any internal soundness
+                        // invariants. The buffer in the serialization case starts off and remains
+                        // writable (even though the HostBuffer might have been initially created as
+                        // immutable.) In the direct mapping case we redirect the region to the
+                        // buffer stored in the account later on.
+                        region.redirect(data_slice);
+                    }
                 }
 
                 // Potentially unshare / make the account shared data unique (CoW logic).
                 if virtual_address_space_adjustments && account_data_direct_mapping {
-                    region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
-                    region.writable = true;
+                    unsafe {
+                        // SAFETY: refer to the comment above.
+                        region.redirect(account.raw_mut_data_slice());
+                    }
                 }
             },
         )
