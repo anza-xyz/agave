@@ -498,7 +498,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 },
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let (missing_programs, filter_executable_us) =
-                        measure_us!(self.filter_executable_program_accounts(
+                        measure_us!(Self::filter_executable_program_accounts(
                             &account_loader,
                             &mut program_cache_for_tx_batch,
                             tx,
@@ -815,7 +815,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Appends to a set of executable program accounts (all accounts owned by any loader)
     /// for transactions with a valid blockhash or nonce.
     fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
-        &self,
         account_loader: &AccountLoader<CB>,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         tx: &impl SVMMessage,
@@ -1834,13 +1833,13 @@ mod tests {
             false,
         );
 
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let missing_programs = batch_processor.filter_executable_program_accounts(
-            &account_loader,
-            &mut ProgramCacheForTxBatch::default(),
-            &sanitized_transaction,
-            false,
-        );
+        let missing_programs =
+            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
+                &account_loader,
+                &mut ProgramCacheForTxBatch::default(),
+                &sanitized_transaction,
+                false,
+            );
         assert_eq!(missing_programs.len(), 2);
         assert!(
             missing_programs
@@ -1925,14 +1924,13 @@ mod tests {
         );
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-
-        let missing_programs = batch_processor.filter_executable_program_accounts(
-            &account_loader,
-            &mut ProgramCacheForTxBatch::default(),
-            &sanitized_tx1,
-            false,
-        );
+        let missing_programs =
+            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
+                &account_loader,
+                &mut ProgramCacheForTxBatch::default(),
+                &sanitized_tx1,
+                false,
+            );
         assert_eq!(missing_programs.len(), 1);
         assert!(
             missing_programs
@@ -1941,12 +1939,13 @@ mod tests {
                 .is_some()
         );
 
-        let missing_programs = batch_processor.filter_executable_program_accounts(
-            &account_loader,
-            &mut ProgramCacheForTxBatch::default(),
-            &sanitized_tx2,
-            false,
-        );
+        let missing_programs =
+            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
+                &account_loader,
+                &mut ProgramCacheForTxBatch::default(),
+                &sanitized_tx2,
+                false,
+            );
         assert_eq!(missing_programs.len(), 2);
         assert!(
             missing_programs
