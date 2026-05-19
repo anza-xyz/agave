@@ -11,7 +11,7 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             outstanding_requests::OutstandingRequests,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairStats},
+            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairInfo, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
@@ -1600,7 +1600,6 @@ impl ServeRepair {
         Self::repair_proto_to_bytes(&request, keypair)
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// Finds a peer to send this repair request too and returns their address and the raw bytes to send.
     ///
     /// For TowerBFT blocks we do a weighted selection where:
@@ -1610,24 +1609,23 @@ impl ServeRepair {
     /// For Alpenglow blocks we do a weighted selection where the weights are `peer_stake`
     pub(crate) fn repair_request(
         &self,
-        cluster_slots: &ClusterSlots,
+        repair_info: &RepairInfo,
         repair_request: ShredRepairType,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         repair_stats: &mut RepairStats,
-        repair_validators: &Option<HashSet<Pubkey>>,
         outstanding_requests: &mut OutstandingShredRepairs,
-        identity_keypair: &Keypair,
     ) -> Result<Option<(SocketAddr, Vec<u8>)>> {
+        let identity_keypair = repair_info.cluster_info.keypair();
         // find a peer that appears to be accepting replication and has the desired slot, as indicated
         // by a valid tvu port location
         let slot = repair_request.slot();
         let weight_source = self.repair_peer_weight_source(slot);
         let repair_peers = self.repair_peers_from_cache(
             slot,
-            cluster_slots,
-            repair_validators,
+            &repair_info.cluster_slots,
+            &repair_info.repair_validators,
             peers_cache,
-            identity_keypair,
+            &identity_keypair,
             weight_source,
         )?;
         let peer = repair_peers.sample(&mut rand::rng());
@@ -1649,7 +1647,7 @@ impl ServeRepair {
             &peer.pubkey,
             repair_stats,
             nonce,
-            identity_keypair,
+            &identity_keypair,
         )?;
         debug!(
             "Sending repair request from {} to {} for {:#?}",
@@ -1664,21 +1662,20 @@ impl ServeRepair {
     /// Only for use in Alpenglow blocks, peer selection is based on `peer_stake`
     pub(crate) fn block_id_repair_request(
         &self,
-        repair_validators: &Option<HashSet<Pubkey>>,
+        repair_info: &RepairInfo,
         repair_request: BlockIdRepairType,
-        cluster_slots: &ClusterSlots,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         outstanding_requests: &mut OutstandingRequests<BlockIdRepairType>,
-        identity_keypair: &Keypair,
     ) -> Result<(Vec<u8>, SocketAddr, Pubkey)> {
+        let identity_keypair = repair_info.cluster_info.keypair();
         let slot = repair_request.slot();
         let weight_source = RepairPeerWeightSource::CurrentEpochStake;
         let repair_peers = self.repair_peers_from_cache(
             slot,
-            cluster_slots,
-            repair_validators,
+            &repair_info.cluster_slots,
+            &repair_info.repair_validators,
             peers_cache,
-            identity_keypair,
+            &identity_keypair,
             weight_source,
         )?;
         let peer = repair_peers.sample(&mut rand::rng());
@@ -1688,7 +1685,7 @@ impl ServeRepair {
             &repair_request,
             &peer.pubkey,
             nonce,
-            identity_keypair,
+            &identity_keypair,
         )?;
         debug!(
             "Sending block_id repair request from {} to {} for {:#?}",
@@ -2532,28 +2529,56 @@ mod tests {
         ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
     }
 
+    fn new_test_repair_info(
+        cluster_info: Arc<ClusterInfo>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        cluster_slots: Arc<ClusterSlots>,
+        repair_validators: Option<HashSet<Pubkey>>,
+    ) -> RepairInfo {
+        let epoch_schedule = bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .epoch_schedule()
+            .clone();
+        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) =
+            crossbeam_channel::unbounded();
+        RepairInfo {
+            bank_forks,
+            cluster_info,
+            cluster_slots,
+            epoch_schedule,
+            ancestor_duplicate_slots_sender,
+            repair_validators,
+            repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+        }
+    }
+
     #[test]
     fn window_index_request() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let cluster_slots = ClusterSlots::default_for_tests();
+        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let cluster_info = Arc::new(new_test_cluster_info());
+        let repair_info = new_test_repair_info(
+            cluster_info.clone(),
+            bank_forks.clone(),
+            cluster_slots,
+            None,
+        );
         let serve_repair = ServeRepair::new_for_test(
             cluster_info.clone(),
             bank_forks,
             Arc::new(RwLock::new(HashSet::default())),
         );
-        let identity_keypair = cluster_info.keypair();
         let mut outstanding_requests = OutstandingShredRepairs::default();
         let rv = serve_repair.repair_request(
-            &cluster_slots,
+            &repair_info,
             ShredRepairType::Shred(0, 0),
             &mut LruCache::new(100),
             &mut RepairStats::default(),
-            &None,
             &mut outstanding_requests,
-            &identity_keypair,
         );
         assert_matches!(rv, Err(Error::ClusterInfo(ClusterInfoError::NoPeers)));
 
@@ -2573,13 +2598,11 @@ mod tests {
         cluster_info.insert_info(nxt.clone());
         let rv = serve_repair
             .repair_request(
-                &cluster_slots,
+                &repair_info,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
-                &None,
                 &mut outstanding_requests,
-                &identity_keypair,
             )
             .unwrap()
             .unwrap();
@@ -2606,13 +2629,11 @@ mod tests {
             //this randomly picks an option, so eventually it should pick both
             let rv = serve_repair
                 .repair_request(
-                    &cluster_slots,
+                    &repair_info,
                     ShredRepairType::Shred(0, 0),
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
-                    &None,
                     &mut outstanding_requests,
-                    &identity_keypair,
                 )
                 .unwrap()
                 .unwrap();
@@ -2876,7 +2897,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let cluster_slots = ClusterSlots::default_for_tests();
+        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let cluster_info = Arc::new(new_test_cluster_info());
         let me = cluster_info.my_contact_info();
         // Insert two peers on the network
@@ -2885,6 +2906,12 @@ mod tests {
         cluster_info.insert_info(contact_info2.clone());
         cluster_info.insert_info(contact_info3.clone());
         let identity_keypair = cluster_info.keypair();
+        let mut repair_info = new_test_repair_info(
+            cluster_info.clone(),
+            bank_forks.clone(),
+            cluster_slots,
+            None,
+        );
         let serve_repair = ServeRepair::new_for_test(
             cluster_info,
             bank_forks,
@@ -2897,6 +2924,7 @@ mod tests {
         // then no repairs should be generated
         for pubkey in &[solana_pubkey::new_rand(), *me.pubkey()] {
             let known_validators = Some(vec![*pubkey].into_iter().collect());
+            repair_info.repair_validators = known_validators.clone();
             assert!(
                 serve_repair
                     .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
@@ -2904,13 +2932,11 @@ mod tests {
             );
             assert_matches!(
                 serve_repair.repair_request(
-                    &cluster_slots,
+                    &repair_info,
                     ShredRepairType::Shred(0, 0),
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
-                    &known_validators,
                     &mut OutstandingShredRepairs::default(),
-                    &identity_keypair,
                 ),
                 Err(Error::ClusterInfo(ClusterInfoError::NoPeers))
             );
@@ -2918,25 +2944,25 @@ mod tests {
 
         // If known validator exists in gossip, should return repair successfully
         let known_validators = Some(vec![*contact_info2.pubkey()].into_iter().collect());
+        repair_info.repair_validators = known_validators.clone();
         let repair_peers =
             serve_repair.repair_peers(&known_validators, 1, &identity_keypair.pubkey());
         assert_eq!(repair_peers.len(), 1);
         assert_eq!(repair_peers[0].pubkey(), contact_info2.pubkey());
         assert_matches!(
             serve_repair.repair_request(
-                &cluster_slots,
+                &repair_info,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
-                &known_validators,
                 &mut OutstandingShredRepairs::default(),
-                &identity_keypair,
             ),
             Ok(Some(_))
         );
 
         // Using no known validators should default to all
         // validator's available in gossip, excluding myself
+        repair_info.repair_validators = None;
         let repair_peers: HashSet<Pubkey> = serve_repair
             .repair_peers(&None, 1, &identity_keypair.pubkey())
             .into_iter()
@@ -2947,13 +2973,11 @@ mod tests {
         assert!(repair_peers.contains(contact_info3.pubkey()));
         assert_matches!(
             serve_repair.repair_request(
-                &cluster_slots,
+                &repair_info,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
-                &None,
                 &mut OutstandingShredRepairs::default(),
-                &identity_keypair,
             ),
             Ok(Some(_))
         );

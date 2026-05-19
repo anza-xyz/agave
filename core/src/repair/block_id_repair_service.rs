@@ -951,12 +951,10 @@ impl BlockIdRepairService {
                     let Ok((bytes, addr, peer_pubkey)) = state
                         .serve_repair
                         .block_id_repair_request(
-                            &repair_info.repair_validators,
+                            repair_info,
                             block_id_repair_type,
-                            &repair_info.cluster_slots,
                             &mut state.peers_cache,
                             &mut state.outstanding_requests,
-                            &repair_info.cluster_info.keypair(),
                         )
                         .inspect_err(|e| {
                             error!(
@@ -988,13 +986,11 @@ impl BlockIdRepairService {
                     let Ok(Some((addr, bytes))) = state
                         .serve_repair
                         .repair_request(
-                            &repair_info.cluster_slots,
+                            repair_info,
                             shred_request,
                             &mut state.peers_cache,
                             &mut RepairStats::default(),
-                            &repair_info.repair_validators,
                             &mut state.outstanding_shred_requests.write().unwrap(),
-                            &repair_info.cluster_info.keypair(),
                         )
                         .inspect_err(|e| {
                             error!(

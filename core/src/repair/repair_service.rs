@@ -803,7 +803,6 @@ impl RepairService {
         repair_metrics: &mut RepairMetrics,
     ) {
         let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
-        let identity_keypair = repair_info.cluster_info.keypair();
         let batch: Vec<(Vec<u8>, SocketAddr)> = {
             let mut outstanding_requests = outstanding_requests.write().unwrap();
             repairs
@@ -811,13 +810,11 @@ impl RepairService {
                 .filter_map(|repair_request| {
                     let (to, req) = serve_repair
                         .repair_request(
-                            &repair_info.cluster_slots,
+                            repair_info,
                             repair_request,
                             peers_cache,
                             &mut repair_metrics.stats,
-                            &repair_info.repair_validators,
                             &mut outstanding_requests,
-                            &identity_keypair,
                         )
                         .ok()??;
                     Some((req, to))
@@ -836,7 +833,7 @@ impl RepairService {
                     error!(
                         "{} batch_send failed to send {num_failed}/{num_pkts} packets first error \
                          {err:?}",
-                        identity_keypair.pubkey()
+                        repair_info.cluster_info.id()
                     );
                 }
             }
