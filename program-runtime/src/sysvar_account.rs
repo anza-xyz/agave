@@ -85,6 +85,7 @@ fn create_account_with_fields<T: Serialize + SysvarAccountSize>(
     account
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn create_account_for_test<T: Serialize + SysvarAccountSize>(sysvar_data: &T) -> Account {
     create_account_with_fields(sysvar_data, (1, solana_clock::INITIAL_RENT_EPOCH))
 }
@@ -96,6 +97,7 @@ pub fn create_account_shared_data_with_fields<T: Serialize + SysvarAccountSize>(
     AccountSharedData::from(create_account_with_fields(sysvar_data, fields))
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn create_account_shared_data_for_test<T: Serialize + SysvarAccountSize>(
     sysvar_data: &T,
 ) -> AccountSharedData {

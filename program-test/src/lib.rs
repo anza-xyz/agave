@@ -17,7 +17,7 @@ use {
     solana_address::Address,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
-    solana_clock::{Clock, Epoch, Slot},
+    solana_clock::{Clock, Epoch, INITIAL_RENT_EPOCH, Slot},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
     solana_epoch_rewards::EpochRewards,
@@ -40,7 +40,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         serialization::serialize_parameters,
         stable_log,
-        sysvar_account::{SysvarAccountSize, create_account_shared_data_for_test},
+        sysvar_account::{SysvarAccountSize, create_account_shared_data_with_fields},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -774,7 +774,7 @@ impl ProgramTest {
         address: Pubkey,
         sysvar: &S,
     ) {
-        let account = create_account_shared_data_for_test(sysvar);
+        let account = create_account_shared_data_with_fields(sysvar, (1, INITIAL_RENT_EPOCH));
         self.add_account(address, account.into());
     }
 
