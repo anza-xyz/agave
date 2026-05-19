@@ -29,3 +29,6 @@ thiserror = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 rand_chacha = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+
+[lints]
+workspace = true

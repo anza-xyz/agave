@@ -28,3 +28,6 @@ rand_chacha = { workspace = true }
 solana-hash = { workspace = true, features = ["decode"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

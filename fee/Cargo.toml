@@ -16,3 +16,6 @@ agave-unstable-api = []
 agave-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-svm-transaction = { workspace = true }
+
+[lints]
+workspace = true

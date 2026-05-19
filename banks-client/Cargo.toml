@@ -47,3 +47,6 @@ solana-pubkey = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
+
+[lints]
+workspace = true

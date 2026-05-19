@@ -26,3 +26,6 @@ solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
 solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { version = "=4.2.0", features = ["rand"] }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

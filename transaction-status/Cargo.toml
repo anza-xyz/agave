@@ -61,3 +61,6 @@ spl-token-confidential-transfer-proof-extraction = { workspace = true }
 [[bench]]
 name = "extract_memos"
 harness = false
+
+[lints]
+workspace = true

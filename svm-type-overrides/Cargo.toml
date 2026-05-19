@@ -17,3 +17,6 @@ executor = ["dep:futures"]
 futures = { workspace = true, optional = true }
 rand = { workspace = true }
 shuttle = { workspace = true, optional = true }
+
+[lints]
+workspace = true

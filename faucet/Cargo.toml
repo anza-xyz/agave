@@ -43,3 +43,6 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 solana-faucet = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

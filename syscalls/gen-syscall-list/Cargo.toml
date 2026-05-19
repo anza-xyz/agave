@@ -13,3 +13,6 @@ agave-unstable-api = []
 
 [build-dependencies]
 regex = { workspace = true }
+
+[lints]
+workspace = true

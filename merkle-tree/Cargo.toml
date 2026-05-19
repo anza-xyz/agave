@@ -26,3 +26,6 @@ solana-sha256-hasher = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
+
+[lints]
+workspace = true

@@ -63,3 +63,6 @@ assert_matches = { workspace = true }
 bincode = { workspace = true }
 solana-test-validator = { path = "../test-validator" }
 solana-transaction-error = { workspace = true }
+
+[lints]
+workspace = true

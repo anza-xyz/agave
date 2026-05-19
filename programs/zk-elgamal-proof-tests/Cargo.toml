@@ -24,3 +24,6 @@ solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-zk-sdk = { workspace = true }
+
+[lints]
+workspace = true
