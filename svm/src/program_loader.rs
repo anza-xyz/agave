@@ -1,13 +1,16 @@
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
+    crate::account_loader::PROGRAM_OWNERS,
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
-        loaded_programs::ProgramRuntimeEnvironment,
+        loaded_programs::{
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+        },
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
             ProgramCacheEntryType,
@@ -17,8 +20,10 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_timings::ExecuteTimings,
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_error::{TransactionError, TransactionResult},
+    std::{collections::HashMap, sync::atomic::Ordering},
 };
 
 #[derive(Debug)]
@@ -239,6 +244,41 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     }
 }
 
+/// Appends to a set of executable program accounts (all accounts owned by any loader)
+/// for transactions with a valid blockhash or nonce.
+pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+    tx: &impl SVMMessage,
+    check_program_deployment_slot: bool,
+) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
+    let mut program_accounts_set: HashMap<Pubkey, Slot> = HashMap::default();
+    for account_key in tx.account_keys().iter() {
+        if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
+            cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
+        } else if let Some((account, last_modification_slot)) =
+            callbacks.get_account_shared_data(account_key)
+            && PROGRAM_OWNERS.contains(account.owner())
+        {
+            program_accounts_set.insert(*account_key, last_modification_slot);
+        }
+    }
+    program_accounts_set
+        .iter()
+        .map(|(pubkey, last_modification_slot)| {
+            let match_criteria = if check_program_deployment_slot {
+                get_program_deployment_slot(callbacks, pubkey)
+                    .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
+                        ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
+                    })
+            } else {
+                ProgramCacheMatchCriteria::NoCriteria
+            };
+            (*pubkey, match_criteria, *last_modification_slot)
+        })
+        .collect()
+}
+
 // Plucked from the now-removed Loader V4 program library.
 fn loader_v4_get_state(data: &[u8]) -> Result<&LoaderV4State, InstructionError> {
     unsafe {
@@ -260,6 +300,12 @@ mod tests {
         super::*,
         crate::transaction_processor::TransactionBatchProcessor,
         solana_account::WritableAccount,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{
+            LegacyMessage, Message, MessageHeader, SanitizedMessage,
+            compiled_instruction::CompiledInstruction,
+        },
         solana_program_runtime::{
             loaded_programs::{
                 BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
@@ -268,15 +314,21 @@ mod tests {
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+        solana_signature::Signature,
         solana_svm_callback::InvokeContextCallback,
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{
             cell::RefCell,
-            collections::HashMap,
+            collections::{HashMap, HashSet},
             env,
             fs::{self, File},
             io::Read,
         },
     };
+
+    fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
+    }
 
     struct TestForkGraph {}
 
@@ -759,5 +811,172 @@ mod tests {
 
         let result = get_program_deployment_slot(&mock_bank, &key2);
         assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_filter_executable_program_accounts() {
+        let mock_bank = MockBankCallback::default();
+        let key1 = Pubkey::new_unique();
+        let owner1 = bpf_loader::id();
+        let key2 = Pubkey::new_unique();
+        let owner2 = bpf_loader_upgradeable::id();
+
+        let mut data1 = AccountSharedData::default();
+        data1.set_owner(owner1);
+        data1.set_lamports(93);
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(key1, (data1, 0));
+
+        let mut data2 = AccountSharedData::default();
+        data2.set_owner(owner2);
+        data2.set_lamports(90);
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(key2, (data2, 0));
+
+        let message = Message {
+            account_keys: vec![key1, key2],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let sanitized_message = new_unchecked_sanitized_message(message);
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+
+        let missing_programs = filter_executable_program_accounts(
+            &mock_bank,
+            &mut ProgramCacheForTxBatch::default(),
+            &sanitized_transaction,
+            false,
+        );
+        assert_eq!(missing_programs.len(), 2);
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &key1)
+                .is_some()
+        );
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &key2)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_filter_executable_program_accounts_no_errors() {
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+
+        let non_program_pubkey1 = Pubkey::new_unique();
+        let non_program_pubkey2 = Pubkey::new_unique();
+        let program1_pubkey = bpf_loader::id();
+        let program2_pubkey = bpf_loader_upgradeable::id();
+        let account1_pubkey = Pubkey::new_unique();
+        let account2_pubkey = Pubkey::new_unique();
+        let account3_pubkey = Pubkey::new_unique();
+        let account4_pubkey = Pubkey::new_unique();
+
+        let account5_pubkey = Pubkey::new_unique();
+
+        let mock_bank = MockBankCallback::default();
+        mock_bank.account_shared_data.borrow_mut().insert(
+            non_program_pubkey1,
+            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            non_program_pubkey2,
+            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            program1_pubkey,
+            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            program2_pubkey,
+            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            account1_pubkey,
+            (AccountSharedData::new(1, 10, &non_program_pubkey1), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            account2_pubkey,
+            (AccountSharedData::new(1, 10, &non_program_pubkey2), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            account3_pubkey,
+            (AccountSharedData::new(40, 1, &program1_pubkey), 0),
+        );
+        mock_bank.account_shared_data.borrow_mut().insert(
+            account4_pubkey,
+            (AccountSharedData::new(40, 1, &program2_pubkey), 0),
+        );
+
+        let tx1 = Transaction::new_with_compiled_instructions(
+            &[&keypair1],
+            &[non_program_pubkey1],
+            Hash::new_unique(),
+            vec![account1_pubkey, account2_pubkey, account3_pubkey],
+            vec![CompiledInstruction::new(1, &(), vec![0])],
+        );
+        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
+
+        let tx2 = Transaction::new_with_compiled_instructions(
+            &[&keypair2],
+            &[non_program_pubkey2],
+            Hash::new_unique(),
+            vec![account4_pubkey, account3_pubkey, account2_pubkey],
+            vec![CompiledInstruction::new(1, &(), vec![0])],
+        );
+        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
+
+        let missing_programs = filter_executable_program_accounts(
+            &mock_bank,
+            &mut ProgramCacheForTxBatch::default(),
+            &sanitized_tx1,
+            false,
+        );
+        assert_eq!(missing_programs.len(), 1);
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &account3_pubkey)
+                .is_some()
+        );
+
+        let missing_programs = filter_executable_program_accounts(
+            &mock_bank,
+            &mut ProgramCacheForTxBatch::default(),
+            &sanitized_tx2,
+            false,
+        );
+        assert_eq!(missing_programs.len(), 2);
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &account3_pubkey)
+                .is_some()
+        );
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &account4_pubkey)
+                .is_some()
+        );
     }
 }
