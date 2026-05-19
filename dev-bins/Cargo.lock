@@ -4864,7 +4864,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap 0.10.1",
@@ -5385,16 +5385,15 @@ dependencies = [
 
 [[package]]
 name = "reqwest-middleware"
-version = "0.4.2"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57f17d28a6e6acfe1733fe24bcd30774d13bffa4b8a22535b4c8c98423088d4e"
+checksum = "07bc3f1384cffa4f274dad2d4ddd73aed32fed8f786d96c6be8aa4e5fd3c3b58"
 dependencies = [
  "anyhow",
  "async-trait",
  "http 1.4.0",
- "reqwest 0.12.28",
- "serde",
- "thiserror 1.0.69",
+ "reqwest 0.13.2",
+ "thiserror 2.0.18",
  "tower-service",
 ]
 
