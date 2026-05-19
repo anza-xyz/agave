@@ -10,6 +10,7 @@ use {
     solana_program_runtime::{
         loaded_programs::{
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            ProgramToLoad,
         },
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
@@ -248,7 +249,7 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     tx: &impl SVMMessage,
     check_program_deployment_slot: bool,
-) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
+) -> Vec<ProgramToLoad> {
     let mut result = Vec::new();
     for account_key in tx.account_keys().iter() {
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
@@ -265,7 +266,11 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
             } else {
                 ProgramCacheMatchCriteria::NoCriteria
             };
-            result.push((*account_key, match_criteria, last_modification_slot));
+            result.push(ProgramToLoad {
+                program_id: *account_key,
+                match_criteria,
+                last_modification_slot,
+            });
         }
     }
     result
@@ -866,13 +871,13 @@ mod tests {
         assert!(
             missing_programs
                 .iter()
-                .position(|(key, _, _)| key == &key1)
+                .position(|program_to_load| program_to_load.program_id == key1)
                 .is_some()
         );
         assert!(
             missing_programs
                 .iter()
-                .position(|(key, _, _)| key == &key2)
+                .position(|program_to_load| program_to_load.program_id == key2)
                 .is_some()
         );
     }
@@ -955,7 +960,7 @@ mod tests {
         assert!(
             missing_programs
                 .iter()
-                .position(|(key, _, _)| key == &account3_pubkey)
+                .position(|program_to_load| program_to_load.program_id == account3_pubkey)
                 .is_some()
         );
 
@@ -969,13 +974,13 @@ mod tests {
         assert!(
             missing_programs
                 .iter()
-                .position(|(key, _, _)| key == &account3_pubkey)
+                .position(|program_to_load| program_to_load.program_id == account3_pubkey)
                 .is_some()
         );
         assert!(
             missing_programs
                 .iter()
-                .position(|(key, _, _)| key == &account4_pubkey)
+                .position(|program_to_load| program_to_load.program_id == account4_pubkey)
                 .is_some()
         );
     }

@@ -44,6 +44,7 @@ use {
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+            ProgramToLoad,
         },
         program_cache_entry::ProgramCacheEntry,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
@@ -316,9 +317,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Pre-populate the builtin program cache from the global cache.
         // This is done once per block rather than once per batch.
         let mut builtin_program_cache = ProgramCacheForTxBatch::new(slot);
-        let mut search_for: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> = builtin_program_ids
+        let mut search_for: Vec<ProgramToLoad> = builtin_program_ids
             .iter()
-            .map(|key| (*key, ProgramCacheMatchCriteria::NoCriteria, 0))
+            .map(|program_id| ProgramToLoad {
+                program_id: *program_id,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                last_modification_slot: 0,
+            })
             .collect();
         self.global_program_cache.read().unwrap().extract(
             &mut search_for,
@@ -816,7 +821,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)>,
+        mut missing_programs: Vec<ProgramToLoad>,
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
@@ -1696,7 +1701,11 @@ mod tests {
 
         batch_processor.replenish_program_cache(
             &account_loader,
-            vec![(key, ProgramCacheMatchCriteria::NoCriteria, 0)],
+            vec![ProgramToLoad {
+                program_id: key,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                last_modification_slot: 0,
+            }],
             &program_runtime_environment_for_execution,
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
@@ -1730,7 +1739,11 @@ mod tests {
 
             batch_processor.replenish_program_cache(
                 &account_loader,
-                vec![(key, ProgramCacheMatchCriteria::NoCriteria, 0)],
+                vec![ProgramToLoad {
+                    program_id: key,
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                    last_modification_slot: 0,
+                }],
                 &program_runtime_environment_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
@@ -1948,7 +1961,11 @@ mod tests {
             .write()
             .unwrap()
             .extract(
-                &mut vec![(key, ProgramCacheMatchCriteria::NoCriteria, 0)],
+                &mut vec![ProgramToLoad {
+                    program_id: key,
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                    last_modification_slot: 0,
+                }],
                 &mut loaded_programs_for_tx_batch,
                 &program_runtime_environment,
                 true,

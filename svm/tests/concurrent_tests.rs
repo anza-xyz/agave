@@ -10,12 +10,12 @@ use {
         thread,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_clock::Slot,
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::{
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
+            ProgramToLoad,
         },
         program_cache_entry::ProgramCacheEntryType,
     },
@@ -51,9 +51,13 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> = programs
+    let missing_programs: Vec<ProgramToLoad> = programs
         .iter()
-        .map(|key| (*key, ProgramCacheMatchCriteria::NoCriteria, 0))
+        .map(|key| ProgramToLoad {
+            program_id: *key,
+            match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+            last_modification_slot: 0,
+        })
         .collect();
 
     let ths: Vec<_> = (0..threads)

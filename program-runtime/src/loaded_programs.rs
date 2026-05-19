@@ -183,6 +183,17 @@ impl EpochBoundaryPreparation {
     }
 }
 
+/// Input of ProgramCache::extract()
+#[derive(Clone)]
+pub struct ProgramToLoad {
+    /// The program address
+    pub program_id: Pubkey,
+    /// Potentially filter out / ignore some entries during the start up / catch up phase
+    pub match_criteria: ProgramCacheMatchCriteria,
+    /// When the program account was last written to (might be after the deployment slot)
+    pub last_modification_slot: Slot,
+}
+
 #[derive(Debug)]
 pub(crate) enum IndexImplementation {
     /// Fork-graph aware index implementation
@@ -341,6 +352,7 @@ impl ProgramCacheForTxBatch {
     }
 }
 
+#[derive(Clone)]
 pub enum ProgramCacheMatchCriteria {
     DeployedOnOrAfterSlot(Slot),
     Tombstone,
@@ -572,7 +584,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
         &self,
-        search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)>,
+        search_for: &mut Vec<ProgramToLoad>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
         increment_usage_counter: bool,
@@ -587,8 +599,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries,
                 loading_entries,
             } => {
-                search_for.retain(|(key, match_criteria, _slot)| {
-                    if let Some(second_level) = entries.get(key) {
+                search_for.retain(|program_to_load| {
+                    if let Some(second_level) = entries.get(&program_to_load.program_id) {
                         let mut filter_by_deployment_slot = None;
                         for entry in second_level.iter().rev() {
                             let required_deployment_slot =
@@ -625,7 +637,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                             .or(Some(entry.deployment_slot));
                                         continue;
                                     }
-                                    if !Self::matches_criteria(entry, match_criteria) {
+                                    if !Self::matches_criteria(
+                                        entry,
+                                        &program_to_load.match_criteria,
+                                    ) {
                                         break;
                                     }
                                     if let ProgramCacheEntryType::Unloaded(_environment) =
@@ -656,20 +671,20 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 }
                                 loaded_programs_for_tx_batch
                                     .entries
-                                    .insert(*key, entry_to_return);
+                                    .insert(program_to_load.program_id, entry_to_return);
                                 return false;
                             }
                         }
                     }
                     if cooperative_loading_task.is_none() {
                         let mut loading_entries = loading_entries.lock().unwrap();
-                        let entry = loading_entries.entry(*key);
+                        let entry = loading_entries.entry(program_to_load.program_id);
                         if let Entry::Vacant(entry) = entry {
                             entry.insert((
                                 loaded_programs_for_tx_batch.slot,
                                 thread::current().id(),
                             ));
-                            cooperative_loading_task = Some(*key);
+                            cooperative_loading_task = Some(program_to_load.program_id);
                         }
                     }
                     true
@@ -941,7 +956,7 @@ pub(crate) mod tests {
         crate::{
             loaded_programs::{
                 BlockRelation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
-                ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+                ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramToLoad,
                 get_mock_program_runtime_environment,
             },
             program_cache_entry::{
@@ -1797,7 +1812,7 @@ pub(crate) mod tests {
         cache: &ProgramCache<TestForkGraphSpecific>,
         loading_slot: Slot,
         keys: &[Pubkey],
-    ) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
+    ) -> Vec<ProgramToLoad> {
         let fork_graph = cache.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
         let entries = cache.get_flattened_entries_for_tests();
@@ -1813,12 +1828,10 @@ pub(crate) mod tests {
                                 BlockRelation::Equal | BlockRelation::Ancestor,
                             )
                     })
-                    .map(|(program_id, entry)| {
-                        (
-                            *program_id,
-                            ProgramCacheMatchCriteria::NoCriteria,
-                            entry.deployment_slot,
-                        )
+                    .map(|(program_id, entry)| ProgramToLoad {
+                        program_id: *program_id,
+                        match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                        last_modification_slot: entry.deployment_slot,
                     })
             })
             .collect()
@@ -1839,11 +1852,11 @@ pub(crate) mod tests {
     }
 
     fn match_missing(
-        missing: &[(Pubkey, ProgramCacheMatchCriteria, Slot)],
-        program: &Pubkey,
+        missing: &[ProgramToLoad],
+        program_id: &Pubkey,
         expected_result: bool,
     ) -> bool {
-        missing.iter().any(|(key, _, _)| key == program) == expected_result
+        missing.iter().any(|entry| &entry.program_id == program_id) == expected_result
     }
 
     #[test]
@@ -2095,8 +2108,10 @@ pub(crate) mod tests {
 
         // Test the same fork, but request the program modified at a later slot than what's in the cache.
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
-        missing.get_mut(0).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
-        missing.get_mut(1).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(0).unwrap().match_criteria =
+            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(1).unwrap().match_criteria =
+            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
@@ -2239,7 +2254,11 @@ pub(crate) mod tests {
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
-        let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria, 0)];
+        let mut missing = vec![ProgramToLoad {
+            program_id: program1,
+            match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+            last_modification_slot: 0,
+        }];
         let mut extracted = ProgramCacheForTxBatch::new(0);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_missing(&missing, &program1, true));
