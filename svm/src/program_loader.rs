@@ -213,11 +213,8 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 /// Returns an error if the program's account state can not be found or parsed.
 pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    pubkey: &Pubkey,
+    program: &AccountSharedData,
 ) -> TransactionResult<Slot> {
-    let (program, _slot) = callbacks
-        .get_account_shared_data(pubkey)
-        .ok_or(TransactionError::ProgramAccountNotFound)?;
     if bpf_loader_upgradeable::check_id(program.owner()) {
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
@@ -267,7 +264,8 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
         .iter()
         .map(|(pubkey, last_modification_slot)| {
             let match_criteria = if check_program_deployment_slot {
-                get_program_deployment_slot(callbacks, pubkey)
+                let (program, _slot) = callbacks.get_account_shared_data(pubkey).unwrap();
+                get_program_deployment_slot(callbacks, &program)
                     .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
                         ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
                     })
@@ -738,11 +736,7 @@ mod tests {
     #[test]
     fn test_program_modification_slot_account_not_found() {
         let mock_bank = MockBankCallback::default();
-
         let key = Pubkey::new_unique();
-
-        let result = get_program_deployment_slot(&mock_bank, &key);
-        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
         let mut account_data = AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
         mock_bank
@@ -750,7 +744,10 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let result = get_program_deployment_slot(&mock_bank, &key);
+        let result = get_program_deployment_slot(
+            &mock_bank,
+            &mock_bank.get_account_shared_data(&key).unwrap().0,
+        );
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
         let state = UpgradeableLoaderState::Program {
@@ -762,7 +759,10 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let result = get_program_deployment_slot(&mock_bank, &key);
+        let result = get_program_deployment_slot(
+            &mock_bank,
+            &mock_bank.get_account_shared_data(&key).unwrap().0,
+        );
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
     }
 
@@ -800,7 +800,10 @@ mod tests {
             .borrow_mut()
             .insert(key2, (account_data.clone(), 0));
 
-        let result = get_program_deployment_slot(&mock_bank, &key1);
+        let result = get_program_deployment_slot(
+            &mock_bank,
+            &mock_bank.get_account_shared_data(&key1).unwrap().0,
+        );
         assert_eq!(result.unwrap(), 77);
 
         account_data.set_owner(Pubkey::new_unique());
@@ -809,7 +812,10 @@ mod tests {
             .borrow_mut()
             .insert(key2, (account_data, 0));
 
-        let result = get_program_deployment_slot(&mock_bank, &key2);
+        let result = get_program_deployment_slot(
+            &mock_bank,
+            &mock_bank.get_account_shared_data(&key2).unwrap().0,
+        );
         assert_eq!(result.unwrap(), 0);
     }
 
