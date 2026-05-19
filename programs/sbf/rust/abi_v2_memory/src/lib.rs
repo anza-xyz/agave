@@ -77,7 +77,7 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn custom_panic(info: &core::panic::PanicInfo<'_>) {
     let formatted = format!("{info:?}");
     sol_log(formatted.as_bytes());
@@ -199,7 +199,7 @@ unsafe fn write_to_account(
     *account_data.get_unchecked_mut(2) = 9;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint() -> u64 {
     // Transaction frame
