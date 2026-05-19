@@ -817,8 +817,8 @@ mod test {
                     num_readonly_unsigned_accounts: 0,
                 },
                 solana_message::v1::TransactionConfig::empty(),
-                Default::default(),
-                vec![Default::default()],
+                solana_message::Hash::default(),
+                vec![solana_message::Address::default()],
                 vec![],
             )),
         };
