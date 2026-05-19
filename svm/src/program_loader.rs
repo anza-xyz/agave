@@ -23,7 +23,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_error::{TransactionError, TransactionResult},
-    std::{collections::HashMap, sync::atomic::Ordering},
+    std::sync::atomic::Ordering,
 };
 
 #[derive(Debug)]
@@ -249,8 +249,7 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
     tx: &impl SVMMessage,
     check_program_deployment_slot: bool,
 ) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
-    let mut program_accounts_set: HashMap<Pubkey, (ProgramCacheMatchCriteria, Slot)> =
-        HashMap::default();
+    let mut result = Vec::new();
     for account_key in tx.account_keys().iter() {
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
@@ -266,15 +265,10 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
             } else {
                 ProgramCacheMatchCriteria::NoCriteria
             };
-            program_accounts_set.insert(*account_key, (match_criteria, last_modification_slot));
+            result.push((*account_key, match_criteria, last_modification_slot));
         }
     }
-    program_accounts_set
-        .iter()
-        .map(|(pubkey, (match_criteria, last_modification_slot))| {
-            (*pubkey, *match_criteria, *last_modification_slot)
-        })
-        .collect()
+    result
 }
 
 // Plucked from the now-removed Loader V4 program library.
