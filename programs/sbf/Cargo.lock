@@ -7080,7 +7080,6 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_bytes",
- "siphasher 1.0.2",
  "solana-bloom",
  "solana-client",
  "solana-clock",

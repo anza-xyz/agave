@@ -55,7 +55,6 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
-siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
