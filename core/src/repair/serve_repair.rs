@@ -2895,6 +2895,64 @@ mod tests {
     }
 
     #[test]
+    fn repair_requests_return_error_for_all_zero_peer_weights() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        bank_forks
+            .read()
+            .unwrap()
+            .migration_status()
+            .enable_alpenglow_for_tests();
+
+        let slot = 1;
+        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
+        let cluster_info = Arc::new(new_test_cluster_info());
+        let unstaked_pubkey = Pubkey::new_unique();
+        cluster_info.insert_info(ContactInfo::new_localhost(&unstaked_pubkey, timestamp()));
+        let repair_info = new_test_repair_info(
+            cluster_info.clone(),
+            bank_forks.clone(),
+            cluster_slots,
+            Some(HashSet::from([unstaked_pubkey])),
+        );
+        let serve_repair = ServeRepair::new_for_test(
+            cluster_info,
+            bank_forks,
+            Arc::new(RwLock::new(HashSet::default())),
+        );
+
+        let mut peers_cache = LruCache::new(100);
+        let mut outstanding_shred_requests = OutstandingShredRepairs::default();
+        assert_matches!(
+            serve_repair.repair_request(
+                &repair_info,
+                ShredRepairType::Shred(slot, 0),
+                &mut peers_cache,
+                &mut RepairStats::default(),
+                &mut outstanding_shred_requests,
+            ),
+            Err(Error::WeightedIndex(WeightedError::InsufficientNonZero))
+        );
+        assert!(peers_cache.get(&slot).is_none());
+
+        let mut outstanding_block_id_requests = OutstandingRequests::default();
+        assert_matches!(
+            serve_repair.block_id_repair_request(
+                &repair_info,
+                BlockIdRepairType::ParentAndFecSetCount {
+                    slot,
+                    block_id: Hash::new_unique(),
+                },
+                &mut peers_cache,
+                &mut outstanding_block_id_requests,
+            ),
+            Err(Error::WeightedIndex(WeightedError::InsufficientNonZero))
+        );
+        assert!(peers_cache.get(&slot).is_none());
+    }
+
+    #[test]
     fn test_repair_with_repair_validators() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
