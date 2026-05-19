@@ -948,6 +948,7 @@ impl Bank {
                             commission_account.checked_add_lamports(*commission_lamports)
                         {
                             debug!("reward redemption failed for {commission_pubkey}: {err:?}");
+                            total_burned_lamports.fetch_add(*commission_lamports, Relaxed);
                             return None;
                         }
                         if !is_vote_account {
