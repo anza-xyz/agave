@@ -11,9 +11,7 @@ use {
         bank::Bank,
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        loader_utils::{
-            load_upgradeable_program_and_advance_slot, load_upgradeable_program_wrapper,
-        },
+        loader_utils::load_upgradeable_program_and_advance_slot,
     },
     solana_sdk_ids::system_program,
     solana_signer::Signer,
@@ -231,4 +229,126 @@ fn test_access_invalid_regions() {
     for i in 0x149..0x160 {
         check_invalid_access(i);
     }
+}
+
+#[test]
+fn test_write_to_accounts() {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_abi_v2_memory",
+    );
+
+    let acc_1_key = Pubkey::new_unique();
+    let acc_1 = AccountSharedData::create_from_existing_shared_data(
+        223450,
+        vec![1, 2, 3].into(),
+        system_program::id(),
+        false,
+        64,
+    );
+    bank.store_account(&acc_1_key, &acc_1);
+
+    let acc_2_key = Pubkey::new_unique();
+    let acc_2 = AccountSharedData::create_from_existing_shared_data(
+        90123,
+        vec![4, 5, 6].into(),
+        acc_1_key,
+        false,
+        64,
+    );
+    bank.store_account(&acc_2_key, &acc_2);
+
+    let metas_for_ix_1 = vec![
+        AccountMeta::new(acc_1_key, false),
+        AccountMeta::new_readonly(acc_2_key, false),
+    ];
+
+    let data = [1u8];
+    let ix_1 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_1.clone());
+    let message = Message::new(&[ix_1], Some(&mint_keypair.pubkey()));
+    let bank_client = BankClient::new_shared(bank.clone());
+
+    let result = bank_client.send_and_confirm_message(&[&mint_keypair], message);
+    assert!(result.is_ok());
+
+    let account = bank.get_account_with_fixed_root(&acc_1_key).unwrap();
+    assert_eq!(account.data(), &[7, 8, 9]);
+}
+
+#[test]
+fn account_permissions_update() {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_abi_v2_memory",
+    );
+
+    let acc_1_key = Pubkey::new_unique();
+    let acc_1 = AccountSharedData::create_from_existing_shared_data(
+        223450,
+        vec![1, 2, 3].into(),
+        system_program::id(),
+        false,
+        64,
+    );
+    bank.store_account(&acc_1_key, &acc_1);
+
+    let acc_2_key = Pubkey::new_unique();
+    let acc_2 = AccountSharedData::create_from_existing_shared_data(
+        90123,
+        vec![4, 5, 6].into(),
+        acc_1_key,
+        false,
+        64,
+    );
+    bank.store_account(&acc_2_key, &acc_2);
+
+    let metas_for_ix_1 = vec![
+        AccountMeta::new(acc_1_key, false),
+        AccountMeta::new_readonly(acc_2_key, false),
+    ];
+
+    let data = [1u8];
+    let ix_1 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_1);
+
+    let metas_for_ix_2 = vec![
+        AccountMeta::new_readonly(acc_2_key, false),
+        AccountMeta::new_readonly(acc_1_key, false),
+    ];
+    let data = [1u8];
+    let ix_2 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_2);
+
+    let message = Message::new(&[ix_1, ix_2], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+    let first_ix = logs.get(2).unwrap();
+    assert!(first_ix.contains("success"));
+
+    let second_ix = logs.last().unwrap();
+    assert!(second_ix.contains("Access violation"));
 }

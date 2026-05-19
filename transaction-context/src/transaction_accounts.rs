@@ -504,9 +504,12 @@ impl TransactionAccounts {
             .zip(accounts_regions.iter_mut())
         {
             unsafe {
-                // We are sharing the payload of all accounts as readonly
+                // Creating regions as writable, so the compiler knows the underlying memory
+                // may change.
+                // Writing permissions are updated in a later stage at `update_account_permissions`.
+                let account_data = Arc::make_mut(&mut (*private_fields.get()).payload);
                 *region = MemoryRegion::new(
-                    &raw const (*(*private_fields.get()).payload)[..],
+                    &raw mut account_data[..],
                     (*shared_fields.get()).payload.ptr(),
                 );
             };

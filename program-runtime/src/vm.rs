@@ -236,7 +236,7 @@ pub fn execute<'a, 'b: 'a>(
     let is_abi_v2 = executable.get_sbpf_version() == SBPFVersion::V4;
 
     let mut abiv1_parameters = if is_abi_v2 {
-        initialize_abi_v2_areas(invoke_context, executable);
+        initialize_abi_v2_areas(invoke_context, executable)?;
         None
     } else {
         let mut serialize_time = Measure::start("serialize");
@@ -553,14 +553,16 @@ pub fn execute<'a, 'b: 'a>(
 fn initialize_abi_v2_areas<C: ContextObject>(
     invoke_context: &mut InvokeContext,
     executable: &Executable<C>,
-) {
+) -> Result<(), InstructionError> {
     // Doing a lazy initialization in case we don't have any ABIv2 instruction in the transaction.
-    if invoke_context.memory_contexts.abi_v2_regions_exist() {
-        return;
+    if !invoke_context.memory_contexts.abi_v2_regions_exist() {
+        let abi_v2_regions = create_abiv2_regions(invoke_context.transaction_context);
+        invoke_context
+            .memory_contexts
+            .create_abi_v2_mappings(abi_v2_regions, executable);
     }
 
-    let abi_v2_regions = create_abiv2_regions(invoke_context.transaction_context);
     invoke_context
         .memory_contexts
-        .create_abi_v2_mappings(abi_v2_regions, executable);
+        .update_abi_v2_account_permissions(invoke_context.transaction_context)
 }
