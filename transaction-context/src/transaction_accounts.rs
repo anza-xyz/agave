@@ -98,6 +98,10 @@ impl TransactionAccountViewMut<'_> {
         Arc::make_mut(&mut self.private_fields.payload)
     }
 
+    pub(crate) fn raw_mut_data_slice(&mut self) -> *mut [u8] {
+        &raw mut self.data_mut()[..]
+    }
+
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
         self.data_mut().resize(new_len, value);
         // SAFETY: We are synchronizing the lengths.
