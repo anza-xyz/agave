@@ -199,10 +199,10 @@ pull_request_rules:
       comment:
         message: |
           If this PR represents a change to the public RPC API:
-        
+
           1. Make sure it includes a complementary update to `rpc-client/` ([example](https://github.com/anza-xyz/agave/pull/2036/files))
           2. Open a follow-up PR to update the JavaScript client `@solana/kit` ([example](https://github.com/anza-xyz/kit/pull/974/files))
-        
+
           Thank you for keeping the RPC clients in sync with the server API @{{author}}.
   - name: Reminder to add Firedancer team to changes in `programs/`
     conditions:
