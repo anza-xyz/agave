@@ -1956,7 +1956,7 @@ impl Bank {
         let ancestors = Ancestors::from(vec![slot]);
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
-        let _rewards_calculation_thread_pool = rewards_calculation_thread_pool();
+        let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
         // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
@@ -2122,7 +2122,7 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
-        bank.initialize_after_snapshot_restore(rewards_calculation_thread_pool);
+        bank.initialize_after_snapshot_restore(|| rewards_calculation_thread_pool);
 
         datapoint_info!(
             "bank-new-from-fields",
