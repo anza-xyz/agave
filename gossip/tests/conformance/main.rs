@@ -1,4 +1,4 @@
-#![cfg(feature = "conformance")]
+#![cfg(feature = "dev-context-only-utils")]
 
 //! Gossip conformance tests and fixture generation.
 

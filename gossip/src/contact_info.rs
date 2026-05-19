@@ -248,12 +248,12 @@ impl ContactInfo {
         &self.version
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn addrs(&self) -> &[IpAddr] {
         &self.addrs
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn sockets(&self) -> &[SocketEntry] {
         &self.sockets
     }
