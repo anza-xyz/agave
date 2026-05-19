@@ -244,7 +244,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             builtin_program_ids: RwLock::new(HashSet::new()),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
-            compilation_worker: CompilationWorker::new(),
+            compilation_worker: CompilationWorker::default(),
         }
     }
 }

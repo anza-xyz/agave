@@ -3,7 +3,7 @@ use {
         invoke_context::InvokeContext,
         loading_task::LoadingTaskWaiter,
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
-        program_metrics::{EMA_SCALE, ProgramCacheStats}, threaded_compilation::CompilationWorker,
+        program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
     percentage::PercentageInteger,

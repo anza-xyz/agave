@@ -18,8 +18,8 @@ pub struct CompilationWorker {
     sender: crossbeam_channel::Sender<CompilationRequest>,
 }
 
-impl CompilationWorker {
-    pub fn new() -> Self {
+impl Default for CompilationWorker {
+    fn default() -> Self {
         let (compile_send, compile_recv) =
             crossbeam_channel::bounded::<CompilationRequest>(COMPILE_REQUEST_CHANNEL_SIZE);
         std::thread::Builder::new()
@@ -37,7 +37,9 @@ impl CompilationWorker {
             sender: compile_send,
         }
     }
+}
 
+impl CompilationWorker {
     pub fn request_compilation(
         &self,
         entry: Arc<ProgramCacheEntry>,
