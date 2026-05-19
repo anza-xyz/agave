@@ -19,7 +19,7 @@ pub struct CompilationWorker {
 }
 
 impl CompilationWorker {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let (compile_send, compile_recv) =
             crossbeam_channel::bounded::<CompilationRequest>(COMPILE_REQUEST_CHANNEL_SIZE);
         std::thread::Builder::new()

@@ -48,7 +48,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
-        threaded_compilation::CompilationMode,
+        threaded_compilation::{CompilationMode, CompilationWorker},
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -213,6 +213,10 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     builtin_program_cache: RwLock<ProgramCacheForTxBatch>,
 
     execution_cost: SVMTransactionExecutionCost,
+
+    /// As programs are collected, we'll check if they are a candidate for compilation and send the
+    /// request to compile to a dedicated compilation thread.
+    pub compilation_worker: CompilationWorker,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -240,6 +244,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             builtin_program_ids: RwLock::new(HashSet::new()),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
+            compilation_worker: CompilationWorker::new(),
         }
     }
 }
@@ -340,6 +345,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             builtin_program_ids: RwLock::new(builtin_program_ids),
             builtin_program_cache: RwLock::new(builtin_program_cache),
             execution_cost: self.execution_cost,
+            compilation_worker: self.compilation_worker.clone(),
         }
     }
 
@@ -870,12 +876,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let extracted_callback: &dyn Fn(&_, &_) = if let CompilationMode::ThreadedJit =
             compilation_mode
         {
-            let compilation_worker = self
-                .global_program_cache
-                .read()
-                .unwrap()
-                .compilation_worker
-                .clone();
+            let compilation_worker = self.compilation_worker.clone();
             let jit_timer = Arc::clone(&execute_timings.details.create_executor_jit_compile_us);
             &move |_, program| {
                 compilation_worker.request_compilation(Arc::clone(program), Arc::clone(&jit_timer));

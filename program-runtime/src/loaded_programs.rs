@@ -230,9 +230,6 @@ pub struct ProgramCache<FG: ForkGraph> {
     pub fork_graph: Option<Weak<RwLock<FG>>>,
     /// Coordinates TX batches waiting for others to complete their task during cooperative loading
     pub loading_task_waiter: Arc<LoadingTaskWaiter>,
-    /// As programs are extracted, we'll check if they are a candidate for compilation and send the
-    /// request to compile to a dedicated compilation thread.
-    pub compilation_worker: CompilationWorker,
 }
 
 impl<FG: ForkGraph> std::fmt::Debug for ProgramCache<FG> {
@@ -361,7 +358,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             stats: ProgramCacheStats::default(),
             fork_graph: None,
             loading_task_waiter: Arc::new(LoadingTaskWaiter::default()),
-            compilation_worker: CompilationWorker::new(),
         }
     }
 
