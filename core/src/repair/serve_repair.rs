@@ -1940,8 +1940,6 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
-        agave_votor_messages::consensus_message::{Certificate, CertificateType},
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -1961,22 +1959,6 @@ mod tests {
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
-
-    fn enable_alpenglow_for_tests(bank_forks: &Arc<RwLock<BankForks>>) {
-        let migration_status = bank_forks.read().unwrap().migration_status();
-        let genesis_block = (0, Hash::new_unique());
-        migration_status.record_feature_activation(0);
-        migration_status.set_genesis_block(genesis_block);
-        migration_status.set_genesis_certificate(Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(genesis_block.0, genesis_block.1),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
-        }));
-        assert_eq!(
-            migration_status.enable_alpenglow_during_startup(),
-            genesis_block.0
-        );
-    }
 
     fn discard_malformed_repair_requests(
         requests: &mut Vec<BytesPacket>,
@@ -2843,7 +2825,11 @@ mod tests {
         } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        enable_alpenglow_for_tests(&bank_forks);
+        bank_forks
+            .read()
+            .unwrap()
+            .migration_status()
+            .enable_alpenglow_for_tests();
 
         let staked_nodes = bank_forks
             .read()
