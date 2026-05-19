@@ -183,6 +183,22 @@ unsafe fn read_invalid_regions(current_ix: &InstructionFrame) -> u64 {
     panic!("Should not have reached this stage!");
 }
 
+unsafe fn write_to_account(
+    current_ix: &InstructionFrame,
+    tx_accounts_metadata: &mut [AccountSharedFields],
+) {
+    let ix_accounts = current_ix.instruction_accounts.deref();
+    let ix_account = ix_accounts.get_unchecked(0);
+
+    let account_data = tx_accounts_metadata
+        .get_unchecked_mut(ix_account.index_in_transaction as usize)
+        .payload
+        .deref_mut();
+    *account_data.get_unchecked_mut(0) = 7;
+    *account_data.get_unchecked_mut(1) = 8;
+    *account_data.get_unchecked_mut(2) = 9;
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint() -> u64 {
@@ -194,8 +210,8 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
         INSTRUCTION_TRACE_AREA as *const InstructionFrame,
         tx_frame.total_number_of_instructions_in_trace as usize,
     );
-    let tx_accounts_metadata = slice::from_raw_parts(
-        ACCOUNT_METADATA_AREA as *const AccountSharedFields,
+    let tx_accounts_metadata = slice::from_raw_parts_mut(
+        ACCOUNT_METADATA_AREA as *mut AccountSharedFields,
         tx_frame.number_of_transaction_accounts as usize,
     );
 
@@ -210,6 +226,8 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
         let mes = format!("tx accs: {}", tx_frame.number_of_transaction_accounts);
         sol_log(mes.as_bytes());
         read_invalid_regions(current_ix);
+    } else if *current_ix.instruction_data.deref().get_unchecked(0) == 1 {
+        write_to_account(current_ix, tx_accounts_metadata);
     }
 
     0
