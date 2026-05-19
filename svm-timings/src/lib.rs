@@ -525,13 +525,35 @@ mod tests {
         assert_eq!(timings1.create_vm_us, timings2.create_vm_us);
         assert_eq!(timings1.execute_us, timings2.execute_us);
         assert_eq!(timings1.deserialize_us, timings2.deserialize_us);
-        assert_eq!(timings1.get_or_create_executor_us, timings2.get_or_create_executor_us);
-        assert_eq!(timings1.changed_account_count, timings2.changed_account_count);
+        assert_eq!(
+            timings1.get_or_create_executor_us,
+            timings2.get_or_create_executor_us
+        );
+        assert_eq!(
+            timings1.changed_account_count,
+            timings2.changed_account_count
+        );
         assert_eq!(timings1.total_account_count, timings2.total_account_count);
-        assert_eq!(timings1.create_executor_register_syscalls_us, timings2.create_executor_register_syscalls_us);
-        assert_eq!(timings1.create_executor_load_elf_us, timings2.create_executor_load_elf_us);
-        assert_eq!(timings1.create_executor_verify_code_us, timings2.create_executor_verify_code_us);
-        assert_eq!(timings1.create_executor_jit_compile_us.load(Ordering::Relaxed), timings2.create_executor_jit_compile_us.load(Ordering::Relaxed));
+        assert_eq!(
+            timings1.create_executor_register_syscalls_us,
+            timings2.create_executor_register_syscalls_us
+        );
+        assert_eq!(
+            timings1.create_executor_load_elf_us,
+            timings2.create_executor_load_elf_us
+        );
+        assert_eq!(
+            timings1.create_executor_verify_code_us,
+            timings2.create_executor_verify_code_us
+        );
+        assert_eq!(
+            timings1
+                .create_executor_jit_compile_us
+                .load(Ordering::Relaxed),
+            timings2
+                .create_executor_jit_compile_us
+                .load(Ordering::Relaxed)
+        );
         assert_eq!(timings1.per_program_timings, timings2.per_program_timings);
     }
 

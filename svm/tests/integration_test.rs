@@ -3751,7 +3751,9 @@ fn svm_metrics_accumulation() {
             // complete in time before execution finishes. Give it some more
             // time.
             for _ in 0..1000 {
-                if jit_time != 0 { break; }
+                if jit_time != 0 {
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             assert_ne!(jit_time, 0);

@@ -1,5 +1,7 @@
-use crate::program_cache_entry::ProgramCacheEntry;
-use std::sync::{Arc, atomic::AtomicU64};
+use {
+    crate::program_cache_entry::ProgramCacheEntry,
+    std::sync::{Arc, atomic::AtomicU64},
+};
 
 // There are ~600ms per slot. Making an assumption that each compile takes on average 1ms, that
 // would mean we'd fit about 600 compiles per slot. Given that slot also involves sending and
