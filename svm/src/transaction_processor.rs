@@ -497,11 +497,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     }
                 },
                 TransactionLoadResult::Loaded(loaded_transaction) => {
-                    let (program_accounts_set, filter_executable_us) =
+                    let (missing_programs, filter_executable_us) =
                         measure_us!(self.filter_executable_program_accounts(
                             &account_loader,
                             &mut program_cache_for_tx_batch,
                             tx,
+                            config.check_program_deployment_slot,
                         ));
                     execute_timings.saturating_add_in_place(
                         ExecuteTimingType::FilterExecutableUs,
@@ -511,13 +512,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     let ((), program_cache_us) = measure_us!({
                         self.replenish_program_cache(
                             &account_loader,
-                            &program_accounts_set,
+                            missing_programs,
                             environment
                                 .program_runtime_environments
                                 .get_env_for_execution(),
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
-                            config.check_program_deployment_slot,
                             config.limit_to_load_programs,
                             true, // increment_usage_counter
                         );
@@ -819,8 +819,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &AccountLoader<CB>,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         tx: &impl SVMMessage,
-    ) -> HashMap<Pubkey, Slot> {
-        let mut program_accounts_set = HashMap::default();
+        check_program_deployment_slot: bool,
+    ) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
+        let mut program_accounts_set: HashMap<Pubkey, Slot> = HashMap::default();
         for account_key in tx.account_keys().iter() {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
                 cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
@@ -832,36 +833,32 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             }
         }
         program_accounts_set
+            .iter()
+            .map(|(pubkey, last_modification_slot)| {
+                let match_criteria = if check_program_deployment_slot {
+                    get_program_deployment_slot(account_loader, pubkey)
+                        .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
+                            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
+                        })
+                } else {
+                    ProgramCacheMatchCriteria::NoCriteria
+                };
+                (*pubkey, match_criteria, *last_modification_slot)
+            })
+            .collect()
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        program_accounts_set: &HashMap<Pubkey, Slot>,
+        mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)>,
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
-        check_program_deployment_slot: bool,
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
-        let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> =
-            program_accounts_set
-                .iter()
-                .map(|(pubkey, last_modification_slot)| {
-                    let match_criteria = if check_program_deployment_slot {
-                        get_program_deployment_slot(account_loader, pubkey)
-                            .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
-                                ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
-                            })
-                    } else {
-                        ProgramCacheMatchCriteria::NoCriteria
-                    };
-                    (*pubkey, match_criteria, *last_modification_slot)
-                })
-                .collect();
-
         let mut count_hits_and_misses = true;
         loop {
             // Lock the global cache.
@@ -1732,18 +1729,14 @@ mod tests {
             batch_processor.program_runtime_environment_for_epoch(0);
         let key = Pubkey::new_unique();
 
-        let mut account_set = HashMap::new();
-        account_set.insert(key, 0);
-
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
         batch_processor.replenish_program_cache(
             &account_loader,
-            &account_set,
+            vec![(key, ProgramCacheMatchCriteria::NoCriteria, 0)],
             &program_runtime_environment_for_execution,
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
-            false,
             true,
             true,
         );
@@ -1768,20 +1761,16 @@ mod tests {
             .insert(key, account_data);
         let account_loader = (&mock_bank).into();
 
-        let mut account_set = HashMap::new();
-        account_set.insert(key, 0);
         let mut loaded_missing = 0;
-
         for limit_to_load_programs in [false, true] {
             let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
             batch_processor.replenish_program_cache(
                 &account_loader,
-                &account_set,
+                vec![(key, ProgramCacheMatchCriteria::NoCriteria, 0)],
                 &program_runtime_environment_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
-                false,
                 limit_to_load_programs,
                 true,
             );
@@ -1846,15 +1835,25 @@ mod tests {
         );
 
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let program_accounts_set = batch_processor.filter_executable_program_accounts(
+        let missing_programs = batch_processor.filter_executable_program_accounts(
             &account_loader,
             &mut ProgramCacheForTxBatch::default(),
             &sanitized_transaction,
+            false,
         );
-
-        assert_eq!(program_accounts_set.len(), 2);
-        assert!(program_accounts_set.contains_key(&key1));
-        assert!(program_accounts_set.contains_key(&key2));
+        assert_eq!(missing_programs.len(), 2);
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &key1)
+                .is_some()
+        );
+        assert!(
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &key2)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1928,32 +1927,38 @@ mod tests {
 
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-        let tx1_programs = batch_processor.filter_executable_program_accounts(
+        let missing_programs = batch_processor.filter_executable_program_accounts(
             &account_loader,
             &mut ProgramCacheForTxBatch::default(),
             &sanitized_tx1,
+            false,
         );
-
-        assert_eq!(tx1_programs.len(), 1);
+        assert_eq!(missing_programs.len(), 1);
         assert!(
-            tx1_programs.contains_key(&account3_pubkey),
-            "failed to find the program account",
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &account3_pubkey)
+                .is_some()
         );
 
-        let tx2_programs = batch_processor.filter_executable_program_accounts(
+        let missing_programs = batch_processor.filter_executable_program_accounts(
             &account_loader,
             &mut ProgramCacheForTxBatch::default(),
             &sanitized_tx2,
+            false,
         );
-
-        assert_eq!(tx2_programs.len(), 2);
+        assert_eq!(missing_programs.len(), 2);
         assert!(
-            tx2_programs.contains_key(&account3_pubkey),
-            "failed to find the program account",
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &account3_pubkey)
+                .is_some()
         );
         assert!(
-            tx2_programs.contains_key(&account4_pubkey),
-            "failed to find the program account",
+            missing_programs
+                .iter()
+                .position(|(key, _, _)| key == &account4_pubkey)
+                .is_some()
         );
     }
 

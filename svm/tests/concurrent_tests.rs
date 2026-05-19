@@ -14,7 +14,9 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::{
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
+        },
         program_cache_entry::ProgramCacheEntryType,
     },
     solana_pubkey::Pubkey,
@@ -31,7 +33,7 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    std::collections::{HashMap, HashSet},
+    std::collections::HashSet,
 };
 
 mod mock_bank;
@@ -49,7 +51,10 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashMap<Pubkey, Slot> = programs.iter().map(|key| (*key, 0)).collect();
+    let missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> = programs
+        .iter()
+        .map(|key| (*key, ProgramCacheMatchCriteria::NoCriteria, 0))
+        .collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
@@ -59,7 +64,7 @@ fn program_cache_execution(threads: usize) {
                 batch_processor.slot,
                 batch_processor.epoch,
             );
-            let maps = account_maps.clone();
+            let missing_programs = missing_programs.clone();
             let programs = programs.clone();
             thread::spawn(move || {
                 let feature_set = SVMFeatureSet::all_enabled();
@@ -74,11 +79,10 @@ fn program_cache_execution(threads: usize) {
                     processor.program_runtime_environment_for_epoch(processor.epoch);
                 processor.replenish_program_cache(
                     &account_loader,
-                    &maps,
+                    missing_programs,
                     &program_runtime_environment_for_execution,
                     &mut result,
                     &mut ExecuteTimings::default(),
-                    false,
                     true,
                     true,
                 );
