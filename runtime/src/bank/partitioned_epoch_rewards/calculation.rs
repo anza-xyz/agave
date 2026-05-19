@@ -476,7 +476,7 @@ impl Bank {
                         stake_pubkey,
                         stake,
                         stake_reward: 0,
-                        commission_bps: 0,
+                        commission_bps: (!custom_commission_collector).then_some(0),
                     };
                     let reward_commission = RewardCommission {
                         commission_bps: (!custom_commission_collector).then_some(0),
@@ -541,7 +541,7 @@ impl Bank {
                     stake_pubkey,
                     stake,
                     stake_reward,
-                    commission_bps,
+                    commission_bps: (!custom_commission_collector).then_some(commission_bps),
                 };
                 let reward_commission = RewardCommission {
                     commission_bps: (!custom_commission_collector).then_some(commission_bps),
@@ -1790,7 +1790,6 @@ mod tests {
         assert_eq!(vote_rewards_accounts.len(), 1);
         let reward_commission = vote_rewards_accounts.get(vote_pubkey).unwrap();
         let vote_rewards = 0;
-        let commission_bps = vote_state.inflation_rewards_commission_bps;
         assert_eq!(reward_commission.commission_lamports, vote_rewards);
         assert_eq!(reward_commission.commission_bps, None);
 
@@ -1805,7 +1804,7 @@ mod tests {
                 stake,
                 stake_pubkey,
                 stake_reward,
-                commission_bps,
+                commission_bps: None,
             }
         };
         assert_eq!(

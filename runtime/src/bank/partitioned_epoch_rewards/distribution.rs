@@ -262,7 +262,7 @@ impl Bank {
                 reward_type,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
-                commission_bps: Some(partitioned_stake_reward.commission_bps),
+                commission_bps: partitioned_stake_reward.commission_bps,
             },
             stake_account: account,
         })
@@ -711,7 +711,7 @@ mod tests {
             stake_pubkey: nonexistent_account,
             stake: new_stake,
             stake_reward,
-            commission_bps,
+            commission_bps: Some(commission_bps),
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -748,7 +748,7 @@ mod tests {
             stake_pubkey: overflowing_account,
             stake: new_stake,
             stake_reward,
-            commission_bps,
+            commission_bps: Some(commission_bps),
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -795,7 +795,7 @@ mod tests {
             stake_pubkey: successful_account,
             stake: new_stake,
             stake_reward,
-            commission_bps,
+            commission_bps: Some(commission_bps),
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -876,7 +876,7 @@ mod tests {
             stake_pubkey: deactivating_account,
             stake: deactivating_stake,
             stake_reward,
-            commission_bps,
+            commission_bps: Some(commission_bps),
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
