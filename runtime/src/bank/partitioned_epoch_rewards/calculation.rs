@@ -268,7 +268,8 @@ impl Bank {
         rewards_calculation
     }
 
-    /// Returns the total amount of commission lamports distributed.
+    /// Returns a tuple containing the total amount of commission lamports
+    /// distributed and the total amount of lamports burned.
     pub(in crate::bank) fn distribute_reward_commissions(
         &mut self,
         prev_epoch: Epoch,
@@ -311,7 +312,10 @@ impl Bank {
 
         // verify that we didn't pay any more than we expected to
         assert!(
-            point_value.rewards >= distributed_reward_commissions + total_stake_rewards_lamports
+            point_value.rewards
+                >= distributed_reward_commissions
+                    + burned_reward_commissions
+                    + total_stake_rewards_lamports
         );
         info!(
             "distributed reward commissions: {} out of {}, remaining {}",
@@ -547,11 +551,14 @@ impl Bank {
                         stake_reward: 0,
                         commission_bps: (!custom_commission_collector).then_some(0),
                     };
+                    // Set `is_vote_account` to `false` in order to deliberately
+                    // fail during commission collector checks. This avoids
+                    // creating a reward entry during payout.
                     let reward_commission = RewardCommission {
                         commission_bps: (!custom_commission_collector).then_some(0),
                         commission_lamports: 0,
                         burned_lamports: 0,
-                        is_vote_account: true,
+                        is_vote_account: false,
                     };
                     return Some(DelegationRewards {
                         stake_reward,
