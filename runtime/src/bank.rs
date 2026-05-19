@@ -5734,7 +5734,7 @@ impl Bank {
         }
 
         // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated
-        // (SIMD-0194), so rent.lamports_per_byte_year can be set directly. These gates are
+        // (SIMD-0194), so rent.lamports_per_byte can be set directly. These gates are
         // expected to activate in order; if multiple activate in one epoch, the lowest
         // activated lamports_per_byte value will be used. If features are activated out of
         // order, the most recently activated value will be used.
@@ -5760,9 +5760,9 @@ impl Bank {
                 feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE,
             ),
         ];
-        for (feature_id, lamports_per_byte_year) in rent_feature_gates {
+        for (feature_id, lamports_per_byte) in rent_feature_gates {
             if new_feature_activations.contains(&feature_id) {
-                self.rent_collector.rent.lamports_per_byte = lamports_per_byte_year;
+                self.rent_collector.rent.lamports_per_byte = lamports_per_byte;
                 self.update_rent();
             }
         }
@@ -5772,7 +5772,7 @@ impl Bank {
         // Note: if this is activated in the same epoch as a 437 feature gate (above), the
         // safeguard must override it.
         if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_6960::id()) {
-            self.rent_collector.rent.lamports_per_byte_year =
+            self.rent_collector.rent.lamports_per_byte =
                 feature_set::set_lamports_per_byte_to_6960::LAMPORTS_PER_BYTE;
             self.update_rent();
         }

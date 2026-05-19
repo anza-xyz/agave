@@ -6435,14 +6435,16 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
     }
     goto_end_of_slot(bank.clone());
     bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
-    assert!(bank
-        .feature_set
-        .is_active(&feature_set::set_lamports_per_byte_to_6960::id()));
-    assert!(bank
-        .feature_set
-        .is_active(&feature_set::set_lamports_per_byte_to_696::id()));
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::set_lamports_per_byte_to_6960::id())
+    );
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::set_lamports_per_byte_to_696::id())
+    );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_6960::LAMPORTS_PER_BYTE,
         "SIMD-0438 safeguard should override later activations"
     );
