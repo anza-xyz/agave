@@ -90,12 +90,13 @@ impl solana_sanitize::Sanitize for CrdsFilter {
 }
 
 impl CrdsFilter {
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn mask(&self) -> u64 {
         self.mask
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn get_mask_bits(&self) -> u32 {
         self.mask_bits
     }

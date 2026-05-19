@@ -248,12 +248,13 @@ impl ContactInfo {
         &self.version
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn addrs(&self) -> &[IpAddr] {
         &self.addrs
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn sockets(&self) -> &[SocketEntry] {
         &self.sockets
     }

@@ -29,11 +29,7 @@ frozen-abi = [
 ]
 agave-unstable-api = []
 dev-context-only-utils = ["solana-bloom/dev-context-only-utils"]
-conformance = [
-    "dep:prost",
-    "dep:protosol",
-    "dev-context-only-utils",
-]
+conformance = ["dep:prost", "dep:protosol", "dev-context-only-utils"]
 dummy-for-ci-check = ["conformance"]
 
 [dependencies]
