@@ -805,7 +805,9 @@ impl ServeRepair {
         identity_keypair: &Keypair,
         weight_source: RepairPeerWeightSource,
     ) -> Result<&'a RepairPeers> {
-        if matches!(peers_cache.get(&slot), Some(entry) if entry.is_valid_for(weight_source)) {
+        if let Some(entry) = peers_cache.get(&slot)
+            && entry.is_valid_for(weight_source)
+        {
             return Ok(peers_cache.get(&slot).unwrap());
         }
 
