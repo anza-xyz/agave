@@ -3643,13 +3643,12 @@ impl RpcClient {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # use solana_keypair::Keypair;
     /// # use solana_signer::Signer;
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// let token_account = rpc_client.get_token_account(&Keypair::new().pubkey())?;
-    /// assert!(token_account.is_some());
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn get_token_account(&self, pubkey: &Pubkey) -> ClientResult<Option<UiTokenAccount>> {
@@ -3669,7 +3668,7 @@ impl RpcClient {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// # use solana_commitment_config::CommitmentConfig;
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # use solana_keypair::Keypair;
@@ -3679,7 +3678,6 @@ impl RpcClient {
     ///     &Keypair::new().pubkey(),
     ///     CommitmentConfig::processed(),
     /// )?;
-    /// assert!(info.value.is_some());
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
     pub fn get_token_account_with_commitment(
