@@ -23,7 +23,6 @@ dev-context-only-utils = []
 [dependencies]
 agave-votor-messages = { workspace = true }
 crossbeam-channel = { workspace = true }
-dlopen2 = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
