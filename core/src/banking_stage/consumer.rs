@@ -5,6 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
+    agave_tpu_extension_api::BatchCommitMode,
     itertools::Itertools,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
@@ -107,6 +108,7 @@ pub struct Consumer {
     committer: Committer,
     transaction_recorder: TransactionRecorder,
     log_messages_bytes_limit: Option<usize>,
+    batch_commit_mode: BatchCommitMode,
 }
 
 impl Consumer {
@@ -119,7 +121,13 @@ impl Consumer {
             committer,
             transaction_recorder,
             log_messages_bytes_limit,
+            batch_commit_mode: BatchCommitMode::standard(),
         }
+    }
+
+    pub fn with_commit_mode(mut self, mode: BatchCommitMode) -> Self {
+        self.batch_commit_mode = mode;
+        self
     }
 
     pub fn process_and_record_transactions(
@@ -155,7 +163,7 @@ impl Consumer {
             check_results.into_iter(),
             ExecutionFlags {
                 drop_on_failure: false,
-                all_or_nothing: false,
+                all_or_nothing: self.batch_commit_mode.reverts_on_error(),
             },
         );
 
@@ -165,6 +173,10 @@ impl Consumer {
             .error_counters
             .accumulate(&error_counters);
         output
+    }
+
+    pub fn batch_commit_mode(&self) -> BatchCommitMode {
+        self.batch_commit_mode
     }
 
     pub fn process_and_record_aged_transactions(
@@ -271,7 +283,7 @@ impl Consumer {
                 // following are retryable errors
                 Err(TransactionError::AccountInUse) => {
                     error_counters.account_in_use += 1;
-                    // locking failure due to vote conflict or jito - immediately retry.
+                    // AccountInUse is retryable: includes vote conflicts and write-lock contention.
                     Some(RetryableIndex {
                         index,
                         immediately_retryable: true,
@@ -446,7 +458,7 @@ impl Consumer {
             "bank: {} process_and_record_locked: {}us record: {}us commit: {}us txs_len: {}",
             bank.slot(),
             load_execute_us,
-            record_us,
+            execute_and_commit_timings.record_us,
             commit_time_us,
             batch.sanitized_transactions().len(),
         );

@@ -311,6 +311,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-tpu-extension-api"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "agave-banking-stage-ingress-types",
+ "crossbeam-channel",
+ "solana-perf",
+ "solana-pubkey 4.2.0",
+]
+
+[[package]]
+name = "agave-tpu-extension-api-jito-solana"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "agave-banking-stage-ingress-types",
+ "agave-tpu-extension-api",
+ "agave-xdp",
+ "anyhow",
+ "crossbeam-channel",
+ "solana-core",
+ "solana-geyser-plugin-manager",
+ "solana-gossip",
+ "solana-keypair",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+]
+
+[[package]]
 name = "agave-transaction-view"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -7817,6 +7844,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
+ "agave-tpu-extension-api",
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",

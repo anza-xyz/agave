@@ -33,6 +33,10 @@ use {
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
     },
+    agave_tpu_extension_api::{
+        AccountFilter, BankingHooks, ExternalLocks, NoExternalLocks, NoFilter, NoGate,
+        SchedulerGate, SetAccountFilter, TpuExtensions,
+    },
     agave_votor::{
         vote_history::VoteHistory,
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
@@ -712,6 +716,101 @@ impl Validator {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_exit(
+        node: Node,
+        identity_keypair: Arc<Keypair>,
+        ledger_path: &Path,
+        vote_account: &Pubkey,
+        authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+        cluster_entrypoints: Vec<ContactInfo>,
+        config: &ValidatorConfig,
+        rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
+        start_progress: Arc<RwLock<ValidatorStartProgress>>,
+        socket_addr_space: SocketAddrSpace,
+        tpu_config: ValidatorTpuConfig,
+        admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+        xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
+        exit: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        if config.filter_keys.is_empty() {
+            Self::new_with_exit_with_tpu_extensions::<NoFilter, NoGate, NoExternalLocks>(
+                node,
+                identity_keypair,
+                ledger_path,
+                vote_account,
+                authorized_voter_keypairs,
+                cluster_entrypoints,
+                config,
+                rpc_to_plugin_manager_receiver,
+                start_progress,
+                socket_addr_space,
+                tpu_config,
+                admin_rpc_service_post_init,
+                xdp_builder_with_src_addr,
+                TpuExtensions::noop(),
+                exit,
+            )
+        } else {
+            Self::new_with_exit_with_tpu_extensions::<SetAccountFilter, NoGate, NoExternalLocks>(
+                node,
+                identity_keypair,
+                ledger_path,
+                vote_account,
+                authorized_voter_keypairs,
+                cluster_entrypoints,
+                config,
+                rpc_to_plugin_manager_receiver,
+                start_progress,
+                socket_addr_space,
+                tpu_config,
+                admin_rpc_service_post_init,
+                xdp_builder_with_src_addr,
+                TpuExtensions::builder()
+                    .banking_hooks(
+                        BankingHooks::builder()
+                            .packet_filter((*config.filter_keys).clone().into())
+                            .build(),
+                    )
+                    .build(),
+                exit,
+            )
+        }
+    }
+
+    /// Validator constructor for downstream forks that inject custom TPU stages and hooks.
+    ///
+    /// `F` is the fork's [`AccountFilter`] implementation. It is monomorphized into
+    /// the packet hot path, so the filter check has zero dynamic-dispatch overhead.
+    /// Pass `TpuExtensions::noop()` to get vanilla behavior with inactive hooks
+    /// short-circuited before the packet hot path.
+    ///
+    /// Typical call site in a fork binary:
+    ///
+    /// ```ignore
+    /// let extensions = TpuExtensions::builder()
+    ///     .processing_stage(bundle_stage)
+    ///     .intake_stage(block_engine_stage)
+    ///     .banking_hooks(hooks)
+    ///     .build();
+    /// Validator::new_with_exit_with_tpu_extensions::<MyFilter, MyGate, MyLocks>(
+    ///     node, identity, ledger_path, /* existing args */, extensions, exit,
+    /// )
+    /// ```
+    ///
+    /// See the `agave-tpu-extension-api` crate doc for the full hook contract, call sites,
+    /// and the `tpu-extension-api-jito-solana` crate for a reviewer-facing reference integration.
+    ///
+    /// **`ValidatorConfig::filter_keys` is not applied when this constructor is used.**
+    /// The `--filter-keys` flag is only wired through `Validator::new`. Forks that need
+    /// that behavior must incorporate it into their own `AccountFilter` implementation.
+    ///
+    /// **Not stable** - subject to change as the hook set evolves.
+    // Packet injection that bypasses sigverify is out of scope; see agave-tpu-extension-api docs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_exit_with_tpu_extensions<
+        F: AccountFilter + 'static,
+        G: SchedulerGate + 'static,
+        L: ExternalLocks + 'static,
+    >(
         mut node: Node,
         identity_keypair: Arc<Keypair>,
         ledger_path: &Path,
@@ -725,6 +824,7 @@ impl Validator {
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
         xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
+        extensions: TpuExtensions<F, G, L>,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         #[cfg(debug_assertions)]
@@ -1732,7 +1832,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
-            config.filter_keys.clone(),
+            extensions,
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),

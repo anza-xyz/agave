@@ -13,6 +13,7 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_tpu_extension_api::BankingHooks,
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::assert_matches,
     bincode::deserialize_from,
@@ -853,7 +854,8 @@ impl BankingSimulator {
             None,
             bank_forks.clone(),
             None,
-            Arc::default(),
+            BankingHooks::default(),
+            Vec::new(),
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

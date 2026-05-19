@@ -123,7 +123,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             &work.max_ages,
             ExecutionFlags {
                 drop_on_failure: false,
-                all_or_nothing: false,
+                all_or_nothing: self.consumer.batch_commit_mode().reverts_on_error(),
             },
         );
         self.metrics.update_for_consume(&output);
@@ -1112,6 +1112,7 @@ pub(crate) mod external {
                 handshake::{ClientLogon, client, server::Server},
                 responses_region::{CheckResponsesPtr, ExecutionResponsesPtr},
             },
+            agave_tpu_extension_api::BatchCommitMode,
             crossbeam_channel::unbounded,
             solana_account::AccountSharedData,
             solana_genesis_config::GenesisConfig,
@@ -1331,7 +1332,7 @@ pub(crate) mod external {
             let recorder = TransactionRecorder::new(record_sender);
             let (replay_vote_sender, replay_vote_receiver) = unbounded();
             let committer = Committer::new(None, replay_vote_sender, None);
-            let consumer = Consumer::new(committer, recorder, None);
+            let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
             let shared_leader_state = SharedLeaderState::new(0, None, None);
             let exit = Arc::new(AtomicBool::new(false));
 
@@ -2782,6 +2783,7 @@ mod tests {
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
+        agave_tpu_extension_api::BatchCommitMode,
         crossbeam_channel::unbounded,
         solana_clock::Slot,
         solana_genesis_config::GenesisConfig,
@@ -2854,7 +2856,7 @@ mod tests {
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, None);
+        let consumer = Consumer::new(committer, recorder, None, BatchCommitMode::standard());
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
         let (consume_sender, consume_receiver) = unbounded();

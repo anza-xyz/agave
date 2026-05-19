@@ -110,6 +110,8 @@ members = [
     "tps-client",
     "tpu-client",
     "tpu-client-next",
+    "tpu-extension-api",
+    "tpu-extension-api-jito-solana",
     "transaction-context",
     "transaction-status",
     "transaction-status-client-types",
@@ -177,6 +179,7 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.2.
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
+agave-tpu-extension-api = { path = "tpu-extension-api", version = "=4.2.0-alpha.0" }
 agave-transaction-view = { path = "transaction-view", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
