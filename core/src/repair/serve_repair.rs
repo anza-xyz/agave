@@ -773,7 +773,16 @@ impl ServeRepair {
                 cluster_slots.compute_weights(slot, repair_peers)
             }
             RepairPeerWeightSource::CurrentEpochStake => {
-                let staked_nodes = self.sharable_banks.root().current_epoch_staked_nodes();
+                let staked_nodes = {
+                    let root_bank = self.sharable_banks.root();
+                    let slot_epoch = root_bank.epoch_schedule().get_epoch(slot);
+                    root_bank
+                        .epoch_staked_nodes(slot_epoch.saturating_add(1))
+                        // Fall back to current stakes if our root is so far behind that we
+                        // have not computed the current staked nodes for `slot_epoch` yet.
+                        // This can happen if we're catching up on a test cluster with short epochs.
+                        .unwrap_or_else(|| root_bank.current_epoch_staked_nodes())
+                };
                 Self::stake_weighted_repair_peer_weights(repair_peers, &staked_nodes)
             }
         }
