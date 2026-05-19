@@ -6391,14 +6391,14 @@ fn test_is_ancestor_zero_lamport_being_flushed_picks_higher_slot(
     let db = AccountsDb::new_single_for_tests();
     let pubkey = Pubkey::new_unique();
 
-    // Non-zero entry in the index. Set up first: flushing goes through the cache,
+    // Non-zero lamport entry in the index. Set up first: flushing goes through the cache,
     // so doing it after the cache setup would conflict with `begin_flush_roots`.
     let account = AccountSharedData::new(100, 0, &Pubkey::default());
     db.store_for_tests((index_slot, [(&pubkey, &account)].as_slice()));
     db.add_root_and_flush_write_cache(index_slot);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
 
-    // Zero entry in the cache. Note: this entry may be older than the slot that was
+    // Zero lamport entry in the cache. Note: this entry may be older than the slot that was
     // flushed above which is normally not allowed to be added to the cache. However,
     // this state is a valid intermediate state when flushing the cache so needs
     // test coverage
