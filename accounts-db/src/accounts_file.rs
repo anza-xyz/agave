@@ -248,7 +248,7 @@ impl AccountsFile {
 
     /// Returns a file handle suitable for archive-style reads. With
     /// `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise
-    /// the `AppendVec`'s existing fd is borrowed, saving one fd per storage.
+    /// the `AccountsFile`'s existing fd is borrowed, saving one fd per storage.
     pub fn open_file_for_archive(&self, use_direct_io: bool) -> io::Result<OpenFileForArchive<'_>> {
         if use_direct_io {
             open_for_reading(self.path(), true).map(OpenFileForArchive::Owned)
@@ -280,7 +280,7 @@ impl AccountsFileProvider {
 /// The access method to use when archiving an AccountsFile
 #[derive(Debug)]
 pub enum OpenFileForArchive<'a> {
-    /// Borrowed `AppendVec` fd; lacks `O_DIRECT`, so reads go through the
+    /// Borrowed `AccountsFile` fd; lacks `O_DIRECT`, so reads go through the
     /// kernel page cache (incompatible with direct-I/O reads).
     Borrowed(&'a File),
     /// Freshly opened fd, typically with `O_DIRECT` on Linux.
