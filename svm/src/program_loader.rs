@@ -249,7 +249,8 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
     tx: &impl SVMMessage,
     check_program_deployment_slot: bool,
 ) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
-    let mut program_accounts_set: HashMap<Pubkey, Slot> = HashMap::default();
+    let mut program_accounts_set: HashMap<Pubkey, (ProgramCacheMatchCriteria, Slot)> =
+        HashMap::default();
     for account_key in tx.account_keys().iter() {
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
@@ -257,22 +258,21 @@ pub fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
             callbacks.get_account_shared_data(account_key)
             && PROGRAM_OWNERS.contains(account.owner())
         {
-            program_accounts_set.insert(*account_key, last_modification_slot);
-        }
-    }
-    program_accounts_set
-        .iter()
-        .map(|(pubkey, last_modification_slot)| {
             let match_criteria = if check_program_deployment_slot {
-                let (program, _slot) = callbacks.get_account_shared_data(pubkey).unwrap();
-                get_program_deployment_slot(callbacks, &program)
+                get_program_deployment_slot(callbacks, &account)
                     .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
                         ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
                     })
             } else {
                 ProgramCacheMatchCriteria::NoCriteria
             };
-            (*pubkey, match_criteria, *last_modification_slot)
+            program_accounts_set.insert(*account_key, (match_criteria, last_modification_slot));
+        }
+    }
+    program_accounts_set
+        .iter()
+        .map(|(pubkey, (match_criteria, last_modification_slot))| {
+            (*pubkey, *match_criteria, *last_modification_slot)
         })
         .collect()
 }

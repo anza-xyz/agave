@@ -341,6 +341,7 @@ impl ProgramCacheForTxBatch {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum ProgramCacheMatchCriteria {
     DeployedOnOrAfterSlot(Slot),
     Tombstone,
