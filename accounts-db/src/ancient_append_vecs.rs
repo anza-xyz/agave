@@ -1561,7 +1561,6 @@ mod tests {
                     let mut write_ancient_accounts = WriteAncientAccounts::default();
 
                     slots.clone().for_each(|slot| {
-                        db.add_root(slot);
                         let storage = db.storage.get_slot_storage_entry(slot);
                         assert!(storage.is_some());
                         if in_shrink_candidate_slots {

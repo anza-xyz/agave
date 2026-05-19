@@ -4252,6 +4252,7 @@ impl AccountsDb {
     /// entries in the accounts index, cache entries, and any backing storage entries.
     ///
     /// This fn is to only be called by snapshot minimizer
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn purge_slots_for_snapshot_minimizer<'a>(
         &self,
         removed_slots: impl Iterator<Item = &'a Slot> + Clone,
@@ -5526,6 +5527,8 @@ impl AccountsDb {
         let slot = accounts.target_slot();
         let num_accounts_stored = accounts.len();
         let stats = &self.store_accounts_frozen_stats;
+
+        debug_assert!(self.accounts_index.is_alive_root(slot));
 
         // Flush the read cache if necessary. This will occur during shrink or clean
         let flush_read_cache_time = Measure::start("flush_read_cache");
