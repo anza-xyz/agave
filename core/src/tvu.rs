@@ -428,6 +428,13 @@ impl Tvu {
             completed_slots_receiver,
         };
 
+        // Create switch block event channel for ReplayStage
+        // We emit a switch bank event when we observe a ParentReady.
+        // The event is immediately consumed and the latest is stored in ReplayStage.
+        // We overprovision at 100 leader windows - we would require almost 3 minutes of stuck
+        // replay to hit the limit.
+        let (switch_bank_sender, switch_bank_receiver) = bounded(100);
+
         let window_service = {
             let epoch_schedule = bank_forks
                 .read()
@@ -515,6 +522,7 @@ impl Tvu {
             leader_window_info_sender,
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
+            switch_bank_sender,
             own_vote_sender: consensus_message_sender.clone(),
             reward_certs_sender,
             repair_event_sender,
@@ -558,6 +566,7 @@ impl Tvu {
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
+            switch_bank_receiver,
         };
 
         let replay_stage_config = ReplayStageConfig {

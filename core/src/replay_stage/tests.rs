@@ -2842,7 +2842,7 @@ fn test_update_parent_restart() {
             &blockstore,
             slot,
             3, // optimistic block-header parent
-            0, // finalized UpdateParent parent
+            0, // UpdateParent parent (from ParentReady)
             parent_block_id,
             32,
         );

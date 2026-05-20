@@ -28,7 +28,7 @@ impl XdpSender {
     ) -> Result<(), TrySendError<tx::BytesTxPacket>> {
         self.sender.try_send(
             sender_index,
-            tx::BytesTxPacket::new(self.src_addr, addr, payload),
+            tx::BytesTxPacket::new(self.src_addr, addr, None, payload),
         )
     }
 }

@@ -305,7 +305,7 @@ pub(super) fn handle_abandoned_bank(
     tbft_structs: Option<&mut TowerBFTStructures>,
 ) {
     // Handle UpdateParent marker during fast leader handover. The leader
-    // built on an optimistic parent that didn't match the finalized parent.
+    // built on an optimistic parent that didn't match the ParentReady event.
     //
     // We clear the bank and remove the progress entry. The bank will be
     // recreated with the correct parent by generate_new_bank_forks, which

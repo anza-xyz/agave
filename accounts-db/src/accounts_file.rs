@@ -6,12 +6,13 @@ use {
         append_vec::{AppendVec, AppendVecError},
         storable_accounts::StorableAccounts,
     },
-    agave_fs::{FileInfo, buffered_reader::RequiredLenBufFileRead},
+    agave_fs::{FileInfo, buffered_reader::RequiredLenBufFileRead, file_io::open_for_reading},
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
-        mem,
+        fs::File,
+        io, mem,
         path::{Path, PathBuf},
     },
     thiserror::Error,
@@ -245,10 +246,16 @@ impl AccountsFile {
         }
     }
 
-    /// Returns the way to access this accounts file when archiving
-    pub fn internals_for_archive(&self) -> InternalsForArchive<'_> {
-        match self {
-            Self::AppendVec(av) => av.internals_for_archive(),
+    /// Returns a file handle suitable for archive-style reads. With
+    /// `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise
+    /// the `AccountsFile`'s existing fd is borrowed, saving one fd per storage.
+    pub fn open_file_for_archive(&self, use_direct_io: bool) -> io::Result<OpenFileForArchive<'_>> {
+        if use_direct_io {
+            open_for_reading(self.path(), true).map(OpenFileForArchive::Owned)
+        } else {
+            Ok(match self {
+                Self::AppendVec(av) => av.open_file_for_archive(),
+            })
         }
     }
 }
@@ -272,9 +279,21 @@ impl AccountsFileProvider {
 
 /// The access method to use when archiving an AccountsFile
 #[derive(Debug)]
-pub struct InternalsForArchive<'a> {
-    /// Path to the backing file used to archive the contents
-    pub path: &'a Path,
+pub enum OpenFileForArchive<'a> {
+    /// Borrowed `AccountsFile` fd; lacks `O_DIRECT`, so reads go through the
+    /// kernel page cache (incompatible with direct-I/O reads).
+    Borrowed(&'a File),
+    /// Freshly opened fd, typically with `O_DIRECT` on Linux.
+    Owned(File),
+}
+
+impl AsRef<File> for OpenFileForArchive<'_> {
+    fn as_ref(&self) -> &File {
+        match self {
+            Self::Borrowed(f) => f,
+            Self::Owned(f) => f,
+        }
+    }
 }
 
 /// Information after storing accounts

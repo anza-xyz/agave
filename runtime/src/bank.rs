@@ -79,7 +79,7 @@ use {
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -107,7 +107,11 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0286_block_limit, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::simd_0286_block_limit,
+        cost_tracker::CostTracker,
+        shred_limit::{DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT},
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -727,7 +731,8 @@ impl BankFieldsToSerialize {
 pub enum RewardCalculationEvent<'a, 'b> {
     Staking(&'a Pubkey, &'b InflationPointCalculationEvent),
 }
-const MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
+/// Default maximum serialized entry bytes a bank may accept in one slot.
+pub const DEFAULT_MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
 
 /// type alias is not supported for trait in rust yet. As a workaround, we define the
 /// `RewardCalcTracer` trait explicitly and implement it on any type that implement
@@ -1115,7 +1120,13 @@ impl AtomicBankHashStats {
 
 struct NewEpochBundle {
     stake_history: CowStakeHistory,
-    vote_accounts: VoteAccounts,
+    /// Vote accounts computed from the stakes cache for the current
+    /// (distribution) epoch *before* applying any VAT filtering.
+    unfiltered_distribution_vote_accounts: VoteAccounts,
+    /// Vote accounts computed from the stakes cache for the current
+    /// (distribution) epoch *after* applying VAT filtering (or an unfiltered
+    /// clone when VAT is disabled).
+    filtered_distribution_vote_accounts: VoteAccounts,
     rewards_calculation: Arc<PartitionedRewardsCalculation>,
     calculate_activated_stake_time_us: u64,
     update_rewards_with_thread_pool_time_us: u64,
@@ -1138,7 +1149,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
-            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
+            entry_bytes_consumed: EntryBytesBudget::new(DEFAULT_MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::default(),
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
@@ -1679,20 +1690,29 @@ impl Bank {
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = stakes.stake_delegations_vec();
-        let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
-            measure_us!(stakes.calculate_activated_stake(
-                self.epoch(),
-                thread_pool,
-                self.new_warmup_cooldown_rate_epoch(),
-                &stake_delegations
-            ));
+        let (
+            (stake_history, unfiltered_distribution_vote_accounts),
+            calculate_activated_stake_time_us,
+        ) = measure_us!(stakes.calculate_activated_stake(
+            self.epoch(),
+            thread_pool,
+            self.new_warmup_cooldown_rate_epoch(),
+            &stake_delegations
+        ));
 
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.
-        let distribution_epoch_vote_accounts =
-            self.maybe_filter_vote_accounts_for_vat(&vote_accounts);
+        let filtered_distribution_vote_accounts =
+            if self.feature_set.snapshot().validator_admission_ticket {
+                unfiltered_distribution_vote_accounts.clone_and_filter_for_vat(
+                    MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                    self.minimum_vote_account_balance_for_vat(),
+                )
+            } else {
+                unfiltered_distribution_vote_accounts.clone()
+            };
         let cached_vote_accounts =
-            self.get_cached_vote_accounts(rewarded_epoch, &distribution_epoch_vote_accounts);
+            self.get_cached_vote_accounts(rewarded_epoch, &filtered_distribution_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
@@ -1705,7 +1725,8 @@ impl Bank {
             ));
         NewEpochBundle {
             stake_history,
-            vote_accounts,
+            unfiltered_distribution_vote_accounts,
+            filtered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
@@ -1732,7 +1753,8 @@ impl Bank {
         let mut rewards_metrics = RewardsMetrics::default();
         let NewEpochBundle {
             stake_history,
-            vote_accounts,
+            unfiltered_distribution_vote_accounts,
+            filtered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
@@ -1743,13 +1765,18 @@ impl Bank {
             &mut rewards_metrics,
         );
 
-        self.stakes_cache
-            .activate_epoch(epoch, stake_history, vote_accounts);
+        self.stakes_cache.activate_epoch(
+            epoch,
+            stake_history,
+            unfiltered_distribution_vote_accounts,
+        );
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
-        let (_, update_epoch_stakes_time_us) =
-            measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
+        let (_, update_epoch_stakes_time_us) = measure_us!(self.update_epoch_stakes(
+            leader_schedule_epoch,
+            Some(filtered_distribution_vote_accounts),
+        ));
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
@@ -1823,7 +1850,7 @@ impl Bank {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, leader, slot);
-        new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
+        new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot), None);
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
         let mut clock = new.clock();
@@ -1882,7 +1909,7 @@ impl Bank {
             } else {
                 // Save a snapshot of stakes for use in consensus and stake weighted networking
                 let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(slot);
-                self.update_epoch_stakes(leader_schedule_epoch);
+                self.update_epoch_stakes(leader_schedule_epoch, None);
             }
         });
 
@@ -1956,7 +1983,7 @@ impl Bank {
         let ancestors = Ancestors::from(vec![slot]);
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
-        let _rewards_calculation_thread_pool = rewards_calculation_thread_pool();
+        let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
         // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
@@ -2034,7 +2061,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
-            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
+            entry_bytes_consumed: EntryBytesBudget::new(DEFAULT_MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::new(fields.tick_height),
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
@@ -2122,12 +2149,7 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
-        bank.initialize_after_snapshot_restore(|| {
-            ThreadPoolBuilder::new()
-                .thread_name(|i| format!("solBnkClcRwds{i:02}"))
-                .build()
-                .expect("new rayon threadpool")
-        });
+        bank.initialize_after_snapshot_restore(|| rewards_calculation_thread_pool);
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -2473,7 +2495,11 @@ impl Bank {
         from_account(&self.get_account(&sysvar::slot_history::id()).unwrap()).unwrap()
     }
 
-    fn update_epoch_stakes(&mut self, leader_schedule_epoch: Epoch) {
+    fn update_epoch_stakes(
+        &mut self,
+        leader_schedule_epoch: Epoch,
+        prefiltered_distribution_vote_accounts: Option<VoteAccounts>,
+    ) {
         // update epoch_stakes cache
         //  if my parent didn't populate for this staker's epoch, we've
         //  crossed a boundary
@@ -2483,7 +2509,15 @@ impl Bank {
                 // to ensure we retain the oldest epoch, if that epoch is 0.
                 epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES - 1)
             });
-            let stakes = self.get_top_epoch_stakes();
+            // At the epoch boundary, `compute_new_epoch_caches_and_rewards`
+            // has already produced the VAT-filtered vote-account snapshot;
+            // reuse it here instead of re-cloning and re-filtering the
+            // `stakes_cache`. Other callers (same-epoch refresh, warps)
+            // fall back to `get_top_epoch_stakes`.
+            let stakes = match prefiltered_distribution_vote_accounts {
+                Some(prefiltered) => Stakes::new(prefiltered, self.epoch()),
+                None => self.get_top_epoch_stakes(),
+            };
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             let new_epoch_stakes = VersionedEpochStakes::new(stakes, leader_schedule_epoch);
             info!(
@@ -4802,6 +4836,34 @@ impl Bank {
         self.transactions_per_entry_max.load(Relaxed)
     }
 
+    pub fn max_data_shreds_per_slot(&self) -> u32 {
+        self.max_data_shreds_per_slot_for_slot(self.slot())
+    }
+
+    pub fn max_code_shreds_per_slot(&self) -> u32 {
+        self.max_code_shreds_per_slot_for_slot(self.slot())
+    }
+
+    /// Returns the data shred limit applicable to `slot`.
+    ///
+    /// Limit changes are delayed by an epoch, so a root bank can derive the
+    /// limit for any slot inside the shred intake window.
+    pub fn max_data_shreds_per_slot_for_slot(&self, _slot: Slot) -> u32 {
+        DEFAULT_MAX_DATA_SHREDS_PER_SLOT
+    }
+
+    /// Returns the code shred limit applicable to `slot`.
+    ///
+    /// Limit changes are delayed by an epoch, so a root bank can derive the
+    /// limit for any slot inside the shred intake window.
+    pub fn max_code_shreds_per_slot_for_slot(&self, _slot: Slot) -> u32 {
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT
+    }
+
+    pub fn max_entry_bytes_per_slot(&self) -> u64 {
+        self.entry_bytes_budget().slot_limit()
+    }
+
     pub fn entry_bytes_budget(&self) -> &EntryBytesBudget {
         &self.entry_bytes_consumed
     }
@@ -5706,7 +5768,7 @@ impl Bank {
         }
 
         // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated
-        // (SIMD-0194), so rent.lamports_per_byte_year can be set directly. These gates are
+        // (SIMD-0194), so rent.lamports_per_byte can be set directly. These gates are
         // expected to activate in order; if multiple activate in one epoch, the lowest
         // activated lamports_per_byte value will be used. If features are activated out of
         // order, the most recently activated value will be used.
@@ -5732,11 +5794,21 @@ impl Bank {
                 feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE,
             ),
         ];
-        for (feature_id, lamports_per_byte_year) in rent_feature_gates {
+        for (feature_id, lamports_per_byte) in rent_feature_gates {
             if new_feature_activations.contains(&feature_id) {
-                self.rent_collector.rent.lamports_per_byte = lamports_per_byte_year;
+                self.rent_collector.rent.lamports_per_byte = lamports_per_byte;
                 self.update_rent();
             }
+        }
+
+        // SIMD-0438 feature gate: reset lamports per byte to legacy value of 6960. Safeguard
+        // intended to be activated if rent reduction causes issues in the cluster.
+        // Note: if this is activated in the same epoch as a 437 feature gate (above), the
+        // safeguard must override it.
+        if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_6960::id()) {
+            self.rent_collector.rent.lamports_per_byte =
+                feature_set::set_lamports_per_byte_to_6960::LAMPORTS_PER_BYTE;
+            self.update_rent();
         }
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
@@ -6155,17 +6227,6 @@ impl Bank {
             vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
         } else {
             vote_account_rent_exempt_minimum
-        }
-    }
-
-    fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
-        if self.feature_set.snapshot().validator_admission_ticket {
-            vote_accounts.clone_and_filter_for_vat(
-                MAX_ALPENGLOW_VOTE_ACCOUNTS,
-                self.minimum_vote_account_balance_for_vat(),
-            )
-        } else {
-            vote_accounts.clone()
         }
     }
 

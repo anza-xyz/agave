@@ -254,12 +254,12 @@ pub struct LowestSlot {
 }
 
 impl LowestSlot {
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
@@ -365,12 +365,12 @@ impl Vote {
         &self.transaction
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }

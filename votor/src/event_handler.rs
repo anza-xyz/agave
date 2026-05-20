@@ -6,7 +6,10 @@ use {
         commitment::{CommitmentType, update_commitment_cache},
         common::DELTA_FIRST_SLICE,
         consensus_metrics::ConsensusMetricsEvent,
-        event::{CompletedBlock, RepairEvent, RepairEventSender, VotorEvent, VotorEventReceiver},
+        event::{
+            CompletedBlock, RepairEvent, RepairEventSender, SwitchBankEvent, SwitchBankEventSender,
+            VotorEvent, VotorEventReceiver,
+        },
         event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
@@ -208,7 +211,7 @@ impl EventHandler {
 
     fn handle_parent_ready_event(
         slot: Slot,
-        parent_block: Block,
+        parent_block @ (parent_slot, _): Block,
         vctx: &mut VotingContext,
         ctx: &SharedContext,
         local_context: &mut LocalContext,
@@ -217,6 +220,12 @@ impl EventHandler {
     ) -> Result<(), EventLoopError> {
         let my_pubkey = &local_context.my_pubkey;
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
+
+        // We need to ensure that we've replayed the parent bank.
+        if parent_slot > vctx.sharable_banks.root().slot() {
+            request_switch(&ctx.switch_bank_sender, *my_pubkey, parent_block)?;
+        }
+
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
@@ -850,8 +859,6 @@ impl EventHandler {
 }
 
 /// Sends a repair event to the block ID repair service.
-/// Tries non-blocking send first; if the channel is full, logs an error and blocks.
-/// Returns an error if the channel is disconnected.
 fn request_repair(
     sender: &RepairEventSender,
     my_pubkey: Pubkey,
@@ -876,6 +883,31 @@ fn request_repair(
     }
 }
 
+/// Sends a switch bank event to replay.
+fn request_switch(
+    sender: &SwitchBankEventSender,
+    my_pubkey: Pubkey,
+    block: Block,
+) -> Result<(), EventLoopError> {
+    let (slot, block_id) = block;
+    let event = SwitchBankEvent::Switch { slot, block_id };
+    match sender.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(event)) => {
+            error!(
+                "{my_pubkey}: Switch bank event channel is full, this should not happen. Blocking \
+                 to send event for slot {slot}"
+            );
+            sender
+                .send(event)
+                .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            Err(EventLoopError::SenderDisconnected(SendError(())))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -883,7 +915,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             consensus_metrics::ConsensusMetricsEventReceiver,
-            event::{LeaderWindowInfo, RepairEventReceiver},
+            event::{LeaderWindowInfo, RepairEventReceiver, SwitchBankEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
                 VoteHistoryStorage,
@@ -938,6 +970,8 @@ mod tests {
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
         repair_event_receiver: RepairEventReceiver,
+        #[allow(dead_code)]
+        switch_bank_receiver: SwitchBankEventReceiver,
         shared_context: SharedContext,
         voting_context: VotingContext,
         root_context: RootContext,
@@ -1002,6 +1036,7 @@ mod tests {
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
         let (repair_event_sender, repair_event_receiver) = unbounded();
+        let (switch_bank_sender, switch_bank_receiver) = unbounded();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender,
             exit,
@@ -1060,6 +1095,7 @@ mod tests {
             blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
             repair_event_sender,
+            switch_bank_sender,
         };
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
@@ -1103,6 +1139,7 @@ mod tests {
             cluster_info,
             consensus_metrics_receiver,
             repair_event_receiver,
+            switch_bank_receiver,
             highest_parent_ready,
             shared_context,
             voting_context,

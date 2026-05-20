@@ -37,7 +37,7 @@ use {
     rocksdb::{DBRawIterator, LiveFile},
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
-    solana_clock::{DEFAULT_TICKS_PER_SECOND, Slot, UnixTimestamp},
+    solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
             BlockComponent, VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
@@ -83,7 +83,7 @@ use {
         path::{Path, PathBuf},
         rc::Rc,
         sync::{
-            Arc, Mutex, RwLock,
+            Arc, Mutex, MutexGuard, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -1030,11 +1030,6 @@ impl Blockstore {
         let Some(double_merkle_meta_bytes) =
             self.double_merkle_meta_cf.get_slice((slot, location))?
         else {
-            debug_assert!(
-                self.meta_from_location(slot, location)
-                    .unwrap()
-                    .is_none_or(|meta| !meta.is_full())
-            );
             return Ok(None);
         };
 
@@ -1494,7 +1489,7 @@ impl Blockstore {
     }
 
     /// Attempts to insert shreds into blockstore and updates relevant metrics
-    /// based on the results, split out by shred source (tubine vs. repair).
+    /// based on the results, split out by shred source (turbine vs. repair).
     fn attempt_shred_insertion<'a>(
         &self,
         shreds: impl IntoIterator<
@@ -2101,10 +2096,39 @@ impl Blockstore {
 
         // Acquire the insertion lock
         let mut start = Measure::start("Blockstore lock");
-        let _lock = self.insert_shreds_lock.lock().unwrap();
+        let lock = self.insert_shreds_lock.lock().unwrap();
         start.stop();
         metrics.insert_lock_elapsed_us += start.as_us();
 
+        let result = self.do_insert_shreds_locked(
+            &lock,
+            shreds,
+            leader_schedule,
+            is_trusted,
+            shred_recovery_context,
+            metrics,
+        );
+
+        // Roll up metrics
+        total_start.stop();
+        metrics.total_elapsed_us += total_start.as_us();
+
+        result
+    }
+
+    /// Core shred insertion logic.
+    fn do_insert_shreds_locked<'a>(
+        &self,
+        _insert_shreds_lock: &MutexGuard<'_, ()>,
+        shreds: impl IntoIterator<
+            Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
+            IntoIter: ExactSizeIterator,
+        >,
+        leader_schedule: Option<&LeaderScheduleCache>,
+        is_trusted: bool,
+        shred_recovery_context: Option<&mut ShredRecoveryContext>,
+        metrics: &mut BlockstoreInsertionMetrics,
+    ) -> Result<InsertResults> {
         let shreds = shreds.into_iter();
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
@@ -2156,9 +2180,6 @@ impl Blockstore {
             update_parent_signals,
         );
 
-        // Roll up metrics
-        total_start.stop();
-        metrics.total_elapsed_us += total_start.as_us();
         metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
 
         Ok(InsertResults {
@@ -2290,6 +2311,99 @@ impl Blockstore {
                 Err(e) => panic!("Purge database operations failed {e}"),
             }
         }
+    }
+
+    /// Helper to copy shreds from one location to another.
+    /// Reads all data shreds from `from_location` and inserts them at `to_location`.
+    fn copy_shreds_locked(
+        &self,
+        lock: &std::sync::MutexGuard<'_, ()>,
+        slot: Slot,
+        from_location: BlockLocation,
+        to_location: BlockLocation,
+    ) -> Result<()> {
+        let shreds = self.get_data_shreds_for_slot_from_location(
+            slot,
+            /* start_index */ 0,
+            from_location,
+        )?;
+
+        let shreds = shreds.into_iter().map(|shred| {
+            (Cow::Owned(shred), /*is_repaired:*/ false, to_location)
+        });
+        self.do_insert_shreds_locked(
+            lock,
+            shreds,
+            None, // leader_schedule
+            true, // is_trusted
+            None, // should_recover_shreds
+            &mut BlockstoreInsertionMetrics::default(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Switch the block in `slot` from an alternate location to the original location.
+    /// This atomically:
+    /// 1. Back up the original column data if it's a valid block that we don't have
+    /// 2. Purges the original column data while preserving alternate columns
+    /// 3. Copies shreds from the alternate location to the original location
+    /// 4. Verify that the switch was successful
+    ///
+    /// Holds `insert_shreds_lock` for the entire operation.
+    ///
+    /// Assumes that the block at `location` is full.
+    pub fn switch_block_from_alternate(
+        &self,
+        slot: Slot,
+        from_location: BlockLocation,
+    ) -> Result<()> {
+        assert!(
+            !matches!(from_location, BlockLocation::Original),
+            "Cannot switch from Original location"
+        );
+
+        let lock = self.insert_shreds_lock.lock().unwrap();
+
+        // 1. Backup the original block if needed
+        if let Some(dmr) = self.get_double_merkle_root(slot, BlockLocation::Original)? {
+            let backup_location = BlockLocation::Alternate { block_id: dmr };
+            if self
+                .get_double_merkle_root(slot, backup_location)?
+                .is_none()
+            {
+                self.copy_shreds_locked(&lock, slot, BlockLocation::Original, backup_location)?;
+            }
+        }
+
+        // 2. Purge the original column data, keeping alternate columns intact
+        self.purge_slot_cleanup_chaining_keep_alt(slot)
+            .or_else(|err| {
+                if matches!(err, BlockstoreError::SlotUnavailable) {
+                    // There was no block in the original column, continue to copying
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            })?;
+
+        // 3. Copy shreds from alternate location to original
+        let alt_meta = self
+            .meta_from_location(slot, from_location)?
+            .expect("Alternate slot must have SlotMeta");
+        debug_assert!(alt_meta.is_full(), "Alternate slot must be full");
+
+        self.copy_shreds_locked(&lock, slot, from_location, BlockLocation::Original)?;
+
+        // 4. Verify the switch was successful
+        debug_assert!(
+            self.meta(slot)?
+                .expect("Slot must have SlotMeta after switch")
+                .is_full(),
+            "Slot must be full after switch"
+        );
+
+        Ok(())
     }
 
     // Bypasses erasure recovery becuase it is called from broadcast stage
@@ -3336,7 +3450,6 @@ impl Blockstore {
             slot_meta,
             index as u32,
             new_consumed,
-            shred.reference_tick(),
             data_index,
         )
         .map(move |indices| CompletedDataSetInfo { slot, indices });
@@ -3699,26 +3812,17 @@ impl Blockstore {
     }
 
     /// Find missing shred indices for a given `slot` within the range
-    /// [`start_index`, `end_index`]. Missing shreds will only be reported as
-    /// missing if they should be present by the time this function is called,
-    /// as controlled by`first_timestamp` and `defer_threshold_ticks`.
+    /// [`start_index`, `end_index`].
     ///
     /// Arguments:
     ///  - `db_iterator`: Iterator to run search over.
     ///  - `slot`: The slot to search for missing shreds for.
-    ///  - 'first_timestamp`: Timestamp (ms) for slot's first shred insertion.
-    ///  - `defer_threshold_ticks`: A grace period to allow shreds that are
-    ///    missing to be excluded from the reported missing list. This allows
-    ///    tuning on how aggressively missing shreds should be reported and
-    ///    acted upon.
     ///  - `start_index`: Begin search (inclusively) at this shred index.
     ///  - `end_index`: Finish search (exclusively) at this shred index.
     ///  - `max_missing`: Limit result to this many indices.
     fn find_missing_indexes<C>(
         db_iterator: &mut DBRawIterator,
         slot: Slot,
-        first_timestamp: u64,
-        defer_threshold_ticks: u64,
         start_index: u64,
         end_index: u64,
         max_missing: usize,
@@ -3731,9 +3835,6 @@ impl Blockstore {
         }
 
         let mut missing_indexes = vec![];
-        // System time is not monotonic
-        let ticks_since_first_insert =
-            DEFAULT_TICKS_PER_SECOND * timestamp().saturating_sub(first_timestamp) / 1000;
 
         // Seek to the first shred with index >= start_index
         db_iterator.seek(C::key(&(slot, start_index)));
@@ -3757,14 +3858,6 @@ impl Blockstore {
             };
 
             let upper_index = cmp::min(current_index, end_index);
-            // the tick that will be used to figure out the timeout for this hole
-            let data = db_iterator.value().expect("couldn't read value");
-            let reference_tick = u64::from(shred::layout::get_reference_tick(data).unwrap());
-            if ticks_since_first_insert < reference_tick + defer_threshold_ticks {
-                // The higher index holes have not timed out yet
-                break;
-            }
-
             let num_to_take = max_missing - missing_indexes.len();
             missing_indexes.extend((prev_index..upper_index).take(num_to_take));
 
@@ -3788,8 +3881,6 @@ impl Blockstore {
     pub fn find_missing_data_indexes(
         &self,
         slot: Slot,
-        first_timestamp: u64,
-        defer_threshold_ticks: u64,
         start_index: u64,
         end_index: u64,
         max_missing: usize,
@@ -3801,8 +3892,6 @@ impl Blockstore {
         Self::find_missing_indexes::<cf::ShredData>(
             &mut db_iterator,
             slot,
-            first_timestamp,
-            defer_threshold_ticks,
             start_index,
             end_index,
             max_missing,
@@ -5874,7 +5963,6 @@ fn update_slot_meta<'a>(
     slot_meta: &mut SlotMeta,
     index: u32,
     new_consumed: u64,
-    reference_tick: u8,
     received_data_shreds: &'a ShredIndex,
 ) -> impl Iterator<Item = Range<u32>> + 'a + use<'a> {
     let first_insert = slot_meta.received == 0;
@@ -5882,9 +5970,7 @@ fn update_slot_meta<'a>(
     // so received = index + 1 for the same shred.
     slot_meta.received = cmp::max(u64::from(index) + 1, slot_meta.received);
     if first_insert {
-        // predict the timestamp of what would have been the first shred in this slot
-        let slot_time_elapsed = u64::from(reference_tick) * 1000 / DEFAULT_TICKS_PER_SECOND;
-        slot_meta.first_shred_timestamp = timestamp() - slot_time_elapsed;
+        slot_meta.first_shred_timestamp = timestamp();
     }
     slot_meta.consumed = new_consumed;
     // If the last index in the slot hasn't been set before, then

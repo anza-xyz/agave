@@ -36,7 +36,7 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode"] }
+solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode", "atomic"] }
 solana-pubkey = { workspace = true }
 solana-short-vec = { workspace = true, features = ["wincode"] }
 solana-signer-store = { workspace = true }

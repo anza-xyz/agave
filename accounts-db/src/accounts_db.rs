@@ -4252,6 +4252,7 @@ impl AccountsDb {
     /// entries in the accounts index, cache entries, and any backing storage entries.
     ///
     /// This fn is to only be called by snapshot minimizer
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn purge_slots_for_snapshot_minimizer<'a>(
         &self,
         removed_slots: impl Iterator<Item = &'a Slot> + Clone,
@@ -5527,6 +5528,8 @@ impl AccountsDb {
         let num_accounts_stored = accounts.len();
         let stats = &self.store_accounts_frozen_stats;
 
+        debug_assert!(self.accounts_index.is_alive_root(slot));
+
         // Flush the read cache if necessary. This will occur during shrink or clean
         let flush_read_cache_time = Measure::start("flush_read_cache");
         if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
@@ -5626,11 +5629,45 @@ impl AccountsDb {
         }
     }
 
+    /// Returns whether the latest version of pubkey from ancestors is zero-lamport
+    /// Returns `None` if the account doesn't exist
+    fn is_ancestor_zero_lamport(&self, pubkey: &Pubkey, ancestors: &Ancestors) -> Option<bool> {
+        if let Some((cached_account, cache_slot, status)) =
+            self.accounts_cache.load_latest(pubkey, ancestors)
+        {
+            let cache_is_zero_lamport = cached_account.account.lamports() == 0;
+            // When the slot isn't being flushed, the cache is definitely the newest
+            if matches!(status, SlotStatus::Ancestor | SlotStatus::UnflushedRoot) {
+                return Some(cache_is_zero_lamport);
+            }
+
+            // Slot is being flushed; a newer version may already exist in storage.
+            if let Some((index_slot, index_is_zero_lamport)) = self
+                .accounts_index
+                .get_with_and_then(pubkey, ancestors, true, |(slot, account)| {
+                    (slot, account.is_zero_lamport())
+                })
+            {
+                // Return the zero lamport status of the newest version between the cache and index
+                // If slots are the same it doesn't matter which is returned (They are identical)
+                if index_slot > cache_slot {
+                    return Some(index_is_zero_lamport);
+                }
+            }
+            Some(cache_is_zero_lamport)
+        } else {
+            self.accounts_index
+                .get_with_and_then(pubkey, ancestors, true, |(_, account)| {
+                    account.is_zero_lamport()
+                })
+        }
+    }
+
     // Stores accounts in the write cache. If an account is zero-lamport and not present in the
-    // index, there is no need to store it in the write cache as it will not effect the accounts
-    // hash. The function returns a BitVec indicating whether each account was stored in the cache.
-    // Ordering of account is important as duplicate pubkeys are possible. The last account in
-    // accounts_and_meta_to_store for each pubkey is stored in the write cache
+    // cache or index, there is no need to store it in the write cache as it will not affect the
+    // accounts hash. The function returns a BitVec indicating whether each account was stored in
+    // the cache. Ordering of accounts is important as duplicate pubkeys are possible. The last
+    // account in accounts_and_meta_to_store for each pubkey is stored in the write cache.
     fn write_accounts_to_cache<'a, 'b>(
         &self,
         slot: Slot,
@@ -5656,12 +5693,7 @@ impl AccountsDb {
                     return;
                 }
                 if account.is_zero_lamport() {
-                    match self.accounts_index.get_with_and_then(
-                        pubkey,
-                        ancestors,
-                        true,
-                        |(_, info)| info.is_zero_lamport(),
-                    ) {
+                    match self.is_ancestor_zero_lamport(pubkey, ancestors) {
                         None => {
                             stats.num_ephemeral_accounts_skipped += 1;
                             return;

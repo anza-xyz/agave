@@ -591,8 +591,6 @@ impl ValidatorTpuConfig {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
-                max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
                 ..Default::default()
             },
             qos_config: SwQosConfig::default(),
@@ -1442,6 +1440,7 @@ impl Validator {
                 bank_forks_r.sharable_banks(),
                 config.repair_whitelist.clone(),
                 leader_state,
+                leader_schedule_cache.clone(),
                 bank_forks_r.migration_status(),
             )
         };
@@ -1573,12 +1572,16 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
-        let (xdp_transmitter, turbine_xdp_sender) =
+        let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender) =
             if let Some((xdp_transmit_builder, src_addr)) = xdp_builder_with_src_addr {
-                let (rtx, sender) = xdp_transmit_builder.build();
-                (Some(rtx), Some(XdpSender::new(sender, src_addr)))
+                let (transmitter, sender) = xdp_transmit_builder.build();
+                (
+                    Some(transmitter),
+                    Some(XdpSender::new(sender.clone(), src_addr)),
+                    Some((sender, *src_addr.ip())),
+                )
             } else {
-                (None, None)
+                (None, None, None)
             };
 
         // disable all2all tests if not allowed for a given cluster type
@@ -1706,7 +1709,9 @@ impl Validator {
             entry_notification_sender,
             blockstore.clone(),
             &config.broadcast_stage_type,
+            leader_schedule_cache.clone(),
             turbine_xdp_sender,
+            quic_xdp_sender,
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,

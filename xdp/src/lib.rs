@@ -23,6 +23,8 @@ pub mod tx_loop;
 #[cfg(target_os = "linux")]
 pub mod umem;
 
+pub mod ecn_codepoint;
+
 pub mod transmitter;
 
 #[cfg(target_os = "linux")]

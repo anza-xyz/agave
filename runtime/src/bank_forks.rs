@@ -18,7 +18,7 @@ use {
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
-        collections::{HashMap, HashSet, hash_map::Entry},
+        collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},
         ops::Index,
         sync::{Arc, RwLock},
         time::Instant,
@@ -190,6 +190,34 @@ impl BankForks {
     /// Create a map of bank slot id to the set of all of its descendants
     pub fn descendants(&self) -> HashMap<Slot, HashSet<Slot>> {
         self.descendants.clone()
+    }
+
+    /// For use when we want to remove `slots` from `BankForks`. It's not safe to remove
+    /// a bank if it's descendant(s) are still in BankForks.
+    ///
+    /// Returns the supplied slots and any descendants that are still present in bank forks
+    pub fn slots_to_clear(&self, slots: impl IntoIterator<Item = Slot>) -> BTreeSet<Slot> {
+        let root = self.root();
+        let mut slots_to_clear = BTreeSet::new();
+
+        for slot in slots.into_iter() {
+            if slot <= root {
+                continue;
+            }
+            if self.banks.contains_key(&slot) {
+                slots_to_clear.insert(slot);
+            }
+            if let Some(slot_descendants) = self.descendants.get(&slot) {
+                slots_to_clear.extend(
+                    slot_descendants
+                        .iter()
+                        .copied()
+                        .filter(|descendant| self.banks.contains_key(descendant)),
+                );
+            }
+        }
+
+        slots_to_clear
     }
 
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
@@ -1108,6 +1136,31 @@ mod tests {
         assert_eq!(children, *descendants.get(&0).unwrap());
         assert!(descendants[&1].is_empty());
         assert!(descendants[&2].is_empty());
+    }
+
+    #[test]
+    fn test_bank_forks_slots_to_clear() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        extend_bank_forks(
+            bank_forks.clone(),
+            &[(0, 1), (1, 2), (1, 3), (2, 4), (0, 5)],
+        );
+
+        assert_eq!(
+            bank_forks.read().unwrap().slots_to_clear([2]),
+            [2, 4].into_iter().collect()
+        );
+        assert_eq!(
+            bank_forks.read().unwrap().slots_to_clear([1]),
+            [1, 2, 3, 4].into_iter().collect(),
+        );
+        assert_eq!(
+            bank_forks.read().unwrap().slots_to_clear([0]),
+            BTreeSet::<Slot>::new()
+        );
     }
 
     #[test]

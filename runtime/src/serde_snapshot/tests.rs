@@ -9,7 +9,7 @@ mod serde_snapshot_tests {
             },
             snapshot_utils::StorageAndNextAccountsFileId,
         },
-        agave_fs::FileInfo,
+        agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
         bincode::{Error, serialize_into},
         log::info,
         rand::{Rng, rng},
@@ -18,7 +18,9 @@ mod serde_snapshot_tests {
             ObsoleteAccounts,
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
-            account_storage_reader::AccountStorageReader,
+            account_storage_reader::{
+                AccountStorageReader, open_storage_files, storage_file_buf_reader,
+            },
             accounts::Accounts,
             accounts_db::{
                 ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
@@ -123,11 +125,17 @@ mod serde_snapshot_tests {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
-        for storage_entry in storage_entries.into_iter() {
+        const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+        let storage_files = open_storage_files(storage_entries.iter().map(|s| s.as_ref()), false)?;
+        let mut buf_reader =
+            storage_file_buf_reader(MAX_BUFFER_SIZE, false, &IoSetupState::default())?;
+        for (storage_entry, file) in storage_entries.iter().zip(storage_files.iter()) {
             // Copy file to new directory
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
-            let mut reader = AccountStorageReader::new(&storage_entry, None).unwrap();
+            buf_reader.set_file(file.as_ref(), storage_entry.accounts.len() as u64)?;
+            let mut reader =
+                AccountStorageReader::new(storage_entry, None, &mut buf_reader).unwrap();
             let mut writer = File::create(&output_path)?;
             io::copy(&mut reader, &mut writer)?;
 

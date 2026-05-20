@@ -15,7 +15,7 @@ use {
     crate::{
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        accounts_file::{InternalsForArchive, StoredAccountsInfo},
+        accounts_file::{OpenFileForArchive, StoredAccountsInfo},
         storable_accounts::StorableAccounts,
         u64_align,
         utils::create_account_shared_data,
@@ -1074,8 +1074,8 @@ impl AppendVec {
     }
 
     /// Returns the way to access this accounts file when archiving
-    pub(crate) fn internals_for_archive(&self) -> InternalsForArchive<'_> {
-        InternalsForArchive { path: self.path() }
+    pub(crate) fn open_file_for_archive(&self) -> OpenFileForArchive<'_> {
+        OpenFileForArchive::Borrowed(&self.file)
     }
 }
 

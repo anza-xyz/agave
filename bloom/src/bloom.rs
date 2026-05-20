@@ -67,7 +67,7 @@ impl<T: BloomHashIndex> Sanitize for Bloom<T> {
 }
 
 impl<T: BloomHashIndex> Bloom<T> {
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn num_bits_set(&self) -> u64 {
         self.num_bits_set
     }

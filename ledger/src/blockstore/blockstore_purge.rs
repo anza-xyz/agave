@@ -143,7 +143,6 @@ impl Blockstore {
 
     /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns.
     /// Used when switching from an alternate block to allow repair data to be retained.
-    #[allow(dead_code)]
     pub(crate) fn purge_slot_cleanup_chaining_keep_alt(&self, slot: Slot) -> Result<()> {
         self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ false)
     }

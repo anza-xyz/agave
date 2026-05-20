@@ -60,9 +60,9 @@ mod stats;
 
 /// Source of a leader-window notification consumed by BCL.
 enum ParentSource {
-    /// Consensus has finalized the parent for this leader window.
+    /// Parent from ParentReady event for this leader window is already known.
     ParentReady(LeaderWindowInfo),
-    /// Replay froze the previous leader's last block before consensus finalized it.
+    /// Replay froze the previous leader's last block before ParentReady was emitted.
     OptimisticParent(LeaderWindowInfo),
 }
 
@@ -131,7 +131,7 @@ struct LeaderContext {
     leader_window_info_receiver: Receiver<LeaderWindowInfo>,
     /// ParentReady for a future window observed while producing the current one.
     pending_parent_ready: Option<LeaderWindowInfo>,
-    /// Highest finalized parent known to Votor, used to abandon stale windows.
+    /// Highest ParentReady event observed by Votor, used to abandon stale windows.
     highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
@@ -312,7 +312,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
 
         // Wait for the first window notification, then drain both sources and pick the newest
         // leader window. This avoids revisiting stale optimistic windows after replay has already
-        // advanced to a later finalized parent.
+        // advanced to a later parent.
         let window_source = if let Some(info) = ctx.pending_parent_ready.take() {
             Some(ParentSource::ParentReady(info))
         } else {
@@ -449,7 +449,7 @@ fn freshest_window_from_iter(
 }
 
 /// Preserve the freshest future ParentReady so the next loop iteration starts
-/// from finalized consensus state instead of a stale optimistic notification.
+/// from ParentReady state instead of a stale optimistic notification.
 fn stash_parent_ready(ctx: &mut LeaderContext, info: LeaderWindowInfo) {
     ctx.pending_parent_ready = Some(match ctx.pending_parent_ready.take() {
         Some(current) => freshest_leader_window(current, info),
@@ -457,9 +457,9 @@ fn stash_parent_ready(ctx: &mut LeaderContext, info: LeaderWindowInfo) {
     });
 }
 
-/// Choose between finalized and optimistic leader-window notifications.
+/// Choose between ParentReady and optimistic leader-window notifications.
 ///
-/// ParentReady wins ties across sources because finalized parent information
+/// ParentReady wins ties across sources because ParentReady parent information
 /// should override an optimistic parent for the same leader window.
 fn select_freshest_window(
     latest_parent_ready: Option<LeaderWindowInfo>,
@@ -786,7 +786,7 @@ fn record_and_complete_block(
 ///
 /// Returns true when the notification proves this producer is behind and should
 /// abandon the current window. For matching optimistic windows, this may perform
-/// sad leader handover and restart the bank on the finalized parent.
+/// sad leader handover and restart the bank on the ParentReady parent.
 fn process_parent_ready(
     ctx: &mut LeaderContext,
     info: LeaderWindowInfo,
@@ -916,12 +916,12 @@ fn send_update_parent(
 /// Handles a parent ready notification when building on an optimistic parent.
 ///
 /// Happy path:
-/// - finalized parent matches optimistic parent
+/// - ParentReady matches optimistic parent
 /// - this is a no-op, and a win.
 ///
 /// Sad path:
-/// - finalized parent does not match optimistic parent
-/// - we send an UpdateParent to switch to the correct parent (i.e., the finalized parent).
+/// - ParentReady does not match optimistic parent
+/// - we send an UpdateParent to switch to the correct parent (i.e., the one from ParentReady).
 /// - tell PohRecorder to stop sending us transactions
 /// - we clear the bank for the current slot
 fn handle_parent_ready(
@@ -937,13 +937,13 @@ fn handle_parent_ready(
     *block_timer = leader_window_info.block_timer;
 
     if leader_window_info.parent_block == optimistic_parent_block {
-        // Happy path: optimistic parent matches finalized parent
+        // Happy path: optimistic parent matches the one from ParentReady
         return Ok(None);
     }
 
     // Sad path: need to switch to the correct parent
     trace!(
-        "{:?}: Sad leader handover slot optimistic parent = {:?} != {:?} = finalized parent",
+        "{:?}: Sad leader handover slot optimistic parent = {:?} != {:?} = parent from ParentReady",
         ctx.my_pubkey, optimistic_parent_block, leader_window_info.parent_block
     );
     ctx.slot_metrics.mark_leader_handover_sad();

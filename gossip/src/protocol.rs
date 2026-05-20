@@ -255,7 +255,7 @@ pub(crate) fn split_gossip_messages<T: Serialize + Debug>(
     })
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects {
     use {
         crate::{

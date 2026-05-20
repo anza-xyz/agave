@@ -14,8 +14,8 @@ use {
             unix_timestamp_from_rfc3339_datetime,
         },
         input_validators::{
-            is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_url_or_moniker,
-            is_valid_percentage, normalize_to_url_if_moniker,
+            is_non_zero, is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot,
+            is_url_or_moniker, is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
     solana_clock as clock,
@@ -55,6 +55,7 @@ use {
         error,
         fs::File,
         io::{self, Read},
+        num::NonZeroU64,
         path::PathBuf,
         process,
         slice::Iter,
@@ -413,6 +414,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("faucet-lamports")
                 .value_name("LAMPORTS")
                 .takes_value(true)
+                .requires("faucet_pubkey")
+                .validator(is_non_zero)
                 .help("Number of lamports to assign to the faucet"),
         )
         .arg(
@@ -733,7 +736,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_stake_authorized_pubkey =
         pubkey_of(&matches, "bootstrap_stake_authorized_pubkey");
-    let faucet_lamports = value_t!(matches, "faucet_lamports", u64).unwrap_or(0);
     let faucet_pubkey = pubkey_of(&matches, "faucet_pubkey");
 
     let ticks_per_slot = value_t_or_exit!(matches, "ticks_per_slot", u64);
@@ -826,12 +828,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         genesis_config.creation_time = creation_time;
     }
 
-    if let Some(faucet_pubkey) = faucet_pubkey {
-        genesis_config.add_account(
-            faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
-        );
-    }
+    let faucet_account_lamports = faucet_pubkey
+        .map(|faucet_pubkey| {
+            let faucet_lamports =
+                u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
+            genesis_config.add_account(
+                faucet_pubkey,
+                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            );
+            faucet_lamports
+        })
+        .unwrap_or(0);
 
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
@@ -881,7 +888,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_stake_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    add_genesis_stake_accounts(
+        &mut genesis_config,
+        issued_lamports - faucet_account_lamports,
+    );
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {

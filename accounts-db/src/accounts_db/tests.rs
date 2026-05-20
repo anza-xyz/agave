@@ -632,26 +632,15 @@ fn test_flush_slots_with_reclaim_old_slots() {
     assert!(accounts.storage.get_slot_storage_entry(new_slot).is_some());
 }
 
-fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
+define_accounts_db_test!(test_remove_unrooted_slot_cached, |db| {
     let unrooted_slot = 9;
     let unrooted_bank_id = 9;
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
     let ancestors = Ancestors::from(vec![unrooted_slot]);
     assert!(!db.contains(&key));
-    if is_cached {
-        db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
-        assert!(db.accounts_cache.contains(unrooted_slot));
-    } else {
-        let file_size = 4096; // value doesn't need to be exact, just big enough to hold account0
-        let storage = db.create_and_insert_store(unrooted_slot, file_size, "");
-        db.store_accounts_frozen(
-            (unrooted_slot, [(&key, &account0)].as_slice()),
-            &storage,
-            UpdateIndexThreadSelection::Inline,
-        );
-        assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_some());
-    }
+    db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
+    assert!(db.accounts_cache.contains(unrooted_slot));
     assert!(!db.accounts_index.is_alive_root(unrooted_slot));
     assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
@@ -667,14 +656,28 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     let account0 = AccountSharedData::new(2, 0, &key);
     db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
     db.assert_load_account(unrooted_slot, key, 2);
-}
-
-define_accounts_db_test!(test_remove_unrooted_slot_cached, |db| {
-    run_test_remove_unrooted_slot(true, db);
 });
 
-define_accounts_db_test!(test_remove_unrooted_slot_storage, |db| {
-    run_test_remove_unrooted_slot(false, db);
+// Test that removing a rooted storage works correctly. This is behaviour specific to
+// the snapshot minimizer
+define_accounts_db_test!(test_remove_slot_snapshot_minimizer, |db| {
+    let rooted_slot = 9;
+    let key = Pubkey::default();
+    let account0 = AccountSharedData::new(1, 0, &key);
+    let ancestors = Ancestors::from(vec![rooted_slot]);
+    assert!(!db.contains(&key));
+    db.store_for_tests((rooted_slot, [(&key, &account0)].as_slice()));
+    db.add_root_and_flush_write_cache(rooted_slot);
+    assert!(db.storage.get_slot_storage_entry(rooted_slot).is_some());
+    assert!(db.contains(&key));
+    db.assert_load_account(rooted_slot, key, 1);
+
+    // Purge the slot
+    db.purge_slots_for_snapshot_minimizer([(&rooted_slot)].into_iter());
+    assert!(db.load_without_fixed_root(&ancestors, &key).is_none());
+    assert!(db.accounts_cache.slot_cache(rooted_slot).is_none());
+    assert!(db.storage.get_slot_storage_entry(rooted_slot).is_none());
+    assert!(!db.contains(&key));
 });
 
 fn update_accounts(accounts: &AccountsDb, pubkeys: &[Pubkey], slot: Slot, range: usize) {
@@ -5724,15 +5727,11 @@ pub(crate) fn create_storages_and_update_index(
     for i in 0..num_slots {
         let id = starting_id + (i as AccountsFileId);
         let pubkey1 = solana_pubkey::new_rand();
-        let storage = sample_storage_with_entries_id(
-            tf,
-            starting_slot + (i as Slot),
-            &pubkey1,
-            id,
-            alive,
-            account_data_size,
-        );
+        let slot = starting_slot + i as Slot;
+        let storage =
+            sample_storage_with_entries_id(tf, slot, &pubkey1, id, alive, account_data_size);
         insert_store(db, Arc::clone(&storage));
+        db.accounts_index.add_root(slot);
     }
 
     let storage = db.get_storage_for_slot(starting_slot).unwrap();
@@ -6324,6 +6323,104 @@ fn test_write_accounts_to_cache_scenarios(
         duplicates, expected_duplicate_skips,
         "Wrong number of duplicate skips"
     );
+}
+
+/// Verifies that when the accounts cache holds the latest ancestor, is_ancestor_zero_lamport
+/// returns the zero lamport status of the cached account.
+#[test]
+fn test_is_ancestor_zero_lamport_cache_ancestor() {
+    let db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let slot = 5;
+    let ancestors = Ancestors::from(vec![slot]);
+
+    assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), None);
+
+    // Insert a non-zero lamport account and verify the function returns Some(false).
+    let nonzero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+    db.accounts_cache.store(slot, &pubkey, nonzero_account);
+    assert_eq!(
+        db.is_ancestor_zero_lamport(&pubkey, &ancestors),
+        Some(false)
+    );
+
+    // Update the account to zero lamports and verify the function returns Some(true).
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    db.accounts_cache.store(slot, &pubkey, zero_account);
+    assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
+}
+
+/// Verifies that when the latest version of an account lives on an unflushed root in the cache
+/// (with the root itself not in ancestors), is_ancestor_zero_lamport returns the zero lamport
+/// status of the cached account.
+#[test]
+fn test_is_ancestor_zero_lamport_unflushed_root_in_cache() {
+    let db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let slot = 5;
+
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    db.accounts_cache.store(slot, &pubkey, zero_account);
+    db.accounts_cache.add_root(slot);
+
+    // The slot is not in ancestors, but is a root and returns the zero lamport UnflushedRoot
+    let ancestors = Ancestors::from(vec![slot + 5]);
+    assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
+}
+
+/// Verifies that when the accounts cache does not contain the pubkey, is_ancestor_zero_lamport
+/// falls back to the index and returns the zero lamport status of the indexed account.
+#[test]
+fn test_is_ancestor_zero_lamport_index_only() {
+    let db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let slot = 5;
+
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    db.store_for_tests((slot, [(&pubkey, &zero_account)].as_slice()));
+    db.add_root_and_flush_write_cache(slot);
+    assert!(!db.accounts_cache.contains_pubkey(&pubkey));
+
+    let ancestors = Ancestors::from(vec![slot]);
+    assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
+}
+
+/// Verifies that when the cache entry is in a `*BeingFlushed` state, is_ancestor_zero_lamport
+/// also consults the index and returns the zero lamport status of whichever version sits on the
+/// higher slot, regardless of whether that version is in the cache or the index.
+#[test_case(10, 5, true; "newer_cache_wins")]
+#[test_case(5, 10, false; "newer_index_wins")]
+fn test_is_ancestor_zero_lamport_being_flushed_picks_higher_slot(
+    cache_slot: Slot,
+    index_slot: Slot,
+    expected: bool,
+) {
+    let db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+
+    // Non-zero lamport entry in the index. Set up first: flushing goes through the cache,
+    // so doing it after the cache setup would conflict with `begin_flush_roots`.
+    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+    db.store_for_tests((index_slot, [(&pubkey, &account)].as_slice()));
+    db.add_root_and_flush_write_cache(index_slot);
+    assert!(!db.accounts_cache.contains_pubkey(&pubkey));
+
+    // Zero lamport entry in the cache. Note: this entry may be older than the slot that was
+    // flushed above which is normally not allowed to be added to the cache. However,
+    // this state is a valid intermediate state when flushing the cache so needs
+    // test coverage
+    let account = AccountSharedData::new(0, 0, &Pubkey::default());
+    db.accounts_cache.store(cache_slot, &pubkey, account);
+    db.accounts_cache.add_root(cache_slot);
+    db.accounts_cache.begin_flush_roots(Some(cache_slot));
+
+    let ancestors = Ancestors::from(vec![cache_slot, index_slot]);
+    assert_eq!(
+        db.is_ancestor_zero_lamport(&pubkey, &ancestors),
+        Some(expected)
+    );
+
+    db.accounts_cache.end_flush_roots();
 }
 
 /// loading an account through an older bank must not return

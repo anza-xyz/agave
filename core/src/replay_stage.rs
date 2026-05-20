@@ -33,7 +33,10 @@ use {
         window_service::DuplicateSlotReceiver,
     },
     agave_votor::{
-        event::{CompletedBlock, LeaderWindowInfo, VotorEvent, VotorEventSender},
+        event::{
+            CompletedBlock, LeaderWindowInfo, SwitchBankEvent, SwitchBankEventReceiver, VotorEvent,
+            VotorEventSender,
+        },
         root_utils,
         vote_history_storage::SavedVoteHistory,
         voting_service::BLSOp,
@@ -55,7 +58,8 @@ use {
     solana_keypair::Keypair,
     solana_leader_schedule::SlotLeader,
     solana_ledger::{
-        blockstore::{Blockstore, UpdateParentReceiver},
+        blockstore::{Blockstore, BlockstoreError, UpdateParentReceiver},
+        blockstore_meta::BlockLocation,
         blockstore_processor::{
             self, AsyncVerificationProgress, BlockstoreProcessorError, ChainedBlockIdCheck,
             ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats,
@@ -457,6 +461,7 @@ pub struct ReplayReceivers {
     pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
     pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
+    pub switch_bank_receiver: SwitchBankEventReceiver,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -771,6 +776,7 @@ impl ReplayStage {
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
+            switch_bank_receiver,
         } = receivers;
 
         trace!("replay stage");
@@ -855,6 +861,7 @@ impl ReplayStage {
             // AsyncVerificationProgress does a large allocation for its internal channel, so we
             // keep a free list to avoid doing one of those for each slot
             let mut async_verification_freelist = Vec::new();
+            let mut pending_switch = None;
             let working_bank = {
                 let r_bank_forks = bank_forks.read().unwrap();
                 r_bank_forks.working_bank()
@@ -996,7 +1003,6 @@ impl ReplayStage {
 
                 // Check if we've completed the migration conditions
                 if migration_status.is_ready_to_enable() {
-                    let shared_leader_state = poh_recorder.read().unwrap().shared_leader_state();
                     Self::enable_alpenglow(
                         &exit,
                         &my_pubkey,
@@ -1004,7 +1010,7 @@ impl ReplayStage {
                         bank_forks.as_ref(),
                         blockstore.as_ref(),
                         &mut poh_controller,
-                        &shared_leader_state,
+                        &poh_shared_leader_state,
                         leader_schedule_cache.as_ref(),
                         &mut ancestors,
                         &mut descendants,
@@ -1037,6 +1043,19 @@ impl ReplayStage {
                         &mut progress,
                         did_complete_bank,
                     );
+                    Self::process_switch_bank_events(
+                        &my_pubkey,
+                        &switch_bank_receiver,
+                        &mut pending_switch,
+                        &blockstore,
+                        &bank_forks,
+                        &mut progress,
+                        &mut async_verification_freelist,
+                    )
+                    .expect("Blockstore operations must succeed");
+                    // Banks might have been switched above, these maps are no longer accurate
+                    drop(ancestors);
+                    drop(descendants);
                 } else {
                     let forks_root = bank_forks.read().unwrap().root();
                     // Process cluster-agreed versions of duplicate slots for which we potentially
@@ -2318,6 +2337,146 @@ impl ReplayStage {
         descendants
             .remove(&slot)
             .expect("must exist based on earlier check");
+    }
+
+    /// Process switch block events from votor
+    ///
+    /// When receiving a switch request for block b we attempt to switch out the bank in slot(b)
+    /// for b if the bank in slot(b) does not match the block id for b.
+    ///
+    /// When we need to switch a bank b, we first defer until we've repaired the ancestory of b:
+    /// - We must have block b and all of its ancestors up to any ancestor we've already replayed
+    /// - If no ancestor is replayed and it links back <= root, we can ignore this request
+    ///
+    /// Then to perform the switch for b and all of its ancestors identified above we:
+    /// - Clear the existing bank (if one exists) in the slot from bank forks and progress
+    /// - Use `blockstore::switch_block_from_alternate` to atomically switch the shreds fetched
+    ///   by informed repair into the original column
+    ///
+    /// At this point generate_new_bank_forks can replay the fork up to b
+    ///
+    /// We only care about the latest switch event. When deferring while waiting for repair we store
+    /// this in `pending_switch`
+    fn process_switch_bank_events(
+        my_pubkey: &Pubkey,
+        switch_bank_receiver: &SwitchBankEventReceiver,
+        pending_switch: &mut Option<(Slot, Hash)>,
+        blockstore: &Blockstore,
+        bank_forks: &RwLock<BankForks>,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) -> Result<(), BlockstoreError> {
+        let root = bank_forks.read().unwrap().root();
+
+        if let Some(switch_bank_event) = switch_bank_receiver
+            .try_iter()
+            .max()
+            .filter(|SwitchBankEvent::Switch { slot, .. }| *slot > root)
+        {
+            let (slot, block_id) = switch_bank_event.block();
+
+            // Overwrite the pending switch, later switches take precedence
+            if Some(slot) >= pending_switch.map(|(slot, _)| slot) {
+                if let Some(prev_switch_request) = pending_switch.replace((slot, block_id)) {
+                    trace!(
+                        "{my_pubkey}: Overwriting previous switch request {prev_switch_request:?} \
+                         with ({slot}, {block_id})"
+                    );
+                } else {
+                    trace!("{my_pubkey}: Received switch request in {slot} to {block_id}");
+                }
+            }
+        };
+
+        let Some((slot, block_id)) = *pending_switch else {
+            return Ok(());
+        };
+
+        if bank_forks.read().unwrap().block_id(slot) == Some(block_id) {
+            // Nothing to switch
+            *pending_switch = None;
+            return Ok(());
+        }
+
+        // Check if we have received the block and all of its ancestors and collect the ones we
+        // need to switch out
+        let mut ancestor_slot = slot;
+        let mut ancestor_block_id = block_id;
+        let mut blocks_to_switch = vec![];
+        loop {
+            if ancestor_slot <= root {
+                // This is either (1) an outdated attempt to switch out the
+                // root or (2) attempt to switch to a fork that would end up
+                // switching out the root, so we should ignore
+                *pending_switch = None;
+                return Ok(());
+            }
+
+            let Some(location) = blockstore.get_block_location(ancestor_slot, ancestor_block_id)?
+            else {
+                trace!(
+                    "{my_pubkey}: Waiting for repair, deferring switch to block {ancestor_slot} \
+                     {ancestor_block_id}"
+                );
+                // Still waiting on repair to finish - keep pending request
+                return Ok(());
+            };
+
+            if location != BlockLocation::Original {
+                // Need to switch this block
+                blocks_to_switch.push((ancestor_slot, location));
+            }
+
+            let slot_meta = blockstore
+                .meta_from_location(ancestor_slot, location)?
+                .expect("Full slots must contain SlotMeta");
+            let parent_slot = slot_meta
+                .parent_slot
+                .expect("Full slots must have a parent");
+            let parent_block_id = slot_meta.parent_block_id;
+
+            if bank_forks.read().unwrap().block_id(parent_slot) == Some(parent_block_id)
+                // Genesis cannot be duplicate
+                || parent_slot == 0
+            {
+                info!(
+                    "{my_pubkey}: Ancestor in slot {parent_slot} found in bank forks, time to \
+                     switch"
+                );
+                // We have this ancestor replayed, time to switch
+                break;
+            }
+
+            // Check the next ancestor
+            ancestor_block_id = parent_block_id;
+            ancestor_slot = parent_slot;
+        }
+
+        let slots_to_clear = bank_forks
+            .read()
+            .unwrap()
+            .slots_to_clear(blocks_to_switch.iter().map(|(slot, _)| *slot));
+
+        info!("{my_pubkey}: Clearing banks for switching and descendants: {slots_to_clear:?}");
+        Self::clear_banks(
+            &slots_to_clear,
+            bank_forks,
+            progress,
+            async_verification_freelist,
+        );
+
+        // Banks are clear, move shreds in blockstore
+        for (slot, location) in blocks_to_switch {
+            info!("{my_pubkey}: Switching {slot} from {location:?}");
+
+            // Switch the blockstore data atomically, handles slot meta chaining so generate new bank forks can proceed
+            blockstore.switch_block_from_alternate(slot, location)?;
+            info!("{my_pubkey}: Switched {slot} from {location:?}");
+        }
+
+        *pending_switch = None;
+
+        Ok(())
     }
 
     /// For slots to clear, clear the bank from progress, bank forks, and recycle the async verification

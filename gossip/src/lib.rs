@@ -47,10 +47,7 @@ extern crate solana_frozen_abi_macro;
 #[macro_use]
 extern crate solana_metrics;
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 pub use protocol::gossip_decode_to_effects;
-
-#[cfg(feature = "conformance")]
-mod harness;
 
 mod wire_format_tests;

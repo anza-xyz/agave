@@ -8,12 +8,18 @@ use {
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    solana_cost_model::shred_limit::{
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+    },
     solana_entry::block_component::{BlockComponent, VersionedBlockMarker, VersionedUpdateParent},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{
-        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
-        Shred, ShredType, Shredder, merkle_tree::MerkleTree,
+    solana_ledger::{
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::{
+            ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder,
+            merkle_tree::MerkleTree,
+        },
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -47,6 +53,7 @@ pub struct StandardBroadcastRun {
     last_datapoint_submit: Arc<AtomicInterval>,
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
@@ -64,6 +71,7 @@ impl StandardBroadcastRun {
         shred_version: u16,
         migration_status: Arc<MigrationStatus>,
         votor_event_sender: VotorEventSender,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
     ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -88,11 +96,12 @@ impl StandardBroadcastRun {
             last_datapoint_submit: Arc::default(),
             num_batches: 0,
             cluster_nodes_cache,
+            leader_schedule_cache,
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
-            max_data_shreds_per_slot: MAX_DATA_SHREDS_PER_SLOT as u32,
-            max_code_shreds_per_slot: MAX_CODE_SHREDS_PER_SLOT as u32,
+            max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+            max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
         }
     }
 
@@ -306,6 +315,8 @@ impl StandardBroadcastRun {
         } = receive_results;
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
+        self.max_data_shreds_per_slot = bank.max_data_shreds_per_slot();
+        self.max_code_shreds_per_slot = bank.max_code_shreds_per_slot();
 
         let maybe_send_header = if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
@@ -534,6 +545,7 @@ impl StandardBroadcastRun {
             &mut transmit_stats,
             cluster_info,
             bank_forks,
+            &self.leader_schedule_cache,
             cluster_info.socket_addr_space(),
         )?;
         transmit_time.stop();
@@ -691,12 +703,21 @@ mod test {
         ))
     }
 
+    fn test_leader_schedule_cache(bank: &Bank) -> Arc<LeaderScheduleCache> {
+        Arc::new(LeaderScheduleCache::new_from_bank(bank))
+    }
+
     #[test]
     fn test_interrupted_slot_last_shred() {
         let keypair = Arc::new(Keypair::new());
         let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let mut run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         assert!(run.completed);
 
         // Set up the slot to be interrupted
@@ -747,8 +768,12 @@ mod test {
 
         // Step 1: Make an incomplete transmission for slot 1
         let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(migration_status), votor_event_sender);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(migration_status),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank0),
+        );
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -900,8 +925,12 @@ mod test {
         let (ssend, _srecv) = unbounded();
         let (votor_event_sender, _votor_event_receiver) = unbounded();
         let mut last_tick_height = bank.tick_height();
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
             last_tick_height += ticks.len() as u64;
@@ -969,8 +998,12 @@ mod test {
         };
 
         let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -985,12 +1018,68 @@ mod test {
     }
 
     #[test]
+    fn test_update_shred_limits_from_bank() {
+        agave_logger::setup();
+        let num_shreds_per_slot = 2;
+        let (
+            blockstore,
+            genesis_config,
+            cluster_info,
+            parent_bank,
+            leader_keypair,
+            socket,
+            bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks),
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + 1,
+        };
+
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
+        standard_broadcast_run.max_data_shreds_per_slot = 1;
+        standard_broadcast_run.max_code_shreds_per_slot = 1;
+        standard_broadcast_run
+            .test_process_receive_results(
+                &leader_keypair,
+                &cluster_info,
+                &socket,
+                &blockstore,
+                receive_results,
+                &bank_forks,
+            )
+            .unwrap();
+
+        assert_eq!(
+            standard_broadcast_run.max_data_shreds_per_slot,
+            bank.max_data_shreds_per_slot()
+        );
+        assert_eq!(
+            standard_broadcast_run.max_code_shreds_per_slot,
+            bank.max_code_shreds_per_slot()
+        );
+    }
+
+    #[test]
     fn test_component_to_shreds_max() {
         agave_logger::setup();
         let keypair = Keypair::new();
         let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut bs =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         bs.slot = 1;
         bs.parent = 0;
         bs.max_data_shreds_per_slot = 1000;
@@ -1021,10 +1110,12 @@ mod test {
     fn test_update_parent() {
         let keypair = Keypair::new();
         let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
         let mut bs = StandardBroadcastRun::new(
             0,
             Arc::new(MigrationStatus::post_migration_status()),
             votor_event_sender,
+            test_leader_schedule_cache(&bank),
         );
         bs.slot = 12;
         bs.parent = 10;

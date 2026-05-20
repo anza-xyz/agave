@@ -106,7 +106,7 @@ pub type RepairEventReceiver = Receiver<RepairEvent>;
 pub enum RepairEvent {
     /// We require that this block be fetched. This can happen for the following reasons:
     /// - The block has received a NotarizeFallback certificate or stronger
-    /// - TODO(ashwin): An intrawindow block has reached the SafeToNotar threshold, however we need
+    /// - An intrawindow block has reached the SafeToNotar threshold, however we need
     ///   to check that the parent has reached notarize-fallback requiring us to fetch this block
     FetchBlock { slot: Slot, block_id: Hash },
 }
@@ -115,6 +115,24 @@ impl RepairEvent {
     pub fn slot(&self) -> Slot {
         match self {
             RepairEvent::FetchBlock { slot, .. } => *slot,
+        }
+    }
+}
+
+pub type SwitchBankEventSender = Sender<SwitchBankEvent>;
+pub type SwitchBankEventReceiver = Receiver<SwitchBankEvent>;
+
+/// Event sent to replay_stage when a bank needs to be switched as a result of a ParentReady
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SwitchBankEvent {
+    /// We need to switch any existing banks to this bank including ancestors
+    Switch { slot: Slot, block_id: Hash },
+}
+
+impl SwitchBankEvent {
+    pub fn block(&self) -> Block {
+        match self {
+            SwitchBankEvent::Switch { slot, block_id } => (*slot, *block_id),
         }
     }
 }
