@@ -184,7 +184,7 @@ impl EpochBoundaryPreparation {
 }
 
 /// Input of ProgramCache::extract()
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct ProgramToLoad<'a> {
     /// The program address
     pub program_id: &'a Pubkey,
@@ -352,7 +352,7 @@ impl ProgramCacheForTxBatch {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ProgramCacheMatchCriteria {
     DeployedOnOrAfterSlot(Slot),
     Tombstone,

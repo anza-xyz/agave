@@ -299,10 +299,7 @@ mod tests {
         solana_account::WritableAccount,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_message::{
-            LegacyMessage, Message, MessageHeader, SanitizedMessage,
-            compiled_instruction::CompiledInstruction,
-        },
+        solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
             loaded_programs::{
                 BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
@@ -310,22 +307,18 @@ mod tests {
             },
             solana_sbpf::program::BuiltinProgram,
         },
-        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
-        solana_signature::Signature,
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
         solana_svm_callback::InvokeContextCallback,
+        solana_svm_type_overrides::sync::atomic::AtomicU64,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{
             cell::RefCell,
-            collections::{HashMap, HashSet},
+            collections::HashMap,
             env,
             fs::{self, File},
             io::Read,
         },
     };
-
-    fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
-    }
 
     struct TestForkGraph {}
 
@@ -820,168 +813,115 @@ mod tests {
 
     #[test]
     fn test_filter_executable_program_accounts() {
+        let feepayer = Keypair::new();
+        let loader_ids = [
+            bpf_loader_deprecated::id(),
+            bpf_loader::id(),
+            bpf_loader_upgradeable::id(),
+            native_loader::id(),
+        ];
+        let program_ids = [
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+        let account_ids = [
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+
+        let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::default();
         let mock_bank = MockBankCallback::default();
-        let key1 = Pubkey::new_unique();
-        let owner1 = bpf_loader::id();
-        let key2 = Pubkey::new_unique();
-        let owner2 = bpf_loader_upgradeable::id();
+        for i in 0..3 {
+            loaded_programs_for_tx_batch.replenish(
+                loader_ids[i],
+                Arc::new(ProgramCacheEntry {
+                    program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+                    account_owner: ProgramCacheEntryOwner::NativeLoader,
+                    account_size: 0,
+                    deployment_slot: 0,
+                    effective_slot: 0,
+                    stats: Arc::default(),
+                    latest_access_slot: AtomicU64::default(),
+                }),
+            );
+            mock_bank.account_shared_data.borrow_mut().insert(
+                loader_ids[i],
+                (AccountSharedData::new(1, 1, &program_ids[3]), 0),
+            );
+            mock_bank.account_shared_data.borrow_mut().insert(
+                program_ids[i],
+                (AccountSharedData::new(1, 1, &loader_ids[i]), 0),
+            );
+            mock_bank.account_shared_data.borrow_mut().insert(
+                account_ids[i],
+                (AccountSharedData::new(1, 1, &program_ids[i]), 0),
+            );
+        }
 
-        let mut data1 = AccountSharedData::default();
-        data1.set_owner(owner1);
-        data1.set_lamports(93);
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key1, (data1, 0));
-
-        let mut data2 = AccountSharedData::default();
-        data2.set_owner(owner2);
-        data2.set_lamports(90);
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key2, (data2, 0));
-
-        let message = Message {
-            account_keys: vec![key1, key2],
-            header: MessageHeader::default(),
-            instructions: vec![CompiledInstruction {
-                program_id_index: 0,
-                accounts: vec![],
-                data: vec![],
-            }],
-            recent_blockhash: Hash::default(),
-        };
-
-        let sanitized_message = new_unchecked_sanitized_message(message);
-
-        let sanitized_transaction = SanitizedTransaction::new_for_tests(
-            sanitized_message,
-            vec![Signature::new_unique()],
-            false,
-        );
-
-        let missing_programs = filter_executable_program_accounts(
-            &mock_bank,
-            &mut ProgramCacheForTxBatch::default(),
-            &sanitized_transaction,
-            false,
-        );
-        assert_eq!(missing_programs.len(), 2);
-        assert!(
-            missing_programs
-                .iter()
-                .position(|program_to_load| program_to_load.program_id == &key1)
-                .is_some()
-        );
-        assert!(
-            missing_programs
-                .iter()
-                .position(|program_to_load| program_to_load.program_id == &key2)
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn test_filter_executable_program_accounts_no_errors() {
-        let keypair1 = Keypair::new();
-        let keypair2 = Keypair::new();
-
-        let non_program_pubkey1 = Pubkey::new_unique();
-        let non_program_pubkey2 = Pubkey::new_unique();
-        let program1_pubkey = bpf_loader::id();
-        let program2_pubkey = bpf_loader_upgradeable::id();
-        let account1_pubkey = Pubkey::new_unique();
-        let account2_pubkey = Pubkey::new_unique();
-        let account3_pubkey = Pubkey::new_unique();
-        let account4_pubkey = Pubkey::new_unique();
-
-        let account5_pubkey = Pubkey::new_unique();
-
-        let mock_bank = MockBankCallback::default();
-        mock_bank.account_shared_data.borrow_mut().insert(
-            non_program_pubkey1,
-            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            non_program_pubkey2,
-            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            program1_pubkey,
-            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            program2_pubkey,
-            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            account1_pubkey,
-            (AccountSharedData::new(1, 10, &non_program_pubkey1), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            account2_pubkey,
-            (AccountSharedData::new(1, 10, &non_program_pubkey2), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            account3_pubkey,
-            (AccountSharedData::new(40, 1, &program1_pubkey), 0),
-        );
-        mock_bank.account_shared_data.borrow_mut().insert(
-            account4_pubkey,
-            (AccountSharedData::new(40, 1, &program2_pubkey), 0),
-        );
-
-        let tx1 = Transaction::new_with_compiled_instructions(
-            &[&keypair1],
-            &[non_program_pubkey1],
+        let tx = Transaction::new_with_compiled_instructions(
+            &[&feepayer],
+            &[program_ids[1], program_ids[2], loader_ids[2]],
             Hash::new_unique(),
-            vec![account1_pubkey, account2_pubkey, account3_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
+            vec![
+                account_ids[0],
+                account_ids[1],
+                account_ids[2],
+                account_ids[3],
+            ],
+            vec![
+                CompiledInstruction::new(1, &(), vec![0, 1, 2, 3]),
+                CompiledInstruction::new(2, &(), vec![0, 1, 2, 3]),
+                CompiledInstruction::new(3, &(), vec![0, 1, 2, 3]),
+            ],
         );
-        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
-
-        let tx2 = Transaction::new_with_compiled_instructions(
-            &[&keypair2],
-            &[non_program_pubkey2],
-            Hash::new_unique(),
-            vec![account4_pubkey, account3_pubkey, account2_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
-
-        let missing_programs = filter_executable_program_accounts(
-            &mock_bank,
-            &mut ProgramCacheForTxBatch::default(),
-            &sanitized_tx1,
-            false,
-        );
-        assert_eq!(missing_programs.len(), 1);
-        assert!(
-            missing_programs
-                .iter()
-                .position(|program_to_load| program_to_load.program_id == &account3_pubkey)
-                .is_some()
-        );
+        let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
 
         let missing_programs = filter_executable_program_accounts(
             &mock_bank,
-            &mut ProgramCacheForTxBatch::default(),
-            &sanitized_tx2,
+            &loaded_programs_for_tx_batch,
+            &sanitized_tx,
             false,
         );
-        assert_eq!(missing_programs.len(), 2);
-        assert!(
-            missing_programs
-                .iter()
-                .position(|program_to_load| program_to_load.program_id == &account3_pubkey)
-                .is_some()
+        assert_eq!(
+            missing_programs,
+            &[
+                ProgramToLoad {
+                    program_id: &program_ids[1],
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                    last_modification_slot: 0,
+                },
+                ProgramToLoad {
+                    program_id: &program_ids[2],
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                    last_modification_slot: 0,
+                },
+            ]
         );
-        assert!(
-            missing_programs
-                .iter()
-                .position(|program_to_load| program_to_load.program_id == &account4_pubkey)
-                .is_some()
+
+        let missing_programs = filter_executable_program_accounts(
+            &mock_bank,
+            &loaded_programs_for_tx_batch,
+            &sanitized_tx,
+            true,
+        );
+        assert_eq!(
+            missing_programs,
+            &[
+                ProgramToLoad {
+                    program_id: &program_ids[1],
+                    match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0),
+                    last_modification_slot: 0,
+                },
+                ProgramToLoad {
+                    program_id: &program_ids[2],
+                    match_criteria: ProgramCacheMatchCriteria::Tombstone,
+                    last_modification_slot: 0,
+                },
+            ]
         );
     }
 }
