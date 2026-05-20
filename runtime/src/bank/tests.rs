@@ -6581,6 +6581,18 @@ fn poh_estimate_offset(bank: &Bank) -> Duration {
 }
 
 #[test]
+fn test_ns_per_slot() {
+    let (genesis_config, _) = create_genesis_config(1);
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    assert_eq!(bank.ns_per_slot_at_slot(bank.slot()), bank.ns_per_slot);
+    assert_eq!(
+        bank.ns_per_slot_at_slot(bank.slot().saturating_add(1)),
+        bank.ns_per_slot
+    );
+}
+
+#[test]
 fn test_timestamp_slow() {
     fn max_allowable_delta_since_epoch(bank: &Bank, max_allowable_drift: u32) -> i64 {
         let poh_estimate_offset = poh_estimate_offset(bank);

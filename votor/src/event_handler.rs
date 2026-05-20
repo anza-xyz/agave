@@ -4,7 +4,6 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
-        common::DELTA_FIRST_SLICE,
         consensus_metrics::ConsensusMetricsEvent,
         event::{
             CompletedBlock, RepairEvent, RepairEventSender, SwitchBankEvent, SwitchBankEventSender,
@@ -229,9 +228,9 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
-            // TODO: configure delta_first_slice in bank
-            let delta_first_slice = DELTA_FIRST_SLICE;
-            let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
+            let root_bank = vctx.sharable_banks.root();
+            let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
+            let delta_first_slice = delta_block;
             timer_manager.write().set_timeouts(
                 slot,
                 local_context.standstill_slot,

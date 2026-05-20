@@ -410,13 +410,10 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         .reset(bank.clone(), next_leader_slot);
 }
 
-/// From the passed in bank (used for determining slot times) and leader block
-/// index within the leader window, returns the duration after which we should
-/// publish the final shred for the block with starting point being the start of
-/// the leader window.
-fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
-    Duration::from_nanos_u128(bank.ns_per_slot)
-        .saturating_mul((leader_block_index as u32).saturating_add(1))
+/// Returns the elapsed leader-window time at which `slot` must be completed.
+fn block_timeout(bank: &Bank, slot: Slot) -> Duration {
+    Duration::from_nanos_u128(bank.ns_per_slot_at_slot(slot))
+        .saturating_mul((leader_slot_index(slot) as u32).saturating_add(1))
 }
 
 /// Select the freshest leader-window notification within one source.
@@ -519,7 +516,7 @@ fn produce_block_footer(
             .get_nanosecond_clock()
             .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
         let parent_slot = parent_bank.slot();
-        let ns_per_slot = u64::try_from(bank.ns_per_slot).unwrap_or(u64::MAX);
+        let ns_per_slot = u64::try_from(bank.ns_per_slot_at_slot(slot)).unwrap_or(u64::MAX);
 
         block_producer_time_nanos = skew_block_producer_time_nanos(
             parent_slot,
@@ -571,7 +568,7 @@ fn produce_window(
     let mut slot = start_slot;
 
     while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
-        let timeout = block_timeout(&working_bank, leader_slot_index(slot));
+        let timeout = block_timeout(&working_bank, slot);
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}ms",
             timeout.saturating_sub(block_timer.elapsed()).as_millis()
@@ -1068,10 +1065,7 @@ fn start_leader_wait_for_parent_replay(
         ctx.my_pubkey
     );
     let my_pubkey = ctx.my_pubkey;
-    let timeout = block_timeout(
-        &ctx.bank_forks.read().unwrap().root_bank(),
-        leader_slot_index(slot),
-    );
+    let timeout = block_timeout(&ctx.bank_forks.read().unwrap().root_bank(), slot);
     let end_slot = last_of_consecutive_leader_slots(slot);
 
     let mut slot_delay_start = Measure::start("slot_delay");

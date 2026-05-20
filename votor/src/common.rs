@@ -4,7 +4,6 @@ use {
         fraction::Fraction,
         vote::{Vote, VoteType},
     },
-    solana_clock::DEFAULT_MS_PER_SLOT,
     std::time::Duration,
 };
 
@@ -81,14 +80,6 @@ const DELTA_BLOCK_PROPAGATION: Duration = DELTA.checked_mul(3).unwrap();
 /// This accounts for up to `DELTA` difference between the leader and the other
 /// validator triggering the parent ready event and for block propagation delay.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_add(DELTA_BLOCK_PROPAGATION).unwrap();
-
-/// Time budget we allow a leader to build and send their first slice after
-/// their leader window starts. `TimeoutCrashedLeader` must therefore fire
-/// no earlier than `DELTA_TIMEOUT + DELTA_FIRST_SLICE` from the start of the
-/// window, otherwise we may declare a correct leader crashed.
-///
-/// Conservatively initialized to the slot time.
-pub(crate) const DELTA_FIRST_SLICE: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);

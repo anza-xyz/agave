@@ -2641,6 +2641,11 @@ impl Bank {
         self.epoch_schedule().get_slots_in_epoch(epoch) as f64 / self.slots_per_year
     }
 
+    /// Returns the slot duration to use for `slot`.
+    pub fn ns_per_slot_at_slot(&self, _slot: Slot) -> u128 {
+        self.ns_per_slot
+    }
+
     pub fn max_processing_age(&self) -> usize {
         self.max_processing_age
     }
