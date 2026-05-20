@@ -3054,7 +3054,7 @@ mod tests {
             },
         );
 
-        for (epoch, (collector_address, maybe_account, expected_reward_commission)) in [
+        for (epoch, (collector_address, maybe_account, expect_reward)) in [
             // system account with lamports, success
             (
                 Pubkey::new_unique(),
@@ -3063,12 +3063,12 @@ mod tests {
                     0,
                     &solana_sdk_ids::system_program::id(),
                 )),
-                Some(100),
+                true,
             ),
             // vote account, success
-            (vote_address, None, Some(100)),
+            (vote_address, None, true),
             // incinerator, success
-            (solana_sdk_ids::incinerator::id(), None, Some(100)),
+            (solana_sdk_ids::incinerator::id(), None, true),
             // non-rent-exempt system account with 1 lamport, success with relaxed checks
             (
                 Pubkey::new_unique(),
@@ -3077,7 +3077,7 @@ mod tests {
                     0,
                     &solana_sdk_ids::system_program::id(),
                 )),
-                Some(100),
+                true,
             ),
             // invalid owner, no commission
             (
@@ -3087,12 +3087,12 @@ mod tests {
                     0,
                     &Pubkey::new_unique(),
                 )),
-                None,
+                false,
             ),
             // reserved account, no commission
-            (solana_sdk_ids::native_loader::id(), None, None),
+            (solana_sdk_ids::native_loader::id(), None, false),
             // non-rent-exempt system account, no commission
-            (Pubkey::new_unique(), None, None),
+            (Pubkey::new_unique(), None, false),
         ]
         .into_iter()
         .enumerate()
@@ -3110,8 +3110,7 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1),
                             new_inflation_rewards_collector: Some(collector_address),
-                            expect_reward: expected_reward_commission.is_some(),
-                            expected_reward_commission,
+                            expect_reward,
                             ..VoteOperations::default()
                         },
                     )],
@@ -3169,7 +3168,6 @@ mod tests {
                     VoteOperations {
                         earned_credits: Some(1),
                         expect_reward: true,
-                        expected_reward_commission: Some(10_000),
                         ..VoteOperations::default()
                     },
                 )],
@@ -3242,7 +3240,6 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1),
                             expect_reward: true,
-                            expected_reward_commission: None,
                             ..VoteOperations::default()
                         },
                     ),
@@ -3251,7 +3248,6 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1),
                             expect_reward: true,
-                            expected_reward_commission: None,
                             ..VoteOperations::default()
                         },
                     ),
@@ -3318,7 +3314,6 @@ mod tests {
                     VoteOperations {
                         earned_credits: Some(1000),
                         new_inflation_rewards_collector: Some(invalid_collector),
-                        expected_reward_commission: None,
                         ..VoteOperations::default()
                     },
                 )],
@@ -3390,7 +3385,6 @@ mod tests {
                     VoteOperations {
                         earned_credits: Some(1000),
                         expect_reward: true,
-                        expected_reward_commission: Some(10_000),
                         ..VoteOperations::default()
                     },
                 )],
@@ -3412,7 +3406,6 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1000),
                             expect_reward: true,
-                            expected_reward_commission: Some(10_000),
                             ..VoteOperations::default()
                         },
                     ),
@@ -3456,7 +3449,6 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1000),
                             expect_reward: true,
-                            expected_reward_commission: Some(10_000),
                             ..VoteOperations::default()
                         },
                     ),
@@ -3465,7 +3457,6 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1000),
                             expect_reward: true,
-                            expected_reward_commission: Some(10_000),
                             ..VoteOperations::default()
                         },
                     ),
