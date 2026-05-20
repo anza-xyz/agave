@@ -470,7 +470,7 @@ solana-seed-phrase = "3.0.0"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-serde = "3.0.0"
 solana-serde-varint = "3.0.1"
-solana-serialize-utils = "3.1.1"
+solana-serialize-utils = "3.1.2"
 solana-sha256-hasher = "3.1.0"
 solana-sha512-hasher = "1.0.1"
 solana-short-vec = "3.2.1"
