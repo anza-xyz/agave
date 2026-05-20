@@ -4094,77 +4094,44 @@ impl Blockstore {
         populate_entries: bool,
         allow_dead_slots: bool,
     ) -> Result<VersionedConfirmedBlockWithEntries> {
-        let Some(slot_meta) = self.meta_cf.get(slot)? else {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (missing SlotMeta)");
-            return Err(BlockstoreError::SlotUnavailable);
-        };
-
-        if !slot_meta.is_full() {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (slot not full)");
-            return Err(BlockstoreError::SlotUnavailable);
-        }
-
-        let (slot_entries, _, _) = self.get_slot_entries_with_shred_info(
-            slot,
-            /*shred_start_index:*/ 0,
-            allow_dead_slots,
-        )?;
-
-        if slot_entries.is_empty() {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (no entries found)");
-            return Err(BlockstoreError::SlotUnavailable);
-        }
-
-        let blockhash = slot_entries
-            .last()
-            .map(|entry| entry.hash)
-            .unwrap_or_else(|| panic!("Rooted slot {slot:?} must have blockhash"));
-
-        let mut starting_transaction_index = 0;
-        let mut entries = if populate_entries {
-            Vec::with_capacity(slot_entries.len())
-        } else {
-            Vec::new()
-        };
-
-        let slot_transaction_iterator = slot_entries
-            .into_iter()
-            .flat_map(|entry| {
-                if populate_entries {
-                    entries.push(solana_transaction_status::EntrySummary {
-                        num_hashes: entry.num_hashes,
-                        hash: entry.hash,
-                        num_transactions: entry.transactions.len() as u64,
-                        starting_transaction_index,
-                    });
-                    starting_transaction_index += entry.transactions.len();
-                }
-                entry.transactions
-            })
-            .map(|transaction| {
-                if let Err(err) = transaction.sanitize() {
-                    warn!(
-                        "Blockstore::get_block sanitize failed: {err:?}, slot: {slot:?}, \
-                         {transaction:?}",
-                    );
-                }
-                transaction
-            });
-
-        let block = self.build_versioned_confirmed_block(
+        let VersionedConfirmedBlockWithComponents { block, components } =
+            self.do_get_complete_block_with_components(
             slot,
             require_previous_blockhash,
+            populate_entries,
             allow_dead_slots,
-            &slot_meta,
-            &blockhash,
-            slot_transaction_iterator,
         )?;
+        let entries = components
+            .into_iter()
+            .flat_map(|component| match component {
+                ConfirmedBlockComponent::EntryBatch(items) => items,
+                ConfirmedBlockComponent::BlockMarker(_) => Vec::new(),
+            })
+            .collect();
 
-        Ok(VersionedConfirmedBlockWithEntries { block, entries })
+        Ok(VersionedConfirmedBlockWithEntries {
+            block,
+            entries,
+        })
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn get_complete_block_with_components(
+        &self,
+        slot: Slot,
+        require_previous_blockhash: bool,
+        populate_components: bool,
+        allow_dead_slots: bool,
+    ) -> Result<VersionedConfirmedBlockWithComponents> {
+        self.do_get_complete_block_with_components(
+            slot,
+            require_previous_blockhash,
+            populate_components,
+            allow_dead_slots,
+        )
+    }
+
+    fn do_get_complete_block_with_components(
         &self,
         slot: Slot,
         require_previous_blockhash: bool,
