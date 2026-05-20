@@ -2326,8 +2326,8 @@ impl Bank {
         });
     }
 
-    pub fn get_slot_history(&self) -> SlotHistory {
-        from_account(&self.get_account(&sysvar::slot_history::id()).unwrap()).unwrap()
+    pub fn get_slot_history(&self) -> Option<SlotHistory> {
+        from_account(&self.get_account(&sysvar::slot_history::id())?)
     }
 
     fn update_epoch_stakes(&mut self, leader_schedule_epoch: Epoch) {
