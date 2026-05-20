@@ -124,10 +124,10 @@ impl BlockCommitmentCache {
     fn highest_slot_with_confirmation_count(&self, confirmation_count: usize) -> Slot {
         assert!(confirmation_count > 0 && confirmation_count <= MAX_LOCKOUT_HISTORY);
         for slot in (self.root()..self.slot()).rev() {
-            if let Some(count) = self.get_confirmation_count(slot) {
-                if count >= confirmation_count {
-                    return slot;
-                }
+            if let Some(count) = self.get_confirmation_count(slot)
+                && count >= confirmation_count
+            {
+                return slot;
             }
         }
         self.commitment_slots.root

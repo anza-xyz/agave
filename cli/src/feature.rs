@@ -996,10 +996,10 @@ async fn process_activate(
         .next()
         .unwrap();
 
-    if let Some(account) = account {
-        if from_account(&account).is_some() {
-            return Err(format!("{feature_id} has already been activated").into());
-        }
+    if let Some(account) = account
+        && from_account(&account).is_some()
+    {
+        return Err(format!("{feature_id} has already been activated").into());
     }
 
     if !feature_activation_allowed(rpc_client, false).await?.0 {

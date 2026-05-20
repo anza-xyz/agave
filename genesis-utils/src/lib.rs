@@ -17,13 +17,13 @@ fn check_genesis_hash(
 ) -> Result<(), String> {
     let genesis_hash = genesis_config.hash();
 
-    if let Some(expected_genesis_hash) = expected_genesis_hash {
-        if expected_genesis_hash != genesis_hash {
-            return Err(format!(
-                "Genesis hash mismatch: expected {expected_genesis_hash} but downloaded genesis \
-                 hash is {genesis_hash}",
-            ));
-        }
+    if let Some(expected_genesis_hash) = expected_genesis_hash
+        && expected_genesis_hash != genesis_hash
+    {
+        return Err(format!(
+            "Genesis hash mismatch: expected {expected_genesis_hash} but downloaded genesis hash \
+             is {genesis_hash}",
+        ));
     }
 
     Ok(())

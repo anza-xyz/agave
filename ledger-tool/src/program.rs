@@ -412,18 +412,17 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     let space = data.len();
                     let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
                         let owner = *account.owner();
-                        if bpf_loader_upgradeable::check_id(&owner) {
-                            if let Ok(UpgradeableLoaderState::Program {
+                        if bpf_loader_upgradeable::check_id(&owner)
+                            && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
                             }) = account.state()
+                        {
+                            debug!("Program data address {programdata_address}");
+                            if bank
+                                .get_account_with_fixed_root(&programdata_address)
+                                .is_some()
                             {
-                                debug!("Program data address {programdata_address}");
-                                if bank
-                                    .get_account_with_fixed_root(&programdata_address)
-                                    .is_some()
-                                {
-                                    cached_account_keys.push(pubkey);
-                                }
+                                cached_account_keys.push(pubkey);
                             }
                         }
                         // Override account data and lamports from input file if provided

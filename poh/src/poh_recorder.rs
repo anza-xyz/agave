@@ -479,18 +479,18 @@ impl PohRecorder {
         trace!("new working bank");
         assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
         let mut tick_height = self.tick_height();
-        if let Some(hashes_per_tick) = *working_bank.bank.hashes_per_tick() {
-            if self.poh.lock().unwrap().hashes_per_tick() != hashes_per_tick {
-                // We must clear/reset poh when changing hashes per tick because it's
-                // possible there are ticks in the cache created with the old hashes per
-                // tick value that would get flushed later. This would corrupt the leader's
-                // block and it would be disregarded by the network.
-                info!(
-                    "resetting poh due to hashes per tick change detected at {}",
-                    working_bank.bank.slot()
-                );
-                tick_height = self.reset_poh(working_bank.bank.clone(), false);
-            }
+        if let Some(hashes_per_tick) = *working_bank.bank.hashes_per_tick()
+            && self.poh.lock().unwrap().hashes_per_tick() != hashes_per_tick
+        {
+            // We must clear/reset poh when changing hashes per tick because it's
+            // possible there are ticks in the cache created with the old hashes per
+            // tick value that would get flushed later. This would corrupt the leader's
+            // block and it would be disregarded by the network.
+            info!(
+                "resetting poh due to hashes per tick change detected at {}",
+                working_bank.bank.slot()
+            );
+            tick_height = self.reset_poh(working_bank.bank.clone(), false);
         }
 
         let leader_state = self.shared_leader_state.load();
@@ -693,11 +693,11 @@ impl PohRecorder {
             for (entry, tick_height) in &self.tick_cache[..entry_count] {
                 working_bank.bank.register_tick(&entry.hash);
 
-                if let Some(footer) = footer.clone() {
-                    if let Err(err) = self.wait_for_freeze_and_send_footer(footer, working_bank) {
-                        send_result = Err(err);
-                        break;
-                    }
+                if let Some(footer) = footer.clone()
+                    && let Err(err) = self.wait_for_freeze_and_send_footer(footer, working_bank)
+                {
+                    send_result = Err(err);
+                    break;
                 }
 
                 let tick = (EntryOrMarker::from(entry.clone()), *tick_height);

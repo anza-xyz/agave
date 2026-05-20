@@ -161,14 +161,12 @@ impl RpcSender for HttpSender {
                     && too_many_requests_retries > 0
                 {
                     let mut duration = Duration::from_millis(500);
-                    if let Some(retry_after) = response.headers().get(RETRY_AFTER) {
-                        if let Ok(retry_after) = retry_after.to_str() {
-                            if let Ok(retry_after) = retry_after.parse::<u64>() {
-                                if retry_after < 120 {
-                                    duration = Duration::from_secs(retry_after);
-                                }
-                            }
-                        }
+                    if let Some(retry_after) = response.headers().get(RETRY_AFTER)
+                        && let Ok(retry_after) = retry_after.to_str()
+                        && let Ok(retry_after) = retry_after.parse::<u64>()
+                        && retry_after < 120
+                    {
+                        duration = Duration::from_secs(retry_after);
                     }
 
                     too_many_requests_retries -= 1;

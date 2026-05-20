@@ -449,15 +449,15 @@ impl EventHandler {
                     stats,
                 )?;
 
-                if let Some(slot) = *standstill_slot {
-                    if block.0 > slot {
-                        *standstill_slot = None;
-                        info!(
-                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
-                             at slot={}. Ending timeout extension",
-                            block.0
-                        );
-                    }
+                if let Some(slot) = *standstill_slot
+                    && block.0 > slot
+                {
+                    *standstill_slot = None;
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.0
+                    );
                 }
 
                 if let Some(parent_block) =

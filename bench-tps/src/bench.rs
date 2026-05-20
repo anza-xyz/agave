@@ -966,10 +966,10 @@ fn get_new_latest_blockhash<T: TpsClient + ?Sized>(
 ) -> Option<Hash> {
     let start = Instant::now();
     while start.elapsed().as_secs() < 5 {
-        if let Ok(new_blockhash) = client.get_latest_blockhash() {
-            if new_blockhash != *blockhash {
-                return Some(new_blockhash);
-            }
+        if let Ok(new_blockhash) = client.get_latest_blockhash()
+            && new_blockhash != *blockhash
+        {
+            return Some(new_blockhash);
         }
         debug!("Got same blockhash ({blockhash:?}), will retry...");
 
@@ -1082,18 +1082,17 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
                 );
             }
 
-            if let Some(signatures_sender) = &signatures_sender {
-                if let Err(error) = signatures_sender.send(TransactionInfoBatch {
+            if let Some(signatures_sender) = &signatures_sender
+                && let Err(error) = signatures_sender.send(TransactionInfoBatch {
                     signatures,
                     sent_at: Utc::now(),
                     compute_unit_prices,
-                }) {
-                    error!(
-                        "Receiver has been dropped with error `{error}`, stop sending \
-                         transactions."
-                    );
-                    break 'thread_loop;
-                }
+                })
+            {
+                error!(
+                    "Receiver has been dropped with error `{error}`, stop sending transactions."
+                );
+                break 'thread_loop;
             }
 
             if let Err(error) = client.send_batch(transactions) {

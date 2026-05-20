@@ -67,12 +67,12 @@ impl Read for AccountStorageReader {
 
         while total_read < buf_len {
             let next_obsolete_account = self.sorted_obsolete_accounts.last();
-            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account {
-                if self.current_offset == obsolete_start {
-                    self.current_offset += obsolete_size.min(self.num_total_bytes - obsolete_start);
-                    self.sorted_obsolete_accounts.pop();
-                    continue;
-                }
+            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account
+                && self.current_offset == obsolete_start
+            {
+                self.current_offset += obsolete_size.min(self.num_total_bytes - obsolete_start);
+                self.sorted_obsolete_accounts.pop();
+                continue;
             }
 
             // Cannot read beyond the end of the buffer

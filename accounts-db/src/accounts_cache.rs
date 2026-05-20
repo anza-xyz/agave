@@ -366,18 +366,18 @@ impl AccountsCache {
             // identifies slots with status AncestorBeingFlushed.
             let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
             for slot in (ancestors_min_slot..=index_max_slot).rev() {
-                if ancestors.contains_key(&slot) {
-                    if let Some(account) = self.load(slot, pubkey) {
-                        // Need to check flush status of the slot even for ancestors, because
-                        // there could be newer version of the account that has already been
-                        // flushed
-                        let slot_status = if r_roots_being_flushed.contains(&slot) {
-                            SlotStatus::AncestorBeingFlushed
-                        } else {
-                            SlotStatus::Ancestor
-                        };
-                        return Some((account, slot, slot_status));
-                    }
+                if ancestors.contains_key(&slot)
+                    && let Some(account) = self.load(slot, pubkey)
+                {
+                    // Need to check flush status of the slot even for ancestors, because
+                    // there could be newer version of the account that has already been
+                    // flushed
+                    let slot_status = if r_roots_being_flushed.contains(&slot) {
+                        SlotStatus::AncestorBeingFlushed
+                    } else {
+                        SlotStatus::Ancestor
+                    };
+                    return Some((account, slot, slot_status));
                 }
             }
             drop(r_roots_being_flushed);

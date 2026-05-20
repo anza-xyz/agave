@@ -178,12 +178,11 @@ pub fn parse_args<'a>(
         mut signers,
     } = parse_command(matches, &default_signer, wallet_manager)?;
 
-    if signers.is_empty() {
-        if let Ok(signer_info) =
+    if signers.is_empty()
+        && let Ok(signer_info) =
             default_signer.generate_unique_signers(vec![None], matches, wallet_manager)
-        {
-            signers.extend(signer_info.signers);
-        }
+    {
+        signers.extend(signer_info.signers);
     }
 
     let verbose = matches.is_present("verbose");
