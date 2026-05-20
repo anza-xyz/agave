@@ -4371,6 +4371,12 @@ const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 // Cap base64 based on the largest supported transaction version,
 // which is v1 (4096 bytes).
 const MAX_BASE64_SIZE: usize = 5464; // ceil(4096 / 3) * 4
+
+// V1+ messages start with 0x81 (or higher). In base64 the top 6 bits of 0x81
+// Comparing the first two chars against "gQ" detects V1+ before decoding.
+// Revisit before V3 which will break this shortcut
+const V1_BASE64_PREFIX_LOWER_BOUND: &[u8] = b"gQ";
+
 fn decode_and_deserialize<T>(
     encoded: String,
     encoding: TransactionBinaryEncoding,
@@ -4378,7 +4384,7 @@ fn decode_and_deserialize<T>(
 where
     T: for<'a> wincode::SchemaRead<'a, wincode::config::DefaultConfig, Dst = T>,
 {
-    let wire_output = match encoding {
+    let (wire_output, max_raw_size) = match encoding {
         TransactionBinaryEncoding::Base58 => {
             inc_new_counter_info!("rpc-base58_encoded_tx", 1);
             if encoded.len() > MAX_BASE58_SIZE {
@@ -4390,12 +4396,23 @@ where
                     PACKET_DATA_SIZE,
                 )));
             }
-            bs58::decode(encoded)
+            let bytes = bs58::decode(encoded)
                 .into_vec()
-                .map_err(|e| Error::invalid_params(format!("invalid base58 encoding: {e:?}")))?
+                .map_err(|e| Error::invalid_params(format!("invalid base58 encoding: {e:?}")))?;
+            // base58 is deprecated, unchanged max size
+            (bytes, PACKET_DATA_SIZE)
         }
         TransactionBinaryEncoding::Base64 => {
             inc_new_counter_info!("rpc-base64_encoded_tx", 1);
+            let max_raw_size = if encoded
+                .as_bytes()
+                .get(..2)
+                .is_some_and(|p| p >= V1_BASE64_PREFIX_LOWER_BOUND)
+            {
+                solana_message::v1::MAX_TRANSACTION_SIZE
+            } else {
+                PACKET_DATA_SIZE
+            };
             if encoded.len() > MAX_BASE64_SIZE {
                 return Err(Error::invalid_params(format!(
                     "base64 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
@@ -4405,17 +4422,11 @@ where
                     solana_message::v1::MAX_TRANSACTION_SIZE,
                 )));
             }
-            BASE64_STANDARD
+            let bytes = BASE64_STANDARD
                 .decode(encoded)
-                .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?
+                .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?;
+            (bytes, max_raw_size)
         }
-    };
-    // V1 transactions/messages start with V1_PREFIX (0x81) and may be up to
-    // 4096 bytes; legacy/v0 are still capped at PACKET_DATA_SIZE (1232).
-    let max_raw_size = if wire_output.first().copied() == Some(solana_message::v1::V1_PREFIX) {
-        solana_message::v1::MAX_TRANSACTION_SIZE
-    } else {
-        PACKET_DATA_SIZE
     };
     if wire_output.len() > max_raw_size {
         return Err(Error::invalid_params(format!(
@@ -9268,6 +9279,24 @@ pub mod tests {
                 "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
                  bytes (max: {} bytes)",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
+            ))
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_oversize_non_v1_base64_payload_fails() {
+        // +2 because +1 still fits in base64 encoded worst-case
+        let too_big = PACKET_DATA_SIZE + 2;
+        let tx_ser = vec![0x00u8; too_big];
+        assert_ne!(tx_ser[0], solana_message::v1::V1_PREFIX);
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        assert_eq!(
+            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
+            Error::invalid_params(format!(
+                "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
+                 bytes (max: {PACKET_DATA_SIZE} bytes)",
             ))
         );
     }
