@@ -9,7 +9,7 @@ use {
     },
     log::*,
     serde::{Deserialize, Serialize, de::Deserializer},
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         banking_stage::{
@@ -106,6 +106,16 @@ pub struct AdminRpcContactInfo {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AdminRpcRepairWhitelist {
     pub whitelist: Vec<Pubkey>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AdminRpcValidatorAdmissionTicketStatus {
+    pub vote_account: Pubkey,
+    pub current_epoch: Epoch,
+    pub validator_admission_ticket_active: bool,
+    pub in_current_epoch_validator_admission_ticket: bool,
+    pub current_epoch_vote_account_stake: u64,
+    pub current_epoch_vote_accounts: usize,
 }
 
 impl From<ContactInfo> for AdminRpcContactInfo {
@@ -234,6 +244,12 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
+
+    #[rpc(meta, name = "validatorAdmissionTicketStatus")]
+    fn validator_admission_ticket_status(
+        &self,
+        meta: Self::Metadata,
+    ) -> Result<AdminRpcValidatorAdmissionTicketStatus>;
 
     #[rpc(meta, name = "selectActiveInterface")]
     fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
@@ -608,6 +624,38 @@ impl AdminRpc for AdminRpcImpl {
 
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
+    }
+
+    fn validator_admission_ticket_status(
+        &self,
+        meta: Self::Metadata,
+    ) -> Result<AdminRpcValidatorAdmissionTicketStatus> {
+        debug!("validator_admission_ticket_status request received");
+        meta.with_post_init(|post_init| {
+            let bank = post_init.bank_forks.read().unwrap().root_bank();
+            let current_epoch = bank.epoch();
+            let validator_admission_ticket_active =
+                bank.feature_set.snapshot().validator_admission_ticket;
+            let epoch_vote_accounts = bank
+                .epoch_vote_accounts(current_epoch)
+                .ok_or_else(jsonrpc_core::Error::internal_error)?;
+            let current_epoch_vote_account_stake = epoch_vote_accounts
+                .get(&post_init.vote_account)
+                .map(|(stake, _vote_account)| *stake)
+                .unwrap_or_default();
+            let in_current_epoch_vote_accounts =
+                epoch_vote_accounts.contains_key(&post_init.vote_account);
+
+            Ok(AdminRpcValidatorAdmissionTicketStatus {
+                vote_account: post_init.vote_account,
+                current_epoch,
+                validator_admission_ticket_active,
+                in_current_epoch_validator_admission_ticket: validator_admission_ticket_active
+                    && in_current_epoch_vote_accounts,
+                current_epoch_vote_account_stake,
+                current_epoch_vote_accounts: epoch_vote_accounts.len(),
+            })
+        })
     }
 
     fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
@@ -1238,6 +1286,48 @@ mod tests {
             .recv()
             .expect("Failed to receive SetIdentity event");
         assert_matches!(event, VotorEvent::SetIdentity);
+    }
+
+    #[test]
+    fn test_validator_admission_ticket_status() {
+        let rpc = RpcHandler::_start();
+        let RpcHandler { io, meta, .. } = rpc;
+        let post_init = meta.post_init.read().unwrap().clone().unwrap();
+        let bank = post_init.bank_forks.read().unwrap().root_bank();
+        let current_epoch = bank.epoch();
+        let epoch_vote_accounts = bank.epoch_vote_accounts(current_epoch).unwrap();
+        let expected_validator_admission_ticket_active =
+            bank.feature_set.snapshot().validator_admission_ticket;
+        let expected_in_validator_admission_ticket = expected_validator_admission_ticket_active
+            && epoch_vote_accounts.contains_key(&post_init.vote_account);
+        let expected_stake = epoch_vote_accounts
+            .get(&post_init.vote_account)
+            .map(|(stake, _vote_account)| *stake)
+            .unwrap_or_default();
+
+        let request =
+            r#"{"jsonrpc":"2.0","id":1,"method":"validatorAdmissionTicketStatus","params":[]}"#;
+        let response = io.handle_request_sync(request, meta.clone());
+        let result: Value = serde_json::from_str(&response.expect("actual response"))
+            .expect("actual response deserialization");
+        let status: AdminRpcValidatorAdmissionTicketStatus =
+            serde_json::from_value(result["result"].clone()).unwrap();
+
+        assert_eq!(status.vote_account, post_init.vote_account);
+        assert_eq!(status.current_epoch, current_epoch);
+        assert_eq!(
+            status.validator_admission_ticket_active,
+            expected_validator_admission_ticket_active
+        );
+        assert_eq!(
+            status.in_current_epoch_validator_admission_ticket,
+            expected_in_validator_admission_ticket
+        );
+        assert_eq!(status.current_epoch_vote_account_stake, expected_stake);
+        assert_eq!(
+            status.current_epoch_vote_accounts,
+            epoch_vote_accounts.len()
+        );
     }
 
     struct TestValidatorWithAdminRpc {
