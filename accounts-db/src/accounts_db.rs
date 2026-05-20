@@ -6736,7 +6736,7 @@ impl AccountsDb {
     /// Note that this is non-deterministic if clean is running asynchronously.
     /// If a zero lamport account exists in the index, then Some is returned.
     /// Once it is cleaned from the index, None is returned.
-    fn load_without_fixed_root(
+    fn do_load_for_tests(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -6751,13 +6751,13 @@ impl AccountsDb {
 
     pub fn assert_load_account(&self, slot: Slot, pubkey: Pubkey, expected_lamports: u64) {
         let ancestors = Ancestors::from(vec![slot]);
-        let (account, slot) = self.load_without_fixed_root(&ancestors, &pubkey).unwrap();
+        let (account, slot) = self.do_load_for_tests(&ancestors, &pubkey).unwrap();
         assert_eq!((account.lamports(), slot), (expected_lamports, slot));
     }
 
     pub fn assert_not_load_account(&self, slot: Slot, pubkey: Pubkey) {
         let ancestors = Ancestors::from(vec![slot]);
-        let load = self.load_without_fixed_root(&ancestors, &pubkey);
+        let load = self.do_load_for_tests(&ancestors, &pubkey);
         assert!(load.is_none(), "{load:?}");
     }
 
@@ -6771,7 +6771,7 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         for _ in 0..num {
             let idx = rng().random_range(0..num);
-            let account = self.load_without_fixed_root(&ancestors, &pubkeys[idx]);
+            let account = self.do_load_for_tests(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new(
                     (idx + count) as u64,
@@ -6855,7 +6855,7 @@ impl AccountsDb {
             let account =
                 AccountSharedData::new((t + 1) as u64, space, AccountSharedData::default().owner());
             pubkeys.push(pubkey);
-            assert!(self.load_without_fixed_root(&ancestors, &pubkey).is_none());
+            assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
         for t in 0..num_vote {
@@ -6864,7 +6864,7 @@ impl AccountsDb {
                 AccountSharedData::new((num + t + 1) as u64, space, &solana_vote_program::id());
             pubkeys.push(pubkey);
             let ancestors = Ancestors::from(vec![slot]);
-            assert!(self.load_without_fixed_root(&ancestors, &pubkey).is_none());
+            assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
     }
