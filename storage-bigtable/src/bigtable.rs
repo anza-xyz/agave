@@ -16,7 +16,7 @@ use {
     },
     thiserror::Error,
     tonic::{Request, Status, codegen::InterceptedService, transport::ClientTlsConfig},
-    wincode::{SchemaReadOwned, SchemaWrite, config::DefaultConfig},
+    wincode::{SchemaReadOwned, SchemaWrite},
 };
 
 #[allow(clippy::all)]
@@ -43,6 +43,12 @@ mod google {
     }
 }
 use google::bigtable::v2::*;
+
+// wincode's per-collection preallocation limit (default 4 MiB): it errors if
+// `element_count * size_of::<Element>()` exceeds this. Sized for the dominating collection,
+// `StoredConfirmedBlock::rewards` in legacy epoch-boundary blocks (one 32 B reward per
+// stake/vote account, ~1M+ on mainnet, not shred-bounded): 256 MiB ≈ 8.4M rewards.
+type WincodeConfig = wincode::config::Configuration<true, { 256 << 20 }>;
 
 pub type RowKey = String;
 pub type RowData = Vec<(CellName, CellValue)>;
@@ -313,7 +319,7 @@ impl BigTableConnection {
         cells: &[(RowKey, T)],
     ) -> Result<usize>
     where
-        T: SchemaWrite<DefaultConfig, Src = T>,
+        T: SchemaWrite<WincodeConfig, Src = T>,
     {
         retry_with_exponential_backoff(|| async {
             let mut client = self.client();
@@ -336,7 +342,7 @@ impl BigTableConnection {
         row_keys: &[RowKey],
     ) -> Result<Vec<(RowKey, Result<T>)>>
     where
-        T: SchemaReadOwned<DefaultConfig, Dst = T>,
+        T: SchemaReadOwned<WincodeConfig, Dst = T>,
     {
         retry_with_exponential_backoff(|| async {
             let mut client = self.client();
@@ -795,7 +801,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
 
     pub async fn get_wincode_cell<T>(&mut self, table: &str, key: RowKey) -> Result<T>
     where
-        T: SchemaReadOwned<DefaultConfig, Dst = T>,
+        T: SchemaReadOwned<WincodeConfig, Dst = T>,
     {
         let row_data = self.get_single_row_data(table, key.clone()).await?;
         deserialize_wincode_cell_data(&row_data, table, key.to_string())
@@ -807,7 +813,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         keys: &[RowKey],
     ) -> Result<Vec<(RowKey, Result<T>)>>
     where
-        T: SchemaReadOwned<DefaultConfig, Dst = T>,
+        T: SchemaReadOwned<WincodeConfig, Dst = T>,
     {
         Ok(self
             .get_multi_row_data(table, keys)
@@ -837,7 +843,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         key: RowKey,
     ) -> Result<CellData<B, P>>
     where
-        B: SchemaReadOwned<DefaultConfig, Dst = B>,
+        B: SchemaReadOwned<WincodeConfig, Dst = B>,
         P: prost::Message + Default,
     {
         let row_data = self.get_single_row_data(table, key.clone()).await?;
@@ -850,7 +856,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         row_keys: R,
     ) -> Result<impl Iterator<Item = (RowKey, CellData<B, P>)> + 'a + use<'a, F, B, P, R>>
     where
-        B: SchemaReadOwned<DefaultConfig, Dst = B>,
+        B: SchemaReadOwned<WincodeConfig, Dst = B>,
         P: prost::Message + Default,
         R: IntoIterator<Item = RowKey>,
     {
@@ -876,12 +882,14 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         cells: &[(RowKey, T)],
     ) -> Result<usize>
     where
-        T: SchemaWrite<DefaultConfig, Src = T>,
+        T: SchemaWrite<WincodeConfig, Src = T>,
     {
         let mut bytes_written = 0;
         let mut new_row_data = vec![];
         for (row_key, data) in cells {
-            let data = compress_zstd_or_none(&wincode::serialize(&data).unwrap())?;
+            let data = compress_zstd_or_none(
+                &wincode::config::serialize(&data, WincodeConfig::new()).unwrap(),
+            )?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("bin".to_string(), data)]));
         }
@@ -948,7 +956,7 @@ pub(crate) fn deserialize_protobuf_or_wincode_cell_data<B, P>(
     key: RowKey,
 ) -> Result<CellData<B, P>>
 where
-    B: SchemaReadOwned<DefaultConfig, Dst = B>,
+    B: SchemaReadOwned<WincodeConfig, Dst = B>,
     P: prost::Message + Default,
 {
     match deserialize_protobuf_cell_data(row_data, table, key.to_string()) {
@@ -988,7 +996,7 @@ pub(crate) fn deserialize_wincode_cell_data<T>(
     key: RowKey,
 ) -> Result<T>
 where
-    T: SchemaReadOwned<DefaultConfig, Dst = T>,
+    T: SchemaReadOwned<WincodeConfig, Dst = T>,
 {
     let value = &row_data
         .iter()
@@ -997,7 +1005,7 @@ where
         .1;
 
     let data = decompress(value)?;
-    wincode::deserialize(&data).map_err(|err| {
+    wincode::config::deserialize(&data, WincodeConfig::new()).map_err(|err| {
         warn!("Failed to deserialize {table}/{key}: {err}");
         Error::ObjectCorrupt(format!("{table}/{key}"))
     })
