@@ -36,7 +36,7 @@ use {
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
             MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
             PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, split_gossip_messages,
+            Protocol, PruneData, deserialize_protocol, split_gossip_messages,
         },
         weighted_shuffle::WeightedShuffle,
     },
@@ -131,6 +131,11 @@ pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).u
 pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIVE_SOCKETS;
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
+
+// Contact-info save/restore handles trusted local data, so disable wincode's
+// default 4 MiB preallocation limit (which defends untrusted wire input).
+type ContactInfoFileConfig =
+    wincode::config::Configuration<true, { wincode::config::PREALLOCATION_SIZE_LIMIT_DISABLED }>;
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
@@ -328,7 +333,11 @@ impl ClusterInfo {
         match File::create(tmp_filename) {
             Ok(file) => {
                 let mut writer = BufWriter::new(file);
-                if let Err(err) = wincode::serialize_into(&mut writer, &nodes) {
+                if let Err(err) = wincode::config::serialize_into(
+                    &mut writer,
+                    &nodes,
+                    ContactInfoFileConfig::new(),
+                ) {
                     warn!(
                         "Failed to serialize contact info info {}: {}",
                         tmp_filename.display(),
@@ -375,12 +384,14 @@ impl ClusterInfo {
         }
 
         let nodes: Vec<CrdsValue> = match File::open(&filename) {
-            Ok(file) => {
-                wincode::deserialize_from(&mut BufReader::new(file)).unwrap_or_else(|err| {
-                    warn!("Failed to deserialize {}: {}", filename.display(), err);
-                    vec![]
-                })
-            }
+            Ok(file) => wincode::config::deserialize_from(
+                &mut BufReader::new(file),
+                ContactInfoFileConfig::new(),
+            )
+            .unwrap_or_else(|err| {
+                warn!("Failed to deserialize {}: {}", filename.display(), err);
+                vec![]
+            }),
             Err(err) => {
                 warn!("Failed to open {}: {}", filename.display(), err);
                 vec![]
@@ -2090,8 +2101,11 @@ impl ClusterInfo {
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
         ) -> Option<(SocketAddr, Protocol)> {
-            let mut protocol: Protocol =
-                stats.record_received_packet(packet.deserialize_slice::<Protocol, _>(..))?;
+            let result: wincode::ReadResult<Protocol> = packet
+                .data(..)
+                .ok_or(wincode::ReadError::Custom("packet discarded"))
+                .and_then(deserialize_protocol);
+            let mut protocol: Protocol = stats.record_received_packet(result)?;
             protocol.sanitize().ok()?;
             if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
                 &mut protocol
@@ -2495,9 +2509,20 @@ fn make_gossip_packet_batch<S: Borrow<SocketAddr>>(
     recycler: &PacketBatchRecycler,
     stats: &GossipStats,
 ) -> RecycledPacketBatch {
-    let record_gossip_packet = |(_, pkt): &(_, Protocol)| stats.record_gossip_packet(pkt);
-    let pkts = pkts.into_iter().inspect(record_gossip_packet);
-    RecycledPacketBatch::new_with_recycler_data_and_dests(recycler, "gossip_packet_batch", pkts)
+    let pkts = pkts.into_iter();
+    let mut batch =
+        RecycledPacketBatch::new_with_recycler(recycler, pkts.len(), "gossip_packet_batch");
+    for (addr, pkt) in pkts {
+        let addr = addr.borrow();
+        if !addr.ip().is_unspecified() && addr.port() != 0 {
+            if let Some(packet) = make_gossip_packet(addr, &pkt, stats) {
+                batch.push(packet);
+            }
+        } else {
+            trace!("Dropping packet, as destination is unknown");
+        }
+    }
+    batch
 }
 
 #[inline]
@@ -2506,16 +2531,22 @@ fn make_gossip_packet(
     pkt: &Protocol,
     stats: &GossipStats,
 ) -> Option<Packet> {
-    match Packet::from_data(Some(addr.borrow()), pkt) {
-        Err(err) => {
+    let mut packet = Packet::default();
+    let size = {
+        let buffer = packet.buffer_mut();
+        let initial_len = buffer.len();
+        let mut writer: &mut [u8] = buffer;
+        if let Err(err) = wincode::serialize_into(&mut writer, pkt) {
             error!("failed to write gossip packet: {err:?}");
-            None
+            return None;
         }
-        Ok(out) => {
-            stats.record_gossip_packet(pkt);
-            Some(out)
-        }
-    }
+        initial_len - writer.len()
+    };
+    let meta = packet.meta_mut();
+    meta.size = size;
+    meta.set_socket_addr(addr.borrow());
+    stats.record_gossip_packet(pkt);
+    Some(packet)
 }
 
 #[cfg(test)]

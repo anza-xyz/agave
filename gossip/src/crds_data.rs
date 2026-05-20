@@ -72,6 +72,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(test, derive(strum_macros::EnumCount))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub enum CrdsData {
     #[allow(private_interfaces)]

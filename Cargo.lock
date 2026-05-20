@@ -8570,6 +8570,8 @@ dependencies = [
  "solana-vote-program",
  "solana-wincode-varint",
  "static_assertions",
+ "strum",
+ "strum_macros",
  "tempfile",
  "test-case",
  "thiserror 2.0.18",

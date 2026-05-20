@@ -43,6 +43,16 @@ const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 /// Minimum serialized size of a Protocol::PullResponse packet.
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
+const MIN_CRDS_VALUE_SERIALIZED_SIZE: usize =
+    PULL_RESPONSE_MIN_SERIALIZED_SIZE - (PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE);
+const MAX_CRDS_VALUES_PER_PACKET: usize =
+    (PULL_RESPONSE_MAX_PAYLOAD_SIZE / MIN_CRDS_VALUE_SERIALIZED_SIZE) + 1;
+// Wincode's preallocation limit is decoded collection memory, not input bytes.
+// Bound it to the largest CRDS value vector that can fit in one gossip packet.
+const GOSSIP_PROTOCOL_PREALLOC_LIMIT: usize =
+    MAX_CRDS_VALUES_PER_PACKET * std::mem::size_of::<CrdsValue>();
+type GossipProtocolWincodeConfig =
+    wincode::config::Configuration<true, GOSSIP_PROTOCOL_PREALLOC_LIMIT>;
 
 /// Gossip protocol messages base enum
 #[derive(Serialize, Deserialize, Debug, SchemaRead, SchemaWrite)]
@@ -61,6 +71,13 @@ pub(crate) enum Protocol {
 
 pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
 pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
+
+pub(crate) fn deserialize_protocol(input: &[u8]) -> wincode::ReadResult<Protocol> {
+    wincode::config::deserialize_exact::<Protocol, GossipProtocolWincodeConfig>(
+        input,
+        GossipProtocolWincodeConfig::new(),
+    )
+}
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, SchemaRead, SchemaWrite)]
@@ -509,7 +526,7 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects
             msg: None,
         };
     }
-    let result = wincode::deserialize_exact::<Protocol>(input);
+    let result = deserialize_protocol(input);
 
     match result {
         Ok(proto) if proto.sanitize().is_ok() => {
@@ -532,15 +549,17 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{self, CrdsData, LowestSlot, SnapshotHashes, Vote as CrdsVote},
+            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
             duplicate_shred::{self, MAX_DUPLICATE_SHREDS, tests::new_rand_shred},
+            epoch_slots::EpochSlots,
+            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::Rng,
         solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_perf::packet::Packet,
+        solana_perf::{packet::Packet, test_tx::new_test_vote_tx},
         solana_signer::Signer,
         solana_time_utils::timestamp,
         solana_transaction::Transaction,
@@ -603,6 +622,20 @@ pub(crate) mod tests {
         };
         prune_data.sign(self_keypair);
         prune_data
+    }
+
+    #[test]
+    fn test_deserialize_protocol_rejects_large_vec_preallocation() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&2u32.to_le_bytes()); // Protocol::PushMessage.
+        bytes.extend_from_slice(&Pubkey::new_unique().to_bytes());
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes()); // Vec<CrdsValue> length.
+
+        let err = deserialize_protocol(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            wincode::ReadError::PreallocationSizeLimit { .. }
+        ));
     }
 
     #[test]
@@ -726,6 +759,85 @@ pub(crate) mod tests {
                 PULL_RESPONSE_MIN_SERIALIZED_SIZE <= size,
                 "pull-response serialized size: {size}"
             );
+        }
+    }
+
+    #[test]
+    fn test_min_crds_value_serialized_size_holds() {
+        let mut rng = rand::rng();
+        let keypair = Keypair::new();
+
+        // Build a DuplicateShred for the corresponding variant.
+        let leader = Arc::new(Keypair::new());
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = rng.random_range(0..32_000);
+        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+        let other_payload = {
+            let other = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+            other.into_payload()
+        };
+        let leader_schedule = |s| (s == slot).then_some(leader.pubkey());
+        let dup_shred = duplicate_shred::from_shred(
+            shred,
+            keypair.pubkey(),
+            other_payload,
+            Some(leader_schedule),
+            timestamp(),
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            version,
+        )
+        .unwrap()
+        .next()
+        .unwrap();
+
+        let vote =
+            CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
+
+        // One representative per CrdsData variant. The array length is keyed to
+        // strum::EnumCount, so adding a new CrdsData variant without listing it
+        // here is a compile error (wrong array length).
+        use strum::EnumCount;
+        let variants: [CrdsData; CrdsData::COUNT] = [
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::Vote(0, vote),
+            CrdsData::LowestSlot(0, LowestSlot::new(Pubkey::new_unique(), 0, timestamp())),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::EpochSlots(0, EpochSlots::new_rand(&mut rng, None)),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::DuplicateShred(0, dup_shred),
+            CrdsData::SnapshotHashes(SnapshotHashes {
+                from: Pubkey::new_unique(),
+                full: (0, Hash::default()),
+                incremental: vec![],
+                wallclock: timestamp(),
+            }),
+            CrdsData::ContactInfo(ContactInfo::new_localhost(
+                &Pubkey::new_unique(),
+                timestamp(),
+            )),
+            CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
+                &mut rng, None,
+            )),
+            CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
+        ];
+
+        for data in variants {
+            let value = CrdsValue::new_unsigned(data);
+            let bytes = wincode::serialize(&value).unwrap();
+            // Deprecated variants fail to deserialize; only assert the bound
+            // for variants that can appear in a successfully-parsed Protocol.
+            if wincode::deserialize::<CrdsValue>(&bytes).is_ok() {
+                assert!(
+                    bytes.len() >= MIN_CRDS_VALUE_SERIALIZED_SIZE,
+                    "MIN_CRDS_VALUE_SERIALIZED_SIZE ({MIN_CRDS_VALUE_SERIALIZED_SIZE}) \
+                     underestimates serialized size {}",
+                    bytes.len(),
+                );
+            }
         }
     }
 
