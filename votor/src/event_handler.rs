@@ -27,7 +27,6 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
-        bank_forks_controller::BankForksControllerError,
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -78,9 +77,6 @@ enum EventLoopError {
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
-
-    #[error("Bank forks controller error")]
-    BankForksControllerError(#[from] BankForksControllerError),
 }
 
 pub(crate) struct EventHandler {
@@ -173,7 +169,7 @@ impl EventHandler {
                 .saturating_add(receive_event_time.as_us() as u32);
 
             let root_bank = vctx.sharable_banks.root();
-            if event.should_ignore(root_bank.slot()) {
+            if event.should_ignore(root_bank.slot().max(vctx.vote_history.root())) {
                 local_context.stats.ignored = local_context.stats.ignored.saturating_add(1);
                 continue;
             }
@@ -311,7 +307,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                )?;
+                );
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -447,7 +443,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                )?;
+                );
 
                 if let Some(slot) = *standstill_slot {
                     if block.0 > slot {
@@ -764,10 +760,13 @@ impl EventHandler {
         // In case we set root in the middle of a leader window,
         // it's not necessary to vote skip prior to it and we won't
         // be able to check vote history if we've already voted on it
-        let root_bank = voting_context.sharable_banks.root();
+        let root_slot = voting_context
+            .vote_history
+            .root()
+            .max(voting_context.sharable_banks.root().slot());
         // No matter what happens, we should not vote skip for slot 0
         let start = first_of_consecutive_leader_slots(slot)
-            .max(root_bank.slot())
+            .max(root_slot)
             .max(1);
         for s in start..=last_of_consecutive_leader_slots(slot) {
             if voting_context.vote_history.voted(s) {
@@ -820,9 +819,9 @@ impl EventHandler {
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
         stats: &mut EventHandlerStats,
-    ) -> Result<(), BankForksControllerError> {
+    ) {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
-        let old_root = bank_forks_r.root();
+        let old_root = bank_forks_r.root().max(vctx.vote_history.root());
         let Some(new_root) = finalized_blocks
             .iter()
             .filter_map(|&(slot, block_id)| {
@@ -836,7 +835,7 @@ impl EventHandler {
             .max()
         else {
             // No rootable banks
-            return Ok(());
+            return;
         };
         drop(bank_forks_r);
         root_utils::set_root(
@@ -848,9 +847,8 @@ impl EventHandler {
             pending_blocks,
             finalized_blocks,
             received_shred,
-        )?;
+        );
         stats.set_root(new_root);
-        Ok(())
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -980,6 +978,7 @@ mod tests {
     }
 
     struct DirectBankForksController {
+        my_pubkey: Pubkey,
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -991,13 +990,12 @@ mod tests {
             Ok(self.bank_forks.write().unwrap().insert(bank))
         }
 
-        fn set_root(
+        fn enqueue_set_root(
             &self,
-            my_pubkey: Pubkey,
             parent_slot: Slot,
             new_root: Slot,
             highest_super_majority_root: Option<Slot>,
-        ) -> Result<(), BankForksControllerError> {
+        ) {
             root_utils::check_and_handle_new_root(
                 parent_slot,
                 new_root,
@@ -1009,10 +1007,9 @@ mod tests {
                 &self.leader_schedule_cache,
                 &self.bank_forks,
                 None,
-                &my_pubkey,
+                &self.my_pubkey,
                 |_| {},
             );
-            Ok(())
         }
 
         fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
@@ -1080,6 +1077,7 @@ mod tests {
             &bank_forks.read().unwrap().root_bank(),
         ));
         let bank_forks_controller = Arc::new(DirectBankForksController {
+            my_pubkey: my_node_keypair.pubkey(),
             bank_forks: bank_forks.clone(),
             blockstore: blockstore.clone(),
             leader_schedule_cache,

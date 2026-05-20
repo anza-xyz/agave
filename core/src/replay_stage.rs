@@ -84,7 +84,7 @@ use {
     solana_runtime::{
         bank::{Bank, NewBankOptions, bank_hash_details},
         bank_forks::BankForks,
-        bank_forks_controller::{BankForksCommand, BankForksCommandReceiver},
+        bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
         block_component_processor::BlockComponentProcessorError,
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
@@ -939,6 +939,7 @@ impl ReplayStage {
                     Self::process_bank_forks_commands(
                         &bank_forks_controller_receiver,
                         &process_bank_forks_context,
+                        &my_pubkey,
                         &mut progress,
                         &mut async_verification_freelist,
                     ),
@@ -1515,12 +1516,15 @@ impl ReplayStage {
                     // only wait for the signal if we did not just process a bank; maybe there are more slots available
 
                     let timer = Duration::from_millis(100);
+                    let bank_forks_command_receiver = bank_forks_controller_receiver.receiver();
+                    let set_root_signal_receiver =
+                        bank_forks_controller_receiver.set_root_signal_receiver();
                     select! {
                         recv(ledger_signal_receiver) -> result => match result {
                             Err(_) => break,
                             Ok(_) => trace!("blockstore signal"),
                         },
-                        recv(bank_forks_controller_receiver.receiver()) -> result => match result {
+                        recv(bank_forks_command_receiver) -> result => match result {
                             Err(_) => break,
                             Ok(command) => {
                                 Self::process_bank_forks_command(
@@ -1530,6 +1534,10 @@ impl ReplayStage {
                                     &mut async_verification_freelist,
                                 );
                             }
+                        },
+                        recv(set_root_signal_receiver) -> result => match result {
+                            Err(_) => break,
+                            Ok(()) => trace!("bank forks set-root signal"),
                         },
                         default(timer) => (),
                     }
@@ -5006,9 +5014,14 @@ impl ReplayStage {
     fn process_bank_forks_commands(
         bank_forks_controller_receiver: &BankForksCommandReceiver,
         context: &ProcessBankForksContext,
+        my_pubkey: &Pubkey,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     ) -> Result<(), TryRecvError> {
+        if let Some(command) = bank_forks_controller_receiver.take_set_root_command() {
+            Self::process_set_root_command(command, context, my_pubkey);
+        }
+
         loop {
             let command = bank_forks_controller_receiver.receiver().try_recv()?;
             Self::process_bank_forks_command(
@@ -5018,6 +5031,32 @@ impl ReplayStage {
                 async_verification_freelist,
             );
         }
+    }
+
+    fn process_set_root_command(
+        command: SetRootCommand,
+        context: &ProcessBankForksContext,
+        my_pubkey: &Pubkey,
+    ) {
+        let SetRootCommand {
+            parent_slot,
+            new_root,
+            highest_super_majority_root,
+        } = command;
+        root_utils::check_and_handle_new_root(
+            parent_slot,
+            new_root,
+            context.snapshot_controller.as_deref(),
+            highest_super_majority_root,
+            &context.bank_notification_sender,
+            &context.drop_bank_sender,
+            &context.blockstore,
+            &context.leader_schedule_cache,
+            &context.bank_forks,
+            context.rpc_subscriptions.as_deref(),
+            my_pubkey,
+            |_| {},
+        );
     }
 
     /// Process a bank forks command
@@ -5054,31 +5093,6 @@ impl ReplayStage {
 
                 response_sender.send(bank).unwrap_or_else(|_| {
                     warn!("bank forks controller insert-bank response receiver dropped")
-                });
-            }
-            BankForksCommand::SetRoot {
-                my_pubkey,
-                parent_slot,
-                new_root,
-                highest_super_majority_root,
-                response_sender,
-            } => {
-                root_utils::check_and_handle_new_root(
-                    parent_slot,
-                    new_root,
-                    context.snapshot_controller.as_deref(),
-                    highest_super_majority_root,
-                    &context.bank_notification_sender,
-                    &context.drop_bank_sender,
-                    &context.blockstore,
-                    &context.leader_schedule_cache,
-                    &context.bank_forks,
-                    context.rpc_subscriptions.as_deref(),
-                    &my_pubkey,
-                    |_| {},
-                );
-                response_sender.send(()).unwrap_or_else(|_| {
-                    warn!("bank forks controller set-root response receiver dropped")
                 });
             }
             BankForksCommand::ClearBank {

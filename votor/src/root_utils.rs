@@ -11,10 +11,8 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        bank_forks_controller::{BankForksController, BankForksControllerError},
-        installed_scheduler_pool::BankWithScheduler,
-        snapshot_controller::SnapshotController,
+        bank_forks::BankForks, bank_forks_controller::BankForksController,
+        installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
     },
     solana_time_utils::timestamp,
     std::{
@@ -41,7 +39,7 @@ pub(crate) fn set_root(
     pending_blocks: &mut PendingBlocks,
     finalized_blocks: &mut BTreeSet<Block>,
     received_shred: &mut BTreeSet<Slot>,
-) -> Result<(), BankForksControllerError> {
+) {
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
     *pending_blocks = pending_blocks.split_off(&new_root);
@@ -49,7 +47,7 @@ pub(crate) fn set_root(
     *received_shred = received_shred.split_off(&new_root);
 
     rctx.bank_forks_controller
-        .set_root(*my_pubkey, new_root, new_root, Some(new_root))?;
+        .enqueue_set_root(new_root, new_root, Some(new_root));
 
     // Distinguish between duplicate versions of same slot
     let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
@@ -78,7 +76,6 @@ pub(crate) fn set_root(
             dependency_work,
         ));
     }
-    Ok(())
 }
 
 /// Sets the new root, additionally performs the callback after setting the bank forks root
