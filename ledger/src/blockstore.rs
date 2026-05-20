@@ -4094,13 +4094,13 @@ impl Blockstore {
         populate_entries: bool,
         allow_dead_slots: bool,
     ) -> Result<VersionedConfirmedBlockWithEntries> {
-        let VersionedConfirmedBlockWithComponents { block, components } =
-            self.do_get_complete_block_with_components(
-            slot,
-            require_previous_blockhash,
-            populate_entries,
-            allow_dead_slots,
-        )?;
+        let VersionedConfirmedBlockWithComponents { block, components } = self
+            .do_get_complete_block_with_components(
+                slot,
+                require_previous_blockhash,
+                populate_entries,
+                allow_dead_slots,
+            )?;
         let entries = components
             .into_iter()
             .flat_map(|component| match component {
@@ -4109,10 +4109,7 @@ impl Blockstore {
             })
             .collect();
 
-        Ok(VersionedConfirmedBlockWithEntries {
-            block,
-            entries,
-        })
+        Ok(VersionedConfirmedBlockWithEntries { block, entries })
     }
 
     #[cfg(feature = "dev-context-only-utils")]
