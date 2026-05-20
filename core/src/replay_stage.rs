@@ -1592,7 +1592,9 @@ impl ReplayStage {
     ) -> Result<Tower, TowerError> {
         let tower = Tower::restore(tower_storage, node_pubkey).and_then(|restored_tower| {
             let root_bank = bank_forks.read().unwrap().root_bank();
-            let slot_history = root_bank.get_slot_history();
+            let slot_history = root_bank
+                .get_slot_history()
+                .expect("slot history must exist");
             restored_tower.adjust_lockouts_after_replay(root_bank.slot(), &slot_history)
         });
         match tower {

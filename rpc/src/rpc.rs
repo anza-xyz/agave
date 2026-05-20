@@ -3131,7 +3131,9 @@ pub mod rpc_bank {
                 }
             };
 
-            let slot_history = bank.get_slot_history();
+            let Some(slot_history) = bank.get_slot_history() else {
+                return Err(RpcCustomError::NoSlotHistory.into());
+            };
             if first_slot < slot_history.oldest() {
                 return Err(Error::invalid_params(format!(
                     "firstSlot, {}, is too small; min {}",

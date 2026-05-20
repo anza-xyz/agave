@@ -532,12 +532,10 @@ fn verify_slot_deltas(
 ) -> std::result::Result<(), VerifySlotDeltasError> {
     let max_root_entries = bank.status_cache.read().unwrap().max_root_entries();
     let info = verify_slot_deltas_structural(slot_deltas, bank.slot(), max_root_entries)?;
-    verify_slot_deltas_with_history(
-        &info.slots,
-        &bank.get_slot_history(),
-        bank.slot(),
-        max_root_entries,
-    )
+    let slot_history = bank
+        .get_slot_history()
+        .expect("snapshot bank must have slot history");
+    verify_slot_deltas_with_history(&info.slots, &slot_history, bank.slot(), max_root_entries)
 }
 
 /// Verify that the snapshot's slot deltas are not corrupt/invalid
