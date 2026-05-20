@@ -246,7 +246,7 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
 /// for transactions with a valid blockhash or nonce.
 pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+    program_cache_for_tx_batch: &ProgramCacheForTxBatch,
     tx: &'a impl SVMMessage,
     check_program_deployment_slot: bool,
 ) -> Vec<ProgramToLoad<'a>> {

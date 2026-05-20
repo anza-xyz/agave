@@ -505,7 +505,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     let (missing_programs, filter_executable_us) =
                         measure_us!(filter_executable_program_accounts(
                             &account_loader,
-                            &mut program_cache_for_tx_batch,
+                            &program_cache_for_tx_batch,
                             tx,
                             config.check_program_deployment_slot,
                         ));
