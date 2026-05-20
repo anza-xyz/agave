@@ -512,9 +512,16 @@ impl JsonRpcService {
             config.rpc_config.rpc_blocking_threads,
             config.rpc_config.rpc_niceness_adj,
         );
-        let leader_info = config
-            .poh_recorder
-            .map(|recorder| ClusterTpuInfo::new(config.cluster_info.clone(), recorder));
+        let migration_status = config.bank_forks.read().unwrap().migration_status();
+        let leader_info = config.poh_recorder.clone().map(|recorder| {
+            ClusterTpuInfo::new(
+                config.cluster_info.clone(),
+                recorder,
+                config.block_commitment_cache.clone(),
+                config.leader_schedule_cache.clone(),
+                migration_status.clone(),
+            )
+        });
 
         let RpcTpuClientArgs(identity_keypair, tpu_client_socket, client_runtime, cancel) =
             config.rpc_tpu_client_args;
