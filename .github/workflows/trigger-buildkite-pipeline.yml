@@ -31,7 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          USERNAME: ${{ github.event.pull_request.user.login }}
+          USERNAME: ${{ github.event.sender.login }}
         run: |
           ROLE_NAME=$(curl -sS -L \
             -H "Accept: application/vnd.github+json" \
