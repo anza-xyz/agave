@@ -7527,16 +7527,15 @@ dependencies = [
 
 [[package]]
 name = "solana-instructions-sysvar"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ddf67876c541aa1e21ee1acae35c95c6fbc61119814bfef70579317a5e26955"
+checksum = "9e0732294560e88ecdb2bbc656e67383e9f88c78ec09469cef172f0d28cd1bcd"
 dependencies = [
  "bitflags 2.11.1",
  "solana-account-info",
  "solana-instruction",
  "solana-instruction-error",
  "solana-program-error",
- "solana-pubkey 3.0.0",
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-serialize-utils",
