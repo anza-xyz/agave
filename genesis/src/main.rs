@@ -18,7 +18,7 @@ use {
             is_url_or_moniker, is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
-    solana_clock as clock,
+    solana_clock::{self as clock, Clock},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_entry::poh::compute_hashes_per_tick,
@@ -49,7 +49,11 @@ use {
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
+    solana_vote_interface::program::id,
+    solana_vote_program::{
+        authorized_voters::AuthorizedVoters,
+        vote_state::{self, VoteStateV4, VoteStateVersions},
+    },
     std::{
         collections::HashMap,
         error,
@@ -255,6 +259,37 @@ fn features_to_deactivate_for_cluster(
     Ok(features_to_deactivate)
 }
 
+fn create_v4_account_without_bls(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    inflation_rewards_commission_bps: u16,
+    inflation_rewards_collector: &Pubkey,
+    block_revenue_commission_bps: u16,
+    block_revenue_collector: &Pubkey,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
+    let clock = Clock::default();
+    let vote_state = VoteStateV4 {
+        node_pubkey: *node_pubkey,
+        authorized_voters: AuthorizedVoters::new(clock.epoch, *authorized_voter),
+        authorized_withdrawer: *authorized_withdrawer,
+        bls_pubkey_compressed: None,
+        inflation_rewards_commission_bps,
+        inflation_rewards_collector: *inflation_rewards_collector,
+        block_revenue_commission_bps,
+        block_revenue_collector: *block_revenue_collector,
+        ..VoteStateV4::default()
+    };
+    VoteStateV4::serialize(
+        &VoteStateVersions::V4(Box::new(vote_state)),
+        vote_account.data_as_mut_slice(),
+    )
+    .unwrap();
+    vote_account
+}
+
 fn add_validator_accounts(
     genesis_config: &mut GenesisConfig,
     pubkeys_iter: &mut Iter<Pubkey>,
@@ -279,24 +314,33 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes = bls_pubkeys_iter
-            .next()
-            .map(|bls_pubkey| bls_pubkey.0)
-            .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         // Vote account needs enough lamports for rent exemption plus VAT
         let vote_account_lamports =
             rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            identity_pubkey,
-            identity_pubkey,
-            bls_pubkey_compressed_bytes,
-            identity_pubkey,
-            u16::from(commission) * 100,
-            vote_pubkey,
-            0,
-            identity_pubkey,
-            vote_account_lamports,
-        );
+
+        let vote_account = match bls_pubkeys_iter.next().map(|bls_pubkey| bls_pubkey.0) {
+            None => create_v4_account_without_bls(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                u16::from(commission) * 100,
+                vote_pubkey,
+                0,
+                identity_pubkey,
+                vote_account_lamports,
+            ),
+            Some(bls_pubkey) => vote_state::create_v4_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                bls_pubkey,
+                identity_pubkey,
+                u16::from(commission) * 100,
+                vote_pubkey,
+                0,
+                identity_pubkey,
+                vote_account_lamports,
+            ),
+        };
 
         genesis_config.add_account(
             *stake_pubkey,
