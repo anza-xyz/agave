@@ -792,7 +792,10 @@ mod tests {
             .filter(|shred| shred.shred_type() == ShredType::Code)
             .collect();
         let shred_version = coding_shreds[0].common_header().version;
-        let code_limit = coding_shreds[0].index();
+
+        // Feed recovery only coding shreds. Without the custom limit below, this
+        // is enough parity to recover the missing data shreds.
+        let max_code_shreds_per_slot = coding_shreds[0].index();
         let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         let mut shred_recovery_context = ShredRecoveryContext::new(
             ReedSolomonCache::default(),
@@ -804,11 +807,14 @@ mod tests {
             .shred_filter_ctx
             .set_shred_limits_for_tests(ShredLimits::new(
                 ShredLimits::DEFAULT.max_data_shreds_per_slot,
-                code_limit,
+                // Setting the limit to the first coding index makes every
+                // coding shred in this batch invalid.
+                max_code_shreds_per_slot,
             ));
         let mut recovered_shreds = Vec::new();
         let mut recovered_data_shreds = Vec::new();
 
+        // Recovery sees insufficient parity shreds and cannot recover the FEC.
         assert_matches!(
             shred_recovery_context.recover(
                 coding_shreds,
