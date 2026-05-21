@@ -610,7 +610,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         for entry in second_level.iter().rev() {
                             let required_deployment_slot =
                                 filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
-                            if required_deployment_slot != entry.deployment_slot {
+                            if required_deployment_slot != entry.deployment_slot
+                                || program_to_load.loader != entry.account_owner
+                            {
                                 continue;
                             }
                             let entry_in_same_branch = entry.deployment_slot
