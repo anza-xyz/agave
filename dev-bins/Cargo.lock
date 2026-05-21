@@ -187,6 +187,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-shred-version",
  "solana-signature",
+ "solana-signer-store",
  "solana-stake-interface",
  "solana-storage-bigtable",
  "solana-svm-callback",

@@ -125,6 +125,7 @@ solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
 solana-stake-interface = "4.2.0"
+solana-signer-store = "0.1.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm = { path = "../svm", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

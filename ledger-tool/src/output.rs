@@ -18,7 +18,7 @@ use {
     },
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::block_component::{
-        BlockComponent, BlockMarkerV1, VersionedBlockFooter, VersionedBlockHeader,
+        BlockComponent, BlockFooterV1, BlockMarkerV1, VersionedBlockFooter, VersionedBlockHeader,
         VersionedBlockMarker, VersionedUpdateParent,
     },
     solana_hash::Hash,
@@ -32,6 +32,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_signer_store::{Decoded, decode},
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
@@ -48,6 +49,8 @@ use {
         sync::Arc,
     },
 };
+
+const MAX_CERTIFICATE_VALIDATORS: usize = 4096;
 
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -140,35 +143,34 @@ fn writeln_entry(f: &mut dyn fmt::Write, i: usize, entry: &CliEntry, prefix: &st
 
 fn writeln_block_marker(
     f: &mut dyn fmt::Write,
-    i: usize,
     marker: &CliPopulatedBlockMarker,
     prefix: &str,
 ) -> fmt::Result {
     match marker {
-        CliPopulatedBlockMarker::BlockFooter(footer) => writeln!(
-            f,
-            "{prefix}Block Marker {i} - BlockFooter: bank_hash: {}, block_producer_time_nanos: \
-             {}, block_user_agent: {}, final_cert: {}, skip_reward_cert: {}, notar_reward_cert: {}",
-            footer.bank_hash,
-            footer.block_producer_time_nanos,
-            footer.block_user_agent,
-            footer.has_final_cert,
-            footer.has_skip_reward_cert,
-            footer.has_notar_reward_cert,
-        ),
+        CliPopulatedBlockMarker::BlockFooter(footer) => {
+            writeln!(
+                f,
+                "{prefix}Block Marker - BlockFooter: bank_hash: {}, block_producer_time_nanos: \
+                 {}, block_user_agent: {}",
+                footer.bank_hash, footer.block_producer_time_nanos, footer.block_user_agent,
+            )?;
+            writeln!(f, "{prefix}  {}", footer.final_cert_log)?;
+            writeln!(f, "{prefix}  {}", footer.skip_rewards_log)?;
+            writeln!(f, "{prefix}  {}", footer.notar_rewards_log)
+        }
         CliPopulatedBlockMarker::BlockHeader(header) => writeln!(
             f,
-            "{prefix}Block Marker {i} - BlockHeader: parent_slot: {}, parent_block_id: {}",
+            "{prefix}Block Marker - BlockHeader: parent_slot: {}, parent_block_id: {}",
             header.parent_slot, header.parent_block_id,
         ),
         CliPopulatedBlockMarker::UpdateParent(update_parent) => writeln!(
             f,
-            "{prefix}Block Marker {i} - UpdateParent: new_parent_slot: {}, new_parent_block_id: {}",
+            "{prefix}Block Marker - UpdateParent: new_parent_slot: {}, new_parent_block_id: {}",
             update_parent.new_parent_slot, update_parent.new_parent_block_id,
         ),
         CliPopulatedBlockMarker::GenesisCertificate(certificate) => writeln!(
             f,
-            "{prefix}Block Marker {i} - GenesisCertificate: slot: {}, block_id: {}",
+            "{prefix}Block Marker - GenesisCertificate: slot: {}, block_id: {}",
             certificate.slot, certificate.block_id,
         ),
     }
@@ -257,9 +259,9 @@ pub struct CliPopulatedFooter {
     bank_hash: String,
     block_producer_time_nanos: u64,
     block_user_agent: String,
-    has_final_cert: bool,
-    has_skip_reward_cert: bool,
-    has_notar_reward_cert: bool,
+    final_cert_log: String,
+    skip_rewards_log: String,
+    notar_rewards_log: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -375,11 +377,12 @@ impl fmt::Display for CliBlockWithComponents {
                 build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
         }
-        for (index, component) in self.encoded_confirmed_block.components.iter().enumerate() {
+        let mut entry_index = 0;
+        for component in &self.encoded_confirmed_block.components {
             match component {
                 CliPopulatedComponent::EntryBatch(entries) => {
-                    for (i, entry) in entries.iter().enumerate() {
-                        writeln_entry(f, i, &entry.into(), "")?;
+                    for entry in entries {
+                        writeln_entry(f, entry_index, &entry.into(), "")?;
                         for (index, transaction_with_meta) in entry.transactions.iter().enumerate()
                         {
                             writeln!(f, "  Transaction {index}:")?;
@@ -392,10 +395,11 @@ impl fmt::Display for CliBlockWithComponents {
                                 None,
                             )?;
                         }
+                        entry_index += 1;
                     }
                 }
                 CliPopulatedComponent::BlockMarker(marker) => {
-                    writeln_block_marker(f, index, marker, "")?;
+                    writeln_block_marker(f, marker, "")?;
                 }
             }
         }
@@ -641,14 +645,7 @@ fn cli_populated_block_marker_from(marker: VersionedBlockMarker) -> CliPopulated
     match block_marker {
         BlockMarkerV1::BlockFooter(footer) => {
             let VersionedBlockFooter::V1(footer) = footer.into_inner();
-            CliPopulatedBlockMarker::BlockFooter(CliPopulatedFooter {
-                bank_hash: footer.bank_hash.to_string(),
-                block_producer_time_nanos: footer.block_producer_time_nanos,
-                block_user_agent: String::from_utf8_lossy(&footer.block_user_agent).into_owned(),
-                has_final_cert: footer.final_cert.is_some(),
-                has_skip_reward_cert: footer.skip_reward_cert.is_some(),
-                has_notar_reward_cert: footer.notar_reward_cert.is_some(),
-            })
+            CliPopulatedBlockMarker::BlockFooter(cli_populated_footer_from_marker(footer))
         }
         BlockMarkerV1::BlockHeader(header) => {
             let VersionedBlockHeader::V1(header) = header.into_inner();
@@ -671,6 +668,79 @@ fn cli_populated_block_marker_from(marker: VersionedBlockMarker) -> CliPopulated
                 block_id: certificate.block_id.to_string(),
             })
         }
+    }
+}
+
+fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> CliPopulatedFooter {
+    let BlockFooterV1 {
+        bank_hash,
+        block_producer_time_nanos,
+        block_user_agent,
+        final_cert,
+        skip_reward_cert,
+        notar_reward_cert,
+    } = footer;
+
+    let final_cert_log = match final_cert {
+        Some(cert) => {
+            let slot = cert.slot;
+            let block_id = cert.block_id.to_string();
+            let final_validators = validator_count_log(&cert.final_aggregate.into_bitmap());
+            match cert.notar_aggregate {
+                Some(notar_aggregate) => {
+                    let notar_validators = validator_count_log(&notar_aggregate.into_bitmap());
+                    format!(
+                        "FinalCertificate: slot: {slot}, block_id: {block_id}, final_aggregate \
+                         validators: {final_validators}, notar_aggregate validators: \
+                         {notar_validators}",
+                    )
+                }
+                None => format!(
+                    "FinalCertificate: slot: {slot}, block_id: {block_id}, final_aggregate \
+                     validators: {final_validators}, notar_aggregate: None",
+                ),
+            }
+        }
+        None => "No finalization certificate".to_string(),
+    };
+
+    let skip_rewards_log = match skip_reward_cert {
+        Some(cert) => format!(
+            "SkipRewardCertificate: slot: {}, validators: {}",
+            cert.slot,
+            validator_count_log(cert.to_bitmap()),
+        ),
+        None => "SkipRewardCertificate: None".to_string(),
+    };
+
+    let notar_rewards_log = match notar_reward_cert {
+        Some(cert) => format!(
+            "NotarRewardCertificate: slot: {}, validators: {}, block_id: {}",
+            cert.slot,
+            validator_count_log(cert.bitmap()),
+            cert.block_id,
+        ),
+        None => "NotarRewardCertificate: None".to_string(),
+    };
+
+    CliPopulatedFooter {
+        bank_hash: bank_hash.to_string(),
+        block_producer_time_nanos,
+        block_user_agent: String::from_utf8_lossy(&block_user_agent).into_owned(),
+        final_cert_log,
+        skip_rewards_log,
+        notar_rewards_log,
+    }
+}
+
+fn validator_count_log(bitmap: &[u8]) -> String {
+    match decode(bitmap, MAX_CERTIFICATE_VALIDATORS) {
+        Ok(Decoded::Base2(validators)) => validators.count_ones().to_string(),
+        Ok(Decoded::Base3(first, second)) => first
+            .count_ones()
+            .saturating_add(second.count_ones())
+            .to_string(),
+        Err(err) => format!("unable to decode ({err:?})"),
     }
 }
 
