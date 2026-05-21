@@ -588,13 +588,15 @@ mod tests {
         bank: &Bank,
         total_stake: u64,
         stake_voted: u64,
-    ) -> u64 {
+    ) -> (u64, u64) {
         let epoch_inflation =
             bank.calculate_epoch_inflation_rewards(prev_bank.capitalization(), prev_bank.epoch());
         let numerator = epoch_inflation as u128 * stake_voted as u128;
         let denominator = bank.epoch_schedule.slots_per_epoch as u128 * total_stake as u128;
         let reward: u64 = (numerator / denominator).try_into().unwrap();
-        reward / 2
+        let validator_reward = reward / 2;
+        let leader_reward = reward - validator_reward;
+        (validator_reward, leader_reward)
     }
 
     #[test]
@@ -660,18 +662,25 @@ mod tests {
                     .epoch_stakes_from_slot(reward_slot)
                     .unwrap()
                     .total_stake();
-                let expected_validator_reward =
+                let (expected_validator_reward, expected_leader_reward_per_validator) =
                     calc_reward_for_test(&prev_bank, &bank, total_stake, per_validator_stake);
                 if *validator != leader_vote_pubkey {
                     assert_eq!(got_reward, expected_validator_reward);
                 }
-                got_reward
+                (
+                    got_reward,
+                    expected_validator_reward,
+                    expected_leader_reward_per_validator,
+                )
             })
             .collect::<Vec<_>>();
-        let expected_leader_reward = rewards.last().unwrap()
-            * validator_pubkeys_to_reward.len() as u64
-            + rewards.last().unwrap();
-        assert_eq!(expected_leader_reward, rewards[0]);
+        let (leader_reward, expected_validator_reward, expected_leader_reward_per_validator) =
+            rewards[0];
+        assert_eq!(
+            expected_validator_reward
+                + expected_leader_reward_per_validator * validator_pubkeys_to_reward.len() as u64,
+            leader_reward
+        );
     }
 
     #[test]

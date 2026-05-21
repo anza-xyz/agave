@@ -1964,12 +1964,14 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     let val_a_ledger_path = cluster.ledger_path(&validator_a_pubkey);
+    let root_before_restart;
 
     loop {
         sleep(Duration::from_millis(100));
 
         if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
             if root >= 15 {
+                root_before_restart = root;
                 break;
             }
         }
@@ -1993,7 +1995,7 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     );
 
     let mut newly_rooted = false;
-    let some_root_after_restart = purged_slot_before_restart + 25; // 25 is arbitrary; just wait a bit
+    let some_root_after_restart = root_before_restart + 1;
     for _ in 0..600 {
         sleep(Duration::from_millis(100));
 
@@ -6197,8 +6199,7 @@ fn test_alpenglow_migration(
     let node_stakes = vec![DEFAULT_NODE_STAKE; num_nodes];
 
     // We want the epochs to be as short as possible to reduce test time without being flaky.
-    // We start the migration at an offset of 32, so use 64 as the epoch length.
-    let slots_per_epoch = 2 * MINIMUM_SLOTS_PER_EPOCH;
+    let slots_per_epoch = 4 * MINIMUM_SLOTS_PER_EPOCH;
     assert!(slots_per_epoch > MIGRATION_SLOT_OFFSET);
     let mut cluster_config = ClusterConfig {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
