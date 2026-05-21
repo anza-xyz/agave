@@ -85,19 +85,13 @@ impl VotePacketReceiver {
     > {
         let start = Instant::now();
 
-        let packet_batches = self.banking_packet_receiver.recv_timeout(recv_timeout)?;
-        let mut num_packets_received = packet_batches
-            .iter()
-            .map(|batch| batch.len())
-            .sum::<usize>();
-        let mut messages = vec![packet_batches];
+        let packet_batch = self.banking_packet_receiver.recv_timeout(recv_timeout)?;
+        let mut num_packets_received = packet_batch.len();
+        let mut messages = vec![packet_batch];
 
-        while let Ok(packet_batches) = self.banking_packet_receiver.try_recv() {
-            num_packets_received += packet_batches
-                .iter()
-                .map(|batch| batch.len())
-                .sum::<usize>();
-            messages.push(packet_batches);
+        while let Ok(packet_batch) = self.banking_packet_receiver.try_recv() {
+            num_packets_received += packet_batch.len();
+            messages.push(packet_batch);
 
             if start.elapsed() >= recv_timeout || num_packets_received >= packet_count_upperbound {
                 break;
@@ -109,7 +103,6 @@ impl VotePacketReceiver {
         let mut errors = Saturating::<usize>(0);
         let parsed_packets: Vec<_> = messages
             .iter()
-            .flat_map(|batches| batches.iter())
             .flat_map(|batch| batch.iter())
             .filter_map(|pkt| {
                 match SanitizedTransactionView::try_new_sanitized(
@@ -281,7 +274,7 @@ mod tests {
             vote_storage::{VoteStorage, tests::packet_from_slots},
         },
         crossbeam_channel::unbounded,
-        solana_perf::packet::PacketBatch,
+        solana_perf::packet::{PacketBatch, PacketRef},
         solana_runtime::{
             bank::Bank,
             genesis_utils::{self, ValidatorVoteKeypairs},
@@ -296,7 +289,9 @@ mod tests {
         let vote_packet = packet_from_slots(vec![(1, 1)], keypairs, None);
         let (sender, receiver) = unbounded();
         sender
-            .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
+            .send(Arc::new(PacketBatch::Single(
+                PacketRef::from(&vote_packet).to_bytes_packet(),
+            )))
             .unwrap();
 
         let mut receiver = VotePacketReceiver::new(receiver, filter_keys);

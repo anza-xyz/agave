@@ -824,7 +824,10 @@ mod tests {
             banking_trace::{BankingTracer, Channels},
             validator::SchedulerPacing,
         },
-        agave_banking_stage_ingress_types::BankingPacketBatch,
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, banking_packet_batch_from_transaction,
+            bytes_packet_from_transaction,
+        },
         crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_entry::{
@@ -840,7 +843,7 @@ mod tests {
             },
             get_tmp_ledger_path_auto_delete,
         },
-        solana_perf::packet::to_packet_batches,
+        solana_perf::packet::PacketBatch,
         solana_poh::{
             poh_recorder::{PohRecorderError, create_test_recorder},
             record_channels::record_channels,
@@ -988,18 +991,17 @@ mod tests {
         let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
         // send 'em over
-        let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
-        packet_batches[0]
-            .first_mut()
-            .unwrap()
-            .meta_mut()
-            .set_discard(true); // set discard on `tx_no_ver`
-
-        // glad they all fit
-        assert_eq!(packet_batches.len(), 1);
+        let mut packet = bytes_packet_from_transaction(&tx_no_ver);
+        packet.meta_mut().set_discard(true); // set discard on `tx_no_ver`
 
         non_vote_sender // no_ver, anf, tx
-            .send(BankingPacketBatch::new(packet_batches))
+            .send(BankingPacketBatch::new(PacketBatch::Single(packet)))
+            .unwrap();
+        non_vote_sender
+            .send(banking_packet_batch_from_transaction(&tx_anf))
+            .unwrap();
+        non_vote_sender
+            .send(banking_packet_batch_from_transaction(&tx))
             .unwrap();
 
         // capture the entry receiver until we've received all our entries.
@@ -1078,17 +1080,15 @@ mod tests {
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
 
-        let packet_batches = to_packet_batches(&[tx], 1);
         non_vote_sender
-            .send(BankingPacketBatch::new(packet_batches))
+            .send(banking_packet_batch_from_transaction(&tx))
             .unwrap();
 
         // Process a second batch that uses the same from account, so conflicts with above TX
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_packet_batches(&[tx], 1);
         non_vote_sender
-            .send(BankingPacketBatch::new(packet_batches))
+            .send(banking_packet_batch_from_transaction(&tx))
             .unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -1327,13 +1327,22 @@ mod tests {
                     &keypairs[(i + 1) % 100].pubkey(),
                     10,
                     start_hash,
-                );
+                )
             })
             .collect_vec();
 
-        let non_vote_packet_batches = to_packet_batches(&txs, 10);
-        let tpu_packet_batches = to_packet_batches(&tpu_votes, 10);
-        let gossip_packet_batches = to_packet_batches(&gossip_votes, 10);
+        let non_vote_packet_batches = txs
+            .iter()
+            .map(banking_packet_batch_from_transaction)
+            .collect_vec();
+        let tpu_packet_batches = tpu_votes
+            .iter()
+            .map(banking_packet_batch_from_transaction)
+            .collect_vec();
+        let gossip_packet_batches = gossip_votes
+            .iter()
+            .map(banking_packet_batch_from_transaction)
+            .collect_vec();
 
         // Send em all
         [
@@ -1345,9 +1354,9 @@ mod tests {
         .map(|(packet_batches, sender)| {
             Builder::new()
                 .spawn(move || {
-                    sender
-                        .send(BankingPacketBatch::new(packet_batches))
-                        .unwrap()
+                    for packet_batch in packet_batches {
+                        sender.send(packet_batch).unwrap();
+                    }
                 })
                 .unwrap()
         })

@@ -15,3 +15,4 @@ agave-unstable-api = []
 [dependencies]
 crossbeam-channel = { workspace = true }
 solana-perf = { workspace = true }
+wincode = { workspace = true }

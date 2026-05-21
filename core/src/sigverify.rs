@@ -4,7 +4,7 @@
 
 use {
     crate::{banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError},
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_banking_stage_ingress_types::{BankingPacketBatch, banking_packet_batch_from_packet_ref},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     solana_measure::measure_us,
     solana_perf::{
@@ -297,13 +297,15 @@ impl SigVerifyWorkerPool {
             .total_verify_time_us
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
 
-        let banking_packet_batch = BankingPacketBatch::new(vec![work.batch]);
-        if let Err(err) = banking_stage_sender.send(banking_packet_batch.clone()) {
-            error!("sigverify send failed: {err:?}");
-            return false;
-        }
-        if should_forward {
-            Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
+        for packet in work.batch.iter() {
+            let banking_packet_batch = banking_packet_batch_from_packet_ref(packet);
+            if let Err(err) = banking_stage_sender.send(banking_packet_batch.clone()) {
+                error!("sigverify send failed: {err:?}");
+                return false;
+            }
+            if should_forward {
+                Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
+            }
         }
 
         true

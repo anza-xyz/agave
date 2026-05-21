@@ -7,7 +7,9 @@ use {
         result::{Error, Result},
         sigverify_stage::GossipSigVerifyHandle,
     },
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_banking_stage_ingress_types::{
+        banking_packet_batch_from_packet_ref, packet_batch_from_transaction,
+    },
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
@@ -20,7 +22,7 @@ use {
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
-    solana_perf::packet::{self, PacketBatch},
+    solana_perf::packet::PacketBatch,
     solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
@@ -505,7 +507,12 @@ impl ClusterInfoVoteListener {
                 let (vote_txs, packets) =
                     Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
                 verified_vote_transactions_sender.send(vote_txs)?;
-                verified_packets_sender.send(BankingPacketBatch::new(packets))?;
+                for packet_batch in packets {
+                    for packet in packet_batch.iter() {
+                        verified_packets_sender
+                            .send(banking_packet_batch_from_packet_ref(packet))?;
+                    }
+                }
             }
             sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
         }
@@ -517,7 +524,7 @@ impl ClusterInfoVoteListener {
         gossip_sigverify_handle: &mut GossipSigVerifyHandle,
         sharable_banks: &SharableBanks,
     ) -> Result<(Vec<Transaction>, Vec<PacketBatch>)> {
-        let packet_batches = packet::to_packet_batches(&votes, 1);
+        let packet_batches = votes.iter().map(packet_batch_from_transaction).collect();
         let (votes, packet_batches) =
             gossip_sigverify_handle.verify_and_receive_votes(votes, packet_batches)?;
         Ok(Self::filter_verified_votes(
@@ -970,7 +977,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
-        solana_perf::{packet, sigverify},
+        solana_perf::sigverify,
         solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
@@ -996,7 +1003,10 @@ mod tests {
         verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
         votes: &[Transaction],
     ) {
-        let mut packet_batches = packet::to_packet_batches(votes, 1);
+        let mut packet_batches = votes
+            .iter()
+            .map(packet_batch_from_transaction)
+            .collect::<Vec<_>>();
         // Gossip votes are legacy Transaction values, not tx-v1 packets.
         packet_batches
             .iter_mut()
@@ -1050,9 +1060,9 @@ mod tests {
         use bincode::serialized_size;
         info!("max vote size {}", serialized_size(&vote_tx).unwrap());
 
-        let packet_batches = packet::to_packet_batches(&[vote_tx], 1); // panics if won't fit
+        let packet_batch = packet_batch_from_transaction(&vote_tx); // panics if won't fit
 
-        assert_eq!(packet_batches.len(), 1);
+        assert_eq!(packet_batch.len(), 1);
     }
 
     #[test]
