@@ -233,7 +233,8 @@ pub fn execute<'a, 'b: 'a>(
     let direct_account_pointers_in_program_input = invoke_context
         .get_feature_set()
         .direct_account_pointers_in_program_input;
-    let is_abi_v2 = executable.get_sbpf_version() == SBPFVersion::V4;
+    let is_abi_v2 = executable.get_sbpf_version() == SBPFVersion::V4
+        && invoke_context.get_feature_set().program_runtime_abiv2;
 
     let mut abiv1_parameters = if is_abi_v2 {
         initialize_abi_v2_areas(invoke_context, executable)?;

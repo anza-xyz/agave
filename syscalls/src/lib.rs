@@ -350,7 +350,12 @@ pub fn create_program_runtime_environment(
         } else {
             SBPFVersion::V3
         };
-    let max_sbpf_version = SBPFVersion::V3;
+
+    let max_sbpf_version = if feature_set.program_runtime_abiv2 {
+        SBPFVersion::V4
+    } else {
+        SBPFVersion::V3
+    };
     debug_assert!(min_sbpf_version <= max_sbpf_version);
 
     let config = Config {
