@@ -1,7 +1,6 @@
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
-    crate::account_loader::PROGRAM_OWNERS,
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
@@ -256,8 +255,18 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
         } else if let Some((account, last_modification_slot)) =
             callbacks.get_account_shared_data(account_key)
-            && PROGRAM_OWNERS.contains(account.owner())
         {
+            let _loader = if loader_v4::check_id(account.owner()) {
+                ProgramCacheEntryOwner::LoaderV4
+            } else if bpf_loader_upgradeable::check_id(account.owner()) {
+                ProgramCacheEntryOwner::LoaderV3
+            } else if bpf_loader::check_id(account.owner()) {
+                ProgramCacheEntryOwner::LoaderV2
+            } else if bpf_loader_deprecated::check_id(account.owner()) {
+                ProgramCacheEntryOwner::LoaderV1
+            } else {
+                continue;
+            };
             let match_criteria = if check_program_deployment_slot {
                 get_program_deployment_slot(callbacks, &account)
                     .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
