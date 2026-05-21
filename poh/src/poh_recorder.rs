@@ -612,10 +612,10 @@ impl PohRecorder {
         self.notify_replay_wakeup();
 
         // Wait for the bank to be frozen with timeout
-        // TODO: change this to use DELTA_BLOCK from votor instead.
         let start = Instant::now();
+        let delta_block = Duration::from_nanos_u128(working_bank.bank.ns_per_slot);
         while !working_bank.bank.is_frozen() && !self.is_exited.load(Ordering::Relaxed) {
-            if start.elapsed() > Duration::from_millis(400) {
+            if start.elapsed() > delta_block {
                 break;
             }
             std::hint::spin_loop();
