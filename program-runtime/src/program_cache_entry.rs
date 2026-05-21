@@ -21,7 +21,7 @@ use {
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
 /// The owner of a programs accounts, thus the loader of a program
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Debug)]
 pub enum ProgramCacheEntryOwner {
     #[default]
     NativeLoader,

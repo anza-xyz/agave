@@ -412,6 +412,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     at.effective_slot
                         .cmp(&entry.effective_slot)
                         .then(at.deployment_slot.cmp(&entry.deployment_slot))
+                        .then(at.account_owner.cmp(&entry.account_owner))
                         .then(
                             // This `.then()` has no effect during normal operation.
                             // Only during the cache preparation phase this does allow entries
