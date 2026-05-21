@@ -8468,7 +8468,6 @@ dependencies = [
  "static_assertions",
  "strum",
  "strum_macros",
- "symlink",
  "tempfile",
  "thiserror 2.0.18",
  "wincode",

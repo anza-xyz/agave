@@ -293,11 +293,8 @@ pub fn load_and_process_ledger(
     snapshot_utils::purge_incomplete_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
     info!("Cleaning contents of account snapshot paths: {account_snapshot_paths:?}");
-    clean_orphaned_account_snapshot_dirs(
-        &snapshot_config.bank_snapshots_dir,
-        &account_snapshot_paths,
-    )
-    .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
+    clean_orphaned_account_snapshot_dirs(&account_snapshot_paths)
+        .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
 
     let geyser_plugin_active = arg_matches.is_present("geyser_plugin_config");
     let (accounts_update_notifier, transaction_notifier) = if geyser_plugin_active {

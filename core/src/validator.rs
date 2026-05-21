@@ -836,11 +836,8 @@ impl Validator {
 
         info!("Cleaning orphaned account snapshot directories...");
         let mut timer = Measure::start("clean_orphaned_account_snapshot_dirs");
-        clean_orphaned_account_snapshot_dirs(
-            &config.snapshot_config.bank_snapshots_dir,
-            &config.account_snapshot_paths,
-        )
-        .context("failed to clean orphaned account snapshot directories")?;
+        clean_orphaned_account_snapshot_dirs(&config.account_snapshot_paths)
+            .context("failed to clean orphaned account snapshot directories")?;
         timer.stop();
         info!("Cleaning orphaned account snapshot directories done. {timer}");
 
@@ -2900,8 +2897,16 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
 }
 
 fn cleanup_accounts_paths(config: &ValidatorConfig) {
-    for account_path in &config.account_paths {
-        move_and_async_delete_path_contents(account_path);
+    // Clean account storages only when we'll load from a snapshot archive. Fastboot loads from
+    // the existing storages in `<account_path>/run/`, and the rebuild path prunes any leftover
+    // stale storages itself.
+    let cleanup_account_paths =
+        snapshot_utils::get_highest_loadable_bank_snapshot(&config.snapshot_config).is_none()
+            || config.use_snapshot_archives_at_startup == UseSnapshotArchivesAtStartup::Always;
+    if cleanup_account_paths {
+        for account_path in &config.account_paths {
+            move_and_async_delete_path_contents(account_path);
+        }
     }
 }
 

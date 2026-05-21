@@ -76,6 +76,14 @@ impl AccountsFile {
         }
     }
 
+    /// Detach the on-disk file from this storage's lifetime; see
+    /// [`AppendVec::disable_remove_on_drop`].
+    pub fn disable_remove_on_drop(&self) {
+        match self {
+            Self::AppendVec(av) => av.disable_remove_on_drop(),
+        }
+    }
+
     /// Return the total number of bytes of the zero lamport single ref accounts in the storage.
     /// Those bytes are "dead" and can be shrunk away.
     pub(crate) fn dead_bytes_due_to_zero_lamport_single_ref(&self, count: usize) -> usize {

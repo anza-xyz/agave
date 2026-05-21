@@ -66,6 +66,7 @@ use {
 mod obsolete_accounts;
 mod status_cache;
 mod storage;
+mod storages_list;
 mod tests;
 mod types;
 mod utils;
@@ -74,6 +75,7 @@ pub(crate) use {
     obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+    storages_list::StoragesList,
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
