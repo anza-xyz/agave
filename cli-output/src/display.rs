@@ -18,7 +18,9 @@ use {
         Rewards, UiReturnDataEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
     },
     solana_transaction_status_client_types::UiTransactionError,
-    spl_memo_interface::{v1::id as spl_memo_v1_id, v3::id as spl_memo_v3_id},
+    spl_memo_interface::{
+        v1::id as spl_memo_v1_id, v3::id as spl_memo_v3_id, v4::id as spl_memo_v4_id,
+    },
     std::{collections::HashMap, fmt, io, time::Duration},
 };
 
@@ -40,7 +42,7 @@ impl Default for BuildBalanceMessageConfig {
 }
 
 fn is_memo_program(k: &Pubkey) -> bool {
-    *k == spl_memo_v1_id() || *k == spl_memo_v3_id()
+    *k == spl_memo_v1_id() || *k == spl_memo_v3_id() || *k == spl_memo_v4_id()
 }
 
 pub fn build_balance_message_with_config(

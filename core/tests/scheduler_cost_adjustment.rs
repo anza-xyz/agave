@@ -51,7 +51,7 @@ impl TestSetup {
 
     fn install_memo_program_account(&mut self) {
         let (pubkey, account) = solana_program_binaries::by_id(
-            &spl_memo_interface::v3::id(),
+            &spl_memo_interface::v4::id(),
             &self.genesis_config.rent,
         )
         .unwrap()
@@ -130,7 +130,7 @@ impl TestSetup {
         // construct a memo instruction that would consume more CU than DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
         let memo = "The quick brown fox jumped over the lazy dog. ".repeat(22) + "!";
         let memo_ix = spl_memo_interface::instruction::build_memo(
-            &spl_memo_interface::v3::id(),
+            &spl_memo_interface::v4::id(),
             memo.as_bytes(),
             &[],
         );
@@ -147,7 +147,7 @@ impl TestSetup {
         let upgrade_authority_address = payer_address;
 
         let (_, memo) = solana_program_binaries::by_id(
-            &spl_memo_interface::v3::id(),
+            &spl_memo_interface::v4::id(),
             &self.genesis_config.rent,
         )
         .unwrap()

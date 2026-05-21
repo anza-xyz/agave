@@ -36,6 +36,7 @@ static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableProgram
             ),
             (spl_memo_interface::v1::id(), ParsableProgram::SplMemo),
             (spl_memo_interface::v3::id(), ParsableProgram::SplMemo),
+            (spl_memo_interface::v4::id(), ParsableProgram::SplMemo),
             (solana_sdk_ids::bpf_loader::id(), ParsableProgram::BpfLoader),
             (
                 solana_sdk_ids::bpf_loader_upgradeable::id(),
@@ -190,6 +191,21 @@ mod test {
             ParsedInstruction {
                 program: "spl-memo".to_string(),
                 program_id: spl_memo_interface::v3::id().to_string(),
+                parsed: json!("🦖"),
+                stack_height: Some(1),
+            }
+        );
+        assert_eq!(
+            parse(
+                &spl_memo_interface::v4::id(),
+                &memo_instruction,
+                &no_keys,
+                Some(1)
+            )
+            .unwrap(),
+            ParsedInstruction {
+                program: "spl-memo".to_string(),
+                program_id: spl_memo_interface::v4::id().to_string(),
                 parsed: json!("🦖"),
                 stack_height: Some(1),
             }
