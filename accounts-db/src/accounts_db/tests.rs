@@ -603,8 +603,9 @@ fn test_flush_slots_with_reclaim_old_slots() {
 
     accounts.accounts_index.add_root(new_slot);
 
-    // Flushing this storage directly using store_accounts_flush. This is done to pass in UpsertReclaim::ReclaimOldSlots
-    accounts.store_accounts_flush(
+    // Flushing this storage directly using store_accounts_for_flush. This is done to pass in
+    // UpsertReclaim::ReclaimOldSlots
+    accounts.store_accounts_for_flush(
         (new_slot, &accounts_list[..]),
         &storage,
         UpsertReclaim::ReclaimOldSlots,

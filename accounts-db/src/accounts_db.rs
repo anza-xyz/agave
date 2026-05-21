@@ -2888,7 +2888,7 @@ impl AccountsDb {
         // mutating rooted slots; There should be no writers to them.
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
-        stats_sub.store_accounts_timing = self.store_accounts_shrink(
+        stats_sub.store_accounts_timing = self.store_accounts_for_shrink(
             storable_accounts,
             shrink_in_progress.new_storage(),
             UpdateIndexThreadSelection::PoolWithThreshold,
@@ -2897,7 +2897,7 @@ impl AccountsDb {
         rewrite_elapsed.stop();
         stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
 
-        // `store_accounts_shrink()` above may have purged accounts from some
+        // `store_accounts_for_shrink()` above may have purged accounts from some
         // other storage entries (the ones that were just overwritten by this
         // new storage entry). This means some of those stores might have caused
         // this slot to be read to `self.shrink_candidate_slots`, so delete
@@ -3692,11 +3692,11 @@ impl AccountsDb {
         // F1 flush_slot_cache()                | N/A
         //          |                           |
         //          V                           |
-        // F2 store_accounts_flush()/           | map of stores (creates new entry)
+        // F2 store_accounts_for_flush()/       | map of stores (creates new entry)
         //        write_accounts_to_storage()   |
         //          |                           |
         //          V                           |
-        // F3 store_accounts_flush()/           | index
+        // F3 store_accounts_for_flush()/       | index
         //        update_index_stored_accounts()| (replaces existing store_id, offset in caches)
         //          |                           |
         //          V                           |
@@ -3712,11 +3712,11 @@ impl AccountsDb {
         // S1 do_shrink_slot_store()            | N/A
         //          |                           |
         //          V                           |
-        // S2 store_accounts_shrink()/          | map of stores (creates new entry)
+        // S2 store_accounts_for_shrink()/      | map of stores (creates new entry)
         //        write_accounts_to_storage()   |
         //          |                           |
         //          V                           |
-        // S3 store_accounts_shrink()/          | index
+        // S3 store_accounts_for_shrink()/      | index
         //        update_index_stored_accounts()| (replaces existing store_id, offset in stores)
         //          |                           |
         //          V                           |
@@ -4755,7 +4755,7 @@ impl AccountsDb {
             );
 
             let (store_accounts_timing_inner, store_accounts_total_inner_us) =
-                measure_us!(self.store_accounts_flush(
+                measure_us!(self.store_accounts_for_flush(
                     (slot, &accounts[..]),
                     &flushed_store,
                     reclaim_method,
@@ -5500,7 +5500,7 @@ impl AccountsDb {
     /// - `UpsertReclaims` is set to `IgnoreReclaims`. If the slot in `accounts` differs from the new slot,
     ///   accounts may be removed from the account index. In such cases, the caller must ensure that alive
     ///   accounts are decremented for the older storage or that the old storage is removed entirely
-    pub fn store_accounts_shrink<'a>(
+    pub fn store_accounts_for_shrink<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
@@ -5565,7 +5565,7 @@ impl AccountsDb {
     /// - `UpsertReclaims` determines whether to reclaim old slots. If `ReclaimOldSlots` is used, all
     ///   old versions of the account are reclaimed. If `IgnoreReclaims` is used, old versions of the
     ///   account are not reclaimed and must be cleaned later.
-    fn store_accounts_flush<'a>(
+    fn store_accounts_for_flush<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
@@ -5792,7 +5792,7 @@ impl AccountsDb {
         infos
     }
 
-    /// Marks zero lamport single reference accounts in the storage during store_accounts_flush
+    /// Marks zero lamport single reference accounts in the storage during store_accounts_for_flush
     ///
     /// Returns the number of accounts marked.
     fn mark_zero_lamport_single_ref_accounts(
