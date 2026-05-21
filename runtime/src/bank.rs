@@ -586,6 +586,7 @@ impl PartialEq for Bank {
             status_cache: _,
             blockhash_queue,
             max_processing_age,
+            partitioned_rewards_stake_account_stores_per_block,
             ancestors: _,
             hash,
             parent_hash,
@@ -656,6 +657,8 @@ impl PartialEq for Bank {
         } = self;
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
             && *max_processing_age == other.max_processing_age
+            && *partitioned_rewards_stake_account_stores_per_block
+                == other.partitioned_rewards_stake_account_stores_per_block
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && parent_hash == &other.parent_hash
             && parent_slot == &other.parent_slot
@@ -810,6 +813,9 @@ pub struct Bank {
 
     /// Maximum age in slots a blockhash can be for a tx to be processed.
     max_processing_age: usize,
+
+    /// Number of stake accounts to store in each block during partitioned rewards.
+    partitioned_rewards_stake_account_stores_per_block: u64,
 
     /// The set of parents including this bank
     pub ancestors: Ancestors,
@@ -1134,11 +1140,16 @@ struct NewEpochBundle {
 
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
+        let partitioned_rewards_stake_account_stores_per_block = accounts
+            .accounts_db
+            .partitioned_epoch_rewards_config
+            .stake_account_stores_per_block;
         let mut bank = Self {
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             max_processing_age: MAX_PROCESSING_AGE,
+            partitioned_rewards_stake_account_stores_per_block,
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
             parent_hash: Hash::default(),
@@ -1381,6 +1392,8 @@ impl Bank {
             epoch,
             blockhash_queue,
             max_processing_age: parent.max_processing_age,
+            partitioned_rewards_stake_account_stores_per_block: parent
+                .partitioned_rewards_stake_account_stores_per_block,
             // TODO: clean this up, so much special-case copying...
             hashes_per_tick: parent.hashes_per_tick,
             ticks_per_slot: parent.ticks_per_slot,
@@ -2046,11 +2059,17 @@ impl Bank {
 
         let stakes_accounts_load_duration = now.elapsed();
         let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
+        let partitioned_rewards_stake_account_stores_per_block = bank_rc
+            .accounts
+            .accounts_db
+            .partitioned_epoch_rewards_config
+            .stake_account_stores_per_block;
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             max_processing_age: MAX_PROCESSING_AGE,
+            partitioned_rewards_stake_account_stores_per_block,
             ancestors,
             hash: RwLock::new(fields.hash),
             parent_hash: fields.parent_hash,

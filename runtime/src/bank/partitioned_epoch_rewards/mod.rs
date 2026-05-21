@@ -354,11 +354,7 @@ impl Bank {
 
     /// # stake accounts to store in one block during partitioned reward interval
     pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.rc
-            .accounts
-            .accounts_db
-            .partitioned_epoch_rewards_config
-            .stake_account_stores_per_block
+        self.partitioned_rewards_stake_account_stores_per_block
     }
 
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.
@@ -694,6 +690,14 @@ mod tests {
         let stake_account_stores_per_block =
             bank.partitioned_rewards_stake_account_stores_per_block();
         assert_eq!(stake_account_stores_per_block, 10);
+
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 1);
+        assert_eq!(
+            bank.partitioned_rewards_stake_account_stores_per_block(),
+            stake_account_stores_per_block
+        );
 
         let check_num_reward_distribution_blocks =
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
