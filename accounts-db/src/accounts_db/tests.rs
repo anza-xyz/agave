@@ -1145,6 +1145,88 @@ fn test_shrink_zero_lamport_single_ref_account() {
     }
 }
 
+/// Ensure that shrinking a storage...
+/// * with zero lamport single ref accounts
+/// * in a slot *older* than the latest full snapshot slot
+///
+/// Results in...
+/// * the zero lamport single ref accounts *not* in the shrunk storage
+/// * the expected number of alive bytes
+#[test]
+fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let slot = 1;
+    let dead_account = AccountSharedData::new(0, 123, &Pubkey::default());
+    let dead_pubkeys = [
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+    ];
+    let alive_account = AccountSharedData::new(11, 17, &Pubkey::default());
+    let alive_pubkey = Pubkey::new_unique();
+
+    accounts_db.store_for_tests((
+        slot,
+        [
+            (&dead_pubkeys[0], &dead_account),
+            (&dead_pubkeys[1], &dead_account),
+            (&dead_pubkeys[2], &dead_account),
+            (&alive_pubkey, &alive_account),
+        ]
+        .as_slice(),
+    ));
+    accounts_db.add_root_and_flush_write_cache(slot);
+
+    // We must set the latest full snapshot slot to `slot` or greater
+    // to ensure that ZLSR accounts are treated as dead for `shrink`.
+    accounts_db.set_latest_full_snapshot_slot(slot);
+
+    let storage = accounts_db.get_storage_for_slot(slot).unwrap();
+    accounts_db.accounts_index.scan(
+        dead_pubkeys.iter(),
+        |_pubkey, slots_refs| {
+            let (slot_list, ref_count) = slots_refs.unwrap();
+            assert_eq!(slot_list.len(), 1);
+            assert_eq!(ref_count, 1);
+
+            let (indexed_slot, acct_info) = slot_list.first().unwrap();
+            assert_eq!(*indexed_slot, slot);
+            assert!(acct_info.is_zero_lamport());
+            accounts_db.zero_lamport_single_ref_found(*indexed_slot, acct_info.offset());
+            AccountsIndexScanResult::KeepInMemory
+        },
+        None,
+        ScanFilter::All,
+    );
+
+    assert_eq!(
+        storage.num_zero_lamport_single_ref_accounts(),
+        dead_pubkeys.len(),
+    );
+
+    let alive_bytes_before_shrink = storage.alive_bytes();
+    let expected_alive_bytes_after_shrink = accounts_db.alive_bytes_after_shrink(&storage);
+    assert_ne!(expected_alive_bytes_after_shrink, 0);
+    assert!(expected_alive_bytes_after_shrink < alive_bytes_before_shrink);
+    assert_eq!(
+        expected_alive_bytes_after_shrink,
+        AppendVec::calculate_stored_size(alive_account.data().len()),
+    );
+
+    accounts_db.shrink_slot_forced(slot);
+
+    let storage_after_shrink = accounts_db.get_storage_for_slot(slot).unwrap();
+    assert_eq!(
+        storage_after_shrink.alive_bytes(),
+        expected_alive_bytes_after_shrink,
+    );
+    assert_eq!(storage_after_shrink.count(), 1);
+    assert!(accounts_db.contains(&alive_pubkey));
+    for pubkey in &dead_pubkeys {
+        assert!(!accounts_db.contains(pubkey));
+    }
+}
+
 #[test]
 fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     agave_logger::setup();
@@ -2334,6 +2416,141 @@ fn test_select_candidates_by_total_usage_all_clean() {
     assert!(selected_candidates.contains(&store1_slot));
     assert!(selected_candidates.contains(&store2_slot));
     assert_eq!(0, next_candidates.len());
+}
+
+fn create_store_for_shrink_candidate_tests(
+    accounts_db: &AccountsDb,
+    slot: Slot,
+    file_size: u64,
+    alive_bytes: usize,
+    num_zero_lamport_single_ref_accounts: usize,
+) -> Arc<AccountStorageEntry> {
+    let store = Arc::new(AccountStorageEntry::new(
+        Path::new(""),
+        slot,
+        slot as AccountsFileId,
+        file_size,
+        AccountsFileProvider::AppendVec,
+    ));
+    accounts_db.storage.insert(Arc::clone(&store));
+    store.add_accounts(num_zero_lamport_single_ref_accounts.max(1), alive_bytes);
+    for offset in 0..num_zero_lamport_single_ref_accounts {
+        store.insert_zero_lamport_single_ref_account_offset(offset);
+    }
+    store
+}
+
+/// Ensure selecting shrink candidates respects zero-lamport single-ref accounts,
+/// when a latest full snapshot is *not* set.
+#[test]
+fn test_select_candidates_by_total_usage_zlsr_no_latest_full_snapshot() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let mut shrink_candidates = ShrinkCandidates::default();
+
+    let num_zero_lamport_single_ref_accounts = 4;
+    let file_size = AppendVec::calculate_stored_size(0) * num_zero_lamport_single_ref_accounts;
+
+    let slot_with_zlsr = 11;
+    let store_with_zlsr = create_store_for_shrink_candidate_tests(
+        &accounts_db,
+        slot_with_zlsr,
+        file_size as u64,
+        file_size,
+        num_zero_lamport_single_ref_accounts,
+    );
+    shrink_candidates.insert(slot_with_zlsr);
+
+    let slot_no_zlsr = 22;
+    let store_no_zlsr = create_store_for_shrink_candidate_tests(
+        &accounts_db,
+        slot_no_zlsr,
+        file_size as u64,
+        file_size * 9 / 10,
+        0,
+    );
+    shrink_candidates.insert(slot_no_zlsr);
+
+    // With no latest full snapshot slot, shrink can purge zero-lamport
+    // single-ref accounts.
+    assert!(accounts_db.latest_full_snapshot_slot().is_none());
+
+    // Bytes from ZLSR accounts are alive, but would be dead after shrink.
+    assert_eq!(store_with_zlsr.alive_bytes(), file_size);
+    assert_eq!(accounts_db.alive_bytes_after_shrink(&store_with_zlsr), 0);
+    assert!(accounts_db.is_candidate_for_shrink(&store_with_zlsr));
+    assert!(accounts_db.is_shrinking_productive(&store_with_zlsr));
+
+    // Stores without ZLSR accounts use the raw alive bytes.
+    assert_eq!(
+        accounts_db.alive_bytes_after_shrink(&store_no_zlsr),
+        store_no_zlsr.alive_bytes(),
+    );
+
+    let (selected_candidates, next_candidates) = accounts_db
+        .select_candidates_by_total_usage(&shrink_candidates, DEFAULT_ACCOUNTS_SHRINK_RATIO);
+
+    assert_eq!(1, selected_candidates.len());
+    assert!(selected_candidates.contains_key(&slot_with_zlsr));
+
+    // slot 22 is above the shrink ratio, so ensure it is not a candidate
+    assert!(next_candidates.is_empty());
+}
+
+/// Ensure selecting shrink candidates respects zero-lamport single-ref accounts,
+/// when a latest full snapshot *is* set.
+#[test]
+fn test_select_candidates_by_total_usage_zlsr_latest_full_snapshot() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let mut candidates = ShrinkCandidates::default();
+
+    let num_zero_lamport_single_ref_accounts = 4;
+    let file_size = AppendVec::calculate_stored_size(0) * num_zero_lamport_single_ref_accounts;
+
+    let slot_with_zlsr = 11;
+    let store_with_zlsr = create_store_for_shrink_candidate_tests(
+        &accounts_db,
+        slot_with_zlsr,
+        file_size as u64,
+        file_size,
+        num_zero_lamport_single_ref_accounts,
+    );
+    candidates.insert(slot_with_zlsr);
+
+    let slot_no_zlsr = 22;
+    let store_no_zlsr = create_store_for_shrink_candidate_tests(
+        &accounts_db,
+        slot_no_zlsr,
+        file_size as u64,
+        file_size * 9 / 10,
+        0,
+    );
+    candidates.insert(slot_no_zlsr);
+
+    // Set the latest full snapshot slot *older* than the
+    // store with zero lamport single ref accounts.
+    // This ensures shrink will see ZLSR accounts as *alive*.
+    accounts_db.set_latest_full_snapshot_slot(slot_with_zlsr - 1);
+
+    // Bytes from ZLSR accounts are alive, and will stay alive after shrink.
+    assert_eq!(
+        accounts_db.alive_bytes_after_shrink(&store_with_zlsr),
+        store_with_zlsr.alive_bytes(),
+    );
+    assert!(!accounts_db.is_candidate_for_shrink(&store_with_zlsr));
+    assert!(!accounts_db.is_shrinking_productive(&store_with_zlsr));
+
+    // Stores without ZLSR accounts use the raw alive bytes.
+    assert_eq!(
+        accounts_db.alive_bytes_after_shrink(&store_no_zlsr),
+        store_no_zlsr.alive_bytes(),
+    );
+
+    let (selected_candidates, next_candidates) =
+        accounts_db.select_candidates_by_total_usage(&candidates, DEFAULT_ACCOUNTS_SHRINK_RATIO);
+
+    // both slots are above the shrink ratio, so neither should be shrink candidates
+    assert!(selected_candidates.is_empty());
+    assert!(next_candidates.is_empty());
 }
 
 #[test]
@@ -4246,6 +4463,7 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
 #[test]
 fn test_shrink_productive() {
     agave_logger::setup();
+    let accounts = AccountsDb::new_single_for_tests();
     let path = Path::new("");
     let file_size = 100;
     let slot = 11;
@@ -4258,7 +4476,7 @@ fn test_shrink_productive() {
         AccountsFileProvider::AppendVec,
     ));
     store.add_account(file_size as usize);
-    assert!(!AccountsDb::is_shrinking_productive(&store));
+    assert!(!accounts.is_shrinking_productive(&store));
 
     let store = Arc::new(AccountStorageEntry::new(
         path,
@@ -4270,10 +4488,10 @@ fn test_shrink_productive() {
     store.add_account(file_size as usize / 2);
     store.add_account(file_size as usize / 4);
     store.remove_accounts(file_size as usize / 4, 1);
-    assert!(AccountsDb::is_shrinking_productive(&store));
+    assert!(accounts.is_shrinking_productive(&store));
 
     store.add_account(file_size as usize / 2);
-    assert!(!AccountsDb::is_shrinking_productive(&store));
+    assert!(!accounts.is_shrinking_productive(&store));
 }
 
 #[test]

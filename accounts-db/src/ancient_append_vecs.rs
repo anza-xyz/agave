@@ -61,7 +61,7 @@ struct SlotInfo {
     slot: Slot,
     /// total capacity of storage
     capacity: u64,
-    /// # alive bytes in storage
+    /// # alive bytes in storage *after* shrinking
     alive_bytes: u64,
     /// true if this should be shrunk due to ratio
     should_shrink: bool,
@@ -95,14 +95,14 @@ impl AncientSlotInfos {
         &mut self,
         slot: Slot,
         storage: Arc<AccountStorageEntry>,
+        alive_bytes_after_shrink: u64,
         can_randomly_shrink: bool,
         ideal_size: NonZeroU64,
         is_high_slot: bool,
         is_candidate_for_shrink: bool,
     ) -> bool {
         let mut was_randomly_shrunk = false;
-        let alive_bytes = storage.alive_bytes() as u64;
-        if alive_bytes > 0 {
+        if alive_bytes_after_shrink > 0 {
             let capacity = storage.accounts.capacity();
             let should_shrink = if capacity > 0 {
                 if is_candidate_for_shrink {
@@ -123,11 +123,11 @@ impl AncientSlotInfos {
             if should_shrink {
                 // alive ratio is too low, so prioritize combining this slot with others
                 // to reduce disk space used
-                self.total_alive_bytes_shrink += alive_bytes;
+                self.total_alive_bytes_shrink += alive_bytes_after_shrink;
                 self.shrink_indexes.push(self.all_infos.len());
             } else {
                 let already_ideal_size = u64::from(ideal_size) * 80 / 100;
-                if alive_bytes > already_ideal_size {
+                if alive_bytes_after_shrink > already_ideal_size {
                     // do not include this append vec at all. It is already ideal size and not a candidate for shrink.
                     return was_randomly_shrunk;
                 }
@@ -136,11 +136,11 @@ impl AncientSlotInfos {
                 slot,
                 capacity,
                 storage,
-                alive_bytes,
+                alive_bytes: alive_bytes_after_shrink,
                 should_shrink,
                 is_high_slot,
             });
-            self.total_alive_bytes += alive_bytes;
+            self.total_alive_bytes += alive_bytes_after_shrink;
         }
         was_randomly_shrunk
     }
@@ -602,9 +602,11 @@ impl AccountsDb {
         for slot in &slots {
             if let Some(storage) = self.storage.get_slot_storage_entry(*slot) {
                 let is_candidate_for_shrink = self.is_candidate_for_shrink(&storage);
+                let alive_bytes_after_shrink = self.alive_bytes_after_shrink(&storage) as u64;
                 if infos.add(
                     *slot,
                     storage,
+                    alive_bytes_after_shrink,
                     tuning.can_randomly_shrink,
                     tuning.ideal_storage_size,
                     is_high_slot(*slot),
@@ -2432,6 +2434,7 @@ mod tests {
                         infos.add(
                             slot1,
                             Arc::clone(&storage),
+                            db.alive_bytes_after_shrink(&storage) as u64,
                             can_randomly_shrink,
                             NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
                             high_slot,
@@ -2487,6 +2490,7 @@ mod tests {
                 infos.add(
                     slot1,
                     Arc::clone(&storage),
+                    db.alive_bytes_after_shrink(&storage) as u64,
                     can_randomly_shrink,
                     NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
                     high_slot,
