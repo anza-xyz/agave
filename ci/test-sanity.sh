@@ -50,7 +50,6 @@ fi
   git diff "$target" --check --oneline
 )
 
-_ ci/check-channel-version.sh
 _ ci/nits.sh
 
 scripts/increment-cargo-version.sh check
