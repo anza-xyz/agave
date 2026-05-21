@@ -40,8 +40,8 @@ use {
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
             ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
-            StoreAccountsFrozenStats, StoreAccountsTiming, StoreAccountsUnfrozenStats,
-            WriteAccountsToCacheStats,
+            StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsTiming,
+            StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
         accounts_file::{AccountsFile, AccountsFileProvider},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
@@ -921,8 +921,11 @@ pub struct AccountsDb {
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
 
-    /// Stats from storing accounts frozen
-    store_accounts_frozen_stats: StoreAccountsFrozenStats,
+    /// Stats from storing accounts for shrink
+    store_accounts_for_shrink_stats: StoreAccountsForShrinkStats,
+
+    /// Stats from storing accounts for flush
+    store_accounts_for_flush_stats: StoreAccountsForFlushStats,
 
     clean_accounts_stats: CleanAccountsStats,
 
@@ -1143,7 +1146,8 @@ impl AccountsDb {
             stats: AccountsStats::default(),
             load_account_stats: LoadAccountsStats::default(),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
-            store_accounts_frozen_stats: StoreAccountsFrozenStats::default(),
+            store_accounts_for_shrink_stats: StoreAccountsForShrinkStats::default(),
+            store_accounts_for_flush_stats: StoreAccountsForFlushStats::default(),
             #[cfg(test)]
             load_delay: u64::default(),
             #[cfg(test)]
@@ -5508,7 +5512,7 @@ impl AccountsDb {
     ) -> StoreAccountsTiming {
         let slot = accounts.target_slot();
         let num_accounts_stored = accounts.len();
-        let stats = &self.store_accounts_frozen_stats;
+        let stats = &self.store_accounts_for_shrink_stats;
 
         debug_assert!(self.accounts_index.is_alive_root(slot));
 
@@ -5574,7 +5578,7 @@ impl AccountsDb {
     ) -> StoreAccountsTiming {
         let slot = accounts.target_slot();
         let num_accounts_stored = accounts.len();
-        let stats = &self.store_accounts_frozen_stats;
+        let stats = &self.store_accounts_for_flush_stats;
 
         debug_assert!(self.accounts_index.is_alive_root(slot));
 
