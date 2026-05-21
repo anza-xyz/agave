@@ -4,12 +4,10 @@ extern crate test;
 
 use {
     rand::{Rng, rng},
-    solana_account::AccountSharedData,
     solana_accounts_db::{
         account_info::AccountInfo,
         accounts_index::{
-            ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, AccountSecondaryIndexes, AccountsIndex,
-            ReclaimsSlotList, UpsertReclaim,
+            ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, AccountsIndex, ReclaimsSlotList, UpsertReclaim,
         },
     },
     std::sync::Arc,
@@ -40,8 +38,6 @@ fn bench_accounts_index(bencher: &mut Bencher) {
                 f,
                 f,
                 pubkey,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
                 AccountInfo::default(),
                 &mut reclaims,
                 UpsertReclaim::PopulateReclaims,
@@ -58,8 +54,6 @@ fn bench_accounts_index(bencher: &mut Bencher) {
                 fork,
                 fork,
                 &pubkeys[pubkey],
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
                 AccountInfo::default(),
                 &mut reclaims,
                 UpsertReclaim::PopulateReclaims,

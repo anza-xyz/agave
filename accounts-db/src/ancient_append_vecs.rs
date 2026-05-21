@@ -3768,7 +3768,6 @@ mod tests {
     #[test]
     fn test_shrink_ancient_expected_unref() {
         let db = AccountsDb::new_single_for_tests();
-        let empty_account = AccountSharedData::default();
         for count in 0..3 {
             let pubkeys_to_unref = (0..count)
                 .map(|_| solana_pubkey::new_rand())
@@ -3784,8 +3783,6 @@ mod tests {
                         slot,
                         slot,
                         k,
-                        &empty_account,
-                        &crate::accounts_index::AccountSecondaryIndexes::default(),
                         AccountInfo::default(),
                         &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
