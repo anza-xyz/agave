@@ -121,7 +121,7 @@ impl StoreAccountsForShrinkStats {
         }
 
         datapoint_info!(
-            "accounts_db_store_accounts_shrink",
+            "accounts_db_store_accounts_for_shrink",
             (
                 "flush_read_cache_us",
                 self.flush_read_cache_us.swap(0, Ordering::Relaxed),
