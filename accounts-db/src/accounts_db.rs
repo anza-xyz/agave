@@ -962,6 +962,16 @@ pub struct AccountsDb {
     /// for incremental snapshot support.
     zero_lamport_accounts_to_purge_after_full_snapshot: DashSet<(Slot, Pubkey)>,
 
+    /// Slots whose storage has zero-lamport single-ref accounts that need
+    /// to be cleaned up. Populated by the flush, shrink, and startup paths
+    /// whenever an offset is inserted into a storage's
+    /// `zero_lamport_single_ref_offsets`. Clean drains each slot ≤
+    /// `latest_full_snapshot_slot`, draining the storage's offsets in the
+    /// process. Safe to drain inline because only shrink and clean can add
+    /// ZLSRs to older storages, and the iteration assertion in
+    /// `AccountStorage::iter` rules out concurrent shrink.
+    slots_with_zero_lamport_single_refs: DashSet<Slot>,
+
     /// GeyserPlugin accounts update notifier
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 
@@ -1151,6 +1161,7 @@ impl AccountsDb {
             is_bank_drop_callback_enabled: AtomicBool::default(),
             dirty_stores: DashMap::default(),
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
+            slots_with_zero_lamport_single_refs: DashSet::default(),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
@@ -1619,6 +1630,18 @@ impl AccountsDb {
                     }
                     !is_candidate_for_clean
                 });
+
+            // Drain every storage whose slot has been captured by the
+            // latest full snapshot, marking its zero-lamport single-ref
+            // records obsolete and removing them from the index. This
+            // catches "stranded" zero-lamport accounts that the regular
+            // clean flow drops at the store-counts gate, AND ZLSRs that
+            // shrink discovered via `zero_lamport_single_ref_found` but
+            // haven't yet been swept up by a shrink rewrite.
+            self.drain_zero_lamport_single_refs_for_snapshot(
+                max_slot_inclusive,
+                latest_full_snapshot_slot,
+            );
         }
 
         (candidates, min_dirty_slot)
@@ -2315,6 +2338,102 @@ impl AccountsDb {
         }
     }
 
+    /// For every slot in `slots_with_zero_lamport_single_refs` whose
+    /// storage has been captured by the latest full snapshot, drain that
+    /// storage's `zero_lamport_single_ref_offsets` and reclaim them
+    /// through the standard reclaim pipeline. `handle_reclaims` with
+    /// `MarkAccountsObsolete::Yes` then does the obsolete-marking,
+    /// alive_bytes decrement, and (if the storage becomes empty) drops
+    /// the storage.
+    ///
+    /// Safe to drain inline: only shrink and clean add ZLSRs to older
+    /// storages, and the storage iteration assertion in `AccountStorage::iter`
+    /// rules out concurrent shrink.
+    fn drain_zero_lamport_single_refs_for_snapshot(
+        &self,
+        max_slot_inclusive: Slot,
+        latest_full_snapshot_slot: Slot,
+    ) {
+        self.slots_with_zero_lamport_single_refs
+            .retain(|slot| {
+                let eligible =
+                    max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
+                if eligible {
+                    self.process_zero_lamport_single_refs_for_slot(
+                        *slot,
+                        latest_full_snapshot_slot,
+                    );
+                }
+                !eligible
+            });
+    }
+
+    /// Drain the storage at `slot`'s `zero_lamport_single_ref_offsets`,
+    /// read each pubkey from storage, then unref + purge the pubkeys from
+    /// the accounts index and feed the reclaims through `handle_reclaims`
+    /// so the standard pipeline marks obsolete, decrements `alive_bytes`,
+    /// and drops the storage if it becomes empty.
+    fn process_zero_lamport_single_refs_for_slot(&self, slot: Slot, obsolete_at: Slot) {
+        let Some(store) = self.storage.get_slot_storage_entry(slot) else {
+            return;
+        };
+        let offsets = store.drain_zero_lamport_single_ref_offsets();
+        if offsets.is_empty() {
+            return;
+        }
+
+        // Offsets that already appear in `obsolete_accounts` were reclaimed by
+        // a prior pass (e.g., the flush-time reclaim that displaced an older
+        // entry). Their index entries are gone and their ref-counts have
+        // already been decremented, so we must skip them here to avoid double
+        // unref'ing.
+        let already_obsolete: IntSet<Offset> = store
+            .obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(None)
+            .map(|(offset, _)| offset)
+            .collect();
+
+        let pubkeys: Vec<Pubkey> = offsets
+            .iter()
+            .filter(|offset| !already_obsolete.contains(offset))
+            .map(|offset| {
+                store
+                    .accounts
+                    .get_stored_account_without_data_callback(*offset, |account| {
+                        *account.pubkey()
+                    })
+                    .expect("zero-lamport single-ref offset must exist in storage")
+            })
+            .collect();
+        if pubkeys.is_empty() {
+            return;
+        }
+
+        // Unref before purge to avoid racing with a concurrent revive (same
+        // pattern as remove_zero_lamport_single_ref_accounts_after_shrink).
+        self.accounts_index.scan(
+            pubkeys.iter(),
+            |_pk, _r| AccountsIndexScanResult::Unref,
+            Some(AccountsIndexScanResult::UnrefLog0),
+            ScanFilter::All,
+        );
+
+        let pubkey_slot_pairs: Vec<_> = pubkeys.iter().map(|pk| (*pk, slot)).collect();
+        let (reclaims, _) = self.purge_keys_exact(pubkey_slot_pairs);
+        if reclaims.is_empty() {
+            return;
+        }
+
+        let purge_stats = PurgeStats::default();
+        self.handle_reclaims(
+            reclaims.iter(),
+            Some(slot),
+            &HashSet::default(),
+            &purge_stats,
+            MarkAccountsObsolete::Yes(obsolete_at),
+        );
+    }
+
     // Must be kept private!, does sensitive cleanup that should only be called from
     // supported pipelines in AccountsDb
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
@@ -2779,6 +2898,8 @@ impl AccountsDb {
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
             if store.insert_zero_lamport_single_ref_account_offset(offset) {
+                // Track this slot for the clean-after-snapshot drain.
+                self.slots_with_zero_lamport_single_refs.insert(slot);
                 // this wasn't previously marked as zero lamport single ref
                 self.shrink_stats
                     .num_zero_lamport_single_ref_accounts_found
@@ -5786,15 +5907,20 @@ impl AccountsDb {
                 }
             }
 
-            // If any zero lamport accounts were marked, the storage may be valid for shrinking
-            if num_marked > 0
-                && self.is_candidate_for_shrink(storage)
-                && Self::is_shrinking_productive(storage)
-            {
-                self.shrink_candidate_slots
-                    .lock()
-                    .unwrap()
-                    .insert(storage.slot);
+            if num_marked > 0 {
+                // Track this slot for the clean-after-snapshot drain.
+                self.slots_with_zero_lamport_single_refs.insert(storage.slot);
+
+                // If any zero lamport accounts were marked, the storage may
+                // be valid for shrinking.
+                if self.is_candidate_for_shrink(storage)
+                    && Self::is_shrinking_productive(storage)
+                {
+                    self.shrink_candidate_slots
+                        .lock()
+                        .unwrap()
+                        .insert(storage.slot);
+                }
             }
         }
 
@@ -6077,7 +6203,12 @@ impl AccountsDb {
         // Add all zero lamport accounts as zero lamport single refs to avoid having to revisit
         // them later. This is safe as all zero lamport accounts will be single ref or obsolete
         // by the end of index generation
-        storage.batch_insert_zero_lamport_single_ref_account_offsets(zero_lamport_offsets);
+        let num_inserted_zlsr = storage
+            .batch_insert_zero_lamport_single_ref_account_offsets(zero_lamport_offsets);
+        if num_inserted_zlsr > 0 {
+            // Track this slot for the clean-after-snapshot drain.
+            self.slots_with_zero_lamport_single_refs.insert(slot);
+        }
 
         accum.num_accounts += insert_info.count as u64;
         accum.insert_time_us += insert_time_us;

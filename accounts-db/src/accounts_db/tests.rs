@@ -1374,6 +1374,215 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
 }
 
 #[test]
+fn test_stranded_zero_lamport_marked_obsolete_when_storage_has_other_accounts() {
+    // The "stranded" case: a zero-lamport account lives in a storage that
+    // ALSO contains other live (non-candidate) accounts, so the regular
+    // clean filter drops the candidate at Gate 1 (`store_count != 0`)
+    // without purging it. Our deferral hook in that branch should still
+    // record the (slot, pubkey) so the next clean after a full snapshot
+    // marks the on-disk record obsolete.
+    agave_logger::setup();
+
+    let accounts = AccountsDb::new_single_for_tests();
+    let pubkey = solana_pubkey::new_rand();
+    // A second pubkey kept live at slot 1 so clean's Gate 1 sees
+    // store_count > 0 for slot 1 and drops `pubkey` as a candidate.
+    let keepalive = solana_pubkey::new_rand();
+    let some_account = AccountSharedData::new(123, 0, AccountSharedData::default().owner());
+    let keepalive_account =
+        AccountSharedData::new(456, 0, AccountSharedData::default().owner());
+    let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+
+    accounts.set_latest_full_snapshot_slot(0);
+
+    // Slot 0: `pubkey` with positive lamports.
+    accounts.store_for_tests((0, [(&pubkey, &some_account)].as_slice()));
+    accounts.add_root_and_flush_write_cache(0);
+
+    // Slot 1: `pubkey` goes to zero, plus a separate `keepalive` pubkey
+    // so the storage at slot 1 stays alive after clean.
+    accounts.store_for_tests((
+        1,
+        [(&pubkey, &zero_account), (&keepalive, &keepalive_account)].as_slice(),
+    ));
+    accounts.add_root_and_flush_write_cache(1);
+
+    // Capture the zero-lamport offset before any clean runs.
+    let zero_offset = accounts
+        .accounts_index
+        .get_and_then(&pubkey, |entry| {
+            let slot_list = entry.unwrap().slot_list_read_lock();
+            let info = slot_list
+                .iter()
+                .find(|(s, _)| *s == 1)
+                .map(|(_, info)| *info)
+                .expect("slot 1 entry present");
+            (false, info.offset())
+        });
+
+    // Sanity: storage at slot 1 has both pubkeys and no obsolete entries yet.
+    let storage_1 = accounts
+        .storage
+        .get_slot_storage_entry(1)
+        .expect("slot 1 storage exists");
+    assert_eq!(storage_1.count(), 2);
+    assert!(
+        storage_1
+            .obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(None)
+            .next()
+            .is_none(),
+    );
+    drop(storage_1);
+
+    // First clean: snapshot is behind slot 1, so the cleanup is deferred.
+    // Slot 1 should appear in `slots_with_zero_lamport_single_refs`
+    // (populated when the flush wrote the zero-lamport record).
+    accounts.clean_accounts(Some(1), false);
+    assert!(
+        accounts
+            .slots_with_zero_lamport_single_refs
+            .contains(&1),
+        "slot 1 should be tracked for the post-snapshot drain",
+    );
+    // The pubkey is still in the index and the storage is still around.
+    assert!(accounts.accounts_index.contains(&pubkey));
+    assert!(accounts.accounts_index.contains(&keepalive));
+    assert!(accounts.storage.get_slot_storage_entry(1).is_some());
+
+    // Advance the full snapshot slot and clean again. The drain processes
+    // the storage's zero-lamport single-ref offsets in place: mark obsolete
+    // + decrement counters + remove from index.
+    accounts.set_latest_full_snapshot_slot(1);
+    accounts.clean_accounts(Some(1), false);
+
+    let storage_1 = accounts
+        .storage
+        .get_slot_storage_entry(1)
+        .expect("storage 1 must still exist (keepalive holds it)");
+    let obsolete: Vec<_> = storage_1
+        .obsolete_accounts_read_lock()
+        .filter_obsolete_accounts(None)
+        .collect();
+    assert!(
+        obsolete.iter().any(|(offset, _)| *offset == zero_offset),
+        "obsolete_accounts should contain the zero-lamport offset {zero_offset}, got: \
+         {obsolete:?}",
+    );
+
+    // The full stranded cleanup also removes the pubkey from the index and
+    // decrements storage counters by one zero-lamport record.
+    assert!(
+        !accounts.accounts_index.contains(&pubkey),
+        "stranded zero-lamport pubkey should be removed from the index",
+    );
+    let header_size = storage_1.accounts.calculate_stored_size(0);
+    assert_eq!(
+        storage_1.count(),
+        1,
+        "storage count should drop to 1 (keepalive remains)",
+    );
+    assert!(
+        storage_1.alive_bytes() < (header_size * 2 + 1024),
+        "storage alive_bytes should reflect the removal: {}",
+        storage_1.alive_bytes(),
+    );
+
+    // The keepalive pubkey is still readable.
+    assert!(accounts.accounts_index.contains(&keepalive));
+
+    // Run clean once more to verify we don't re-defer or duplicate the
+    // obsolete entry. Once the index entry is gone, the candidate cannot
+    // re-enter the filter, and the stranded set should not be repopulated.
+    let obsolete_count_before = obsolete.len();
+    drop(storage_1);
+    accounts.clean_accounts(Some(1), false);
+    let storage_1 = accounts
+        .storage
+        .get_slot_storage_entry(1)
+        .expect("storage 1 still exists");
+    let obsolete_after: Vec<_> = storage_1
+        .obsolete_accounts_read_lock()
+        .filter_obsolete_accounts(None)
+        .collect();
+    assert_eq!(
+        obsolete_after.len(),
+        obsolete_count_before,
+        "obsolete_accounts should not grow on repeated clean cycles, got: {obsolete_after:?}",
+    );
+    assert!(
+        !accounts.slots_with_zero_lamport_single_refs.contains(&1),
+        "slot 1 should have been drained from the ZLSR tracker",
+    );
+}
+
+#[test]
+fn test_stranded_zero_lamport_index_state_after_shrink() {
+    // Reproduces the indexing concern: after the helper marks a stranded
+    // zero-lamport offset obsolete, the index entry STAYS (pubkey still
+    // points to (slot Y, offset O)). If shrink later runs on storage Y,
+    // the obsolete-filter excludes our offset from the rewrite, so the
+    // new storage doesn't carry it forward. After shrink, the index entry
+    // still references the OLD store_id, which has been dropped. Reads
+    // would then fail to find the storage.
+    //
+    // This test verifies that loading the pubkey AFTER such a shrink
+    // still returns the expected zero-lamport (i.e. "doesn't exist")
+    // value, NOT a panic or a stale-storage error.
+    agave_logger::setup();
+
+    let accounts = AccountsDb::new_single_for_tests();
+    let pubkey = solana_pubkey::new_rand();
+    let keepalive = solana_pubkey::new_rand();
+    let some_account = AccountSharedData::new(123, 0, AccountSharedData::default().owner());
+    let keepalive_account =
+        AccountSharedData::new(456, 0, AccountSharedData::default().owner());
+    let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+
+    accounts.set_latest_full_snapshot_slot(0);
+
+    accounts.store_for_tests((0, [(&pubkey, &some_account)].as_slice()));
+    accounts.add_root_and_flush_write_cache(0);
+
+    accounts.store_for_tests((
+        1,
+        [(&pubkey, &zero_account), (&keepalive, &keepalive_account)].as_slice(),
+    ));
+    accounts.add_root_and_flush_write_cache(1);
+
+    // Defer the stranded entry, then promote → helper marks obsolete.
+    accounts.clean_accounts(Some(1), false);
+    accounts.set_latest_full_snapshot_slot(1);
+    accounts.clean_accounts(Some(1), false);
+
+    // The on-disk record at slot 1 is marked obsolete but the index
+    // entry for `pubkey` still points to slot 1. Now run shrink on that
+    // storage — the obsolete-filter will exclude our record, and the
+    // keepalive moves to a new storage with a new store_id.
+    accounts.shrink_slot_forced(1);
+
+    // Read the pubkey. The index says it's at slot 1; the new storage
+    // at slot 1 has a different store_id. Does the read path handle
+    // this gracefully?
+    let result = accounts.load_without_fixed_root(&Ancestors::default(), &pubkey);
+    eprintln!("load_without_fixed_root for stranded pubkey after shrink: {result:?}");
+    // Expectation if indexing is correct: None (or a zero-lamport that
+    // gets treated as None).
+    assert!(
+        result.is_none() || result.as_ref().is_some_and(|(a, _)| a.lamports() == 0),
+        "expected None or zero-lamport, got {result:?}",
+    );
+
+    // Keepalive should still be reachable.
+    let keepalive_result =
+        accounts.load_without_fixed_root(&Ancestors::default(), &keepalive);
+    assert!(
+        keepalive_result.is_some_and(|(a, _)| a.lamports() == 456),
+        "keepalive must still be loadable after shrink",
+    );
+}
+
+#[test]
 fn test_clean_max_slot_zero_lamport_account() {
     agave_logger::setup();
 
