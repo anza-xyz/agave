@@ -2,7 +2,9 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loading_task::LoadingTaskWaiter,
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
+        program_cache_entry::{
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType, retention_score,
+        },
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
@@ -188,6 +190,8 @@ impl EpochBoundaryPreparation {
 pub struct ProgramToLoad<'a> {
     /// The program address
     pub program_id: &'a Pubkey,
+    /// The program loader
+    pub loader: ProgramCacheEntryOwner,
     /// Potentially filter out / ignore some entries during the start up / catch up phase
     pub match_criteria: ProgramCacheMatchCriteria,
     /// When the program account was last written to (might be after the deployment slot)
@@ -1830,6 +1834,7 @@ pub(crate) mod tests {
                     })
                     .map(|(_program_id, entry)| ProgramToLoad {
                         program_id: key,
+                        loader: entry.account_owner,
                         match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                         last_modification_slot: entry.deployment_slot,
                     })
@@ -2252,6 +2257,7 @@ pub(crate) mod tests {
         let program1 = Pubkey::new_unique();
         let mut missing = vec![ProgramToLoad {
             program_id: &program1,
+            loader: ProgramCacheEntryOwner::LoaderV3,
             match_criteria: ProgramCacheMatchCriteria::NoCriteria,
             last_modification_slot: 0,
         }];
