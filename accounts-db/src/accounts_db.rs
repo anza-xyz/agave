@@ -821,6 +821,8 @@ struct CleanKeyTimings {
     delta_key_count: u64,
     dirty_pubkeys_count: u64,
     oldest_dirty_slot: Slot,
+    zero_lamport_single_ref_slots_added_to_shrink_count: u64,
+    zero_lamport_sweep_us: u64,
 }
 
 pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
@@ -989,6 +991,10 @@ pub struct AccountsDb {
     /// Note, this is None if we're told to *not* take snapshots
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
 
+    /// The full snapshot slot we last swept for zero-lamport-single-ref shrink
+    /// eligibility.
+    last_swept_full_snapshot_slot: SeqLock<Option<Slot>>,
+
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -1154,6 +1160,7 @@ impl AccountsDb {
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
+            last_swept_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
         };
 
@@ -1607,8 +1614,9 @@ impl AccountsDb {
              be empty"
         );
 
-        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be retained
-        // for incremental snapshots. Once a snapshot occurs, drain the list
+        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
+        // retained for incremental snapshots. Once a snapshot occurs, drain the list and look for
+        // newly shrinkable storages.
         if self
             .latest_full_snapshot_slot_advanced_since_clean
             .swap(false, Ordering::Acquire)
@@ -1623,10 +1631,58 @@ impl AccountsDb {
                         }
                         !is_candidate_for_clean
                     });
+
+                if let Some(prev) = self.last_swept_full_snapshot_slot.read() {
+                    let (added_to_shrink_count, sweep_us) =
+                        measure_us!(self.check_shrink_eligibility_after_snapshot(
+                            prev,
+                            latest_full_snapshot_slot
+                        ));
+                    timings.zero_lamport_single_ref_slots_added_to_shrink_count =
+                        added_to_shrink_count;
+                    timings.zero_lamport_sweep_us = sweep_us;
+                } else {
+                    // First snapshot we've observed (this will be the snapshot set on boot). Initialize
+                    // the last swept full snapshot slot to this snapshot since we know all zero-lamport
+                    // single ref accounts were checked during index generation
+                    *self.last_swept_full_snapshot_slot.lock_write() =
+                        Some(latest_full_snapshot_slot);
+                }
             }
         }
 
         (candidates, min_dirty_slot)
+    }
+
+    /// Loop through slots in `(prev_swept_exclusive, latest_full_snapshot_slot]` and check each
+    /// storage to determine if it is eligible for shrink, since zero-lamport single-ref accounts
+    /// become shrinkable after a full snapshot advances past their slot. Advances the
+    /// `last_swept_full_snapshot_slot` watermark to `latest_full_snapshot_slot` on completion.
+    fn check_shrink_eligibility_after_snapshot(
+        &self,
+        prev_swept_exclusive: Slot,
+        latest_full_snapshot_slot: Slot,
+    ) -> u64 {
+        let start = prev_swept_exclusive.saturating_add(1);
+
+        let mut added_to_shrink_count = 0;
+        // Held for the full scan. Safe because the only paths that take this lock in production
+        // validator code run in earlier/later phases of the same AccountsBackgroundService
+        // iteration, never concurrently with clean_accounts.
+        let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
+        for slot in start..=latest_full_snapshot_slot {
+            if let Some(store) = self.storage.get_slot_storage_entry(slot)
+                && self.is_shrinking_productive(&store)
+                && self.is_candidate_for_shrink(&store)
+            {
+                shrink_candidates.insert(slot);
+                added_to_shrink_count += 1;
+            }
+        }
+        drop(shrink_candidates);
+
+        *self.last_swept_full_snapshot_slot.lock_write() = Some(latest_full_snapshot_slot);
+        added_to_shrink_count
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -2072,6 +2128,12 @@ impl AccountsDb {
             ("delta_insert_us", key_timings.delta_insert_us, i64),
             ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
+            (
+                "zero_lamport_single_ref_slots_added_to_shrink",
+                key_timings.zero_lamport_single_ref_slots_added_to_shrink_count,
+                i64
+            ),
+            ("zero_lamport_sweep_us", key_timings.zero_lamport_sweep_us, i64),
             ("useful_keys", useful_accum.load(Ordering::Relaxed), i64),
             ("total_keys_count", num_candidates, i64),
             ("retained_keys_count", retained_keys_count, i64),

@@ -3601,6 +3601,71 @@ define_accounts_db_test!(
     }
 );
 
+/// When the full snapshot advances past a slot that still holds zero-lamport single-ref
+/// accounts, the next clean's range sweep must re-queue that slot for shrink so the
+/// zero lamport single ref accounts can be removed by shrink
+#[test]
+fn test_zero_lamport_single_ref_resweep_after_snapshot_advances() {
+    agave_logger::setup();
+    let db = AccountsDb::new_single_for_tests_with_provider_and_config(
+        AccountsFileProvider::default(),
+        AccountsDbConfig {
+            shrink_ratio: AccountShrinkThreshold::IndividualStore { shrink_ratio: 1.0 },
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    );
+
+    let key_zero = Pubkey::new_unique();
+    let key_alive = Pubkey::new_unique();
+    let one = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+    let zero = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let zero_lamport_single_ref_slot = 2;
+
+    // Seed the snapshot at slot 0 so the watermark starts at Some(0).
+    db.set_latest_full_snapshot_slot(0);
+
+    // slot 1: older non-zero version of key_zero, on its own so the slot dies once
+    // clean reclaims it (keeps the test focused on slot 2's sweep behavior).
+    db.store_for_tests((1, &[(&key_zero, &one)][..]));
+    db.add_root_and_flush_write_cache(1);
+    // slot 2: zero-lamport version of key_zero plus an unrelated live account so the
+    // storage still has alive bytes once key_zero becomes a single-ref zero-lamport.
+    db.store_for_tests((
+        zero_lamport_single_ref_slot,
+        &[(&key_zero, &zero), (&key_alive, &one)][..],
+    ));
+    db.add_root_and_flush_write_cache(zero_lamport_single_ref_slot);
+
+    // First clean: slot 1 is reclaimed, making slot key_zero a ZLSR. The unref path marks
+    // marks key_zero on slot 2's storage, but because the snapshot is still at 0 it does not
+    // mark the slot shrinkable yet.
+    // is still at 0 we clear shrink_candidate_slots
+    // so the second clean's sweep is the only thing that can re-add it.
+    db.clean_accounts(Some(zero_lamport_single_ref_slot), false);
+    assert!(
+        !db.shrink_candidate_slots
+            .lock()
+            .unwrap()
+            .contains(&zero_lamport_single_ref_slot)
+    );
+
+    // Advance the snapshot past slot 2. Clean will sweep from slot 0 to 2 and
+    // must re-queue slot 2 — its zero-lamport single-ref is now shrinkable
+    db.set_latest_full_snapshot_slot(zero_lamport_single_ref_slot);
+    db.clean_accounts(Some(zero_lamport_single_ref_slot), false);
+    assert!(
+        db.shrink_candidate_slots
+            .lock()
+            .unwrap()
+            .contains(&zero_lamport_single_ref_slot)
+    );
+
+    // Shrink now runs below and removes key_zero
+    db.shrink_candidate_slots(&EpochSchedule::default());
+    assert!(!db.contains(&key_zero));
+    assert!(db.contains(&key_alive));
+}
+
 fn setup_accounts_db_cache_clean(
     num_slots: usize,
     scan_slot: Option<Slot>,
