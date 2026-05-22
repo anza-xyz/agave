@@ -2,19 +2,19 @@ use {
     crate::invoke_context::BpfAllocator,
     solana_instruction::error::InstructionError,
     solana_sbpf::{
-        ebpf::{MM_BYTECODE_START, MM_RODATA_START},
+        ebpf::{MM_BYTECODE_START, MM_HEAP_START, MM_RODATA_START, MM_STACK_START},
         elf::Executable,
         memory_region::{MemoryMapping, MemoryRegion, default_access_violation_handler},
         program::SBPFVersion,
         vm::{Config, ContextObject},
     },
     solana_transaction_context::{
-        MAX_ACCOUNTS_PER_TRANSACTION, MAX_INSTRUCTION_TRACE_LENGTH,
         transaction::TransactionContext,
         vm_addresses::{
             ACCOUNT_METADATA_AREA, GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS,
-            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
-            HEAP_ADDRESS, INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD, STACK_ADDRESS,
+            GUEST_ACCOUNT_PAYLOAD_END_ADDRESS, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS,
+            GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_INSTRUCTION_DATA_END_ADDRESS, INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD,
             TRANSACTION_FRAME_ADDRESS, abiv2_region_index_from_vm_address,
         },
     },
@@ -115,6 +115,12 @@ impl MemoryContexts {
         })];
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock_set_mapping_abi_v2(&mut self, memory_mapping: MemoryMapping) {
+        *self.abiv2_mappings = memory_mapping;
+        self.contexts = vec![MemoryContextType::ABIv2];
+    }
+
     pub fn push_placeholder(&mut self) {
         // We are only pushing a placeholder to be configured later
         self.contexts.push(MemoryContextType::Placeholder);
@@ -156,13 +162,12 @@ impl MemoryContexts {
         transaction_context: &TransactionContext,
     ) -> Result<(), InstructionError> {
         let current_instruction = transaction_context.get_current_instruction_context()?;
-
-        let accounts_index = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
-        let range = accounts_index..accounts_index.saturating_add(MAX_ACCOUNTS_PER_TRANSACTION);
+        let accounts_start = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
+        let accounts_end = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_END_ADDRESS);
         let account_regions = self
             .abiv2_mappings
             .get_regions_mut()
-            .get_mut(range)
+            .get_mut(accounts_start..accounts_end)
             .expect("Account regions should have been configured.");
 
         for account in current_instruction.instruction_accounts() {
@@ -211,6 +216,7 @@ pub struct SerializedAccountMetadata {
     pub vm_owner_addr: u64,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
 pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> Vec<MemoryRegion> {
     let mut v2_regions: Vec<MemoryRegion> = vec![MemoryRegion::default(); NUMBER_OF_REGIONS];
 
@@ -218,13 +224,13 @@ pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> 
     // there are no duplicate regions (for e.g. tests.)
     // Index 0: ELF rodata
     // Index 1: ELF text area (not mapped)
-    // Index 2: heap
-    // Index 3: stack
+    // Index 2: stack
+    // Index 3: heap
     for vm_addr in [
         MM_RODATA_START,
         MM_BYTECODE_START,
-        HEAP_ADDRESS,
-        STACK_ADDRESS,
+        MM_STACK_START,
+        MM_HEAP_START,
     ] {
         v2_regions
             .get_mut(abiv2_region_index_from_vm_address(vm_addr))
@@ -256,32 +262,29 @@ pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> 
         .unwrap() = MemoryRegion::new(instruction_trace_slice, INSTRUCTION_TRACE_AREA);
 
     // Index 7: Return data scratchpad area
-    let return_data_slice = transaction_context.return_data_as_raw_slice();
+    let return_data_slice = &raw const transaction_context.return_data_buffer()[..];
     *v2_regions
         .get_mut(abiv2_region_index_from_vm_address(RETURN_DATA_SCRATCHPAD))
         .unwrap() = MemoryRegion::new(return_data_slice, RETURN_DATA_SCRATCHPAD);
 
     // Indexes 8..264: Transaction accounts payload
-    let payload_start_idx = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
-    let account_regions = v2_regions
-        .get_mut(payload_start_idx..payload_start_idx.saturating_add(MAX_ACCOUNTS_PER_TRANSACTION))
-        .unwrap();
+    let start_idx = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
+    let end_idx = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_END_ADDRESS);
+    let regions = v2_regions.get_mut(start_idx..end_idx).unwrap();
     transaction_context
         .accounts()
-        .account_payload_regions(account_regions);
+        .account_payload_regions(regions);
 
     // Indexes 264..328: Instruction data payload area
-    let data_start_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_DATA_BASE_ADDRESS);
-    let regions = v2_regions
-        .get_mut(data_start_idx..data_start_idx.saturating_add(MAX_INSTRUCTION_TRACE_LENGTH))
-        .unwrap();
+    let start_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_DATA_BASE_ADDRESS);
+    let end_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_DATA_END_ADDRESS);
+    let regions = v2_regions.get_mut(start_idx..end_idx).unwrap();
     transaction_context.instruction_payload_regions(regions);
 
     // Indexes 328..392: Instruction accounts area
-    let acc_start_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
-    let regions = v2_regions
-        .get_mut(acc_start_idx..acc_start_idx.saturating_add(MAX_INSTRUCTION_TRACE_LENGTH))
-        .unwrap();
+    let start_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
+    let end_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS);
+    let regions = v2_regions.get_mut(start_idx..end_idx).unwrap();
     transaction_context.instruction_accounts_regions(regions);
 
     v2_regions

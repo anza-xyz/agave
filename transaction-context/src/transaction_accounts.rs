@@ -35,7 +35,7 @@ impl VmExposable for AccountSharedFields {}
 
 #[derive(Debug, PartialEq)]
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
-struct AccountPrivateFields {
+pub(crate) struct AccountPrivateFields {
     rent_epoch: u64,
     executable: bool,
     payload: Arc<Vec<u8>>,
@@ -100,6 +100,10 @@ pub struct TransactionAccountViewMut<'a> {
 impl TransactionAccountViewMut<'_> {
     fn data_mut(&mut self) -> &mut Vec<u8> {
         Arc::make_mut(&mut self.private_fields.payload)
+    }
+
+    pub(crate) fn raw_mut_data_slice(&mut self) -> *mut [u8] {
+        &raw mut self.data_mut()[..]
     }
 
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {

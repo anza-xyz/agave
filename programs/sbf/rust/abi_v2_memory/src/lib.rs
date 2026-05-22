@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use {
     core::{alloc::Layout, ptr::null_mut, slice},
     solana_transaction_context::{
@@ -15,6 +17,14 @@ fn sol_log(message: &[u8]) {
     unsafe {
         let syscall: extern "C" fn(*const u8, u64) = core::mem::transmute(544561597u64); // murmur32 hash of "sol_log_"
         syscall(message.as_ptr(), message.len() as u64)
+    }
+}
+
+fn set_buffer_length(base_address: u64, new_length: u64) -> u64 {
+    unsafe {
+        let syscall: extern "C" fn(u64, u64, u64, u64, u64) -> u64 =
+            core::mem::transmute(0x713026f5u64);
+        syscall(base_address as u64, new_length, 0, 0, 0)
     }
 }
 
@@ -146,7 +156,7 @@ unsafe fn test_valid_accesses(
         assert_eq!(acc_2.lamports, 90123);
         assert_eq!(acc_2.key.to_bytes(), acc_2.payload.deref());
 
-        assert_eq!(current_ix.instruction_data.deref(), b"IX1");
+        assert_eq!(current_ix.instruction_data.deref(), b"\x02");
     } else if tx_frame.current_executing_instruction == 1 {
         let ix_accounts = current_ix.instruction_accounts.deref();
         assert_eq!(ix_accounts.len(), 2);
@@ -168,7 +178,7 @@ unsafe fn test_valid_accesses(
         assert_eq!(acc_2.lamports, 9123);
         assert_eq!(acc_2.owner, acc_1.key);
 
-        assert_eq!(current_ix.instruction_data.deref(), b"IX2");
+        assert_eq!(current_ix.instruction_data.deref(), b"\x03");
     } else {
         panic!("Not expecting more than two instructions.")
     }
@@ -199,6 +209,34 @@ unsafe fn write_to_account(
     *account_data.get_unchecked_mut(2) = 9;
 }
 
+unsafe fn test_set_buffer_length_return_scratchpad(write_just_outside: bool) {
+    set_buffer_length(0x7_0000_0000u64, 128);
+    for i in 0..128 {
+        assert_eq!(std::ptr::read((0x7_0000_0000u64 + i) as *const u8), 0);
+    }
+    let write_offset = if write_just_outside { 128 } else { 127 };
+    std::ptr::write((0x7_0000_0000u64 + write_offset) as *mut u8, 42);
+    set_buffer_length(0x7_0000_0000, 256);
+    assert_eq!(std::ptr::read((0x7_0000_0000u64 + 127) as *const u8), 42);
+    for i in 128..256 {
+        assert_eq!(std::ptr::read((0x7_0000_0000u64 + i) as *const u8), 0);
+    }
+}
+
+unsafe fn test_set_buffer_length_account(
+    account_idx: u64,
+    account_metadata: &[AccountSharedFields],
+) {
+    let meta = &account_metadata[account_idx as usize];
+    assert_eq!(meta.payload.len(), 3);
+    let mut expected_data = [0; 6];
+    expected_data[..3].copy_from_slice(meta.payload.deref());
+    set_buffer_length(meta.payload.ptr(), 6);
+    assert_eq!(meta.payload.len(), 6);
+    let account_data = core::slice::from_raw_parts(meta.payload.ptr() as *const u8, 6);
+    assert_eq!(account_data, expected_data);
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint() -> u64 {
@@ -218,17 +256,23 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
     let current_ix = instruction_trace
         .get(tx_frame.current_executing_instruction as usize)
         .unwrap();
-    if current_ix.instruction_data.deref() == b"IX1"
-        || current_ix.instruction_data.deref() == b"IX2"
-    {
-        test_valid_accesses(tx_frame, tx_accounts_metadata);
-    } else if *current_ix.instruction_data.deref().get_unchecked(0) == 0 {
-        let mes = format!("tx accs: {}", tx_frame.number_of_transaction_accounts);
-        sol_log(mes.as_bytes());
-        read_invalid_regions(current_ix);
-    } else if *current_ix.instruction_data.deref().get_unchecked(0) == 1 {
-        write_to_account(current_ix, tx_accounts_metadata);
+    match current_ix.instruction_data.deref() {
+        [0x00, ..] => {
+            let mes = format!("tx accs: {}", tx_frame.number_of_transaction_accounts);
+            sol_log(mes.as_bytes());
+            read_invalid_regions(current_ix);
+        }
+        [0x01, ..] => {
+            write_to_account(current_ix, tx_accounts_metadata);
+        }
+        [0x02, ..] | [0x03, ..] => {
+            test_valid_accesses(tx_frame, tx_accounts_metadata);
+        }
+        [b @ 0x04, ..] | [b @ 0x05, ..] => test_set_buffer_length_return_scratchpad(*b == 0x05),
+        [0x06, ..] => test_set_buffer_length_account(1, tx_accounts_metadata),
+        [0x07, ..] => test_set_buffer_length_account(3, tx_accounts_metadata),
+        [0x08, ..] => test_set_buffer_length_account(2, tx_accounts_metadata),
+        _ => panic!("unknown command"),
     }
-
     0
 }

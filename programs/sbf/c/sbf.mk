@@ -17,8 +17,8 @@ SBPF_CPU ?= v0
 OS := $(shell uname)
 
 PLATFORM_TOOLS_FOLDER=$(HOME)/.cache/solana/$(TOOLS_VERSION)/platform-tools
-LLVM_DIR = $(PLATFORM_TOOLS_FOLDER)/llvm
-LLVM_SYSTEM_INC_DIRS := $(LLVM_DIR)/lib/clang/20/include
+#LLVM_DIR = $(PLATFORM_TOOLS_FOLDER)/llvm
+#LLVM_SYSTEM_INC_DIRS := $(LLVM_DIR)/lib/clang/20/include
 
 ifeq "$(SBPF_CPU)" "v1"
 TARGET_NAME := sbpfv1
