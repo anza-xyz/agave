@@ -65,6 +65,7 @@ solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
+spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

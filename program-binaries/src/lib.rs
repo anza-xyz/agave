@@ -15,6 +15,9 @@ mod spl_memo_1_0 {
 mod spl_memo_3_0 {
     solana_pubkey::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 }
+mod spl_memo_4_0 {
+    solana_pubkey::declare_id!("Memo4c2pN8afCj432Lb7RMVKi9PbQnnW7ewFFaV3oAH");
+}
 
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
@@ -36,6 +39,11 @@ static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
         spl_memo_3_0::ID,
         solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_memo-3.0.0.so"),
+    ),
+    (
+        spl_memo_4_0::ID,
+        solana_sdk_ids::bpf_loader_upgradeable::ID,
+        include_bytes!("programs/spl_memo-4.0.0.so"),
     ),
     (
         spl_generic_token::associated_token_account::ID,
