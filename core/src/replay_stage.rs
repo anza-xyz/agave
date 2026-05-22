@@ -51,12 +51,12 @@ use {
     itertools::Itertools,
     rayon::{ThreadPool, prelude::*},
     solana_accounts_db::contains::Contains,
-    solana_clock::{BankId, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::{BankId, Slot},
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::SlotLeader,
+    solana_leader_schedule::{NUM_CONSECUTIVE_LEADER_SLOTS, SlotLeader},
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, UpdateParentReceiver},
         blockstore_meta::BlockLocation,
@@ -2778,7 +2778,7 @@ impl ReplayStage {
             progress_map.get_latest_leader_slot_must_exist(parent_slot)
         {
             let skip_propagated_check =
-                poh_slot - latest_leader_slot < NUM_CONSECUTIVE_LEADER_SLOTS;
+                poh_slot - latest_leader_slot < NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot;
             if skip_propagated_check {
                 return true;
             }
@@ -2795,7 +2795,7 @@ impl ReplayStage {
 
     fn should_retransmit(poh_slot: Slot, last_retransmit_slot: &mut Slot) -> bool {
         if poh_slot < *last_retransmit_slot
-            || poh_slot >= *last_retransmit_slot + NUM_CONSECUTIVE_LEADER_SLOTS
+            || poh_slot >= *last_retransmit_slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot
         {
             *last_retransmit_slot = poh_slot;
             true
@@ -4226,7 +4226,7 @@ impl ReplayStage {
             return;
         };
 
-        let end_slot = next_slot.saturating_add(NUM_CONSECUTIVE_LEADER_SLOTS - 1);
+        let end_slot = next_slot.saturating_add(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 1);
         let leader_window_info = LeaderWindowInfo {
             start_slot: next_slot,
             end_slot,

@@ -8,8 +8,9 @@ use {
         event::VotorEvent,
     },
     agave_votor_messages::{consensus_message::Block, fraction::Fraction, vote::Vote},
-    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
+    solana_clock::Slot,
     solana_hash::Hash,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     std::{collections::BTreeMap, num::NonZeroU64},
 };
 
@@ -72,7 +73,7 @@ impl SlotStakeCounters {
         }
         let slot = vote.slot();
         let is_first_in_leader_window =
-            slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS) || slot == 1;
+            slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) || slot == 1;
 
         // Check safe to notar
         for (block_id, stake) in &self.notarize_entry_total {
