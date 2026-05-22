@@ -17,7 +17,7 @@ use {
     solana_address::Address,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
-    solana_clock::{Clock, Epoch, INITIAL_RENT_EPOCH, Slot},
+    solana_clock::{Clock, Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
     solana_epoch_rewards::EpochRewards,
@@ -40,7 +40,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         serialization::serialize_parameters,
         stable_log,
-        sysvar_account::{SysvarAccountSize, create_account_shared_data_with_fields},
+        sysvar_account::{account_size_of, create_account_shared_data_for_test},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -250,12 +250,12 @@ macro_rules! processor {
     }};
 }
 
-fn get_sysvar<T: SysvarAccountSize + Clone>(
+fn get_sysvar<T: SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: *mut u8,
 ) -> u64 {
     let invoke_context = get_invoke_context();
-    let sysvar_size = T::SIZE as u64;
+    let sysvar_size = account_size_of::<T>().expect("unsupported sysvar") as u64;
     if invoke_context
         .compute_meter
         .consume_checked(
@@ -281,7 +281,7 @@ fn get_sysvar<T: SysvarAccountSize + Clone>(
 struct SyscallStubs {}
 
 impl SyscallStubs {
-    fn fetch_and_write_sysvar<T: Serialize + SysvarAccountSize>(
+    fn fetch_and_write_sysvar<T: Serialize + SysvarId>(
         &self,
         var_addr: *mut u8,
         offset: u64,
@@ -318,7 +318,7 @@ impl SyscallStubs {
         };
 
         // Check that the requested range fits in the sysvar account data.
-        let expected_length = T::SIZE as u64;
+        let expected_length = account_size_of::<T>().expect("unsupported sysvar") as u64;
 
         if offset.saturating_add(length) > expected_length {
             return UNSUPPORTED_SYSVAR;
@@ -769,13 +769,8 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: Serialize + SysvarAccountSize>(
-        &mut self,
-        address: Pubkey,
-        sysvar: &S,
-    ) {
-        let account = create_account_shared_data_with_fields(sysvar, (1, INITIAL_RENT_EPOCH));
-        self.add_account(address, account.into());
+    pub fn add_sysvar_account<S: Serialize + SysvarId>(&mut self, address: Pubkey, sysvar: &S) {
+        self.add_account(address, create_account_shared_data_for_test(sysvar).into());
     }
 
     /// Add a BPF Upgradeable program to the test environment's genesis config.
@@ -1335,7 +1330,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: Serialize + SysvarAccountSize>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: Serialize + SysvarId>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);

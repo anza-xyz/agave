@@ -10,7 +10,7 @@ use {
     solana_program_runtime::{
         invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
         solana_sbpf::program::BuiltinFunctionDefinition,
-        sysvar_account::{create_account_for_test, create_account_shared_data_for_test},
+        sysvar_account::create_account_shared_data_for_test,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -91,11 +91,11 @@ fn create_accounts() -> (
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
-            AccountSharedData::from(create_account_for_test(&slot_hashes)),
+            create_account_shared_data_for_test(&slot_hashes),
         ),
         (
             sysvar::clock::id(),
-            AccountSharedData::from(create_account_for_test(&clock)),
+            create_account_shared_data_for_test(&clock),
         ),
         (authority_pubkey, AccountSharedData::default()),
     ];

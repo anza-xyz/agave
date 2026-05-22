@@ -10,11 +10,11 @@ use {
     solana_instruction::Instruction,
     solana_keypair::Keypair,
     solana_message::{Message, SanitizedMessage},
-    solana_program_runtime::sysvar_account::SysvarAccountSize,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_signer::{Signer, signers::Signers},
     solana_system_interface::instruction as system_instruction,
+    solana_sysvar_id::SysvarId,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
@@ -275,7 +275,7 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: Serialize + SysvarAccountSize>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: Serialize + SysvarId>(&self, sysvar: &T) {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 

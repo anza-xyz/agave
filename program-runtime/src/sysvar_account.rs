@@ -1,167 +1,120 @@
-//! Helpers for creating, reading, and writing sysvar accounts.
-//! Replaces `solana_account`'s `SysvarSerialize`-bound helpers.
-
-#[allow(deprecated)]
-use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
-    serde::{Serialize, de::DeserializeOwned},
-    solana_account::{
-        Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
-    },
-    solana_clock::Clock,
-    solana_epoch_rewards::EpochRewards,
-    solana_epoch_schedule::EpochSchedule,
-    solana_last_restart_slot::LastRestartSlot,
-    solana_rent::Rent,
+    serde::Serialize,
+    solana_account::{Account, AccountSharedData},
+    solana_clock::INITIAL_RENT_EPOCH,
+    solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
-    solana_slot_hashes::SlotHashes,
-    solana_stake_interface::stake_history::StakeHistory,
-    solana_sysvar::{rewards::Rewards, slot_history::SlotHistory},
     solana_sysvar_id::SysvarId,
 };
 
-pub trait SysvarAccountSize: SysvarId {
-    const SIZE: usize;
+macro_rules! sysvar_registry {
+    ($($CONST:ident = $size:expr => $Ty:ty,)*) => {
+        pub mod account_size {
+            $(pub const $CONST: usize = $size;)*
+        }
+
+        /// Returns the on-chain account size for the sysvar with the given
+        /// pubkey, or `None` if the pubkey is not a registered sysvar.
+        #[allow(deprecated)]
+        pub fn size_for_id(sysvar_id: &Pubkey) -> Option<usize> {
+            $(
+                if <$Ty as SysvarId>::check_id(sysvar_id) {
+                    return Some(account_size::$CONST);
+                }
+            )*
+            None
+        }
+    };
 }
 
-impl SysvarAccountSize for Clock {
-    const SIZE: usize = 40;
+// TODO: Temporary until sizes are within each sysvar crate
+sysvar_registry! {
+    CLOCK              = 40      => solana_clock::Clock,
+    EPOCH_REWARDS      = 81      => solana_epoch_rewards::EpochRewards,
+    EPOCH_SCHEDULE     = 33      => solana_epoch_schedule::EpochSchedule,
+    LAST_RESTART_SLOT  = 8       => solana_last_restart_slot::LastRestartSlot,
+    RENT               = 17      => solana_rent::Rent,
+    REWARDS            = 16      => solana_sysvar::rewards::Rewards,
+    FEES               = 8       => solana_sysvar::fees::Fees,
+    RECENT_BLOCKHASHES = 6_008   => solana_sysvar::recent_blockhashes::RecentBlockhashes,
+    SLOT_HASHES        = 20_488  => solana_slot_hashes::SlotHashes,
+    SLOT_HISTORY       = 131_097 => solana_sysvar::slot_history::SlotHistory,
+    STAKE_HISTORY      = 16_392  => solana_stake_interface::stake_history::StakeHistory,
 }
 
-impl SysvarAccountSize for EpochRewards {
-    const SIZE: usize = 81;
+pub fn account_size_of<T: SysvarId>() -> Option<usize> {
+    size_for_id(&T::id())
 }
 
-impl SysvarAccountSize for EpochSchedule {
-    const SIZE: usize = 33;
-}
-
-impl SysvarAccountSize for LastRestartSlot {
-    const SIZE: usize = 8;
-}
-
-impl SysvarAccountSize for Rent {
-    const SIZE: usize = 17;
-}
-
-impl SysvarAccountSize for Rewards {
-    const SIZE: usize = 16;
-}
-
-#[allow(deprecated)]
-impl SysvarAccountSize for Fees {
-    const SIZE: usize = 8;
-}
-
-#[allow(deprecated)]
-impl SysvarAccountSize for RecentBlockhashes {
-    const SIZE: usize = 6008;
-}
-
-impl SysvarAccountSize for SlotHashes {
-    const SIZE: usize = 20_488;
-}
-
-impl SysvarAccountSize for SlotHistory {
-    const SIZE: usize = 131_097;
-}
-
-impl SysvarAccountSize for StakeHistory {
-    const SIZE: usize = 16_392;
-}
-
-fn create_account_with_fields<T: Serialize + SysvarAccountSize>(
-    sysvar_data: &T,
-    (lamports, rent_epoch): InheritableAccountFields,
-) -> Account {
+pub fn create_account_shared_data_for_test<T: Serialize + SysvarId>(
+    value: &T,
+) -> AccountSharedData {
+    let size = account_size_of::<T>().unwrap_or_else(|| panic!("unsupported sysvar: {}", T::id()));
     let mut account = Account {
-        lamports,
-        data: vec![0; T::SIZE],
+        lamports: 1,
+        data: vec![0; size],
         owner: sysvar::id(),
         executable: false,
-        rent_epoch,
+        rent_epoch: INITIAL_RENT_EPOCH,
     };
-    to_account(sysvar_data, &mut account).unwrap();
-    account
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-pub fn create_account_for_test<T: Serialize + SysvarAccountSize>(sysvar_data: &T) -> Account {
-    create_account_with_fields(sysvar_data, (1, solana_clock::INITIAL_RENT_EPOCH))
-}
-
-pub fn create_account_shared_data_with_fields<T: Serialize + SysvarAccountSize>(
-    sysvar_data: &T,
-    fields: InheritableAccountFields,
-) -> AccountSharedData {
-    AccountSharedData::from(create_account_with_fields(sysvar_data, fields))
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-pub fn create_account_shared_data_for_test<T: Serialize + SysvarAccountSize>(
-    sysvar_data: &T,
-) -> AccountSharedData {
-    AccountSharedData::from(create_account_for_test(sysvar_data))
-}
-
-pub fn from_account<T: DeserializeOwned + SysvarId, U: ReadableAccount>(account: &U) -> Option<T> {
-    bincode::deserialize(account.data()).ok()
-}
-
-pub fn to_account<T: Serialize + SysvarAccountSize, U: WritableAccount>(
-    sysvar_data: &T,
-    account: &mut U,
-) -> Option<()> {
-    if T::SIZE > account.data().len() {
-        return None;
-    }
-    bincode::serialize_into(account.data_as_mut_slice(), sysvar_data).ok()
+    bincode::serialize_into(&mut account.data[..], value).unwrap();
+    AccountSharedData::from(account)
 }
 
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
     use {
-        super::*,
+        super::account_size,
         bincode::serialized_size,
+        solana_clock::Clock,
+        solana_epoch_rewards::EpochRewards,
+        solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_slot_hashes::MAX_ENTRIES as SLOT_HASHES_MAX_ENTRIES,
+        solana_last_restart_slot::LastRestartSlot,
+        solana_rent::Rent,
+        solana_slot_hashes::{MAX_ENTRIES as SLOT_HASHES_MAX_ENTRIES, SlotHashes},
         solana_stake_interface::stake_history::{
-            MAX_ENTRIES as STAKE_HISTORY_MAX_ENTRIES, StakeHistoryEntry,
+            MAX_ENTRIES as STAKE_HISTORY_MAX_ENTRIES, StakeHistory, StakeHistoryEntry,
         },
-        solana_sysvar::recent_blockhashes::{
-            IterItem, MAX_ENTRIES as RECENT_BLOCKHASHES_MAX_ENTRIES,
+        solana_sysvar::{
+            fees::Fees,
+            recent_blockhashes::{
+                IterItem, MAX_ENTRIES as RECENT_BLOCKHASHES_MAX_ENTRIES, RecentBlockhashes,
+            },
+            rewards::Rewards,
+            slot_history::SlotHistory,
         },
     };
 
     #[test]
     fn test_fixed_size_sysvar_account_sizes_match_bincode() {
         assert_eq!(
-            Clock::SIZE,
+            account_size::CLOCK,
             serialized_size(&Clock::default()).unwrap() as usize
         );
         assert_eq!(
-            EpochRewards::SIZE,
+            account_size::EPOCH_REWARDS,
             serialized_size(&EpochRewards::default()).unwrap() as usize
         );
         assert_eq!(
-            EpochSchedule::SIZE,
+            account_size::EPOCH_SCHEDULE,
             serialized_size(&EpochSchedule::default()).unwrap() as usize
         );
         assert_eq!(
-            LastRestartSlot::SIZE,
+            account_size::LAST_RESTART_SLOT,
             serialized_size(&LastRestartSlot::default()).unwrap() as usize
         );
         assert_eq!(
-            Rent::SIZE,
+            account_size::RENT,
             serialized_size(&Rent::default()).unwrap() as usize
         );
         assert_eq!(
-            Rewards::SIZE,
+            account_size::REWARDS,
             serialized_size(&Rewards::default()).unwrap() as usize
         );
         assert_eq!(
-            Fees::SIZE,
+            account_size::FEES,
             serialized_size(&Fees::default()).unwrap() as usize
         );
     }
@@ -173,7 +126,7 @@ mod tests {
             .map(|block_height| IterItem(block_height, &hash, block_height))
             .collect::<RecentBlockhashes>();
         assert_eq!(
-            RecentBlockhashes::SIZE,
+            account_size::RECENT_BLOCKHASHES,
             serialized_size(&recent_blockhashes).unwrap() as usize
         );
 
@@ -181,13 +134,13 @@ mod tests {
             .map(|slot| (slot, hash))
             .collect::<SlotHashes>();
         assert_eq!(
-            SlotHashes::SIZE,
+            account_size::SLOT_HASHES,
             serialized_size(&slot_hashes).unwrap() as usize
         );
 
         let slot_history = SlotHistory::default();
         assert_eq!(
-            SlotHistory::SIZE,
+            account_size::SLOT_HISTORY,
             serialized_size(&slot_history).unwrap() as usize
         );
 
@@ -196,7 +149,7 @@ mod tests {
             stake_history.add(epoch, StakeHistoryEntry::default());
         }
         assert_eq!(
-            StakeHistory::SIZE,
+            account_size::STAKE_HISTORY,
             serialized_size(&stake_history).unwrap() as usize
         );
     }

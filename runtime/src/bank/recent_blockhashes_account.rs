@@ -3,8 +3,8 @@
 #[expect(deprecated)]
 use solana_sysvar::recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes};
 use {
+    crate::sysvar_account::{create_account_shared_data_with_fields, to_account},
     solana_account::{AccountSharedData, InheritableAccountFields},
-    solana_program_runtime::sysvar_account::{create_account_shared_data_with_fields, to_account},
     std::{collections::BinaryHeap, iter::FromIterator},
 };
 
@@ -43,10 +43,10 @@ mod tests {
     #![allow(deprecated)]
     use {
         super::*,
+        crate::sysvar_account::from_account,
         rand::{rng, seq::SliceRandom},
         solana_account::DUMMY_INHERITABLE_ACCOUNT_FIELDS,
         solana_hash::{HASH_BYTES, Hash},
-        solana_program_runtime::sysvar_account::from_account,
         solana_sysvar::recent_blockhashes::Entry,
     };
 

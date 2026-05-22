@@ -573,19 +573,13 @@ mod tests {
         solana_program_runtime::{
             invoke_context::mock_process_instruction,
             solana_sbpf::program::BuiltinFunctionDefinition,
-            sysvar_account::{
-                create_account_shared_data_for_test, create_account_shared_data_with_fields,
-                to_account,
-            },
-            with_mock_invoke_context,
+            sysvar_account::create_account_shared_data_for_test, with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
     };
     #[allow(deprecated)]
     use {
-        solana_account::{
-            Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount,
-        },
+        solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
@@ -641,16 +635,11 @@ mod tests {
     where
         I: IntoIterator<Item = IterItem<'a>>,
     {
-        let mut account = create_account_shared_data_with_fields::<RecentBlockhashes>(
-            &RecentBlockhashes::default(),
-            DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-        );
         let sorted = BinaryHeap::from_iter(recent_blockhash_iter);
         let sorted_iter = IntoIterSorted::new(sorted);
         let recent_blockhash_iter = sorted_iter.take(MAX_ENTRIES);
         let recent_blockhashes: RecentBlockhashes = recent_blockhash_iter.collect();
-        to_account(&recent_blockhashes, &mut account);
-        account
+        create_account_shared_data_for_test(&recent_blockhashes)
     }
     fn create_default_recent_blockhashes_account() -> AccountSharedData {
         #[allow(deprecated)]
