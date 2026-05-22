@@ -902,8 +902,6 @@ pub struct AccountsDb {
     /// directory for bank hash details files
     bank_hash_details_dir: PathBuf,
 
-    shrink_paths: Vec<PathBuf>,
-
     /// Directory of paths this accounts_db needs to hold/remove
     #[allow(dead_code)]
     pub temp_paths: Option<Vec<TempDir>>,
@@ -1060,11 +1058,6 @@ impl AccountsDb {
             (paths, None)
         };
 
-        let shrink_paths = accounts_db_config
-            .shrink_paths
-            .clone()
-            .unwrap_or_else(|| paths.clone());
-
         let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
@@ -1105,7 +1098,6 @@ impl AccountsDb {
             paths,
             bank_hash_details_dir: accounts_db_config.bank_hash_details_dir,
             temp_paths,
-            shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
             ancient_append_vec_offset: accounts_db_config
                 .ancient_append_vec_offset
@@ -3018,7 +3010,7 @@ impl AccountsDb {
         old_store: Arc<AccountStorageEntry>,
         size: u64,
     ) -> ShrinkInProgress<'_> {
-        let shrunken_store = self.create_store(slot, size, "shrink", self.shrink_paths.as_slice());
+        let shrunken_store = self.create_store(slot, size, "shrink", self.paths.as_slice());
         self.storage
             .shrinking_in_progress(slot, old_store, shrunken_store)
     }

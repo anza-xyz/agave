@@ -362,7 +362,6 @@ pub fn get_accounts_db_config(
         index: Some(accounts_index_config),
         account_indexes: None,
         bank_hash_details_dir: ledger_tool_ledger_path,
-        shrink_paths: None,
         shrink_ratio: AccountShrinkThreshold::default(),
         read_cache_limit_bytes: None,
         read_cache_evict_sample_size: None,
