@@ -138,13 +138,13 @@ fn regions_sanity_test() {
         AccountMeta::new(acc_1_keypair.pubkey(), true),
         AccountMeta::new_readonly(acc_4_key, false),
     ];
-    let ix_1 = Instruction::new_with_bytes(program_id_1, b"IX1", metas_for_ix_1);
+    let ix_1 = Instruction::new_with_bytes(program_id_1, b"\x02", metas_for_ix_1);
 
     let metas_for_ix_2 = vec![
         AccountMeta::new_readonly(acc_2_keypair.pubkey(), true),
         AccountMeta::new(acc_3_key, false),
     ];
-    let ix_2 = Instruction::new_with_bytes(program_id_2, b"IX2", metas_for_ix_2);
+    let ix_2 = Instruction::new_with_bytes(program_id_2, b"\x03", metas_for_ix_2);
 
     let message = Message::new(&[ix_1, ix_2], Some(&mint_keypair.pubkey()));
     let bank_client = BankClient::new_shared(bank.clone());
@@ -351,4 +351,125 @@ fn account_permissions_update() {
 
     let second_ix = logs.last().unwrap();
     assert!(second_ix.contains("Access violation"));
+}
+
+fn common_set_buffer_length(test_discr: u8) -> CommittedTransaction {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_abi_v2_memory",
+    );
+    let acc_1_key = Pubkey::new_unique();
+    let acc_1 = AccountSharedData::create_from_existing_shared_data(
+        9999,
+        vec![1, 2, 3].into(),
+        program_id,
+        false,
+        64,
+    );
+    bank.store_account(&acc_1_key, &acc_1);
+
+    let acc_2_key = Pubkey::new_unique();
+    let acc_2 = AccountSharedData::create_from_existing_shared_data(
+        10001,
+        vec![7, 8, 9].into(),
+        system_program::id(),
+        false,
+        64,
+    );
+    bank.store_account(&acc_2_key, &acc_2);
+
+    let acc_3_key = Pubkey::new_unique();
+    let acc_3 = AccountSharedData::create_from_existing_shared_data(
+        10000,
+        vec![4, 5, 6].into(),
+        program_id,
+        false,
+        64,
+    );
+    bank.store_account(&acc_3_key, &acc_3);
+
+    let metas_for_ix_1 = vec![
+        AccountMeta::new(acc_1_key, false),
+        AccountMeta::new(acc_2_key, false),
+        AccountMeta::new_readonly(acc_3_key, false),
+    ];
+
+    let data = [test_discr];
+    let ix_1 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_1.clone());
+    let message = Message::new(&[ix_1], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let commit_result = load_execute_and_commit_transaction(&bank, tx).unwrap();
+    std::eprintln!("logs: {:?}", commit_result.log_messages);
+    commit_result
+}
+
+#[test]
+fn buffer_resize_return_scratchpad_success() {
+    // Verify that we resize to exactly the requested length and can write to the new data.
+    let result = common_set_buffer_length(0x04);
+    result.status.expect("success");
+    let return_data = result.return_data.expect("should have return data");
+    assert_eq!(128, return_data.data.len());
+    assert_eq!(return_data.data[127], 42);
+}
+
+#[test]
+fn buffer_resize_return_scratchpad_oob_access() {
+    // Verify that we resize to exactly the requested length, by reading one byte past the
+    // requested buffer size.
+    let result = common_set_buffer_length(0x05);
+    result.status.expect_err("err");
+    assert!(
+        result
+            .log_messages
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("Access violation")
+    );
+}
+
+#[test]
+fn buffer_resize_writable_account() {
+    let result = common_set_buffer_length(0x06);
+    result.status.expect("success");
+}
+
+#[test]
+fn buffer_resize_readonly_account() {
+    let result = common_set_buffer_length(0x07);
+    result.status.expect_err("err");
+    assert!(
+        result
+            .log_messages
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("Invalid pointer")
+    );
+}
+
+#[test]
+fn buffer_resize_somebody_elses_account() {
+    let result = common_set_buffer_length(0x08);
+    result.status.expect_err("err");
+    assert!(
+        result
+            .log_messages
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("program other than the account's owner changed the size")
+    );
 }

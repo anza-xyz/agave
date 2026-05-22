@@ -1,4 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
+
 pub use self::{
     cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
     logging::{
@@ -344,6 +345,7 @@ pub fn create_program_runtime_environment(
         feature_set.remaining_compute_units_syscall_enabled;
     let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
     let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let enable_abiv2 = feature_set.program_runtime_abiv2;
     let min_sbpf_version =
         if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
             SBPFVersion::V0
@@ -564,6 +566,13 @@ pub fn create_program_runtime_environment(
 
     // Log data
     SyscallLogData::register(&mut result, "sol_log_data")?;
+
+    register_feature_gated_function!(
+        result,
+        enable_abiv2,
+        "sol_set_buffer_length",
+        SyscallSetBufferLength
+    )?;
 
     Ok(ProgramRuntimeEnvironment::from(result))
 }
@@ -2750,6 +2759,58 @@ declare_builtin_function!(
     }
 );
 
+declare_builtin_function!(
+    /// Resize the specified buffer to a new size.
+    SyscallSetBufferLength,
+    fn rust(
+        invoke_context: &mut InvokeContext<'_, '_>,
+        region_base_address: u64,
+        new_len: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+    ) -> Result<u64, Error> {
+        let compute_cost = invoke_context.get_execution_cost();
+        let cpi_bytes_per_unit = compute_cost.cpi_bytes_per_unit;
+        invoke_context
+            .compute_meter
+            .consume_checked(compute_cost.set_buffer_length_base_cost)?;
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+        let Some((idx, region)) = memory_mapping.find_region(region_base_address) else {
+            return Err(SyscallError::InvalidPointer.into());
+        };
+        if region.vm_addr != region_base_address || !region.writable {
+            return Err(SyscallError::InvalidPointer.into());
+        }
+        if let Some(_increase_bytes) = new_len.checked_sub(region.len) {
+            // We have to charge for the entire new_length whenever the syscall increases the size
+            // of the buffer. That's because not only do we have to zero out the newly added
+            // capacity but also may need to copy data from the old buffer to a new one in case the
+            // increase in buffer size requires a realloc.
+            //
+            // This may change in the future if we end up using something fancier as the backing
+            // storage.
+            let cost = new_len.checked_div(cpi_bytes_per_unit).unwrap_or(u64::MAX);
+            invoke_context.compute_meter.consume_checked(cost)?;
+        }
+        let new_region = invoke_context
+            .transaction_context
+            .resize_region(region_base_address, new_len)?;
+        unsafe {
+            // FIXME(nagisa): RISKY! The above might have realloc'd, but replace_region can
+            // still fail, leaving the memory mapping in an entirely invalid and unsound state
+            // if used afterwards!
+            //
+            // To consider: removing the old mapping first before modifications so that code
+            // perturbations aren't problematic. At that point, although its a non-atomic 2 step
+            // operation, early exits out of this function aren't an unsoundness risk at least.
+            memory_mapping.replace_region(idx, new_region)?;
+        }
+        Ok(0)
+    }
+);
+
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 #[allow(clippy::indexing_slicing)]
@@ -2773,7 +2834,8 @@ mod tests {
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext},
-            memory_context::MemoryContext,
+            memory::address_is_aligned,
+            memory_context::{MemoryContext, create_abiv2_regions},
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
@@ -2794,7 +2856,10 @@ mod tests {
             SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
         },
         solana_sysvar_id::SysvarId,
-        solana_transaction_context::instruction_accounts::InstructionAccount,
+        solana_transaction_context::{
+            instruction_accounts::InstructionAccount,
+            vm_addresses::{GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_REGION_SIZE},
+        },
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -7984,5 +8049,74 @@ mod tests {
             result,
             Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
         );
+    }
+
+    #[test]
+    fn test_syscall_resize_region_fails_for_non_base_addresses() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader_upgradeable::id());
+        invoke_context.memory_contexts.set_abi_v2().unwrap();
+        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        for region in &mut regions {
+            region.writable = true;
+        }
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v2(unsafe {
+                MemoryMapping::new(regions, &config, SBPFVersion::V4).unwrap()
+            });
+        for base in (1..GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS).step_by(GUEST_REGION_SIZE as usize) {
+            let err =
+                SyscallSetBufferLength::rust(&mut invoke_context, base, 4096, 0, 0, 0).unwrap_err();
+            let err = err.downcast::<SyscallError>().unwrap();
+            assert_eq!(SyscallError::InvalidPointer, *err);
+        }
+    }
+
+    #[test_case(solana_transaction_context::vm_addresses::RETURN_DATA_SCRATCHPAD)]
+    fn test_syscall_resize_region_works_for_address(addr: u64) {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader_upgradeable::id());
+        invoke_context.memory_contexts.set_abi_v2().unwrap();
+        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        for region in &mut regions {
+            region.writable = true;
+        }
+        let mapping = unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V4).unwrap() };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v2(mapping);
+        SyscallSetBufferLength::rust(&mut invoke_context, addr, 4096, 0, 0, 0).unwrap();
+        let (_, region) = invoke_context
+            .memory_contexts
+            .memory_mapping_mut()
+            .unwrap()
+            .find_region(addr)
+            .unwrap();
+        assert_eq!(region.len, 4096);
+    }
+
+    #[test]
+    fn test_syscall_resize_region_fails_for_readonly() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader_upgradeable::id());
+        invoke_context.memory_contexts.set_abi_v2().unwrap();
+        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        for region in &mut regions {
+            region.writable = true;
+        }
+        for (idx, region) in regions.clone().into_iter().enumerate() {
+            regions[idx].writable = false;
+            let mapping =
+                unsafe { MemoryMapping::new(regions.clone(), &config, SBPFVersion::V4).unwrap() };
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping_abi_v2(mapping);
+            let err =
+                SyscallSetBufferLength::rust(&mut invoke_context, region.vm_addr, 4096, 0, 0, 0)
+                    .unwrap_err();
+            let err = err.downcast::<SyscallError>().unwrap();
+            assert_eq!(SyscallError::InvalidPointer, *err);
+        }
     }
 }

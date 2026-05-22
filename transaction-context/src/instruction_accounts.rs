@@ -1,6 +1,7 @@
 use crate::IndexOfAccount;
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
+    crate::vm_addresses::{self, GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS},
     crate::{
         MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION, transaction::TransactionContext,
         transaction_accounts::AccountRefMut,
@@ -8,6 +9,7 @@ use {
     solana_account::{ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
+    solana_sbpf::memory_region::MemoryRegion,
 };
 
 /// Contains account meta data which varies between instruction.
@@ -56,6 +58,9 @@ impl InstructionAccount {
         self.is_writable = value as u8;
     }
 }
+
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
+unsafe impl solana_sbpf::memory_region::VmExposableMut for InstructionAccount {}
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
@@ -225,6 +230,28 @@ impl BorrowedInstructionAccount<'_, '_> {
         self.make_data_mut();
         self.account.extend_from_slice(data);
         Ok(())
+    }
+
+    /// Resizes the account payload buffer.
+    ///
+    /// Returns the new memory region representing this account payload.
+    /// Used for the ABIv2 syscall.
+    pub fn resize_payload_region(
+        &mut self,
+        new_len: usize,
+    ) -> Result<MemoryRegion, InstructionError> {
+        self.can_data_be_resized(new_len)?;
+        self.touch()?;
+        self.update_accounts_resize_delta(new_len)?;
+        self.account.resize(new_len, 0);
+        let tx_index = self.instruction_account.index_in_transaction;
+        let vm_address = GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS
+            .checked_add(vm_addresses::from_index(u64::from(tx_index)))
+            .unwrap();
+        Ok(MemoryRegion::new(
+            self.account.raw_mut_data_slice(),
+            vm_address,
+        ))
     }
 
     /// Returns whether the underlying AccountSharedData is shared.

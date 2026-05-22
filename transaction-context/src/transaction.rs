@@ -6,28 +6,32 @@ use {
         instruction::{InstructionContext, InstructionFrame},
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+            GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_ACCOUNT_PAYLOAD_END_ADDRESS,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_END_ADDRESS,
+            GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD, abiv2_region_index_from_vm_address,
         },
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
-    solana_sbpf::memory_region::VmExposable,
-    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
+    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion, VmExposable},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
+
 use {
     crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccount,
             vm_slice::VmSlice},
     solana_pubkey::Pubkey,
 };
 
+
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 #[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 pub type InstructionTrace<'ix_data> = (
     Vec<InstructionFrame>,
-    Vec<Box<[InstructionAccount]>>,
+    Vec<Vec<InstructionAccount>>,
     Vec<Cow<'ix_data, [u8]>>,
 );
 
@@ -79,7 +83,7 @@ pub struct TransactionContext<'ix_data> {
     /// Each entry in `deduplication_maps` represents the deduplication map for each instruction.
     deduplication_maps: Vec<Box<[u16]>>,
     /// Each entry in `instruction_accounts` represents the array of accounts for each instruction.
-    instruction_accounts: Vec<Box<[InstructionAccount]>>,
+    instruction_accounts: Vec<Vec<InstructionAccount>>,
     /// Each entry in `instruction_data` represents the data for instruction at the corresponding
     /// index.
     instruction_data: Vec<Cow<'ix_data, [u8]>>,
@@ -335,8 +339,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         );
         self.deduplication_maps
             .push(deduplication_map.into_boxed_slice());
-        self.instruction_accounts
-            .push(instruction_accounts.into_boxed_slice());
+        self.instruction_accounts.push(instruction_accounts);
         self.instruction_data.push(instruction_data);
         Ok(())
     }
@@ -657,8 +660,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         &raw const self.instruction_trace[..]
     }
 
-    pub fn return_data_as_raw_slice(&self) -> *const [u8] {
-        &raw const self.return_data_bytes[..]
+    pub fn return_data_buffer(&self) -> &Vec<u8> {
+        &self.return_data_bytes
     }
 
     pub fn instruction_payload_regions(&self, regions: &mut [MemoryRegion]) {
@@ -681,13 +684,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .zip(self.instruction_accounts.iter())
             .zip(regions.iter_mut())
         {
-            // FIXME: maybe implement HostObject?
-            let bytesize = ix_frame
-                .instruction_accounts
-                .len()
-                .saturating_mul(size_of::<InstructionAccount>() as u64);
-            let host_slice =
-                std::ptr::slice_from_raw_parts(accounts.as_ptr().cast::<u8>(), bytesize as usize);
+            let len = ix_frame.instruction_accounts.len();
+            let host_slice = std::ptr::slice_from_raw_parts(accounts.as_ptr(), len as usize);
             *region = MemoryRegion::new(host_slice, ix_frame.instruction_accounts.ptr());
         }
         self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
@@ -701,6 +699,72 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 GUEST_REGION_SIZE.saturating_mul(idx.saturating_add(num_ixs) as u64),
             );
         }
+    }
+
+    pub fn resize_region(
+        &mut self,
+        vm_address: u64,
+        new_len: u64,
+    ) -> Result<MemoryRegion, InstructionError> {
+        let new_region = match vm_address {
+            RETURN_DATA_SCRATCHPAD => {
+                self.return_data_bytes.resize(new_len as usize, 0);
+                unsafe {
+                    self.transaction_frame
+                        .return_data_scratchpad
+                        .set_len(new_len);
+                }
+                MemoryRegion::new(&raw mut self.return_data_bytes[..], vm_address)
+            }
+            GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS..GUEST_ACCOUNT_PAYLOAD_END_ADDRESS => {
+                let account_address = vm_address
+                    .checked_sub(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS)
+                    .ok_or(InstructionError::InvalidArgument)?;
+                let account_index = abiv2_region_index_from_vm_address(account_address);
+                let index_in_transaction =
+                    u16::try_from(account_index).map_err(|_| InstructionError::MissingAccount)?;
+                let insn_ctx = self.get_current_instruction_context()?;
+                let index_in_instruction =
+                    insn_ctx.get_index_of_account_in_instruction(index_in_transaction)?;
+                let mut account = insn_ctx.try_borrow_instruction_account(index_in_instruction)?;
+                account.resize_payload_region(new_len as usize)?
+            }
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS..GUEST_INSTRUCTION_DATA_END_ADDRESS => {
+                let ix_address = vm_address
+                    .checked_sub(GUEST_INSTRUCTION_DATA_BASE_ADDRESS)
+                    .ok_or(InstructionError::InvalidArgument)?;
+                let ix_idx = abiv2_region_index_from_vm_address(ix_address);
+                let ix = self.instruction_data.get_mut(ix_idx);
+                let ix = ix.ok_or(InstructionError::InvalidArgument)?;
+                let data_vec = match ix {
+                    Cow::Owned(vec) => vec,
+                    Cow::Borrowed(_) => {
+                        debug_assert!(false, "writable region implies ownership of ix data");
+                        ix.to_mut()
+                    }
+                };
+                data_vec.resize(new_len as usize, 0);
+                MemoryRegion::new(&raw mut data_vec[..], vm_address)
+            }
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS..GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS => {
+                let ix_address = vm_address
+                    .checked_sub(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS)
+                    .ok_or(InstructionError::InvalidArgument)?;
+                let ix_idx = abiv2_region_index_from_vm_address(ix_address);
+                let ix = self
+                    .instruction_accounts
+                    .get_mut(ix_idx)
+                    .ok_or(InstructionError::InvalidArgument)?;
+                ix.resize(new_len as usize, InstructionAccount::new(0, false, false));
+                MemoryRegion::new(&raw mut ix[..], vm_address)
+            }
+            _ => {
+                // FIXME(nagisa): this is a forward-compatibility hazard.
+                debug_assert!(false, "unknown writable region requested for resizing?");
+                return Err(InstructionError::InvalidArgument);
+            }
+        };
+        Ok(new_region)
     }
 }
 
@@ -1624,7 +1688,7 @@ mod tests {
             next_top_level_instruction_index: 0,
             rent: Rent::default(),
             deduplication_maps: vec![],
-            instruction_accounts: vec![acc_1.into_boxed_slice(), acc_2.into_boxed_slice()],
+            instruction_accounts: vec![acc_1, acc_2],
             instruction_data: vec![],
         };
 

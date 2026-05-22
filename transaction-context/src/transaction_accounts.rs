@@ -35,7 +35,7 @@ impl VmExposable for AccountSharedFields {}
 
 #[derive(Debug, PartialEq)]
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
-struct AccountPrivateFields {
+pub(crate) struct AccountPrivateFields {
     rent_epoch: u64,
     executable: bool,
     payload: Arc<Vec<u8>>,
