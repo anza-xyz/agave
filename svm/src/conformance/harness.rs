@@ -94,7 +94,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let loader_key = program_cache.find(program_id)?.account_owner();
 
     let (sanitized_message, transaction_accounts) =
-        mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key)?;
+        mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key);
 
     let mut transaction_context = TransactionContext::new(
         transaction_accounts,
