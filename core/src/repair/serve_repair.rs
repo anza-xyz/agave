@@ -1667,7 +1667,8 @@ impl ServeRepair {
         repair_info: &RepairInfo,
         repair_request: BlockIdRepairType,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
-        outstanding_requests: &mut OutstandingRequests<BlockIdRepairType>,
+        outstanding_requests: &mut OutstandingRequests<BlockIdRepairType, Pubkey>,
+        blacklisted_peers: &LruCache<Pubkey, ()>,
     ) -> Result<(Vec<u8>, SocketAddr, Pubkey)> {
         let identity_keypair = repair_info.cluster_info.keypair();
         let slot = repair_request.slot();
@@ -1680,8 +1681,26 @@ impl ServeRepair {
             &identity_keypair,
             weight_source,
         )?;
-        let peer = repair_peers.sample(&mut rand::rng());
-        let nonce = outstanding_requests.add_request(repair_request, timestamp());
+        // Sample, re-rolling if we hit a peer that has previously sent us a
+        // definitively-bad metadata response. After a small number of attempts
+        // we give up and let the request be re-queued on the next iteration.
+        const MAX_BLACKLIST_RESAMPLES: usize = 3;
+        let mut rng = rand::rng();
+        let mut peer = repair_peers.sample(&mut rng);
+        for _ in 0..MAX_BLACKLIST_RESAMPLES {
+            if !blacklisted_peers.contains_key(&peer.pubkey) {
+                break;
+            }
+            peer = repair_peers.sample(&mut rng);
+        }
+        if blacklisted_peers.contains_key(&peer.pubkey) {
+            return Err(Error::from(ClusterInfoError::NoPeers));
+        }
+        let nonce = outstanding_requests.add_request_with_metadata(
+            repair_request,
+            timestamp(),
+            Some(peer.pubkey),
+        );
 
         let out = self.map_block_id_repair_request(
             &repair_request,
@@ -2937,6 +2956,7 @@ mod tests {
         assert!(peers_cache.get(&slot).is_none());
 
         let mut outstanding_block_id_requests = OutstandingRequests::default();
+        let blacklisted_peers = LruCache::new(1);
         assert_matches!(
             serve_repair.block_id_repair_request(
                 &repair_info,
@@ -2946,6 +2966,7 @@ mod tests {
                 },
                 &mut peers_cache,
                 &mut outstanding_block_id_requests,
+                &blacklisted_peers,
             ),
             Err(Error::WeightedIndex(WeightedError::InsufficientNonZero))
         );

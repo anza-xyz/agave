@@ -11,6 +11,32 @@ pub struct OutstandingRequests<T, U = ()> {
     requests: LruCache<Nonce, RequestStatus<T, U>>,
 }
 
+/// Outcome of [`OutstandingRequests::register_response`].
+#[derive(Debug)]
+pub enum RegisterResponseResult<R, U> {
+    /// Nonce was valid and `verify_response` accepted the response.
+    Success(R),
+    /// Nonce was not in the cache (never existed, evicted, or already consumed).
+    UnknownNonce,
+    /// Nonce existed but the request had passed its expire_timestamp.
+    Expired(Option<U>),
+    /// Nonce existed and was within ttl, but `verify_response` rejected the
+    /// payload. Metadata (if any) is returned so the caller can attribute the
+    /// failure to the peer the nonce was sent to.
+    InvalidResponse(Option<U>),
+}
+
+impl<R, U> RegisterResponseResult<R, U> {
+    /// Convert to an `Option<R>`, discarding failure context. Useful for
+    /// callers that only care whether the response was accepted.
+    pub fn ok(self) -> Option<R> {
+        match self {
+            Self::Success(r) => Some(r),
+            _ => None,
+        }
+    }
+}
+
 impl<T, S: ?Sized, U> OutstandingRequests<T, U>
 where
     T: RequestResponse<Response = S>,
@@ -44,53 +70,57 @@ where
     }
 
     /// Register a response to the request associated with `nonce`.
-    /// If there are no more expected responses to the request, return `None`
     ///
-    /// Performs validation on the response, if:
-    /// - Request has expired
-    /// - Or validation fails
-    ///
-    /// Deletes the request from the cache
-    ///
-    /// Otherwise decrement the # of expected requests.
-    /// If the expected number of responses is now 0 and there is no metadata associated with the request,
-    /// delete the response.
-    ///
-    /// Finally return `success_fn(request)`
+    /// Performs validation on the response, distinguishing four outcomes:
+    /// - `Success`: nonce was valid and `verify_response` passed. Decrements the
+    ///   # of expected responses; deletes the entry eagerly if exhausted and no
+    ///   metadata was attached.
+    /// - `UnknownNonce`: nonce never existed, was already evicted, or its
+    ///   `num_expected_responses` is already zero.
+    /// - `Expired`: nonce existed but its `expire_timestamp` has passed. The
+    ///   entry is removed and any attached metadata is returned.
+    /// - `InvalidResponse`: nonce was valid but `verify_response` rejected the
+    ///   response (e.g. bad Merkle proof, mismatched block id). The entry is
+    ///   removed and any attached metadata is returned, so callers can attribute
+    ///   the failure back to the peer the nonce was sent to.
     pub fn register_response<R>(
         &mut self,
         nonce: u32,
         response: &S,
         now: u64,
         success_fn: impl Fn(&T) -> R,
-    ) -> Option<R> {
+    ) -> RegisterResponseResult<R, U> {
         let mut should_delete = false;
-        let response = self.requests.get_mut(&nonce).and_then(|status| {
-            if status.num_expected_responses == 0 {
-                // No more expected responses
-                return None;
+        let outcome = match self.requests.get_mut(&nonce) {
+            None => RegisterResponseResult::UnknownNonce,
+            Some(status) if status.num_expected_responses == 0 => {
+                RegisterResponseResult::UnknownNonce
             }
-
-            if now >= status.expire_timestamp || !status.request.verify_response(response) {
-                // Invalid/expired response should invalidate this nonce.
+            Some(status) if now >= status.expire_timestamp => {
                 should_delete = true;
-                return None;
+                RegisterResponseResult::Expired(status.metadata.take())
             }
-
-            status.num_expected_responses -= 1;
-            if status.num_expected_responses == 0 && status.metadata.is_none() {
-                // No metadata, and no more expected responses safe to delete eagerly.
+            Some(status) if !status.request.verify_response(response) => {
                 should_delete = true;
+                RegisterResponseResult::InvalidResponse(status.metadata.take())
             }
-            Some(success_fn(&status.request))
-        });
+            Some(status) => {
+                status.num_expected_responses -= 1;
+                let result = success_fn(&status.request);
+                if status.num_expected_responses == 0 && status.metadata.is_none() {
+                    // No metadata, and no more expected responses safe to delete eagerly.
+                    should_delete = true;
+                }
+                RegisterResponseResult::Success(result)
+            }
+        };
 
         if should_delete {
             self.requests
                 .pop(&nonce)
                 .expect("request must exist when marked for deletion");
         }
-        response
+        outcome
     }
 
     /// Fetches metadata associated with the nonce
@@ -175,11 +205,15 @@ pub(crate) mod tests {
             .map(|status| status.expire_timestamp)
             .unwrap();
 
-        assert!(
-            outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp + 1, |_| ())
-                .is_none()
-        );
+        assert!(matches!(
+            outstanding_requests.register_response(
+                nonce,
+                shred.payload(),
+                expire_timestamp + 1,
+                |_| ()
+            ),
+            RegisterResponseResult::Expired(_)
+        ));
         assert!(outstanding_requests.requests.get(&nonce).is_none());
     }
 
@@ -203,11 +237,15 @@ pub(crate) mod tests {
         assert!(num_expected_responses > 1);
 
         // Response that passes all checks should decrease num_expected_responses.
-        assert!(
-            outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
-                .is_some()
-        );
+        assert!(matches!(
+            outstanding_requests.register_response(
+                nonce,
+                shred.payload(),
+                expire_timestamp - 1,
+                |_| ()
+            ),
+            RegisterResponseResult::Success(_)
+        ));
         num_expected_responses -= 1;
         assert_eq!(
             outstanding_requests
@@ -219,16 +257,24 @@ pub(crate) mod tests {
         );
 
         // Response with incorrect nonce is ignored.
-        assert!(
-            outstanding_requests
-                .register_response(nonce + 1, shred.payload(), expire_timestamp - 1, |_| ())
-                .is_none()
-        );
-        assert!(
-            outstanding_requests
-                .register_response(nonce + 1, shred.payload(), expire_timestamp, |_| ())
-                .is_none()
-        );
+        assert!(matches!(
+            outstanding_requests.register_response(
+                nonce + 1,
+                shred.payload(),
+                expire_timestamp - 1,
+                |_| ()
+            ),
+            RegisterResponseResult::UnknownNonce
+        ));
+        assert!(matches!(
+            outstanding_requests.register_response(
+                nonce + 1,
+                shred.payload(),
+                expire_timestamp,
+                |_| ()
+            ),
+            RegisterResponseResult::UnknownNonce
+        ));
         assert_eq!(
             outstanding_requests
                 .requests
@@ -240,11 +286,15 @@ pub(crate) mod tests {
 
         // Response with timestamp over limit should remove status, preventing late
         // responses from being accepted.
-        assert!(
-            outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp, |_| ())
-                .is_none()
-        );
+        assert!(matches!(
+            outstanding_requests.register_response(
+                nonce,
+                shred.payload(),
+                expire_timestamp,
+                |_| ()
+            ),
+            RegisterResponseResult::Expired(_)
+        ));
         assert!(outstanding_requests.requests.get(&nonce).is_none());
 
         // If number of outstanding requests hits zero and there is no completion
@@ -263,11 +313,15 @@ pub(crate) mod tests {
         assert!(num_expected_responses > 1);
         for _ in 0..num_expected_responses {
             assert!(outstanding_requests.requests.get(&nonce).is_some());
-            assert!(
-                outstanding_requests
-                    .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
-                    .is_some()
-            );
+            assert!(matches!(
+                outstanding_requests.register_response(
+                    nonce,
+                    shred.payload(),
+                    expire_timestamp - 1,
+                    |_| ()
+                ),
+                RegisterResponseResult::Success(_)
+            ));
         }
         assert!(outstanding_requests.requests.get(&nonce).is_none());
     }
@@ -287,18 +341,16 @@ pub(crate) mod tests {
             Some(BlockLocation::Alternate { block_id }),
         );
 
-        assert!(
-            outstanding_requests
-                .register_response(nonce, &42, now, |_| ())
-                .is_some()
-        );
+        assert!(matches!(
+            outstanding_requests.register_response(nonce, &42, now, |_| ()),
+            RegisterResponseResult::Success(_)
+        ));
 
         // Duplicate responses should not remove metadata before consumption.
-        assert!(
-            outstanding_requests
-                .register_response(nonce, &42, now, |_| ())
-                .is_none()
-        );
+        assert!(matches!(
+            outstanding_requests.register_response(nonce, &42, now, |_| ()),
+            RegisterResponseResult::UnknownNonce
+        ));
 
         assert_eq!(
             outstanding_requests.fetch_metadata_for_nonce(nonce),

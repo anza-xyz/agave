@@ -394,22 +394,22 @@ impl AncestorHashesService {
                     return None;
                 }
 
-                let request_slot = outstanding_requests.write().unwrap().register_response(
-                    nonce,
-                    &response,
-                    timestamp(),
-                    // If the response is valid, return the slot the request
-                    // was for
-                    |ancestor_hashes_request| ancestor_hashes_request.0,
-                );
-
-                if request_slot.is_none() {
+                let Some(request_slot) = outstanding_requests
+                    .write()
+                    .unwrap()
+                    .register_response(
+                        nonce,
+                        &response,
+                        timestamp(),
+                        // If the response is valid, return the slot the request
+                        // was for
+                        |ancestor_hashes_request| ancestor_hashes_request.0,
+                    )
+                    .ok()
+                else {
                     stats.invalid_packets += 1;
                     return None;
-                }
-
-                // If was a valid response, there must be a valid `request_slot`
-                let request_slot = request_slot.unwrap();
+                };
                 stats.processed += 1;
 
                 if let Occupied(mut ancestor_hashes_status_ref) =

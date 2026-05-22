@@ -270,5 +270,6 @@ fn verify_repair_nonce(
     };
     outstanding_repair_requests
         .register_response(nonce, shred, now, |_| ())
+        .ok()
         .is_some()
 }

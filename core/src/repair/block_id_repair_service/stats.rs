@@ -25,6 +25,11 @@ pub(super) struct BlockIdRepairResponsesStats {
     pub parent_fec_set_count_responses: usize,
     /// Responses to FecSetRoot requests
     pub fec_set_root_responses: usize,
+
+    /// Count of peers added to the blacklist this reporting window after
+    /// sending us a definitively-bad metadata response (failed Merkle proof
+    /// verification or mismatched slot/block id on a valid nonce).
+    pub blacklisted_peers: usize,
 }
 
 impl BlockIdRepairResponsesStats {
@@ -49,6 +54,7 @@ impl BlockIdRepairResponsesStats {
                 i64
             ),
             ("fec_set_root_responses", self.fec_set_root_responses, i64),
+            ("blacklisted_peers", self.blacklisted_peers, i64),
         );
         *self = Self::default();
     }
