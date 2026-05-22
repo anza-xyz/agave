@@ -120,14 +120,6 @@ impl KeystoneWallet {
             ))
         })?;
 
-        handle
-        .set_alternate_setting(interface_number, setting_number)
-        .map_err(|e| {
-            RemoteWalletError::Hid(format!(
-                "Failed to set alternate setting {setting_number} on interface {interface_number}: {e}"
-            ))
-        })?;
-
         Ok(Self {
             device,
             handle,
