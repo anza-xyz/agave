@@ -1145,6 +1145,83 @@ fn test_shrink_zero_lamport_single_ref_account() {
     }
 }
 
+/// unit test for `alive_bytes_after_shrink()`
+///
+/// Check all the permutations of latest full snapshot slot w.r.t. if/how
+/// zero lamport single ref accounts are counted as alive bytes or not.
+#[test]
+fn test_alive_bytes_after_shrink() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let slot = 5;
+    // note the initial alive bytes should be big enough so that subtracting
+    // all the zero lamport single ref accounts does not saturate at zero.
+    let initial_alive_bytes = 123_456;
+    let store = create_store_for_shrink_candidate_tests(
+        &accounts_db,
+        slot,
+        4096, // <-- file size
+        initial_alive_bytes,
+        2, // <-- num zero lamport single ref accounts
+    );
+
+    // test case: latest full snapshot slot is None -- ZLSR accounts are dead
+    {
+        // latest full snapshot slot starts off as None
+        assert!(accounts_db.latest_full_snapshot_slot().is_none());
+
+        // ensure ZLSR accounts are dead bytes
+        let alive_bytes_after_shrink1 = accounts_db.alive_bytes_after_shrink(&store);
+        assert!(alive_bytes_after_shrink1 < initial_alive_bytes);
+
+        // add a ZLSR account, and ensure alive bytes reduces
+        store.insert_zero_lamport_single_ref_account_offset(2);
+        let alive_bytes_after_shrink2 = accounts_db.alive_bytes_after_shrink(&store);
+        assert!(alive_bytes_after_shrink2 < alive_bytes_after_shrink1);
+    }
+
+    // test case: slot > latest full snapshot -- ZLSR accounts are alive
+    {
+        accounts_db.set_latest_full_snapshot_slot(slot - 1);
+
+        // ensure ZLSR accounts are *not* dead bytes
+        let alive_bytes_after_shrink1 = accounts_db.alive_bytes_after_shrink(&store);
+        assert_eq!(alive_bytes_after_shrink1, initial_alive_bytes);
+
+        // add a ZLSR account, and ensure alive bytes is unchanged
+        store.insert_zero_lamport_single_ref_account_offset(3);
+        let alive_bytes_after_shrink2 = accounts_db.alive_bytes_after_shrink(&store);
+        assert_eq!(alive_bytes_after_shrink2, initial_alive_bytes);
+    }
+
+    // test case: slot == latest full snapshot -- ZLSR accounts are dead
+    {
+        accounts_db.set_latest_full_snapshot_slot(slot);
+
+        // ensure ZLSR accounts are dead bytes
+        let alive_bytes_after_shrink1 = accounts_db.alive_bytes_after_shrink(&store);
+        assert!(alive_bytes_after_shrink1 < initial_alive_bytes);
+
+        // add a ZLSR account, and ensure alive bytes reduces
+        store.insert_zero_lamport_single_ref_account_offset(4);
+        let alive_bytes_after_shrink2 = accounts_db.alive_bytes_after_shrink(&store);
+        assert!(alive_bytes_after_shrink2 < alive_bytes_after_shrink1);
+    }
+
+    // test case: slot < latest full snapshot -- ZLSR accounts are dead
+    {
+        accounts_db.set_latest_full_snapshot_slot(slot + 1);
+
+        // ensure ZLSR accounts are dead bytes
+        let alive_bytes_after_shrink1 = accounts_db.alive_bytes_after_shrink(&store);
+        assert!(alive_bytes_after_shrink1 < initial_alive_bytes);
+
+        // add a ZLSR account, and ensure alive bytes reduces
+        store.insert_zero_lamport_single_ref_account_offset(5);
+        let alive_bytes_after_shrink2 = accounts_db.alive_bytes_after_shrink(&store);
+        assert!(alive_bytes_after_shrink2 < alive_bytes_after_shrink1);
+    }
+}
+
 /// Ensure that shrinking a storage...
 /// * with zero lamport single ref accounts
 /// * in a slot *older* than the latest full snapshot slot
