@@ -4,8 +4,8 @@ use {
     solana_tps_client::TpsClient,
     std::{
         sync::{
-            Arc, RwLock,
             atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
         },
         thread::sleep,
         time::{Duration, Instant},
