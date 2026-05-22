@@ -7760,9 +7760,9 @@ dependencies = [
 
 [[package]]
 name = "solana-nullable"
-version = "1.0.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a90429a75d69fdcb31952c3dea79f5f3c8157cfe88221e066103c9c237876073"
+checksum = "a0f95d3028ef0f682bb174b77379c19d5dae2904a649f4a103fe29be7a139980"
 dependencies = [
  "bytemuck",
 ]
@@ -9636,6 +9636,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-zk-elgamal-proof-interface"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8da7f01db2148a1dc16261ff1dc6f3930a1e255a33cece4f1b56658694f27f7"
+dependencies = [
+ "bytemuck",
+ "bytemuck_derive",
+ "num-derive",
+ "num-traits",
+ "solana-address 2.6.0",
+ "solana-instruction",
+ "solana-sdk-ids",
+ "solana-zk-sdk-pod",
+]
+
+[[package]]
 name = "solana-zk-elgamal-proof-program"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -9644,7 +9660,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk-ids",
  "solana-svm-log-collector",
- "solana-zk-sdk 5.0.1",
+ "solana-zk-sdk 6.0.1",
 ]
 
 [[package]]
@@ -9686,20 +9702,17 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-sdk"
-version = "5.0.1"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09670ff59f60e6ddc2209c2e4353992a9b9f01d4e244f3e9d67bd5146e33d388"
+checksum = "9664f023aac0b5976cb036684cd3d5ab3c4f12beadafafdcf87c3ba19f868887"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",
  "bincode",
  "bytemuck",
- "bytemuck_derive",
  "curve25519-dalek 4.1.3",
  "itertools 0.14.0",
  "merlin",
- "num-derive",
- "num-traits",
  "rand 0.8.6",
  "serde",
  "serde_derive",
@@ -9707,15 +9720,28 @@ dependencies = [
  "sha3",
  "solana-address 2.6.0",
  "solana-derivation-path",
- "solana-instruction",
- "solana-sdk-ids",
  "solana-seed-derivable",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
+ "solana-zk-elgamal-proof-interface",
+ "solana-zk-sdk-pod",
  "subtle",
  "thiserror 2.0.18",
  "zeroize",
+]
+
+[[package]]
+name = "solana-zk-sdk-pod"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a800583b7a4cea3e851686af162cc6e4712eef97fa91dfa9aca2459b95c84777"
+dependencies = [
+ "base64 0.22.1",
+ "bytemuck",
+ "bytemuck_derive",
+ "solana-nullable",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
