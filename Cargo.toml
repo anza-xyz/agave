@@ -523,7 +523,7 @@ solana-zk-sdk = "5.0.1"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 spl-associated-token-account-interface = "2.0.0"
 spl-generic-token = "2.0.0"
-spl-memo-interface = "2.0.0"
+spl-memo-interface = "2.1.0"
 spl-pod = "0.7.3"
 spl-token-2022-interface = "2.1.0"
 spl-token-confidential-transfer-proof-extraction = "0.5.1"
