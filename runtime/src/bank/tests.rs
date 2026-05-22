@@ -2917,8 +2917,10 @@ fn test_bank_epoch_vote_accounts() {
 
         // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
         //   in the prior epoch (0 in this case)
+        #[allow(deprecated)]
+        let expected_stake = leader_stake.stake(0, &StakeHistory::default(), None);
         assert_eq!(
-            leader_stake.stake(0, &StakeHistory::default(), None),
+            expected_stake,
             vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
         );
 
@@ -2933,8 +2935,10 @@ fn test_bank_epoch_vote_accounts() {
     );
 
     assert!(child.epoch_vote_accounts(epoch).is_some());
+    #[allow(deprecated)]
+    let expected_stake = leader_stake.stake(child.epoch(), &StakeHistory::default(), None);
     assert_eq!(
-        leader_stake.stake(child.epoch(), &StakeHistory::default(), None),
+        expected_stake,
         child
             .epoch_vote_accounts(epoch)
             .unwrap()
@@ -2951,8 +2955,10 @@ fn test_bank_epoch_vote_accounts() {
         SLOTS_PER_EPOCH - (LEADER_SCHEDULE_SLOT_OFFSET % SLOTS_PER_EPOCH) + 1,
     );
     assert!(child.epoch_vote_accounts(epoch).is_some());
+    #[allow(deprecated)]
+    let expected_stake = leader_stake.stake(child.epoch(), &StakeHistory::default(), None);
     assert_eq!(
-        leader_stake.stake(child.epoch(), &StakeHistory::default(), None),
+        expected_stake,
         child
             .epoch_vote_accounts(epoch)
             .unwrap()

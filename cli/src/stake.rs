@@ -2456,6 +2456,7 @@ pub fn build_stake_state(
             _,
         ) => {
             let current_epoch = clock.epoch;
+            #[allow(deprecated)]
             let StakeActivationStatus {
                 effective,
                 activating,
@@ -2719,9 +2720,10 @@ pub async fn get_account_stake_state(
     match stake_account.state() {
         Ok(stake_state) => {
             let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
-            let stake_history = from_account(&stake_history_account).ok_or_else(|| {
-                CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-            })?;
+            let stake_history: StakeHistory = bincode::deserialize(&stake_history_account.data)
+                .map_err(|_| {
+                    CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+                })?;
             let clock_account = rpc_client.get_account(&clock::id()).await?;
             let clock: Clock = from_account(&clock_account).ok_or_else(|| {
                 CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
@@ -2779,7 +2781,7 @@ pub async fn process_show_stake_history(
 ) -> ProcessResult {
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let stake_history =
-        from_account::<StakeHistory, _>(&stake_history_account).ok_or_else(|| {
+        bincode::deserialize::<StakeHistory>(&stake_history_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize stake history".to_string())
         })?;
 

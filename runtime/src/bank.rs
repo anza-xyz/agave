@@ -140,13 +140,17 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader, system_program},
+    solana_sdk_ids::{
+        bpf_loader_upgradeable, incinerator, native_loader, system_program, sysvar as sysvar_id,
+    },
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
     solana_stake_interface::{
-        stake_history::StakeHistory, state::Delegation, sysvar::stake_history,
+        stake_history::{SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory},
+        state::Delegation,
+        sysvar::stake_history,
     },
     solana_svm::{
         account_loader::LoadedTransaction,
@@ -1136,6 +1140,18 @@ struct NewEpochBundle {
     rewards_calculation: Arc<PartitionedRewardsCalculation>,
     calculate_activated_stake_time_us: u64,
     update_rewards_with_thread_pool_time_us: u64,
+}
+
+fn create_stake_history_account(
+    stake_history: &StakeHistory,
+    (lamports, rent_epoch): InheritableAccountFields,
+) -> AccountSharedData {
+    let data_len =
+        STAKE_HISTORY_ACCOUNT_SIZE.max(bincode::serialized_size(stake_history).unwrap() as usize);
+    let mut account = AccountSharedData::new(lamports, data_len, &sysvar_id::id());
+    account.serialize_data(stake_history).unwrap();
+    account.set_rent_epoch(rent_epoch);
+    account
 }
 
 impl Bank {
@@ -2646,7 +2662,7 @@ impl Bank {
         }
         // if I'm the first Bank in an epoch, ensure stake_history is updated
         self.update_sysvar_account(&stake_history::id(), |account| {
-            create_account::<StakeHistory>(
+            create_stake_history_account(
                 self.stakes_cache.stakes().history(),
                 self.inherit_specially_retained_account_fields(account),
             )

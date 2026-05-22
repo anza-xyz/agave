@@ -191,6 +191,7 @@ pub(crate) fn calculate_stake_points_and_credits(
 
     for epoch_credits_item in vote_state.epoch_credits_iter {
         let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item;
+        #[allow(deprecated)]
         let stake_amount = u128::from(stake.delegation.stake(
             epoch,
             stake_history,

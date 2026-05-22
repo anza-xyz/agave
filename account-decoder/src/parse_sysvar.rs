@@ -266,8 +266,11 @@ mod test {
     #[allow(deprecated)]
     use solana_sysvar::recent_blockhashes::IterItem;
     use {
-        super::*, solana_account::create_account_for_test, solana_fee_calculator::FeeCalculator,
+        super::*,
+        solana_account::{Account, create_account_for_test},
+        solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
+        solana_stake_interface::stake_history::SIZE,
     };
 
     #[test]
@@ -362,7 +365,8 @@ mod test {
             deactivating: 3,
         };
         stake_history.add(1, stake_history_entry.clone());
-        let stake_history_sysvar = create_account_for_test(&stake_history);
+        let stake_history_sysvar =
+            Account::new_data_with_space(1, &stake_history, SIZE, &sysvar::id()).unwrap();
         assert_eq!(
             parse_sysvar(&stake_history_sysvar.data, &sysvar::stake_history::id()).unwrap(),
             SysvarAccountType::StakeHistory(vec![UiStakeHistoryEntry {

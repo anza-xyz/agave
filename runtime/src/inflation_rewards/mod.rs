@@ -45,12 +45,13 @@ pub(crate) fn redeem_rewards<'a>(
             commission_rate_in_basis_points,
             ..
         } = calculation_environment;
+        #[allow(deprecated)]
+        let effective_stake_at_rewarded_epoch =
+            stake.stake(rewarded_epoch, stake_history, new_rate_activation_epoch);
         inflation_point_calc_tracer(
-            &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(stake.stake(
-                rewarded_epoch,
-                stake_history,
-                new_rate_activation_epoch,
-            )),
+            &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(
+                effective_stake_at_rewarded_epoch,
+            ),
         );
         inflation_point_calc_tracer(&InflationPointCalculationEvent::PriorTotalLamports(
             current_lamports,

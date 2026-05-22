@@ -269,6 +269,7 @@ impl Stakes<StakeAccount> {
                     StakeAccount::try_from(create_account_shared_data(account))
                 {
                     let delegation = stake_account.delegation();
+                    #[allow(deprecated)]
                     let stake = delegation.stake(epoch, &stake_history, new_rate_activation_epoch);
                     *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
                     stake_delegations.insert(*pubkey, stake_account);
@@ -398,11 +399,13 @@ impl Stakes<StakeAccount> {
                     StakeActivationStatus::default,
                     |acc, (_stake_pubkey, stake_account)| {
                         let delegation = stake_account.delegation();
-                        acc + delegation.stake_activating_and_deactivating(
+                        #[allow(deprecated)]
+                        let activation_status = delegation.stake_activating_and_deactivating(
                             self.epoch,
                             &self.stake_history,
                             new_rate_activation_epoch,
-                        )
+                        );
+                        acc + activation_status
                     },
                 )
                 .reduce(StakeActivationStatus::default, Add::add)
@@ -434,6 +437,7 @@ impl Stakes<StakeAccount> {
     }
 
     /// Sum the stakes that point to the given voter_pubkey
+    #[allow(deprecated)]
     fn calculate_stake(
         stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
         voter_pubkey: &Pubkey,
@@ -460,6 +464,7 @@ impl Stakes<StakeAccount> {
     ) {
         if let Some(stake_account) = self.stake_delegations.remove(stake_pubkey) {
             let removed_delegation = stake_account.delegation();
+            #[allow(deprecated)]
             let removed_stake = removed_delegation.stake(
                 self.epoch,
                 &self.stake_history,
@@ -499,12 +504,14 @@ impl Stakes<StakeAccount> {
         debug_assert_ne!(stake_account.lamports(), 0u64);
         let delegation = stake_account.delegation();
         let voter_pubkey = delegation.voter_pubkey;
+        #[allow(deprecated)]
         let stake = delegation.stake(self.epoch, &self.stake_history, new_rate_activation_epoch);
         match self.stake_delegations.insert(stake_pubkey, stake_account) {
             None => self.vote_accounts.add_stake(&voter_pubkey, stake),
             Some(old_stake_account) => {
                 let old_delegation = old_stake_account.delegation();
                 let old_voter_pubkey = old_delegation.voter_pubkey;
+                #[allow(deprecated)]
                 let old_stake = old_delegation.stake(
                     self.epoch,
                     &self.stake_history,
@@ -644,7 +651,9 @@ fn refresh_vote_accounts(
                 |mut delegated_stakes, (_stake_pubkey, stake_account)| {
                     let delegation = stake_account.delegation();
                     let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
-                    *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    #[allow(deprecated)]
+                    let stake = delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    *entry += stake;
                     delegated_stakes
                 },
             )
@@ -768,9 +777,11 @@ pub(crate) mod tests {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
                 assert!(vote_accounts.get(&vote_pubkey).is_some());
+                #[allow(deprecated)]
+                let expected_stake = stake.stake(i, &StakeHistory::default(), None);
                 assert_eq!(
                     vote_accounts.get_delegated_stake(&vote_pubkey),
-                    stake.stake(i, &StakeHistory::default(), None)
+                    expected_stake
                 );
             }
 
@@ -780,9 +791,11 @@ pub(crate) mod tests {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
                 assert!(vote_accounts.get(&vote_pubkey).is_some());
+                #[allow(deprecated)]
+                let expected_stake = stake.stake(i, &StakeHistory::default(), None);
                 assert_eq!(
                     vote_accounts.get_delegated_stake(&vote_pubkey),
-                    stake.stake(i, &StakeHistory::default(), None)
+                    expected_stake
                 ); // stays old stake, because only 10 is activated
             }
 
@@ -799,9 +812,11 @@ pub(crate) mod tests {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
                 assert!(vote_accounts.get(&vote_pubkey).is_some());
+                #[allow(deprecated)]
+                let expected_stake = stake.stake(i, &StakeHistory::default(), None);
                 assert_eq!(
                     vote_accounts.get_delegated_stake(&vote_pubkey),
-                    stake.stake(i, &StakeHistory::default(), None)
+                    expected_stake
                 ); // now stake of 42 is activated
             }
 
@@ -956,9 +971,11 @@ pub(crate) mod tests {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
             assert!(vote_accounts.get(&vote_pubkey).is_some());
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
             assert!(vote_accounts.get(&vote_pubkey2).is_some());
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey2), 0);
@@ -973,9 +990,11 @@ pub(crate) mod tests {
             assert!(vote_accounts.get(&vote_pubkey).is_some());
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 0);
             assert!(vote_accounts.get(&vote_pubkey2).is_some());
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey2),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
         }
     }
@@ -1026,9 +1045,11 @@ pub(crate) mod tests {
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -1042,9 +1063,11 @@ pub(crate) mod tests {
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
         }
     }

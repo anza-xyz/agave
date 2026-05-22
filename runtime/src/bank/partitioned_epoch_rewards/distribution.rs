@@ -246,12 +246,13 @@ impl Bank {
             ))
             .map_err(|_| DistributionError::UnableToSetState)?;
 
-        let reward_type = if partitioned_stake_reward.stake.delegation.stake(
+        #[allow(deprecated)]
+        let stake_at_distribution_epoch = partitioned_stake_reward.stake.delegation.stake(
             distribution_epoch,
             stake_history,
             new_warmup_cooldown_rate_epoch,
-        ) == 0
-        {
+        );
+        let reward_type = if stake_at_distribution_epoch == 0 {
             RewardType::DeactivatedStake
         } else {
             RewardType::Staking
