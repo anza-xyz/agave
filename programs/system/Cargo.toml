@@ -53,3 +53,6 @@ solana-transaction-context = { path = "../../transaction-context", features = ["
 [[bench]]
 name = "system"
 harness = false
+
+[lints]
+workspace = true

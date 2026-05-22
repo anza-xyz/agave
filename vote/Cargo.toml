@@ -18,7 +18,13 @@ name = "solana_vote"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:qualifier_attr", "dep:rand", "dep:bincode", "dep:solana-bls-signatures"]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "dep:rand",
+    "dep:bincode",
+    "dep:solana-bls-signatures",
+    "solana-bls-signatures/solana-signer-derive",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

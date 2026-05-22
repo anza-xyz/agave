@@ -253,9 +253,8 @@ if [[ -z "$noBuildPlatformTools" ]]; then
   source "$SOLANA_ROOT"/scripts/cargo-build-sbf-version.sh
 
   # shellcheck disable=SC2086
+  # starting from cargo-build-sbf v4.1.0, `cargo install cargo-build-sbf` installs both `cargo-build-sbf` and `cargo-test-sbf`
   "$cargo" $maybeRustVersion install --locked cargo-build-sbf --root "$installDir" $maybeCargoBuildSbfVersionArg
-  # shellcheck disable=SC2086
-  "$cargo" $maybeRustVersion install --locked cargo-test-sbf --root "$installDir" $maybeCargoTestSbfVersionArg
 fi
 
 (

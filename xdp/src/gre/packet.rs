@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        ecn_codepoint::EcnCodepoint,
         netlink::{GreTunnelInfo, MacAddress},
         packet::{
             ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE, write_eth_header, write_ip_header,
@@ -74,11 +75,10 @@ fn write_gre_outer_headers(
     gre_dst_mac: &MacAddress,
     inner_packet_len: usize,
     gre_header: &GreHeader,
+    ecn: Option<EcnCodepoint>,
     info: &GreTunnelInfo,
 ) -> Result<(), PacketError> {
     write_eth_header(packet, &gre_src_mac.0, &gre_dst_mac.0);
-
-    let dont_fragment = info.pmtudisc != 0;
 
     // Write outer IP header (protocol = GRE = 47)
     let gre_payload_len = GRE_HEADER_BASE_SIZE + inner_packet_len;
@@ -86,15 +86,21 @@ fn write_gre_outer_headers(
     let (IpAddr::V4(outer_local), IpAddr::V4(outer_remote)) = (info.local, info.remote) else {
         return Err(PacketError::InvalidTunnelEndpoints);
     };
+    // We must construct the outer encapsulating IP header by copying the two-bit ECN field of the
+    // incoming IP header, see RFC 6040 Section 4.1.
+    let outer_tos = update_tos_with_ecn(info.tos, ecn);
+
     write_ip_header(
         &mut packet[ETH_HEADER_SIZE..],
         &outer_local,
         &outer_remote,
         gre_payload_len as u16,
         IPPROTO_GRE as u8,
-        dont_fragment,
+        // GRE fragmentation is not supported. The outer IP header is always written with the Don't
+        // Fragment (DF) flag set.
+        true,
         outer_ttl,
-        Some(info.tos),
+        Some(outer_tos),
     );
 
     // Write GRE header
@@ -119,6 +125,7 @@ pub fn construct_gre_packet(
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
+    ecn: Option<EcnCodepoint>,
     info: &GreTunnelInfo,
 ) -> Result<(), PacketError> {
     let payload_len = payload.len();
@@ -142,6 +149,7 @@ pub fn construct_gre_packet(
         dst_mac,
         inner_packet_len,
         &gre_header,
+        ecn,
         info,
     )?;
 
@@ -151,6 +159,7 @@ pub fn construct_gre_packet(
         &mut packet[inner_start..inner_start + IP_HEADER_SIZE],
         src_ip,
         dst_ip,
+        ecn,
         (UDP_HEADER_SIZE + payload_len) as u16,
     );
 
@@ -169,4 +178,9 @@ pub fn construct_gre_packet(
         ..inner_start + INNER_PACKET_HEADER_SIZE + payload_len]
         .copy_from_slice(payload);
     Ok(())
+}
+
+/// Returns `tos` with ECN (low 2 bits) replaced; DSCP (high 6 bits) is preserved.
+fn update_tos_with_ecn(tos: u8, ecn: Option<EcnCodepoint>) -> u8 {
+    tos & 0b1111_1100 | ecn.map_or(0, |ecn| ecn as u8 & 0b0000_0011)
 }

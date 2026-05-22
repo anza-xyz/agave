@@ -13,7 +13,7 @@
 //! a block with parent `b` in slot `s` will have their block finalized.
 
 use {
-    crate::{common::MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, event::VotorEvent},
+    crate::{common::MAX_NOTAR_FALLBACK_BLOCKS, event::VotorEvent},
     agave_votor_messages::consensus_message::Block,
     core::fmt,
     solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
@@ -108,7 +108,7 @@ impl ParentReadyTracker {
             self.cluster_info.0.id()
         );
         status.notar_fallbacks.push(block);
-        assert!(status.notar_fallbacks.len() <= MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE);
+        assert!(status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_BLOCKS);
 
         // Add this block as valid parent to skip connected future blocks
         for s in slot.saturating_add(1).. {

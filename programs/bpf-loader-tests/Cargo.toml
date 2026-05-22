@@ -34,3 +34,6 @@ solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,10 +1,8 @@
 //! Feature set conversions for protobuf support.
 
-#![cfg(feature = "fuzz")]
-
 use {
-    crate::proto::FeatureSet as ProtoFeatureSet,
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
+    protosol::protos::FeatureSet as ProtoFeatureSet,
     solana_pubkey::Pubkey,
     std::{collections::HashMap, sync::LazyLock},
 };
@@ -28,14 +26,13 @@ static INDEXED_FEATURES: LazyLock<HashMap<u64, Pubkey>> = LazyLock::new(|| {
         .collect()
 });
 
-impl From<&ProtoFeatureSet> for FeatureSet {
-    fn from(value: &ProtoFeatureSet) -> Self {
-        let mut feature_set = FeatureSet::default();
-        for id in &value.features {
-            if let Some(pubkey) = INDEXED_FEATURES.get(id) {
-                feature_set.activate(pubkey, 0);
-            }
+/// Build a `FeatureSet` from a protobuf feature set.
+pub fn feature_set_from_proto(value: &ProtoFeatureSet) -> FeatureSet {
+    let mut feature_set = FeatureSet::default();
+    for id in &value.features {
+        if let Some(pubkey) = INDEXED_FEATURES.get(id) {
+            feature_set.activate(pubkey, 0);
         }
-        feature_set
     }
+    feature_set
 }

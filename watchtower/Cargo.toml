@@ -31,3 +31,6 @@ solana-pubkey = { version = "=4.2.0", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

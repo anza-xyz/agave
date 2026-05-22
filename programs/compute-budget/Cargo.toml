@@ -21,3 +21,6 @@ agave-unstable-api = []
 
 [dependencies]
 solana-program-runtime = { workspace = true }
+
+[lints]
+workspace = true

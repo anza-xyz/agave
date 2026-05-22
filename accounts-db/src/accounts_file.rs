@@ -6,12 +6,13 @@ use {
         append_vec::{AppendVec, AppendVecError},
         storable_accounts::StorableAccounts,
     },
-    agave_fs::{FileInfo, buffered_reader::RequiredLenBufFileRead},
+    agave_fs::{FileInfo, buffered_reader::RequiredLenBufFileRead, file_io::open_for_reading},
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
-        mem,
+        fs::File,
+        io, mem,
         path::{Path, PathBuf},
     },
     thiserror::Error,
@@ -40,17 +41,6 @@ pub enum AccountsFileError {
     AppendVecError(#[from] AppendVecError),
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum StorageAccess {
-    /// storages should be accessed by Mmap
-    #[deprecated(since = "4.0.0")]
-    Mmap,
-    /// storages should be accessed by File I/O
-    /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
-    #[default]
-    File,
-}
-
 #[derive(Debug)]
 /// An enum for accessing an accounts file which can be implemented
 /// under different formats.
@@ -64,12 +54,8 @@ impl AccountsFile {
     /// The second element of the returned tuple is the number of accounts in the
     /// accounts file.
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_from_file(
-        path: impl Into<PathBuf>,
-        current_len: usize,
-        storage_access: StorageAccess,
-    ) -> Result<(Self, usize)> {
-        let (av, num_accounts) = AppendVec::new_from_file(path, current_len, storage_access)?;
+    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
+        let (av, num_accounts) = AppendVec::new_from_file(path, current_len)?;
         Ok((Self::AppendVec(av), num_accounts))
     }
 
@@ -78,12 +64,8 @@ impl AccountsFile {
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
     /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
     /// accounts verification to ensure it is valid.
-    pub fn new_for_startup(
-        file_info: FileInfo,
-        current_len: usize,
-        storage_access: StorageAccess,
-    ) -> Result<Self> {
-        let av = AppendVec::new_for_startup(file_info, current_len, storage_access)?;
+    pub fn new_for_startup(file_info: FileInfo, current_len: usize) -> Result<Self> {
+        let av = AppendVec::new_for_startup(file_info, current_len)?;
         Ok(Self::AppendVec(av))
     }
 
@@ -264,10 +246,16 @@ impl AccountsFile {
         }
     }
 
-    /// Returns the way to access this accounts file when archiving
-    pub fn internals_for_archive(&self) -> InternalsForArchive<'_> {
-        match self {
-            Self::AppendVec(av) => av.internals_for_archive(),
+    /// Returns a file handle suitable for archive-style reads. With
+    /// `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise
+    /// the `AccountsFile`'s existing fd is borrowed, saving one fd per storage.
+    pub fn open_file_for_archive(&self, use_direct_io: bool) -> io::Result<OpenFileForArchive<'_>> {
+        if use_direct_io {
+            open_for_reading(self.path(), true).map(OpenFileForArchive::Owned)
+        } else {
+            Ok(match self {
+                Self::AppendVec(av) => av.open_file_for_archive(),
+            })
         }
     }
 }
@@ -280,30 +268,32 @@ pub enum AccountsFileProvider {
 }
 
 impl AccountsFileProvider {
-    pub fn new_writable(
-        &self,
-        path: impl Into<PathBuf>,
-        file_size: u64,
-        storage_access: StorageAccess,
-    ) -> AccountsFile {
+    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
         match self {
-            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(
-                path,
-                true,
-                file_size as usize,
-                storage_access,
-            )),
+            Self::AppendVec => {
+                AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
+            }
         }
     }
 }
 
 /// The access method to use when archiving an AccountsFile
 #[derive(Debug)]
-pub enum InternalsForArchive<'a> {
-    /// Accessing the internals is done via Mmap
-    Mmap(&'a [u8]),
-    /// Accessing the internals is done via File I/O
-    FileIo(&'a Path),
+pub enum OpenFileForArchive<'a> {
+    /// Borrowed `AccountsFile` fd; lacks `O_DIRECT`, so reads go through the
+    /// kernel page cache (incompatible with direct-I/O reads).
+    Borrowed(&'a File),
+    /// Freshly opened fd, typically with `O_DIRECT` on Linux.
+    Owned(File),
+}
+
+impl AsRef<File> for OpenFileForArchive<'_> {
+    fn as_ref(&self) -> &File {
+        match self {
+            Self::Borrowed(f) => f,
+            Self::Owned(f) => f,
+        }
+    }
 }
 
 /// Information after storing accounts

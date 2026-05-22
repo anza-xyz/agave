@@ -226,6 +226,7 @@ impl ShredData {
             .contains(ShredFlags::DATA_COMPLETE_SHRED)
     }
 
+    #[cfg(test)]
     pub(super) fn reference_tick(&self) -> u8 {
         (self.data_header.flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits()
     }

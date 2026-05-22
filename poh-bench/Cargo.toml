@@ -24,3 +24,6 @@ solana-entry = { workspace = true }
 solana-measure = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

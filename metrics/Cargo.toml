@@ -39,3 +39,6 @@ solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 [[bench]]
 name = "metrics"
 harness = false
+
+[lints]
+workspace = true

@@ -1,10 +1,8 @@
 use {
     crate::{
         contact_info::ContactInfo,
-        deprecated,
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
-        legacy_contact_info::LegacyContactInfo,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
@@ -31,6 +29,11 @@ pub const MAX_VOTES: VoteIndex = 12;
 pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 
+// Helper for deprecated types
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Deprecated {}
+reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
+
 /// CrdsData that defines the different types of items CrdsValues can hold
 /// * Merge Strategy - Latest wallclock is picked
 /// * LowestSlot index is deprecated
@@ -39,23 +42,23 @@ pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
-    LegacyContactInfo(LegacyContactInfo), // Deprecated
+    LegacyContactInfo(Deprecated), // Deprecated
     Vote(VoteIndex, Vote),
     LowestSlot(
         #[serde(deserialize_with = "reject_nonzero_u8")] u8, // u8 is deprecated
         LowestSlot,
     ),
     #[allow(private_interfaces)]
-    LegacySnapshotHashes(LegacySnapshotHashes), // Deprecated
+    LegacySnapshotHashes(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    AccountsHashes(AccountsHashes), // Deprecated
+    AccountsHashes(Deprecated), // Deprecated
     EpochSlots(EpochSlotsIndex, EpochSlots),
     #[allow(private_interfaces)]
-    LegacyVersion(LegacyVersion), // Deprecated
+    LegacyVersion(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    Version(Version), // Deprecated
+    Version(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    NodeInstance(NodeInstance), // Deprecated
+    NodeInstance(Deprecated), // Deprecated
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
@@ -96,12 +99,12 @@ impl Sanitize for CrdsData {
             CrdsData::RestartLastVotedForkSlots(slots) => slots.sanitize(),
             CrdsData::RestartHeaviestFork(fork) => fork.sanitize(),
             // Deprecated
-            CrdsData::LegacySnapshotHashes(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::LegacyContactInfo(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::AccountsHashes(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::LegacyVersion(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::NodeInstance(_) => Err(SanitizeError::InvalidValue),
+            CrdsData::AccountsHashes(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::NodeInstance(_)
+            | CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
         }
     }
 }
@@ -212,12 +215,6 @@ impl From<&ContactInfo> for CrdsData {
     }
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AccountsHashes {}
-reject_deserialize!(AccountsHashes, "AccountsHashes is deprecated");
-
-type LegacySnapshotHashes = AccountsHashes;
-
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotHashes {
@@ -251,18 +248,19 @@ pub struct LowestSlot {
     pub(crate) from: Pubkey,
     root: Slot, //deprecated
     pub lowest: Slot,
-    slots: BTreeSet<Slot>,                        //deprecated
-    stash: Vec<deprecated::EpochIncompleteSlots>, //deprecated
+    slots: BTreeSet<Slot>, //deprecated
+    stash: Vec<u8>,        //deprecated
     wallclock: u64,
 }
 
 impl LowestSlot {
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
@@ -368,12 +366,13 @@ impl Vote {
         &self.transaction
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
@@ -402,18 +401,6 @@ impl<'de> Deserialize<'de> for Vote {
             .ok_or_else(|| serde::de::Error::custom("invalid vote tx"))
     }
 }
-
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LegacyVersion {}
-reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
-
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Version {}
-reject_deserialize!(Version, "Version is deprecated");
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct NodeInstance {}
-reject_deserialize!(NodeInstance, "NodeInstance is deprecated");
 
 pub(crate) fn sanitize_wallclock(wallclock: u64) -> Result<(), SanitizeError> {
     if wallclock >= MAX_WALLCLOCK {
@@ -472,7 +459,7 @@ mod test {
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
 
         let mut o = ls;
-        o.stash.push(deprecated::EpochIncompleteSlots::default());
+        o.stash.push(0);
         let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(0, o));
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
     }
@@ -534,37 +521,21 @@ mod test {
 
     #[test]
     fn test_deprecated_values_fail_deserialization() {
+        let deprecated_values = [
+            CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+        ];
+
+        for value in deprecated_values {
+            let bytes = bincode::serialize(&value).unwrap();
+            assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+        }
+
         let keypair = Keypair::new();
-
-        // NodeInstance
-        let node_instance = CrdsData::NodeInstance(NodeInstance {});
-        let bytes = bincode::serialize(&node_instance).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacyVersion
-        let legacy_version = CrdsData::LegacyVersion(LegacyVersion {});
-        let bytes = bincode::serialize(&legacy_version).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // Version
-        let version = CrdsData::Version(Version {});
-        let bytes = bincode::serialize(&version).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacyContactInfo
-        let legacy_contact_info = CrdsData::LegacyContactInfo(LegacyContactInfo {});
-        let bytes = bincode::serialize(&legacy_contact_info).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // AccountsHashes
-        let accounts_hashes = CrdsData::AccountsHashes(AccountsHashes {});
-        let bytes = bincode::serialize(&accounts_hashes).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacySnapshotHashes
-        let legacy_snapshot_hashes = CrdsData::LegacySnapshotHashes(LegacySnapshotHashes {});
-        let bytes = bincode::serialize(&legacy_snapshot_hashes).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
 
         // LowestSlot(1, ...)
         let lowest_slot =

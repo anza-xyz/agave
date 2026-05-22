@@ -474,6 +474,17 @@ impl AccountsCache {
         self.index.entries.contains_key(pubkey)
     }
 
+    /// Returns a vector of all pubkeys currently in the cache index.
+    /// In iterator is not returned as the dashmap shards would be readlocked for the duration
+    /// of the iterator
+    pub(crate) fn cached_pubkeys(&self) -> Vec<Pubkey> {
+        self.index
+            .entries
+            .iter()
+            .map(|entry| *entry.key())
+            .collect()
+    }
+
     pub fn num_slots(&self) -> usize {
         self.cache.len()
     }

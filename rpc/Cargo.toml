@@ -124,3 +124,6 @@ solana-vote-interface = { workspace = true }
 spl-pod = { workspace = true }
 symlink = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

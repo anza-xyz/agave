@@ -209,7 +209,9 @@ fn verify_votes(
     for remote_pubkey in invalid_remote_pubkeys {
         if banlist.ban(remote_pubkey, BAN_TIMEOUT) {
             stats.already_banned += 1;
-        };
+        } else {
+            info!("bls_vote_sigverify: banned sender={remote_pubkey} due to failed verification");
+        }
     }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
 

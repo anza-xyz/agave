@@ -27,7 +27,7 @@ use {
         common::DELTA,
         event::{RepairEvent, RepairEventReceiver},
     },
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    agave_votor_messages::consensus_message::Block,
     crossbeam_channel::select,
     lazy_lru::LruCache,
     log::{debug, info},
@@ -71,6 +71,11 @@ type OutstandingBlockIdRepairs = OutstandingRequests<BlockIdRepairType>;
 const MAX_REPAIR_REQUESTS_PER_ITERATION: usize = 200;
 const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 11;
 const MAX_PENDING_REPAIR_EVENTS: usize = 10_000;
+
+/// Idle wake-up cadence for `run_repair_iteration`'s `select!`. Bounds the worst-case
+/// latency between a `sent_requests` entry exceeding its `2 * DELTA` TTL and us
+/// re-queueing it, while keeping idle CPU well below the busy-path `REPAIR_MS` rate.
+const IDLE_TICK: Duration = Duration::from_millis(10);
 
 /// Bound to 1/32th the size of shred fetch, as we roughly expect one message per FEC set
 const RESPONSE_CHANNEL_SIZE: usize = SHRED_FETCH_CHANNEL_SIZE / DATA_SHREDS_PER_FEC_BLOCK;
@@ -174,11 +179,11 @@ struct RepairState {
 
     /// Repair events that are pending because Turbine/Eager repair hasn't completed yet.
     /// These are re-processed each iteration until Turbine/Eager repair completes or marks the slot dead.
-    /// Only the lowest slots are retained if the queue reaches MAX_PENDING_REPAIR_EVENTS.
+    /// Only the lowest slots are retained if the queue reaches [`MAX_PENDING_REPAIR_EVENTS`].
     pending_repair_events: BTreeSet<RepairEvent>,
 
     /// Requests that have been sent, mapped to the timestamp they were sent.
-    /// Used for retry logic - requests that exceed DELTA
+    /// Used for retry logic - requests that exceed `2 * DELTA`
     /// are moved back to pending_repair_requests. We track this separately from the
     /// outstanding_requests maps as those are used for verifying response validity.
     sent_requests: HashMap<OutgoingMessage, u64>,
@@ -213,7 +218,7 @@ impl RepairState {
     }
 
     fn prune_expected_ping_responses(&mut self, now: u64) {
-        let ttl_ms = u64::try_from(DELTA.as_millis()).unwrap();
+        let ttl_ms = u64::try_from(2 * DELTA.as_millis()).unwrap();
         self.expected_ping_responses
             .retain(|_, sent_at| now.saturating_sub(*sent_at) <= ttl_ms);
     }
@@ -304,12 +309,13 @@ impl BlockIdRepairService {
             .name("solBlockIdRep".to_string())
             .spawn(move || {
                 info!("BlockIdRepairService started");
-                let sharable_banks = context
-                    .repair_info
-                    .bank_forks
-                    .read()
-                    .unwrap()
-                    .sharable_banks();
+                let (sharable_banks, migration_status) = {
+                    let bank_forks_r = context.repair_info.bank_forks.read().unwrap();
+                    (
+                        bank_forks_r.sharable_banks(),
+                        bank_forks_r.migration_status(),
+                    )
+                };
                 let mut state = RepairState {
                     // One day we'll actually split out the build request functionality from the full ServeRepair :'(
                     serve_repair: ServeRepair::new(
@@ -317,8 +323,7 @@ impl BlockIdRepairService {
                         sharable_banks.clone(),
                         context.repair_info.repair_whitelist.clone(),
                         Box::new(StandardRepairHandler::new(context.blockstore.clone())),
-                        // Doesn't matter this serve_repair isn't used to respond
-                        Arc::new(MigrationStatus::default()),
+                        migration_status,
                     ),
                     peers_cache: LruCache::new(REPAIR_PEERS_CACHE_CAPACITY),
                     outstanding_requests: OutstandingBlockIdRepairs::default(),
@@ -393,7 +398,7 @@ impl BlockIdRepairService {
                     Ok(response) => pending_response = Some(response),
                     Err(_) => return Ok(false),
                 },
-                default(DELTA) => ()
+                default(IDLE_TICK) => ()
             }
         }
 
@@ -866,7 +871,7 @@ impl BlockIdRepairService {
     /// For shred requests, we check if the shred has been received before retrying
     fn retry_timed_out_requests(blockstore: &Blockstore, state: &mut RepairState, now: u64) {
         state.sent_requests.retain(|request, sent_time| {
-            if now.saturating_sub(*sent_time) >= u64::try_from(DELTA.as_millis()).unwrap() {
+            if now.saturating_sub(*sent_time) >= u64::try_from(2 * DELTA.as_millis()).unwrap() {
                 match request {
                     OutgoingMessage::Metadata(_) => {
                         // Metadata requests: always retry on timeout
@@ -926,8 +931,6 @@ impl BlockIdRepairService {
             Vec::with_capacity(max_batch_len);
         let mut shred_socket_batch = Vec::with_capacity(max_batch_len);
 
-        let root_bank = repair_info.bank_forks.read().unwrap().root_bank();
-        let staked_nodes = root_bank.current_epoch_staked_nodes();
         let now = timestamp();
 
         while block_id_socket_batch
@@ -948,12 +951,10 @@ impl BlockIdRepairService {
                     let Ok((bytes, addr, peer_pubkey)) = state
                         .serve_repair
                         .block_id_repair_request(
-                            &repair_info.repair_validators,
+                            repair_info,
                             block_id_repair_type,
                             &mut state.peers_cache,
                             &mut state.outstanding_requests,
-                            &repair_info.cluster_info.keypair(),
-                            &staked_nodes,
                         )
                         .inspect_err(|e| {
                             error!(
@@ -985,13 +986,11 @@ impl BlockIdRepairService {
                     let Ok(Some((addr, bytes))) = state
                         .serve_repair
                         .repair_request(
-                            &repair_info.cluster_slots,
+                            repair_info,
                             shred_request,
                             &mut state.peers_cache,
                             &mut RepairStats::default(),
-                            &repair_info.repair_validators,
                             &mut state.outstanding_shred_requests.write().unwrap(),
-                            &repair_info.cluster_info.keypair(),
                         )
                         .inspect_err(|e| {
                             error!(
@@ -1303,7 +1302,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let now = timestamp();
-        let expired_time = now - (DELTA.as_millis() as u64) - 100;
+        let expired_time = now - (2 * DELTA.as_millis() as u64) - 100;
 
         // 1. Expired metadata request (ParentAndFecSetCount) - should retry
         let expired_metadata = OutgoingMessage::Metadata(BlockIdRepairType::ParentAndFecSetCount {

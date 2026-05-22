@@ -17,3 +17,6 @@ agave-unstable-api = []
 
 [dependencies]
 log = { workspace = true }
+
+[lints]
+workspace = true

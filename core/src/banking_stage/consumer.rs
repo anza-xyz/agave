@@ -33,10 +33,9 @@ use {
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
-const SERIALIZED_ENTRIES_OVERHEAD: u64 = {
-    48  // Entry Header
-    + 8 // Vec<Entry> length
-};
+pub(crate) const ENTRY_OVERHEAD_BYTES: u64 = 48;
+
+const SERIALIZED_ENTRIES_OVERHEAD: u64 = ENTRY_OVERHEAD_BYTES + 8; // Vec<Entry> length
 
 #[derive(Debug)]
 pub struct ExecutionFlags {
@@ -491,12 +490,14 @@ impl Consumer {
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(
-            fee_payer,
             &mut fee_payer_account,
             0,
             error_counters,
             &bank.rent_collector().rent,
             fee,
+            bank.feature_set
+                .snapshot()
+                .relax_post_exec_min_balance_check,
         )
     }
 }

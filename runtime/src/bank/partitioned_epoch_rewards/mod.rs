@@ -9,7 +9,6 @@ use {
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
         stake_account::StakeAccount, stake_history::StakeHistory,
     },
-    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         stake_rewards::StakeReward,
@@ -36,7 +35,10 @@ pub(crate) struct PartitionedStakeReward {
     pub stake_reward: u64,
     /// Reward commission in basis points (0-10,000 representing 0-100%) for
     /// recording reward info.
-    pub commission_bps: u16,
+    //
+    // Note: This field becomes always `None` once SIMD-0232 is activated.
+    // After full activation, it can be removed on feature cleanup.
+    pub commission_bps: Option<u16>,
 }
 
 /// A vector of stake rewards.
@@ -151,7 +153,9 @@ pub(crate) enum EpochRewardPhase {
 
 #[derive(Debug)]
 pub(super) struct RewardCommission {
-    pub(super) commission_bps: u16,
+    // Note: This field becomes always `None` once SIMD-0232 is activated.
+    // After full activation, it can be removed on feature cleanup.
+    pub(super) commission_bps: Option<u16>,
     pub(super) commission_lamports: u64,
 }
 
@@ -250,44 +254,6 @@ impl Default for CalculateValidatorRewardsResult {
     }
 }
 
-pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    min_stake_delegation: Option<u64>,
-}
-
-impl<'a> FilteredStakeDelegations<'a> {
-    pub(super) fn len(&self) -> usize {
-        self.stake_delegations.len()
-    }
-
-    pub(super) fn par_iter(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
-    {
-        self.stake_delegations
-            .par_iter()
-            // We yield `None` items instead of filtering them out to
-            // keep the number of elements predictable. It's better to
-            // let the callers deal with `None` elements and even store
-            // them in collections (that are allocated once with the
-            // size of `FilteredStakeDelegations::len`) rather than
-            // `collect` yet another time (which would take ~100ms).
-            .map(|(pubkey, stake_account)| {
-                match self.min_stake_delegation {
-                    Some(min_stake_delegation)
-                        if stake_account.delegation().stake < min_stake_delegation =>
-                    {
-                        None
-                    }
-                    _ => {
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))
-                    }
-                }
-            })
-    }
-}
-
 pub(super) struct CachedVoteAccounts<'a> {
     /// Snapshot of vote account state from the beginning of the epoch prior to
     /// the rewarded epoch. This snapshot state is saved a full epoch before
@@ -307,7 +273,7 @@ pub(super) struct CachedVoteAccounts<'a> {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
+    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
     pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 
@@ -320,6 +286,11 @@ pub(super) struct PartitionedRewardsCalculation {
     stake_rewards: StakeRewardCalculation,
     capitalization: u64,
     point_value: PointValue,
+    /// Number of vote accounts in the distribution-epoch snapshot after
+    /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
+    /// Surfaced for the `epoch_rewards` datapoint without re-running the
+    /// filter at distribution time.
+    num_filtered_vote_accounts: usize,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -383,11 +354,7 @@ impl Bank {
 
     /// # stake accounts to store in one block during partitioned reward interval
     pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.rc
-            .accounts
-            .accounts_db
-            .partitioned_epoch_rewards_config
-            .stake_account_stores_per_block
+        self.partitioned_rewards_stake_account_stores_per_block
     }
 
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.
@@ -461,7 +428,7 @@ mod tests {
                     stake_pubkey: stake_reward.stake_pubkey,
                     stake,
                     stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    commission_bps: stake_reward.stake_reward_info.commission_bps.unwrap(),
+                    commission_bps: stake_reward.stake_reward_info.commission_bps,
                 })
             } else {
                 None
@@ -723,6 +690,14 @@ mod tests {
         let stake_account_stores_per_block =
             bank.partitioned_rewards_stake_account_stores_per_block();
         assert_eq!(stake_account_stores_per_block, 10);
+
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 1);
+        assert_eq!(
+            bank.partitioned_rewards_stake_account_stores_per_block(),
+            stake_account_stores_per_block
+        );
 
         let check_num_reward_distribution_blocks =
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {

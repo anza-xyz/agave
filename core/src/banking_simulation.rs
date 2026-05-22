@@ -832,6 +832,7 @@ impl BankingSimulator {
             exit.clone(),
             blockstore.clone(),
             bank_forks.clone(),
+            leader_schedule_cache.clone(),
             shred_version,
             None,
             completed_block_sender,

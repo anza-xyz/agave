@@ -118,8 +118,19 @@ fn verify_certs(
                 Some(ConsensusMessage::Certificate(cert))
             }
             Err(e) => {
-                if banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT) {
-                    stats.already_banned += 1;
+                match &e {
+                    CertVerifyError::NotEnoughStake { .. }
+                    | CertVerifyError::CertVerifyFailed(_) => {
+                        if banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT) {
+                            stats.already_banned += 1;
+                        } else {
+                            info!(
+                                "bls_cert_sigverify: banned sender={} due to error {e}",
+                                cert_payload.remote_pubkey
+                            );
+                        }
+                    }
+                    CertVerifyError::TooFarInFuture { .. } => {}
                 }
 
                 match e {

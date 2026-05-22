@@ -3,11 +3,19 @@ use {
         ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError, paths,
         snapshot_archive_info::SnapshotArchiveInfo, snapshot_hash::SnapshotHash,
     },
-    agave_fs::{buffered_writer::large_file_buf_writer, io_setup::IoSetupState},
+    agave_fs::{
+        buffered_reader::FileBufRead as _, buffered_writer::large_file_buf_writer,
+        io_setup::IoSetupState,
+    },
     log::info,
     solana_accounts_db::{
-        account_storage::AccountStoragesOrderer, account_storage_entry::AccountStorageEntry,
-        account_storage_reader::AccountStorageReader, accounts_file::AccountsFile,
+        account_storage::AccountStoragesOrderer,
+        account_storage_entry::AccountStorageEntry,
+        account_storage_reader::{
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE, AccountStorageReader, open_storage_files,
+            storage_file_buf_reader,
+        },
+        accounts_file::AccountsFile,
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -116,14 +124,34 @@ pub fn archive_snapshot(
                 snapshot_storages,
                 INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );
-            for storage in storages_orderer.iter() {
+            // For incremental snapshots, the storage files have just been
+            // written and are likely still hot in the page cache, so prefer
+            // page-cached reads over direct I/O.
+            let use_page_cache =
+                matches!(snapshot_archive_kind, SnapshotArchiveKind::Incremental(_));
+            let use_direct_io = io_setup.use_direct_io && !use_page_cache;
+            // Pre-open every storage file (with the buffered reader's
+            // direct-IO setting) so they outlive `buf_reader` — the reader's
+            // `'a` lifetime needs to borrow into them across loop iterations.
+            let storage_files = open_storage_files(storages_orderer.iter(), use_direct_io)
+                .map_err(E::StorageFileBufReaderError)?;
+            let mut buf_reader =
+                storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, use_page_cache, io_setup)
+                    .map_err(E::StorageFileBufReaderError)?;
+            for (storage, file) in storages_orderer.iter().zip(storage_files.iter()) {
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
-                let reader =
-                    AccountStorageReader::new(storage, Some(snapshot_slot)).map_err(|err| {
+                buf_reader
+                    .set_file(file.as_ref(), storage.accounts.len() as u64)
+                    .map_err(|err| {
                         E::AccountStorageReaderError(err, storage.path().to_path_buf())
                     })?;
+                let reader =
+                    AccountStorageReader::new(storage, Some(snapshot_slot), &mut buf_reader)
+                        .map_err(|err| {
+                            E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                        })?;
                 let mut header = tar::Header::new_gnu();
                 header.set_path(path_in_archive).map_err(|err| {
                     E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())

@@ -23,91 +23,92 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
 };
 
-macro_rules! testable_prototype {
-    ($prototype:ident {
-        core_bpf_migration_config: $core_bpf_migration_config:expr,
-        name: $name:ident,
-        $($field:ident : $value:expr),* $(,)?
-    }) => {
-        $prototype {
-            core_bpf_migration_config: {
-                #[cfg(not(feature = "dev-context-only-utils"))]
-                {
-                    $core_bpf_migration_config
-                }
-                #[cfg(feature = "dev-context-only-utils")]
-                {
-                    Some( test_only::$name::CONFIG )
-                }
-            },
-            name: stringify!($name),
-            $($field: $value),*
-        }
-    };
-}
-
 /// DEVELOPER: when a builtin is migrated to sbpf, please add its corresponding
 /// migration feature ID to solana-builtin-default-costs::BUILTIN_INSTRUCTION_COSTS,
 /// so the builtin's default cost can be determined properly based on feature status.
 /// When migration completed, and the feature gate is enabled everywhere, please
 /// remove that builtin entry from solana-builtin-default-costs::BUILTIN_INSTRUCTION_COSTS.
 pub static BUILTINS: &[BuiltinPrototype] = &[
-    testable_prototype!(BuiltinPrototype {
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: system_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::system_program::CONFIG),
+        name: "solana_system_program",
         enable_feature_id: None,
         program_id: solana_system_program::id(),
         register_fn: solana_system_program::system_processor::Entrypoint::register,
-    }),
-    testable_prototype!(BuiltinPrototype {
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: vote_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::vote_program::CONFIG),
+        name: "solana_vote_program",
         enable_feature_id: None,
         program_id: solana_vote_program::id(),
-        register_fn: solana_vote_program::vote_processor::Entrypoint::register
-    }),
-    testable_prototype!(BuiltinPrototype {
+        register_fn: solana_vote_program::vote_processor::Entrypoint::register,
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: solana_bpf_loader_deprecated_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::solana_bpf_loader_deprecated_program::CONFIG),
+        name: "solana_bpf_loader_program",
         enable_feature_id: None,
         program_id: bpf_loader_deprecated::id(),
-        register_fn: solana_bpf_loader_program::Entrypoint::register
-    }),
-    testable_prototype!(BuiltinPrototype {
+        register_fn: solana_bpf_loader_program::Entrypoint::register,
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: solana_bpf_loader_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::solana_bpf_loader_program::CONFIG),
+        name: "solana_bpf_loader_program",
         enable_feature_id: None,
         program_id: bpf_loader::id(),
-        register_fn: solana_bpf_loader_program::Entrypoint::register
-    }),
-    testable_prototype!(BuiltinPrototype {
+        register_fn: solana_bpf_loader_program::Entrypoint::register,
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: solana_bpf_loader_upgradeable_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::solana_bpf_loader_upgradeable_program::CONFIG),
+        name: "solana_bpf_loader_upgradeable_program",
         enable_feature_id: None,
         program_id: bpf_loader_upgradeable::id(),
-        register_fn: solana_bpf_loader_program::Entrypoint::register
-    }),
-    testable_prototype!(BuiltinPrototype {
+        register_fn: solana_bpf_loader_program::Entrypoint::register,
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: compute_budget_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::compute_budget_program::CONFIG),
+        name: "compute_budget_program",
         enable_feature_id: None,
         program_id: solana_sdk_ids::compute_budget::id(),
         register_fn: solana_compute_budget_program::Entrypoint::register,
-    }),
-    testable_prototype!(BuiltinPrototype {
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: zk_token_proof_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::zk_token_proof_program::CONFIG),
+        name: "zk_token_proof_program",
         enable_feature_id: Some(feature_set::zk_token_sdk_enabled::id()),
         program_id: solana_sdk_ids::zk_token_proof_program::id(),
         register_fn: solana_zk_token_proof_program::Entrypoint::register,
-    }),
-    testable_prototype!(BuiltinPrototype {
+    },
+    BuiltinPrototype {
+        #[cfg(not(feature = "dev-context-only-utils"))]
         core_bpf_migration_config: None,
-        name: zk_elgamal_proof_program,
+        #[cfg(feature = "dev-context-only-utils")]
+        core_bpf_migration_config: Some(test_only::zk_elgamal_proof_program::CONFIG),
+        name: "zk_elgamal_proof_program",
         enable_feature_id: Some(feature_set::zk_elgamal_proof_program_enabled::id()),
         program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
         register_fn: solana_zk_elgamal_proof_program::Entrypoint::register,
-    }),
+    },
 ];
 
 pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltinPrototype {
@@ -313,7 +314,7 @@ pub mod test_only {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dev-context-only-utils"))]
 mod tests {
     // Since a macro is used to initialize the test IDs from the `test_only`
     // module, best to ensure the lists have the expected values within a test

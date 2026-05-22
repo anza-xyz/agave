@@ -28,6 +28,7 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
+solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
@@ -61,6 +62,7 @@ bencher = { workspace = true }
 bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-leader-schedule = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
@@ -75,3 +77,6 @@ harness = false
 [[bench]]
 name = "cluster_nodes"
 harness = false
+
+[lints]
+workspace = true

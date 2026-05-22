@@ -27,3 +27,6 @@ solana-pubkey = { workspace = true, features = ["std"] }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

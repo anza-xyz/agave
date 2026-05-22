@@ -1,14 +1,21 @@
+//! Program helpers: builtins, keyed accounts, and program cache.
+
+#[cfg(feature = "metrics")]
+use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
-    crate::builtins::SVM_BUILTINS,
+    crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction_error::InstructionError,
+    solana_instruction::error::InstructionError,
     solana_program_runtime::{
+        invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
         program_cache_entry::ProgramCacheEntry,
-        program_metrics::LoadProgramMetrics,
+        solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
@@ -16,8 +23,62 @@ use {
     std::{collections::HashSet, sync::Arc},
 };
 
-/// Create a new `ProgramCacheForTxBatch` instance populated with builtins.
-pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
+struct SvmBuiltinPrototype {
+    pub program_id: Pubkey,
+    pub name: &'static str,
+    pub register_fn: BuiltinFunctionRegisterer,
+}
+
+static SVM_BUILTINS: &[SvmBuiltinPrototype] = &[
+    SvmBuiltinPrototype {
+        program_id: solana_system_program::id(),
+        name: "system_program",
+        register_fn: solana_system_program::system_processor::Entrypoint::register,
+    },
+    SvmBuiltinPrototype {
+        program_id: bpf_loader_deprecated::id(),
+        name: "solana_bpf_loader_deprecated_program",
+        register_fn: solana_bpf_loader_program::Entrypoint::register,
+    },
+    SvmBuiltinPrototype {
+        program_id: bpf_loader::id(),
+        name: "solana_bpf_loader_program",
+        register_fn: solana_bpf_loader_program::Entrypoint::register,
+    },
+    SvmBuiltinPrototype {
+        program_id: bpf_loader_upgradeable::id(),
+        name: "solana_bpf_loader_upgradeable_program",
+        register_fn: solana_bpf_loader_program::Entrypoint::register,
+    },
+    SvmBuiltinPrototype {
+        program_id: solana_sdk_ids::compute_budget::id(),
+        name: "compute_budget_program",
+        register_fn: solana_compute_budget_program::Entrypoint::register,
+    },
+];
+
+fn create_keyed_account_for_builtin_program(program_id: &Pubkey, name: &str) -> (Pubkey, Account) {
+    let data = name.as_bytes().to_vec();
+    let lamports = Rent::default().minimum_balance(data.len());
+    let account = Account {
+        lamports,
+        data,
+        owner: solana_sdk_ids::native_loader::id(),
+        executable: true,
+        ..Default::default()
+    };
+    (*program_id, account)
+}
+
+pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
+}
+
+pub fn keyed_account_for_compute_budget_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[4].program_id, SVM_BUILTINS[4].name)
+}
+
+pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     let mut cache = ProgramCacheForTxBatch::default();
     cache.set_slot_for_tests(slot);
 
@@ -36,7 +97,7 @@ pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
 }
 
 /// Add a program loaded from ELF bytes to the cache.
-pub fn add_program(
+pub fn add_program_to_program_cache(
     cache: &mut ProgramCacheForTxBatch,
     program_id: &Pubkey,
     loader_key: &Pubkey,
@@ -59,6 +120,7 @@ pub fn add_program(
         0, // effective_slot
         elf,
         elf.len(),
+        #[cfg(feature = "metrics")]
         &mut LoadProgramMetrics::default(),
     )
     .unwrap();
@@ -67,7 +129,7 @@ pub fn add_program(
 }
 
 /// Populate a `ProgramCacheForTxBatch` via `load_program_with_pubkey` from any program accounts.
-pub fn fill_from_accounts(
+pub fn fill_program_cache_from_accounts(
     program_cache: &mut ProgramCacheForTxBatch,
     program_runtime_environment: &ProgramRuntimeEnvironment,
     accounts: &[(Pubkey, Account)],
@@ -76,38 +138,24 @@ pub fn fill_from_accounts(
     let mut newly_loaded_programs = HashSet::<Pubkey>::new();
 
     for acc in accounts {
-        // FD rejects duplicate account loads
         if !newly_loaded_programs.insert(acc.0) {
             return Err(InstructionError::UnsupportedProgramId);
         }
 
         if program_cache.find(&acc.0).is_none() {
-            // load_program_with_pubkey expects the owner to be one of the bpf loader
             if !solana_sdk_ids::bpf_loader_deprecated::check_id(&acc.1.owner)
                 && !solana_sdk_ids::bpf_loader::check_id(&acc.1.owner)
                 && !solana_sdk_ids::bpf_loader_upgradeable::check_id(&acc.1.owner)
             {
                 continue;
             }
-            // https://github.com/anza-xyz/agave/blob/af6930da3a99fd0409d3accd9bbe449d82725bd6/svm/src/program_loader.rs#L124
-            /* pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph>(
-                callbacks: &CB,
-                program_cache: &ProgramCache<FG>,
-                pubkey: &Pubkey,
-                slot: Slot,
-                effective_epoch: Epoch,
-                epoch_schedule: &EpochSchedule,
-                reload: bool,
-            ) -> Option<Arc<ProgramCacheEntry>> { */
-            if let Some((loaded_program, _last_modification_slot)) =
-                solana_svm::program_loader::load_program_with_pubkey(
-                    &FillFromAccountsCallback(accounts),
-                    program_runtime_environment,
-                    &acc.0,
-                    slot,
-                    &mut ExecuteTimings::default(),
-                )
-            {
+            if let Some((loaded_program, _last_modification_slot)) = load_program_with_pubkey(
+                &FillFromAccountsCallback(accounts),
+                program_runtime_environment,
+                &acc.0,
+                slot,
+                &mut ExecuteTimings::default(),
+            ) {
                 program_cache.replenish(acc.0, loaded_program);
             }
         }

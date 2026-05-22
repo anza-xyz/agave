@@ -350,10 +350,6 @@ impl BorrowedInstructionAccount<'_, '_> {
     /// Returns an error if the account data can not be resized to the given length
     pub fn can_data_be_resized(&self, new_len: usize) -> Result<(), InstructionError> {
         let old_len = self.get_data().len();
-        // Only the owner can change the length of the data
-        if new_len != old_len && !self.is_owned_by_current_program() {
-            return Err(InstructionError::AccountDataSizeChanged);
-        }
         self.transaction_context
             .accounts
             .can_data_be_resized(old_len, new_len)?;

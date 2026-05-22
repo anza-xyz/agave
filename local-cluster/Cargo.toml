@@ -95,3 +95,6 @@ solana-genesis-utils = { path = "../genesis-utils", features = ["agave-unstable-
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

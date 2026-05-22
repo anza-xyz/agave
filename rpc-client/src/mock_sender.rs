@@ -5,7 +5,9 @@ use {
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     serde_json::{Number, Value, json},
-    solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
+    solana_account_decoder_client_types::{
+        UiAccount, UiAccountData, UiAccountEncoding, token::UiTokenAmount,
+    },
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -17,12 +19,12 @@ use {
         config::RpcBlockProductionConfig,
         request::RpcRequest,
         response::{
-            Response, RpcAccountBalance, RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
-            RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
-            RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
-            RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
-            RpcSnapshotSlotInfo, RpcSupply, RpcVersionInfo, RpcVoteAccountInfo,
-            RpcVoteAccountStatus,
+            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
+            RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
+            RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
+            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
+            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
+            RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
     },
     solana_signature::Signature,
@@ -35,6 +37,7 @@ use {
         UiRawMessage, UiTransaction, UiTransactionStatusMeta, option_serializer::OptionSerializer,
     },
     solana_version::Version,
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{HashMap, VecDeque},
         net::SocketAddr,
@@ -261,7 +264,12 @@ impl RpcSender for MockSender {
                 incremental: Some(110),
             }),
             "getBlockHeight" => Value::Number(Number::from(1234)),
+            "getSlotLeader" => Value::String(PUBKEY.to_string()),
             "getSlotLeaders" => json!([PUBKEY]),
+            "getBlockCommitment" => serde_json::to_value(RpcBlockCommitment {
+                commitment: Some([0; MAX_LOCKOUT_HISTORY + 1]),
+                total_stake: 42,
+            })?,
             "getBlockProduction" => {
                 if params.is_null() {
                     json!(Response {
@@ -491,6 +499,39 @@ impl RpcSender for MockSender {
                     }
                 ])?
             },
+            "getFirstAvailableBlock" => json![0],
+            "getGenesisHash" => Value::String(PUBKEY.to_string()),
+            "getHealth" => Value::String("ok".to_string()),
+            "getTokenAccountBalance" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: UiTokenAmount {
+                    ui_amount: Some(0.0),
+                    decimals: 9,
+                    amount: "0".to_string(),
+                    ui_amount_string: "0".to_string(),
+                },
+            })?,
+            "getTokenAccountsByDelegate" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: Vec::<RpcKeyedAccount>::new(),
+            })?,
+            "getTokenAccountsByOwner" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: Vec::<RpcKeyedAccount>::new(),
+            })?,
+            "getTokenLargestAccounts" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: Vec::<RpcAccountBalance>::new(),
+            })?,
+            "getTokenSupply" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: UiTokenAmount {
+                    ui_amount: Some(0.0),
+                    decimals: 9,
+                    amount: "0".to_string(),
+                    ui_amount_string: "0".to_string(),
+                },
+            })?,
             _ => Value::Null,
         };
         Ok(val)

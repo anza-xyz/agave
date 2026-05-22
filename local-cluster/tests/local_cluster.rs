@@ -26,6 +26,9 @@ use {
             SWITCH_FORK_THRESHOLD, Tower, VOTE_THRESHOLD_DEPTH, tower_storage::FileTowerStorage,
         },
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
+        repair::{
+            malicious_repair_handler::MaliciousRepairConfig, repair_handler::RepairHandlerType,
+        },
         replay_stage::DUPLICATE_THRESHOLD,
         validator::{BlockProductionMethod, BlockVerificationMethod, ValidatorConfig},
     },
@@ -42,10 +45,11 @@ use {
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
         blockstore::{Blockstore, PurgeType, entries_to_test_shreds},
+        blockstore_options::{AccessType, BlockstoreOptions},
         blockstore_processor::{self, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
-            ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
             filter::{TurbineMode, TurbineModeKind},
         },
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
@@ -354,14 +358,14 @@ fn test_restart_node() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster.exit_restart_node(&nodes[0], validator_config, SocketAddrSpace::Unspecified);
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(
@@ -1960,12 +1964,14 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     let val_a_ledger_path = cluster.ledger_path(&validator_a_pubkey);
+    let root_before_restart;
 
     loop {
         sleep(Duration::from_millis(100));
 
         if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
             if root >= 15 {
+                root_before_restart = root;
                 break;
             }
         }
@@ -1989,7 +1995,7 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     );
 
     let mut newly_rooted = false;
-    let some_root_after_restart = purged_slot_before_restart + 25; // 25 is arbitrary; just wait a bit
+    let some_root_after_restart = root_before_restart + 1;
     for _ in 0..600 {
         sleep(Duration::from_millis(100));
 
@@ -5007,7 +5013,7 @@ fn test_boot_from_local_state() {
             std::thread::yield_now();
         }
         let other_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
-            &other_validator_config.full_snapshot_archives_dir,
+            other_validator_config.full_snapshot_archives_dir.path(),
         )
         .collect::<Vec<_>>();
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
@@ -5034,7 +5040,9 @@ fn test_boot_from_local_state() {
 
         let other_incremental_snapshot_archives =
             snapshot_paths::incremental_snapshot_archives_iter(
-                &other_validator_config.incremental_snapshot_archives_dir,
+                other_validator_config
+                    .incremental_snapshot_archives_dir
+                    .path(),
             )
             .collect::<Vec<_>>();
         debug!(
@@ -5937,7 +5945,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         1.0,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     info!("Restarting node");
@@ -5945,7 +5953,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::sleep_n_epochs(
         0.5,
         &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
+        ticks_per_slot,
         slots_per_epoch,
     );
     cluster_tests::send_many_transactions(
@@ -6060,6 +6068,109 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     );
 }
 
+/// We start 2 nodes, where the first node A holds 90% of the stake.
+/// B has turbine disabled, and receives duplicate blocks through eager repair.
+/// However, through informed repair it is able to repair the correct blocks and keep up with A.
+#[test]
+#[serial]
+fn test_alpenglow_basic_equivocation() {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    // Create node stakes
+    let slots_per_epoch = 512;
+
+    let total_stake = 2 * DEFAULT_NODE_STAKE;
+    let tenth_stake = total_stake / 10;
+    let node_a_stake = 9 * tenth_stake;
+    let node_b_stake = total_stake - node_a_stake;
+
+    let node_stakes = vec![node_a_stake, node_b_stake];
+
+    // Create leader schedule with A as the leader
+    let (leader_schedule, validator_keys) = create_custom_leader_schedule_with_random_keys(&[4, 0]);
+
+    let leader_schedule = FixedSchedule {
+        leader_schedule: Arc::new(leader_schedule),
+    };
+
+    let mut a_validator_config = ValidatorConfig::default_for_test();
+    a_validator_config.wait_for_supermajority = Some(0);
+    a_validator_config.fixed_leader_schedule = Some(leader_schedule);
+
+    let node_b_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+    let mut b_validator_config = safe_clone_config(&a_validator_config);
+    b_validator_config.turbine_mode = node_b_turbine_mode.clone();
+
+    // Equivocate every other slot, one shred per FEC set
+    let last_duplicate = 20;
+    let duplicate_frequency = 2;
+    let expected_duplicate_blocks = (last_duplicate / duplicate_frequency) as usize - 1;
+    a_validator_config.repair_handler_type = RepairHandlerType::Malicious(MaliciousRepairConfig {
+        bad_shred_slot_frequency: Some(duplicate_frequency),
+        bad_shred_index_frequency: Some(DATA_SHREDS_PER_FEC_BLOCK as u64),
+        slot_range: Some((0, last_duplicate)),
+    });
+
+    // Cluster config
+    let mut cluster_config = ClusterConfig {
+        mint_lamports: DEFAULT_MINT_LAMPORTS + total_stake,
+        node_stakes: node_stakes.clone(),
+        validator_configs: vec![a_validator_config, b_validator_config],
+        validator_keys: Some(
+            validator_keys
+                .iter()
+                .cloned()
+                .zip(iter::repeat_with(|| true))
+                .collect(),
+        ),
+        slots_per_epoch,
+        stakers_slot_offset: slots_per_epoch,
+        skip_warmup_slots: true,
+        ..ClusterConfig::default()
+    };
+
+    // Create local cluster
+    let cluster = LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+    let node_b_pubkey = validator_keys[1].node_keypair.pubkey();
+
+    // Check to make sure the low staked node observes duplicate blocks
+    let start = Instant::now();
+    loop {
+        let blockstore = Blockstore::open_with_options(
+            &cluster.ledger_path(&node_b_pubkey),
+            BlockstoreOptions {
+                access_type: AccessType::ReadOnly,
+                ..BlockstoreOptions::default()
+            },
+        )
+        .unwrap();
+        let total_duplicate_blocks_observed = (1..=last_duplicate)
+            .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
+            .count();
+        if total_duplicate_blocks_observed == expected_duplicate_blocks {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            panic!(
+                "Expected to see {expected_duplicate_blocks} in 60 seconds but only saw \
+                 {total_duplicate_blocks_observed}"
+            );
+        }
+        sleep(Duration::from_secs(1));
+    }
+
+    // Turn turbine back on, now the low staked node will be able to catchup
+    node_b_turbine_mode.set(TurbineModeKind::Enabled);
+
+    // Ensure all nodes are rooting
+    // Although the low staked node might be behind while the leader is equivocating,
+    // once the leader stops equivocating it will be able to catch up
+    cluster.check_for_new_roots(
+        32,
+        "test_alpenglow_basic_equivocation",
+        SocketAddrSpace::Unspecified,
+    );
+}
+
 fn test_alpenglow_migration(
     num_nodes: usize,
     test_name: &str,
@@ -6088,8 +6199,7 @@ fn test_alpenglow_migration(
     let node_stakes = vec![DEFAULT_NODE_STAKE; num_nodes];
 
     // We want the epochs to be as short as possible to reduce test time without being flaky.
-    // We start the migration at an offset of 32, so use 64 as the epoch length.
-    let slots_per_epoch = 2 * MINIMUM_SLOTS_PER_EPOCH;
+    let slots_per_epoch = 4 * MINIMUM_SLOTS_PER_EPOCH;
     assert!(slots_per_epoch > MIGRATION_SLOT_OFFSET);
     let mut cluster_config = ClusterConfig {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),

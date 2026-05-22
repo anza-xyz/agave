@@ -47,3 +47,6 @@ thiserror = { workspace = true }
 [dev-dependencies]
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

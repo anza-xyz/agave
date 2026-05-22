@@ -58,3 +58,6 @@ solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-test-validator = { path = "../test-validator" }
+
+[lints]
+workspace = true

@@ -8,12 +8,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.1](#edge-channel)
+* [edge - v4.2](#edge-channel)
+* [alpha - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
 * [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
 * [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.1.0-Unreleased
+## 4.2.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Deprecations
+* `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
+  deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
+  backward compatibility, but account storages are always accessed via file I/O.
+#### Changes
+
+## 4.1.0
 ### RPC
 #### Breaking
 #### Changes

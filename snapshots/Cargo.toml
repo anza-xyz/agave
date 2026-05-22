@@ -48,3 +48,6 @@ zstd = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
+
+[lints]
+workspace = true

@@ -58,7 +58,11 @@ use {
         MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, OpenGenesisConfigError, open_genesis_config,
     },
     solana_geyser_plugin_manager::{
-        GeyserPluginManagerRequest, geyser_plugin_service::GeyserPluginService,
+        GeyserPluginManagerRequest,
+        contact_info_notifier::{
+            self as geyser_contact_info_notifier, ContactInfoNotifier as GeyserContactInfoNotifier,
+        },
+        geyser_plugin_service::GeyserPluginService,
     },
     solana_gossip::{
         cluster_info::{
@@ -78,7 +82,7 @@ use {
         bank_forks_utils,
         blockstore::{
             Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL,
-            MAX_REPLAY_WAKE_UP_SIGNALS, PurgeType,
+            MAX_REPLAY_WAKE_UP_SIGNALS, MAX_UPDATE_PARENT_SIGNALS, PurgeType, UpdateParentReceiver,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions},
@@ -121,6 +125,7 @@ use {
         },
         bank::Bank,
         bank_forks::BankForks,
+        bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -654,6 +659,10 @@ pub struct Validator {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub blockstore: Arc<Blockstore>,
     geyser_plugin_service: Option<GeyserPluginService>,
+    /// Held for the lifetime of the validator so the dispatch thread keeps
+    /// running. `None` when no loaded plugin opted into contact info
+    /// notifications.
+    _contact_info_notifier: Option<GeyserContactInfoNotifier>,
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
     xdp_transmitter: Option<Transmitter>,
@@ -898,6 +907,7 @@ impl Validator {
             blockstore,
             original_blockstore_root,
             ledger_signal_receiver,
+            update_parent_receiver,
             leader_schedule_cache,
             starting_snapshot_hashes,
             TransactionHistoryServices {
@@ -987,6 +997,17 @@ impl Validator {
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
 
+        // Opt-in Geyser notifications for gossip contact info changes. If
+        // no loaded plugin opts in, this returns `None` and gossip's hot
+        // path performs no work for these notifications.
+        let contact_info_notifier = geyser_plugin_service.as_ref().and_then(|service| {
+            geyser_contact_info_notifier::attach(
+                service.plugin_manager_handle(),
+                cluster_info.as_ref(),
+                geyser_contact_info_notifier::DEFAULT_CHANNEL_CAPACITY,
+            )
+        });
+
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
@@ -1062,6 +1083,9 @@ impl Validator {
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (poh_controller, poh_service_message_receiver) = PohController::new();
+        let (bank_forks_controller, bank_forks_controller_receiver) =
+            BankForksControllerHandle::new();
+        let bank_forks_controller = Arc::new(bank_forks_controller);
 
         let (banking_tracer, tracer_thread) =
             BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
@@ -1416,6 +1440,7 @@ impl Validator {
                 bank_forks_r.sharable_banks(),
                 config.repair_whitelist.clone(),
                 leader_state,
+                leader_schedule_cache.clone(),
                 bank_forks_r.migration_status(),
             )
         };
@@ -1460,14 +1485,21 @@ impl Validator {
         let highest_parent_ready = Arc::new(RwLock::default());
         // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
         let highest_finalized = Arc::new(RwLock::new(None));
+        // This channel growing > ~1 indicates problems, so bound channel at a
+        // small (but highly overprovisioned) number for performance and easier
+        // debug if things go off the rails.
+        let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
         let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
         let (reward_certs_sender, reward_certs_receiver) = bounded(1);
 
+        let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
+
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
             bank_forks: bank_forks.clone(),
+            bank_forks_controller: bank_forks_controller.clone(),
             blockstore: blockstore.clone(),
             cluster_info: cluster_info.clone(),
             poh_recorder: poh_recorder.clone(),
@@ -1479,9 +1511,11 @@ impl Validator {
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
+            optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
             build_reward_certs_sender,
             reward_certs_receiver,
+            banking_stage_sender: banking_stage_sender_for_bcl,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
@@ -1538,12 +1572,16 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
-        let (xdp_transmitter, turbine_xdp_sender) =
+        let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender) =
             if let Some((xdp_transmit_builder, src_addr)) = xdp_builder_with_src_addr {
-                let (rtx, sender) = xdp_transmit_builder.build();
-                (Some(rtx), Some(XdpSender::new(sender, src_addr)))
+                let (transmitter, sender) = xdp_transmit_builder.build();
+                (
+                    Some(transmitter),
+                    Some(XdpSender::new(sender.clone(), src_addr)),
+                    Some((sender, *src_addr.ip())),
+                )
             } else {
-                (None, None)
+                (None, None, None)
             };
 
         // disable all2all tests if not allowed for a given cluster type
@@ -1570,6 +1608,7 @@ impl Validator {
             },
             blockstore.clone(),
             ledger_signal_receiver,
+            update_parent_receiver,
             rpc_subscriptions.clone(),
             &poh_recorder,
             poh_controller,
@@ -1617,8 +1656,12 @@ impl Validator {
             vote_connection_cache,
             AlpenglowInitializationState {
                 leader_window_info_sender,
+                optimistic_parent_sender,
+                optimistic_parent_receiver,
                 replay_highest_frozen,
                 highest_parent_ready,
+                bank_forks_controller,
+                bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
                 cancel: cancel.clone(),
@@ -1666,7 +1709,9 @@ impl Validator {
             entry_notification_sender,
             blockstore.clone(),
             &config.broadcast_stage_type,
+            leader_schedule_cache.clone(),
             turbine_xdp_sender,
+            quic_xdp_sender,
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,
@@ -1768,6 +1813,7 @@ impl Validator {
             bank_forks,
             blockstore,
             geyser_plugin_service,
+            _contact_info_notifier: contact_info_notifier,
             blockstore_metric_report_service,
             accounts_background_service,
             xdp_transmitter,
@@ -2013,7 +2059,9 @@ fn post_process_restored_tower(
 
     let restored_tower = restored_tower.and_then(|tower| {
         let root_bank = bank_forks.root_bank();
-        let slot_history = root_bank.get_slot_history();
+        let slot_history = root_bank
+            .get_slot_history()
+            .expect("slot history must exist");
         // make sure tower isn't corrupted first before the following hard fork check
         let tower = tower.adjust_lockouts_after_replay(root_bank.slot(), &slot_history);
 
@@ -2130,6 +2178,7 @@ fn load_blockstore(
         Arc<Blockstore>,
         Slot,
         Receiver<bool>,
+        UpdateParentReceiver,
         LeaderScheduleCache,
         Option<StartingSnapshotHashes>,
         TransactionHistoryServices,
@@ -2237,12 +2286,15 @@ fn load_blockstore(
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit);
     let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
     blockstore.add_new_shred_signal(ledger_signal_sender);
+    let (update_parent_sender, update_parent_receiver) = bounded(MAX_UPDATE_PARENT_SIGNALS);
+    blockstore.add_update_parent_signal(update_parent_sender);
 
     Ok((
         bank_forks,
         blockstore,
         original_blockstore_root,
         ledger_signal_receiver,
+        update_parent_receiver,
         leader_schedule_cache,
         starting_snapshot_hashes,
         transaction_history_services,
