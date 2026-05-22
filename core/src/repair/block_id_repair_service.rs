@@ -611,9 +611,7 @@ impl BlockIdRepairService {
             RegisterResponseResult::InvalidResponse(None)
             | RegisterResponseResult::Expired(_)
             | RegisterResponseResult::UnknownNonce => {
-                debug!(
-                    "{my_pubkey}: Response with unknown/expired nonce {nonce} for {response:?}"
-                );
+                debug!("{my_pubkey}: Response with unknown/expired nonce {nonce} for {response:?}");
                 state.response_stats.invalid_packets += 1;
                 return;
             }
