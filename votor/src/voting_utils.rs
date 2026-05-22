@@ -320,7 +320,7 @@ mod tests {
         vote: Vote,
         my_bls_keypair: &BLSKeypair,
     ) -> ConsensusMessage {
-        let vote_serialized = bincode::serialize(&vote).unwrap();
+        let vote_serialized = wincode::serialize(&vote).unwrap();
         let signature = my_bls_keypair.sign(&vote_serialized);
         ConsensusMessage::Vote(VoteMessage {
             vote,

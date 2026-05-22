@@ -435,7 +435,6 @@ dependencies = [
  "agave-math-utils",
  "agave-votor",
  "agave-votor-messages",
- "bincode",
  "bitvec",
  "crossbeam-channel",
  "itertools 0.14.0",

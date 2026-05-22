@@ -708,7 +708,7 @@ mod tests {
             let vote_keypair = &ctx.validator_keypairs[my_rank].vote_keypair;
             let bls_keypair =
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-            let vote_serialized = bincode::serialize(&notarize_vote).unwrap();
+            let vote_serialized = wincode::serialize(&notarize_vote).unwrap();
             let message = ConsensusMessage::Vote(VoteMessage {
                 vote: notarize_vote,
                 signature: bls_keypair.sign(&vote_serialized).into(),

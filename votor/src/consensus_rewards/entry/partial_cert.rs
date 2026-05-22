@@ -112,7 +112,7 @@ mod tests {
     };
 
     fn new_invalid_vote(vote: Vote, rank: usize) -> VoteMessage {
-        let serialized = bincode::serialize(&vote).unwrap();
+        let serialized = wincode::serialize(&vote).unwrap();
         let keypair = BlsKeypair::new();
         let signature = keypair.sign(&serialized).into();
         VoteMessage {

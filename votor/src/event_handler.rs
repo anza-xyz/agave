@@ -1334,7 +1334,7 @@ mod tests {
 
         fn check_for_votes(&mut self, expected_votes: &[Vote]) {
             for v in expected_votes {
-                let expected_vote_serialized = bincode::serialize(v).unwrap();
+                let expected_vote_serialized = wincode::serialize(v).unwrap();
                 let signature: BLSSignature =
                     self.my_bls_keypair.sign(&expected_vote_serialized).into();
                 let expected_message = ConsensusMessage::Vote(VoteMessage {
@@ -1354,7 +1354,7 @@ mod tests {
         }
 
         fn check_for_vote(&mut self, expected_vote: &Vote) {
-            let expected_vote_serialized = bincode::serialize(expected_vote).unwrap();
+            let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
             let signature: BLSSignature =
                 self.my_bls_keypair.sign(&expected_vote_serialized).into();
             let expected_message = ConsensusMessage::Vote(VoteMessage {

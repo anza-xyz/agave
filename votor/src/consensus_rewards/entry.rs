@@ -141,7 +141,7 @@ mod tests {
     }
 
     pub(crate) fn new_vote(vote: Vote, rank: usize, keypairs: &[BlsKeypair]) -> VoteMessage {
-        let serialized = bincode::serialize(&vote).unwrap();
+        let serialized = wincode::serialize(&vote).unwrap();
         let signature = keypairs[rank].sign(&serialized).into();
         VoteMessage {
             vote,
