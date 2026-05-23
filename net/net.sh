@@ -297,6 +297,10 @@ startBootstrapLeader() {
   declare ipAddress=$1
   declare nodeIndex="$2"
   declare logFile="$3"
+  declare nodeIp="$ipAddress"
+  if ! $publicNetwork; then
+    nodeIp=${validatorIpListPrivate[0]}
+  fi
   echo "--- Starting bootstrap validator: $ipAddress"
   echo "start log: $logFile"
 
@@ -332,6 +336,7 @@ startBootstrapLeader() {
          \"$TMPFS_ACCOUNTS\" \
          \"$disableQuic\" \
          \"$enableUdp\" \
+         $nodeIp \
       "
 
   ) >> "$logFile" 2>&1 || {
@@ -345,6 +350,14 @@ startNode() {
   declare ipAddress=$1
   declare nodeType=$2
   declare nodeIndex="$3"
+  declare nodeIp="$ipAddress"
+  if ! $publicNetwork; then
+    if [[ $nodeType = blockstreamer ]]; then
+      nodeIp=${blockstreamerIpListPrivate[$((nodeIndex - ${#validatorIpList[@]}))]}
+    else
+      nodeIp=${validatorIpListPrivate[$nodeIndex]}
+    fi
+  fi
 
   initLogDir
   declare logFile="$netLogDir/validator-$ipAddress.log"
@@ -405,6 +418,7 @@ startNode() {
          \"$TMPFS_ACCOUNTS\" \
          \"$disableQuic\" \
          \"$enableUdp\" \
+         $nodeIp \
       "
   ) >> "$logFile" 2>&1 &
   declare pid=$!

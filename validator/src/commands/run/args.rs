@@ -244,13 +244,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Do not publish the RPC port for use by others"),
     )
     .arg(
-        Arg::with_name("no_port_check")
-            .long("no-port-check")
-            .takes_value(false)
-            .hidden(hidden_unless_forced())
-            .help("Do not perform TCP/UDP reachable port checks at start-up"),
-    )
-    .arg(
         Arg::with_name("account_paths")
             .long("accounts")
             .value_name("PATHS")
@@ -801,6 +794,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "Repeatable. IP addresses to bind the validator ports on. First is primary (used \
                  on startup), the rest may be switched to during operation.",
+            ),
+    )
+    .arg(
+        Arg::with_name("advertised_ip")
+            .long("advertised-ip")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host)
+            .help(
+                "Public IP address for this validator to advertise in gossip. [default: \
+                 127.0.0.1]. In a multihoming context (> 1 --bind-address), this flag is ignored \
+                 and the active --bind-address is advertised instead.",
             ),
     )
     .arg(
@@ -1677,6 +1682,16 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_advertised_ip() {
+        let default_run_args = RunArgs::default();
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args.clone(),
+            vec!["--advertised-ip", "127.0.0.2"],
+            default_run_args,
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use {
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
-    rand::{rng, seq::SliceRandom},
+    rand::seq::SliceRandom,
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_index::{
@@ -199,37 +199,7 @@ pub fn execute(
         })
         .transpose()?;
 
-    let advertised_ip = if let Some(cli_ip) = advertised_ip {
-        cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
-        bind_addresses.active()
-    } else if !entrypoint_addrs.is_empty() {
-        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-        order.shuffle(&mut rng());
-
-        order
-            .into_iter()
-            .find_map(|i| {
-                let entrypoint_addr = &entrypoint_addrs[i];
-                info!(
-                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
-                );
-                solana_net_utils::get_public_ip_addr_with_binding(
-                    entrypoint_addr,
-                    bind_addresses.active(),
-                )
-                .map_or_else(
-                    |err| {
-                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                        None
-                    },
-                    Some,
-                )
-            })
-            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
-    } else {
-        IpAddr::V4(Ipv4Addr::LOCALHOST)
-    };
+    let advertised_ip = resolve_advertised_ip(&bind_addresses, advertised_ip)?;
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
         solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
@@ -259,10 +229,15 @@ pub fn execute(
         })
         .transpose()?;
 
-    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
-        Err(String::from(
-            "--public-tvu-address can not be used in a multihoming context",
-        ))?;
+    if bind_addresses.multihoming_enabled() {
+        for (addr, flag) in [
+            (public_tvu_addr.is_some(), "--public-tvu-address"),
+            (public_tpu_addr.is_some(), "--public-tpu-address"),
+        ] {
+            if addr {
+                Err(format!("{flag} can not be used in a multihoming context"))?;
+            }
+        }
     }
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
@@ -458,7 +433,6 @@ pub fn execute(
     let init_complete_file = matches.value_of("init_complete_file");
 
     let private_rpc = matches.is_present("private_rpc");
-    let do_port_check = !matches.is_present("no_port_check");
 
     let ledger_path = run_args.ledger_path;
 
@@ -507,25 +481,6 @@ pub fn execute(
         "gossip_validators",
         "--gossip-validator",
     )?;
-
-    if bind_addresses.len() > 1 {
-        for (flag, msg) in [
-            (
-                "advertised_ip",
-                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-                 validator will advertise the first --bind-address as this node's public IP \
-                 address.",
-            ),
-            (
-                "public_tpu_addr",
-                "--public-tpu-address can not be used in a multihoming context",
-            ),
-        ] {
-            if matches.is_present(flag) {
-                Err(String::from(msg))?;
-            }
-        }
-    }
 
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
@@ -1019,7 +974,6 @@ pub fn execute(
             &cluster_entrypoints,
             &mut validator_config,
             run_args.rpc_bootstrap_config,
-            do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,
             &start_progress,
@@ -1179,6 +1133,19 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
         }
     }
     None
+}
+
+fn resolve_advertised_ip(
+    bind_addresses: &BindIpAddrs,
+    cli_advertised_ip: Option<IpAddr>,
+) -> Result<IpAddr, String> {
+    if bind_addresses.multihoming_enabled() {
+        Ok(bind_addresses.active())
+    } else if let Some(cli_ip) = cli_advertised_ip {
+        Ok(cli_ip)
+    } else {
+        Ok(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
 }
 
 fn parse_banking_trace_dir_byte_limit(matches: &ArgMatches) -> u64 {
@@ -1373,4 +1340,118 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{
+            cli::{DefaultArgs, thread_args::thread_args},
+            commands::run::args::add_args,
+        },
+        clap::App,
+        std::net::Ipv4Addr,
+    };
+
+    fn bind_addresses_from_args(args: &[&str]) -> BindIpAddrs {
+        let default_args = DefaultArgs::new();
+        let matches = add_args(App::new("run_command"), &default_args)
+            .args(&thread_args(&default_args.thread_args))
+            .get_matches_from(args);
+
+        let parsed = matches
+            .values_of("bind_address")
+            .expect("bind_address should always be present due to default")
+            .map(solana_net_utils::parse_host)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        BindIpAddrs::new(parsed).unwrap()
+    }
+
+    fn cli_advertised_ip_from_args(args: &[&str]) -> Option<IpAddr> {
+        let default_args = DefaultArgs::new();
+        let matches = add_args(App::new("run_command"), &default_args)
+            .args(&thread_args(&default_args.thread_args))
+            .get_matches_from(args);
+
+        matches
+            .value_of("advertised_ip")
+            .map(|advertised_ip| solana_net_utils::parse_host(advertised_ip).unwrap())
+    }
+
+    #[test]
+    fn resolve_advertised_ip_is_decoupled_unless_multihoming() {
+        let cli_ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10));
+
+        let single_bind = BindIpAddrs::new(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
+        assert_eq!(
+            resolve_advertised_ip(&single_bind, Some(cli_ip)).unwrap(),
+            cli_ip,
+        );
+
+        let multihomed = BindIpAddrs::new(vec![
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)),
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 11)),
+        ])
+        .unwrap();
+        assert_eq!(
+            resolve_advertised_ip(&multihomed, Some(cli_ip)).unwrap(),
+            multihomed.active(),
+        );
+    }
+
+    #[test]
+    fn single_homed_advertised_ip_without_entrypoint_uses_default_bind_address() {
+        let args = ["run_command", "--advertised-ip", "192.0.2.10"];
+        let bind_addresses = bind_addresses_from_args(&args);
+        let cli_advertised_ip = cli_advertised_ip_from_args(&args);
+
+        assert_eq!(bind_addresses.active(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(
+            resolve_advertised_ip(&bind_addresses, cli_advertised_ip).unwrap(),
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
+        );
+    }
+
+    #[test]
+    fn single_homed_advertised_ip_with_entrypoint_uses_default_bind_address() {
+        let args = [
+            "run_command",
+            "--advertised-ip",
+            "192.0.2.10",
+            "--entrypoint",
+            "203.0.113.20:8001",
+        ];
+        let bind_addresses = bind_addresses_from_args(&args);
+        let cli_advertised_ip = cli_advertised_ip_from_args(&args);
+
+        assert_eq!(bind_addresses.active(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(
+            resolve_advertised_ip(&bind_addresses, cli_advertised_ip).unwrap(),
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
+        );
+    }
+
+    #[test]
+    fn single_homed_explicit_bind_address_and_advertised_ip_stay_distinct() {
+        let args = [
+            "run_command",
+            "--bind-address",
+            "198.51.100.10",
+            "--advertised-ip",
+            "192.0.2.10",
+        ];
+        let bind_addresses = bind_addresses_from_args(&args);
+        let cli_advertised_ip = cli_advertised_ip_from_args(&args);
+
+        assert_eq!(
+            bind_addresses.active(),
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)),
+        );
+        assert_eq!(
+            resolve_advertised_ip(&bind_addresses, cli_advertised_ip).unwrap(),
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
+        );
+    }
 }
