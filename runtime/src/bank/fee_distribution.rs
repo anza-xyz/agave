@@ -30,6 +30,15 @@ pub(super) enum DepositFeeError {
     ReservedCollector,
 }
 
+/// Helper enum used to distinguish collector types allowed by SIMD-0232
+pub(super) enum CollectorType {
+    /// A rent-exempt, non-incinerator, non-reserved account owned by the system
+    /// program
+    SystemAccount,
+    /// Specifically, the incinerator account, denoted by `incinerator::id()`
+    Incinerator,
+}
+
 #[derive(Default)]
 pub struct FeeDistribution {
     deposit: u64,
@@ -188,7 +197,7 @@ impl Bank {
                 .checked_add_lamports(fees)
                 .map_err(|_| DepositFeeError::LamportOverflow)?;
             if collector_id != &self.leader.vote_address {
-                Bank::check_collector_account(
+                Bank::collector_type_checked(
                     collector_id,
                     pre_lamports,
                     &account,
@@ -228,14 +237,20 @@ impl Bank {
         Ok(account.lamports())
     }
 
-    pub(super) fn check_collector_account(
+    /// Checks if a collector account adheres to the rules outlined in SIMD-0232:
+    /// * system program owned account
+    /// * rent-exempt after depositing inflation rewards commission
+    /// * not a reserved account
+    ///
+    /// Returns the kind of collector
+    pub(super) fn collector_type_checked(
         collector_id: &Pubkey,
         pre_lamports: u64,
         account: &AccountSharedData,
         reserved_account_keys: &ReservedAccountKeys,
         rent: &Rent,
         relax_post_execution_balance_checks: bool,
-    ) -> Result<(), DepositFeeError> {
+    ) -> Result<CollectorType, DepositFeeError> {
         if !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
@@ -245,15 +260,18 @@ impl Bank {
         }
 
         // Don't perform rent check on the incinerator, so that the deposit
-        // always works. The incinerator is cleaned right after this step
-        if *collector_id != incinerator::id()
-            && !rent.is_exempt(account.lamports(), account.data().len())
-            && (!relax_post_execution_balance_checks || pre_lamports == 0)
-        {
-            return Err(DepositFeeError::InvalidRentPayingAccount);
+        // always works. The incinerator is run at the end of a block
+        if *collector_id == incinerator::id() {
+            Ok(CollectorType::Incinerator)
+        } else {
+            if !rent.is_exempt(account.lamports(), account.data().len())
+                && (!relax_post_execution_balance_checks || pre_lamports == 0)
+            {
+                Err(DepositFeeError::InvalidRentPayingAccount)
+            } else {
+                Ok(CollectorType::SystemAccount)
+            }
         }
-
-        Ok(())
     }
 }
 
