@@ -111,7 +111,12 @@ impl GossipService {
                             .map(|es| es.current_epoch_staked_nodes())
                             .unwrap_or_default();
 
-                        submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);
+                        submit_gossip_stats(
+                            &cluster_info.stats,
+                            &cluster_info.gossip,
+                            &stakes,
+                            cluster_info.deferred_contact_info_len(),
+                        );
                         gossip_receiver_stats.report();
                     }
                 }

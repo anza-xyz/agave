@@ -206,6 +206,7 @@ pub(crate) fn submit_gossip_stats(
     stats: &GossipStats,
     gossip: &CrdsGossip,
     stakes: &HashMap<Pubkey, u64>,
+    deferred_contact_info_len: Option<usize>,
 ) {
     let (crds_stats, table_size, num_nodes, num_pubkeys, purged_values_size, failed_inserts_size) = {
         let gossip_crds = gossip.crds.read().unwrap();
@@ -238,6 +239,11 @@ pub(crate) fn submit_gossip_stats(
         ("get_votes", stats.get_votes.clear(), i64),
         ("get_votes_count", stats.get_votes_count.clear(), i64),
         ("tvu_peers", stats.tvu_peers.clear(), i64),
+        (
+            "deferred_contact_info_len",
+            deferred_contact_info_len.map(|len| len as i64),
+            Option<i64>
+        ),
         ("table_size", table_size as i64, i64),
         ("purged_values_size", purged_values_size as i64, i64),
         ("failed_inserts_size", failed_inserts_size as i64, i64),

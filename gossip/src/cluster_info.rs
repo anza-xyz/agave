@@ -213,6 +213,14 @@ impl ClusterInfo {
         &self.socket_addr_space
     }
 
+    pub(crate) fn deferred_contact_info_len(&self) -> Option<usize> {
+        match self.ping_cache.try_lock() {
+            Ok(ping_cache) => Some(ping_cache.get_deferred_contact_len()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+            Err(std::sync::TryLockError::Poisoned(_)) => None,
+        }
+    }
+
     pub fn set_bind_ip_addrs(&mut self, ip_addrs: Arc<BindIpAddrs>) {
         self.bind_ip_addrs = ip_addrs;
     }
@@ -1826,7 +1834,17 @@ impl ClusterInfo {
         if pongs.peek().is_some() {
             let mut ping_cache = self.ping_cache.lock().unwrap();
             for (addr, pong) in pongs {
-                ping_cache.add(&pong, addr, now);
+                if ping_cache.add(&pong, addr, now) {
+                    let remote_node = (pong.pubkey(), addr);
+                    if let Some(value) = ping_cache.take_deferred_contact_info(&remote_node, now) {
+                        let mut gossip_crds = self.gossip.crds.write().unwrap();
+                        if let Err(err) =
+                            gossip_crds.insert(value, timestamp(), GossipRoute::PullResponse)
+                        {
+                            error!("ClusterInfo.insert_info: {err:?}");
+                        }
+                    }
+                }
             }
         }
     }
@@ -2479,7 +2497,16 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     let (out, ping) = {
         let node = (*pubkey, addr);
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(rng, keypair, Instant::now(), node)
+        let now = Instant::now();
+        let (out, ping) = ping_cache.check(rng, keypair, now, node);
+        if !out && ping.is_some() {
+            // Defer until we see a valid pong from `node`. This assumes the peer's
+            // pong is observed from its gossip socket address (i.e. the pong
+            // packet source address matches `ContactInfo::gossip()`).
+            ping_cache.defer_contact_info(node, now, value.clone());
+        }
+
+        (out, ping)
     };
     if let Some(ping) = ping {
         pings.push((addr, ping));
@@ -2767,6 +2794,111 @@ mod tests {
                 }
                 _ => panic!("invalid packet!"),
             }
+        }
+    }
+
+    #[test]
+    fn test_deferred_contact_info_inserted_on_pong() {
+        let mut rng = rand::rng();
+        let now = Instant::now();
+        let this_node = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
+            this_node.clone(),
+            SocketAddrSpace::Unspecified,
+        );
+
+        let (remote_keypair, remote_socket) = new_rand_remote_node(&mut rng);
+        let mut remote_ci = ContactInfo::new_localhost(&remote_keypair.pubkey(), timestamp());
+        remote_ci.set_gossip(remote_socket).unwrap();
+        let remote_crds_value =
+            CrdsValue::new(CrdsData::ContactInfo(remote_ci.clone()), &remote_keypair);
+
+        // Receiving a new (unverified) ContactInfo should defer it and generate a ping.
+        let mut pings = Vec::<(SocketAddr, Ping)>::new();
+        assert!(!verify_gossip_addr(
+            &mut rng,
+            &this_node,
+            &remote_crds_value,
+            &SocketAddrSpace::Unspecified,
+            &cluster_info.ping_cache,
+            &mut pings,
+        ));
+        assert_eq!(pings.len(), 1);
+        let remote_node = (remote_keypair.pubkey(), remote_socket);
+        {
+            let ping_cache = cluster_info.ping_cache.lock().unwrap();
+            assert!(ping_cache.has_deferred_contact_info(&remote_node));
+        }
+
+        // Simulate remote responding with a pong for the generated ping.
+        let (_addr, ping) = pings.pop().unwrap();
+        let pong = Pong::new(&ping, &remote_keypair);
+        cluster_info.handle_batch_pong_messages(
+            vec![(remote_socket, pong)],
+            now + Duration::from_millis(1),
+        );
+
+        // The deferred ContactInfo should now be inserted into CRDS.
+        {
+            let crds = cluster_info.gossip.crds.read().unwrap();
+            let stored = crds.get::<&ContactInfo>(remote_keypair.pubkey());
+            assert!(stored.is_some());
+        }
+        {
+            let ping_cache = cluster_info.ping_cache.lock().unwrap();
+            assert!(!ping_cache.has_deferred_contact_info(&remote_node));
+        }
+    }
+
+    #[test]
+    fn test_deferred_contact_info_expires_before_pong() {
+        let mut rng = rand::rng();
+        let this_node = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
+            this_node.clone(),
+            SocketAddrSpace::Unspecified,
+        );
+
+        let (remote_keypair, remote_socket) = new_rand_remote_node(&mut rng);
+        let mut remote_ci = ContactInfo::new_localhost(&remote_keypair.pubkey(), timestamp());
+        remote_ci.set_gossip(remote_socket).unwrap();
+        let remote_crds_value = CrdsValue::new(CrdsData::ContactInfo(remote_ci), &remote_keypair);
+
+        // Receiving a new (unverified) ContactInfo should defer it and generate a ping.
+        let mut pings = Vec::<(SocketAddr, Ping)>::new();
+        assert!(!verify_gossip_addr(
+            &mut rng,
+            &this_node,
+            &remote_crds_value,
+            &SocketAddrSpace::Unspecified,
+            &cluster_info.ping_cache,
+            &mut pings,
+        ));
+        assert_eq!(pings.len(), 1);
+        let remote_node = (remote_keypair.pubkey(), remote_socket);
+        {
+            let ping_cache = cluster_info.ping_cache.lock().unwrap();
+            assert!(ping_cache.has_deferred_contact_info(&remote_node));
+        }
+
+        // Simulate remote responding with a pong, but after the deferred-entry TTL.
+        // PingCache enforces a 10s TTL for deferred contact infos.
+        let (_addr, ping) = pings.pop().unwrap();
+        let pong = Pong::new(&ping, &remote_keypair);
+        let now = Instant::now() + Duration::from_secs(11);
+        cluster_info.handle_batch_pong_messages(vec![(remote_socket, pong)], now);
+
+        // Deferred entry should have expired (dropped), so it should not be inserted into CRDS.
+        {
+            let crds = cluster_info.gossip.crds.read().unwrap();
+            let stored = crds.get::<&ContactInfo>(remote_keypair.pubkey());
+            assert!(stored.is_none());
+        }
+        {
+            let ping_cache = cluster_info.ping_cache.lock().unwrap();
+            assert!(!ping_cache.has_deferred_contact_info(&remote_node));
         }
     }
 

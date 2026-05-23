@@ -99,6 +99,7 @@ bincode = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
+rand_chacha = { workspace = true }
 serial_test = { workspace = true }
 solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "conformance"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -127,6 +128,10 @@ harness = false
 
 [[bench]]
 name = "weighted_shuffle"
+harness = false
+
+[[bench]]
+name = "deferred_contact_info"
 harness = false
 
 [lints]
