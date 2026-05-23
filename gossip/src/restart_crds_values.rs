@@ -9,11 +9,13 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_serde_varint as serde_varint,
+    solana_wincode_varint::Leb128Int,
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct RestartLastVotedForkSlots {
     pub from: Pubkey,
     pub wallclock: u64,
@@ -30,7 +32,9 @@ pub enum RestartLastVotedForkSlotsError {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
+// repr(C) makes this struct zero-copy eligible in wincode.
+#[repr(C)]
 pub struct RestartHeaviestFork {
     pub from: Pubkey,
     pub wallclock: u64,
@@ -41,24 +45,28 @@ pub struct RestartHeaviestFork {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 enum SlotsOffsets {
     RunLengthEncoding(RunLengthEncoding),
     RawOffsets(RawOffsets),
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-struct U16(#[serde(with = "serde_varint")] u16);
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
+struct U16(
+    #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
+    u16,
+);
 
 // The vector always starts with 1. Encode number of 1's and 0's consecutively.
 // For example, 110000111 is [2, 4, 3].
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 struct RunLengthEncoding(Vec<U16>);
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 struct RawOffsets(BitVec<u8>);
 
 impl Sanitize for RestartLastVotedForkSlots {
@@ -225,7 +233,7 @@ mod test {
             crds_value::{CrdsValue, CrdsValueLabel},
             protocol::MAX_CRDS_OBJECT_SIZE,
         },
-        bincode::serialized_size,
+        bv::BitsPush,
         solana_keypair::Keypair,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -251,9 +259,11 @@ mod test {
         )
         .unwrap();
         // If the following assert fails, please update RestartLastVotedForkSlots::MAX_BYTES
+        let header_size = wincode::serialized_size(&header).unwrap();
+        assert_eq!(header_size, bincode::serialized_size(&header).unwrap());
         assert_eq!(
             RestartLastVotedForkSlots::MAX_BYTES,
-            MAX_CRDS_OBJECT_SIZE - serialized_size(&header).unwrap() as usize
+            MAX_CRDS_OBJECT_SIZE - header_size as usize
         );
 
         // Create large enough slots to make sure we are discarding some to make slots fit.
@@ -268,7 +278,12 @@ mod test {
             0,
         )
         .unwrap();
-        assert!(serialized_size(&large_slots).unwrap() <= MAX_CRDS_OBJECT_SIZE as u64);
+        let large_slots_size = wincode::serialized_size(&large_slots).unwrap();
+        assert_eq!(
+            large_slots_size,
+            bincode::serialized_size(&large_slots).unwrap()
+        );
+        assert!(large_slots_size <= MAX_CRDS_OBJECT_SIZE as u64);
         let retrieved_slots = large_slots.to_slots(0);
         assert!(retrieved_slots.len() <= range.len());
         assert!(retrieved_slots.last().unwrap() - retrieved_slots.first().unwrap() > 5000);
@@ -322,7 +337,12 @@ mod test {
             shred_version,
         )
         .unwrap();
-        assert!(serialized_size(&large_slots).unwrap() < MAX_CRDS_OBJECT_SIZE as u64);
+        let large_slots_size = wincode::serialized_size(&large_slots).unwrap();
+        assert_eq!(
+            large_slots_size,
+            bincode::serialized_size(&large_slots).unwrap()
+        );
+        assert!(large_slots_size < MAX_CRDS_OBJECT_SIZE as u64);
         let retrieved_slots = large_slots.to_slots(0);
         assert_eq!(retrieved_slots, large_slots_vec);
     }
@@ -355,6 +375,168 @@ mod test {
         let large_length = 500;
         let range: Vec<Slot> = make_rand_slots(&mut rng).take(large_length).collect();
         check_run_length_encoding(range);
+    }
+
+    #[test]
+    fn test_wincode_compatibility_run_length_encoding() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let len = rng.random_range(0..32usize);
+            let rle = RunLengthEncoding((0..len).map(|_| U16(rng.random())).collect());
+            let bincode_bytes = bincode::serialize(&rle).unwrap();
+            let wincode_bytes = wincode::serialize(&rle).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+            assert_eq!(
+                rle,
+                wincode::deserialize::<RunLengthEncoding>(&bincode_bytes).unwrap()
+            );
+            assert_eq!(
+                rle,
+                bincode::deserialize::<RunLengthEncoding>(&wincode_bytes).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_raw_offsets() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let nblocks = rng.random_range(0usize..64);
+            let mut bitvec = BitVec::<u8>::new();
+            for _ in 0..nblocks {
+                bitvec.push_block(rng.random::<u8>());
+            }
+            let nbits = if nblocks == 0 {
+                0
+            } else {
+                rng.random_range(0u64..nblocks as u64 * 8 + 1)
+            };
+            bitvec.truncate(nbits);
+            // shrink_to_fit matches RawOffsets::new behavior: serde serializes
+            // the backing block count, so it must equal block_len() for the
+            // two wire formats to be identical.
+            bitvec.shrink_to_fit();
+            let raw = RawOffsets(bitvec);
+            let bincode_bytes = bincode::serialize(&raw).unwrap();
+            let wincode_bytes = wincode::serialize(&raw).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+            assert_eq!(
+                raw,
+                wincode::deserialize::<RawOffsets>(&bincode_bytes).unwrap()
+            );
+            assert_eq!(
+                raw,
+                bincode::deserialize::<RawOffsets>(&wincode_bytes).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_slots_offsets() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let len = rng.random_range(0..32usize);
+            let offsets = SlotsOffsets::RunLengthEncoding(RunLengthEncoding(
+                (0..len).map(|_| U16(rng.random())).collect(),
+            ));
+            let bincode_bytes = bincode::serialize(&offsets).unwrap();
+            let wincode_bytes = wincode::serialize(&offsets).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+            assert_eq!(
+                offsets,
+                wincode::deserialize::<SlotsOffsets>(&bincode_bytes).unwrap()
+            );
+            assert_eq!(
+                offsets,
+                bincode::deserialize::<SlotsOffsets>(&wincode_bytes).unwrap()
+            );
+        }
+        for _ in 0..1000 {
+            let nblocks = rng.random_range(0usize..64);
+            let mut bitvec = BitVec::<u8>::new();
+            for _ in 0..nblocks {
+                bitvec.push_block(rng.random::<u8>());
+            }
+            let nbits = if nblocks == 0 {
+                0
+            } else {
+                rng.random_range(0u64..nblocks as u64 * 8 + 1)
+            };
+            bitvec.truncate(nbits);
+            // shrink_to_fit matches RawOffsets::new behavior: serde serializes
+            // the backing block count, so it must equal block_len() for the
+            // two wire formats to be identical.
+            bitvec.shrink_to_fit();
+            let offsets = SlotsOffsets::RawOffsets(RawOffsets(bitvec));
+            let bincode_bytes = bincode::serialize(&offsets).unwrap();
+            let wincode_bytes = wincode::serialize(&offsets).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+            assert_eq!(
+                offsets,
+                wincode::deserialize::<SlotsOffsets>(&bincode_bytes).unwrap()
+            );
+            assert_eq!(
+                offsets,
+                bincode::deserialize::<SlotsOffsets>(&wincode_bytes).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_restart_last_voted_fork_slots() {
+        let mut rng = rand::rng();
+        // Test RawOffsets variant (small slot ranges from new_rand).
+        for _ in 0..1000 {
+            let slots = RestartLastVotedForkSlots::new_rand(&mut rng, None);
+            let bincode_bytes = bincode::serialize(&slots).unwrap();
+            let wincode_decoded: RestartLastVotedForkSlots =
+                wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(slots, wincode_decoded);
+            let wincode_bytes = wincode::serialize(&slots).unwrap();
+            let bincode_decoded: RestartLastVotedForkSlots =
+                bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(slots, bincode_decoded);
+        }
+        // Test RunLengthEncoding variant: consecutive slots produce a single large run
+        // (num_encoded_slots > MAX_BYTES * 8), forcing RunLengthEncoding to be chosen.
+        for _ in 0..100 {
+            let base: Slot = rng.random_range(0..100_000);
+            let range: Vec<Slot> = (base..base + 8001).collect();
+            let keypair = solana_keypair::Keypair::new();
+            let slots = RestartLastVotedForkSlots::new(
+                keypair.pubkey(),
+                new_rand_timestamp(&mut rng),
+                &range,
+                Hash::new_unique(),
+                1,
+            )
+            .unwrap();
+            assert!(matches!(slots.offsets, SlotsOffsets::RunLengthEncoding(_)));
+            let bincode_bytes = bincode::serialize(&slots).unwrap();
+            let wincode_decoded: RestartLastVotedForkSlots =
+                wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(slots, wincode_decoded);
+            let wincode_bytes = wincode::serialize(&slots).unwrap();
+            let bincode_decoded: RestartLastVotedForkSlots =
+                bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(slots, bincode_decoded);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_restart_heaviest_fork() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let fork = RestartHeaviestFork::new_rand(&mut rng, None);
+            let bincode_bytes = bincode::serialize(&fork).unwrap();
+            let wincode_decoded: RestartHeaviestFork =
+                wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(fork, wincode_decoded);
+            let wincode_bytes = wincode::serialize(&fork).unwrap();
+            let bincode_decoded: RestartHeaviestFork =
+                bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(fork, bincode_decoded);
+        }
     }
 
     #[test]

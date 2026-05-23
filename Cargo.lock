@@ -458,6 +458,7 @@ dependencies = [
  "solana-gossip",
  "solana-hash 4.3.0",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -7174,6 +7175,7 @@ name = "solana-bloom"
 version = "4.2.0-alpha.0"
 dependencies = [
  "bencher",
+ "bincode",
  "bv",
  "fnv",
  "rand 0.9.4",
@@ -7187,6 +7189,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signature",
  "solana-time-utils",
+ "wincode",
 ]
 
 [[package]]
@@ -7667,9 +7670,9 @@ dependencies = [
 
 [[package]]
 name = "solana-clock"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95cf11109c3b6115cc510f1e31f06fdd52f504271bc24ef5f1249fbbcae5f9f3"
+checksum = "5ea35d8f69b67daddb921a9da7f78ca591b533cf5e98833cd9ae62fdc2e4652c"
 dependencies = [
  "serde",
  "serde_derive",
@@ -8509,7 +8512,6 @@ dependencies = [
  "agave-random",
  "anyhow",
  "arc-swap",
- "arrayvec",
  "assert_matches",
  "bincode",
  "bs58",
@@ -8567,7 +8569,11 @@ dependencies = [
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
+ "solana-wincode-varint",
  "static_assertions",
+ "strum",
+ "strum_macros",
+ "tempfile",
  "test-case",
  "thiserror 2.0.18",
  "wincode",
@@ -9753,6 +9759,7 @@ dependencies = [
  "solana-hash 4.3.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-message",
@@ -11067,6 +11074,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-connection-cache",
  "solana-epoch-schedule",
+ "solana-leader-schedule",
  "solana-message",
  "solana-pubkey 4.2.0",
  "solana-pubsub-client",
@@ -11098,6 +11106,7 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -11387,6 +11396,8 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-sanitize",
  "solana-serde-varint",
+ "solana-wincode-varint",
+ "wincode",
 ]
 
 [[package]]
@@ -11490,6 +11501,15 @@ dependencies = [
  "solana-vote-interface",
  "solana-vote-program",
  "test-case",
+]
+
+[[package]]
+name = "solana-wincode-varint"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6679e72a01dcfe7ff180f0e9d3a0d165e4e9664426930014f2702e7571c259c7"
+dependencies = [
+ "wincode",
 ]
 
 [[package]]
@@ -13067,6 +13087,7 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37095eb18dd6254c66217edc61a29d83d51f8818de8a2ffe88e4584ad73fb5f9"
 dependencies = [
+ "bv",
  "bytes",
  "pastey",
  "proc-macro2",

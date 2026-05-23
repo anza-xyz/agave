@@ -36,9 +36,7 @@ dummy-for-ci-check = ["conformance"]
 agave-logger = { workspace = true }
 agave-random = { workspace = true }
 arc-swap = { workspace = true }
-arrayvec = { workspace = true }
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 crossbeam-channel = { workspace = true }
 flate2 = { workspace = true }
@@ -86,16 +84,18 @@ solana-signature = { workspace = true, default-features = false }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-wincode-varint = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+bincode = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
@@ -108,6 +108,9 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+tempfile = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]

@@ -2903,11 +2903,6 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
     for account_path in &config.account_paths {
         move_and_async_delete_path_contents(account_path);
     }
-    if let Some(shrink_paths) = &config.accounts_db_config.shrink_paths {
-        for shrink_path in shrink_paths {
-            move_and_async_delete_path_contents(shrink_path);
-        }
-    }
 }
 
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {

@@ -1,6 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    bincode::serialized_size,
     itertools::Itertools,
     log::*,
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
@@ -393,10 +392,7 @@ fn network_run_push(
                 let mut pruned: HashSet<(Pubkey, Pubkey)> = HashSet::new();
                 for (to, msgs) in push_messages {
                     // 8 bytes for encoding the length of the vector.
-                    bytes += 8 + msgs
-                        .iter()
-                        .map(CrdsValue::bincode_serialized_size)
-                        .sum::<usize>();
+                    bytes += 8 + msgs.iter().map(CrdsValue::serialized_size).sum::<usize>();
                     num_msgs += 1;
                     let origins: HashSet<_> = network
                         .get(&to)
@@ -420,7 +416,12 @@ fn network_run_push(
                             pruned.insert((from, *prune_key));
                         }
 
-                        bytes += serialized_size(&prune_keys).unwrap() as usize;
+                        let prune_keys_size = wincode::serialized_size(&prune_keys).unwrap();
+                        assert_eq!(
+                            prune_keys_size,
+                            bincode::serialized_size(&prune_keys).unwrap()
+                        );
+                        bytes += prune_keys_size as usize;
                         delivered += 1;
 
                         network
@@ -575,7 +576,7 @@ fn network_run_pull(
                     .iter()
                     .map(|f| f.filter.bits.len() as usize / 8)
                     .sum::<usize>();
-                bytes += caller_info.bincode_serialized_size();
+                bytes += caller_info.serialized_size();
                 let requests: Vec<_> = filters
                     .into_iter()
                     .map(|filter| PullRequest {
@@ -603,10 +604,7 @@ fn network_run_pull(
                     })
                     .unwrap();
                 // 8 bytes for encoding the length of the vector.
-                bytes += 8 + rsp
-                    .iter()
-                    .map(CrdsValue::bincode_serialized_size)
-                    .sum::<usize>();
+                bytes += 8 + rsp.iter().map(CrdsValue::serialized_size).sum::<usize>();
                 msgs += rsp.len();
                 if let Some(node) = network.get(&from) {
                     let mut stats = ProcessPullStats::default();

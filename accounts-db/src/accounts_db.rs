@@ -902,8 +902,6 @@ pub struct AccountsDb {
     /// directory for bank hash details files
     bank_hash_details_dir: PathBuf,
 
-    shrink_paths: Vec<PathBuf>,
-
     /// Directory of paths this accounts_db needs to hold/remove
     #[allow(dead_code)]
     pub temp_paths: Option<Vec<TempDir>>,
@@ -1060,11 +1058,6 @@ impl AccountsDb {
             (paths, None)
         };
 
-        let shrink_paths = accounts_db_config
-            .shrink_paths
-            .clone()
-            .unwrap_or_else(|| paths.clone());
-
         let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
@@ -1105,7 +1098,6 @@ impl AccountsDb {
             paths,
             bank_hash_details_dir: accounts_db_config.bank_hash_details_dir,
             temp_paths,
-            shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
             ancient_append_vec_offset: accounts_db_config
                 .ancient_append_vec_offset
@@ -2385,6 +2377,8 @@ impl AccountsDb {
         stats: &ShrinkStats,
         slot_to_shrink: Slot,
     ) -> LoadAccountsIndexForShrink<'a, T> {
+        let can_purge_zero_lamport_single_ref =
+            self.can_purge_zero_lamport_single_ref_after_shrink(slot_to_shrink);
         let count = accounts.len();
         let mut alive_accounts = T::with_capacity(count, slot_to_shrink);
         let mut pubkeys_to_unref = Vec::with_capacity(count);
@@ -2396,7 +2390,6 @@ impl AccountsDb {
         let mut index_scan_returned_some_count = 0;
         let mut index_scan_returned_none_count = 0;
         let mut all_are_zero_lamports = true;
-        let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
         self.accounts_index.scan(
             accounts.iter().map(|account| account.pubkey()),
             |pubkey, slots_refs| {
@@ -2404,11 +2397,7 @@ impl AccountsDb {
                 let mut do_populate_accounts_for_shrink = |ref_count, slot_list| {
                     if stored_account.is_zero_lamport()
                         && ref_count == 1
-                        && latest_full_snapshot_slot
-                            .map(|latest_full_snapshot_slot| {
-                                latest_full_snapshot_slot >= slot_to_shrink
-                            })
-                            .unwrap_or(true)
+                        && can_purge_zero_lamport_single_ref
                     {
                         // only do this if our slot is prior to the latest full snapshot
                         // we found a zero lamport account that is the only instance of this account. We can delete it completely.
@@ -2794,7 +2783,7 @@ impl AccountsDb {
                     self.shrink_stats
                         .num_dead_slots_added_to_clean
                         .fetch_add(1, Ordering::Relaxed);
-                } else if Self::is_shrinking_productive(&store)
+                } else if self.is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
                 {
                     // this store might be eligible for shrinking now
@@ -3018,7 +3007,7 @@ impl AccountsDb {
         old_store: Arc<AccountStorageEntry>,
         size: u64,
     ) -> ShrinkInProgress<'_> {
-        let shrunken_store = self.create_store(slot, size, "shrink", self.shrink_paths.as_slice());
+        let shrunken_store = self.create_store(slot, size, "shrink", self.paths.as_slice());
         self.storage
             .shrinking_in_progress(slot, old_store, shrunken_store)
     }
@@ -3032,7 +3021,7 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
-            if Self::is_shrinking_productive(&store) {
+            if self.is_shrinking_productive(&store) {
                 self.shrink_storage(store)
             }
         }
@@ -3057,26 +3046,28 @@ impl AccountsDb {
         struct StoreUsageInfo {
             slot: Slot,
             alive_ratio: f64,
+            alive_bytes_after_shrink: u64,
             store: Arc<AccountStorageEntry>,
         }
-        let mut store_usage: Vec<StoreUsageInfo> = Vec::with_capacity(shrink_slots.len());
+        let mut store_usages = Vec::with_capacity(shrink_slots.len());
         let mut total_alive_bytes: u64 = 0;
         let mut total_bytes: u64 = 0;
         for slot in shrink_slots {
             let Some(store) = self.storage.get_slot_storage_entry(*slot) else {
                 continue;
             };
-            let alive_bytes = store.alive_bytes();
-            total_alive_bytes += alive_bytes as u64;
+            let alive_bytes_after_shrink = self.alive_bytes_after_shrink(&store) as u64;
+            total_alive_bytes += alive_bytes_after_shrink;
             total_bytes += store.capacity();
-            let alive_ratio = alive_bytes as f64 / store.capacity() as f64;
-            store_usage.push(StoreUsageInfo {
+            let alive_ratio = alive_bytes_after_shrink as f64 / store.capacity() as f64;
+            store_usages.push(StoreUsageInfo {
                 slot: *slot,
                 alive_ratio,
+                alive_bytes_after_shrink,
                 store: store.clone(),
             });
         }
-        store_usage.sort_by(|a, b| {
+        store_usages.sort_by(|a, b| {
             a.alive_ratio
                 .partial_cmp(&b.alive_ratio)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -3086,15 +3077,15 @@ impl AccountsDb {
         // shrinking while still achieving the overall goals.
         let mut shrink_slots = IntMap::default();
         let mut shrink_slots_next_batch = ShrinkCandidates::default();
-        for usage in &store_usage {
-            let store = &usage.store;
+        for store_usage in &store_usages {
+            let store = &store_usage.store;
             let alive_ratio = (total_alive_bytes as f64) / (total_bytes as f64);
             debug!(
                 "alive_ratio: {:?} store_id: {:?}, store_ratio: {:?} requirement: {:?}, \
                  total_bytes: {:?} total_alive_bytes: {:?}",
                 alive_ratio,
-                usage.store.id(),
-                usage.alive_ratio,
+                store_usage.store.id(),
+                store_usage.alive_ratio,
                 shrink_ratio,
                 total_bytes,
                 total_alive_bytes
@@ -3104,19 +3095,19 @@ impl AccountsDb {
                 debug!(
                     "Shrinking goal can be achieved at slot {:?}, total_alive_bytes: {:?} \
                      total_bytes: {:?}, alive_ratio: {:}, shrink_ratio: {:?}",
-                    usage.slot, total_alive_bytes, total_bytes, alive_ratio, shrink_ratio
+                    store_usage.slot, total_alive_bytes, total_bytes, alive_ratio, shrink_ratio
                 );
-                if usage.alive_ratio < shrink_ratio {
-                    shrink_slots_next_batch.insert(usage.slot);
+                if store_usage.alive_ratio < shrink_ratio {
+                    shrink_slots_next_batch.insert(store_usage.slot);
                 } else {
                     break;
                 }
             } else {
                 let current_store_size = store.capacity();
-                let after_shrink_size = store.alive_bytes() as u64;
+                let after_shrink_size = store_usage.alive_bytes_after_shrink;
                 let bytes_saved = current_store_size.saturating_sub(after_shrink_size);
                 total_bytes -= bytes_saved;
-                shrink_slots.insert(usage.slot, Arc::clone(store));
+                shrink_slots.insert(store_usage.slot, Arc::clone(store));
             }
         }
         (shrink_slots, shrink_slots_next_batch)
@@ -3245,9 +3236,10 @@ impl AccountsDb {
                 if let Some(store) = self.storage.get_slot_storage_entry(slot) {
                     if !shrink_slots.contains(&slot)
                         && capacity == store.capacity()
-                        && Self::is_candidate_for_shrink(self, &store)
+                        && self.is_candidate_for_shrink(&store)
                     {
-                        let ancient_bytes_added_to_shrink = store.alive_bytes() as u64;
+                        let ancient_bytes_added_to_shrink =
+                            self.alive_bytes_after_shrink(&store) as u64;
                         shrink_slots.insert(slot, store);
                         self.shrink_stats
                             .ancient_bytes_added_to_shrink
@@ -5023,11 +5015,14 @@ impl AccountsDb {
                             target_slot,
                             target_slot,
                             account.pubkey(),
-                            &account,
-                            &self.account_indexes,
                             info,
                             ReclaimsSlotList::default().as_mut(),
                             UpsertReclaim::PreviousSlotEntryWasCached,
+                        );
+                        self.accounts_index.update_secondary_indexes(
+                            account.pubkey(),
+                            &account,
+                            &self.account_indexes,
                         );
                     });
                 }
@@ -5089,11 +5084,14 @@ impl AccountsDb {
                         target_slot,
                         old_slot,
                         account.pubkey(),
-                        &account,
-                        &self.account_indexes,
                         info,
                         &mut reclaims,
                         reclaim,
+                    );
+                    self.accounts_index.update_secondary_indexes(
+                        account.pubkey(),
+                        &account,
+                        &self.account_indexes,
                     );
                 });
             });
@@ -5134,10 +5132,28 @@ impl AccountsDb {
         alive_bytes >= total_bytes
     }
 
-    fn is_shrinking_productive(store: &AccountStorageEntry) -> bool {
+    /// Can zero lamport single ref accounts in `slot` be purged?
+    fn can_purge_zero_lamport_single_ref_after_shrink(&self, slot: Slot) -> bool {
+        self.latest_full_snapshot_slot()
+            .is_none_or(|latest_full_snapshot_slot| slot <= latest_full_snapshot_slot)
+    }
+
+    /// Returns the expected alive bytes after shrinking `store`.
+    pub(crate) fn alive_bytes_after_shrink(&self, store: &AccountStorageEntry) -> usize {
+        // Obsolete accounts are already excluded from `store.alive_bytes()`.
+        // Zero-lamport single-ref accounts are counted as alive until shrink can purge them,
+        // which is gated by the latest full snapshot slot.
+        if self.can_purge_zero_lamport_single_ref_after_shrink(store.slot()) {
+            store.alive_bytes_exclude_zero_lamport_single_ref_accounts()
+        } else {
+            store.alive_bytes()
+        }
+    }
+
+    fn is_shrinking_productive(&self, store: &AccountStorageEntry) -> bool {
         let alive_count = store.count();
         let total_bytes = store.capacity();
-        let alive_bytes = store.alive_bytes_exclude_zero_lamport_single_ref_accounts() as u64;
+        let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         if Self::should_not_shrink(alive_bytes, total_bytes) {
             trace!(
                 "shrink_slot_forced ({}): not able to shrink at all: num alive: {}, bytes alive: \
@@ -5161,7 +5177,7 @@ impl AccountsDb {
         // It is not possible to identify ancient append vecs when we pack, so no check for ancient when we are not appending.
         let total_bytes = store.capacity();
 
-        let alive_bytes = store.alive_bytes_exclude_zero_lamport_single_ref_accounts() as u64;
+        let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         match self.shrink_ratio {
             AccountShrinkThreshold::TotalSpace { shrink_ratio: _ } => alive_bytes < total_bytes,
             AccountShrinkThreshold::IndividualStore { shrink_ratio } => {
@@ -5257,7 +5273,7 @@ impl AccountsDb {
                 if remaining_accounts == 0 {
                     self.dirty_stores.insert(*slot, store);
                     dead_slots.insert(*slot);
-                } else if Self::is_shrinking_productive(&store)
+                } else if self.is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
                 {
                     // Checking that this single storage entry is ready for shrinking,
@@ -5822,7 +5838,7 @@ impl AccountsDb {
             // If any zero lamport accounts were marked, the storage may be valid for shrinking
             if num_marked > 0
                 && self.is_candidate_for_shrink(storage)
-                && Self::is_shrinking_productive(storage)
+                && self.is_shrinking_productive(storage)
             {
                 self.shrink_candidate_slots
                     .lock()
