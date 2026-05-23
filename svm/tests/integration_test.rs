@@ -1232,7 +1232,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     // 4: safety check that nonce fee-payers are required to be rent-exempt (blockhash fee-payers may be below rent-exemption)
     // if this situation is ever allowed in the future, the nonce account MUST be hidden for fee-only transactions
     // as an aside, nonce accounts closed by WithdrawNonceAccount are safe because they are ordinary executed transactions
-    // we also dont care whether a non-fee nonce (or any account) pays rent because rent is charged on executed transactions
+    // we also don't care whether a non-fee nonce (or any account) pays rent because rent is charged on executed transactions
     if fee_paying_nonce {
         let (transaction, _, nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, false, true);
