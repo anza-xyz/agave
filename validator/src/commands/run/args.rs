@@ -804,6 +804,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("advertised_ip")
+            .long("advertised-ip")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host)
+            .help(
+                "Public IP address for this validator to advertise in gossip. [default: ask \
+                 --entrypoint via its IP echo server, or 127.0.0.1 when --entrypoint is not \
+                 provided]. In a multihoming context (> 1 --bind-address), this flag is ignored \
+                 and the active --bind-address is advertised instead.",
+            ),
+    )
+    .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
             .value_name("HOST")

@@ -20,6 +20,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+* `--bind-address` no longer determines the validator's advertised gossip IP. Use `--advertised-ip` to explicitly set the advertised public IP; otherwise the validator resolves it via the entrypoint IP echo server, or falls back to `127.0.0.1` when no entrypoint is configured. Bootstrap validators that do not pass `--entrypoint` must now also pass `--advertised-ip`.
 #### Deprecations
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
@@ -44,6 +45,7 @@ Release channels have their own copy of this changelog:
 * XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
   `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
 #### Changes
+* Added `--advertised-ip` to configure the validator's advertised gossip IP independently of `--bind-address`. In multihomed configurations, the active `--bind-address` continues to be advertised.
 
 ## 4.0.0
 ### RPC

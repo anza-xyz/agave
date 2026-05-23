@@ -684,15 +684,11 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .hidden(hidden_unless_forced())
                 .help(
-                    "Use when running a validator behind a NAT. DNS name or IP address for this \
-                     validator to advertise in gossip. This address will be used as the target \
-                     destination address for peers trying to contact this node. [default: the \
-                     first --bind-address, or ask --entrypoint when --bind-address is not \
-                     provided, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
-                     argument cannot be used in a multihoming context (when multiple \
-                     --bind-address values are provided).",
+                    "Public IP address for this validator to advertise in gossip. [default: ask \
+                     --entrypoint via its IP echo server, or 127.0.0.1 when --entrypoint is not \
+                     provided]. In a multihoming context (> 1 --bind-address), this flag is \
+                     ignored and the active --bind-address is advertised instead.",
                 ),
         )
         .arg(
