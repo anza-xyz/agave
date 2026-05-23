@@ -960,12 +960,10 @@ mod test {
     fn port_range_validator_rejects_too_small_range() {
         let min = MINIMUM_VALIDATOR_PORT_RANGE_WIDTH;
         let too_small_end = 8000 + (min - 2);
-        let too_small = format!("8000-{}", too_small_end);
+        let too_small = format!("8000-{too_small_end}");
         let suggested_end = 8000 + (min - 1);
-        let expected = format!(
-            "Port range is too small.  Try --dynamic-port-range 8000-{}",
-            suggested_end
-        );
+        let expected =
+            format!("Port range is too small.  Try --dynamic-port-range 8000-{suggested_end}");
         assert_eq!(port_range_validator(too_small), Err(expected));
     }
 
