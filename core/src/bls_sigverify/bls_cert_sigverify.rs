@@ -75,7 +75,7 @@ pub(super) fn verify_and_send_certificates(
         thread_pool,
     );
     stats.sig_verified_certs += messages.len() as u64;
-    send_certs_to_pool(messages, channel_to_pool, verified_certs_set, &mut stats)?;
+    send_certs_to_pool(messages, channel_to_pool, &mut stats)?;
 
     measure.stop();
     stats

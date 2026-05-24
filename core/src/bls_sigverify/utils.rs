@@ -6,16 +6,12 @@ use {
     },
     agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
     agave_votor_messages::{
-        consensus_message::{CertificateType, ConsensusMessage},
-        reward_certificate::AddVoteMessage,
+        consensus_message::ConsensusMessage, reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Sender, TrySendError},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::{
-        collections::{HashMap, HashSet},
-        time::Instant,
-    },
+    std::{collections::HashMap, time::Instant},
 };
 
 pub(super) fn send_votes_to_metrics(
@@ -102,15 +98,9 @@ pub(super) fn send_votes_to_repair(
     Ok(())
 }
 
-/// Sends the verified certs to the consensus pool.
-///
-/// If sending fails because the channel is full, remove the certs from `verified_certs_set`.
-/// Otherwise blssigverify will not verify the same certs again and the node effectively never
-/// receive these certs.
 pub(super) fn send_certs_to_pool(
     messages: Vec<ConsensusMessage>,
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
-    verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
 ) -> Result<(), SigVerifyCertError> {
     if messages.is_empty() {
@@ -122,13 +112,8 @@ pub(super) fn send_certs_to_pool(
             stats.pool_sent += len as u64;
             Ok(())
         }
-        Err(TrySendError::Full(msgs)) => {
+        Err(TrySendError::Full(_)) => {
             stats.pool_channel_full += 1;
-            for msg in msgs {
-                if let ConsensusMessage::Certificate(cert) = msg {
-                    verified_certs_set.remove(&cert.cert_type);
-                }
-            }
             Ok(())
         }
         Err(TrySendError::Disconnected(_)) => {
