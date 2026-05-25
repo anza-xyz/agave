@@ -12,7 +12,7 @@ use {
     crossbeam_channel::Sender,
     pem::Pem,
     quinn::{
-        Endpoint, IdleTimeout, ServerConfig, VarInt,
+        Endpoint, IdleTimeout, MtuDiscoveryConfig, ServerConfig, VarInt,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     },
     rustls::KeyLogFile,
@@ -65,6 +65,13 @@ pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 /// on the number of concurrent streams. This does not affect the memory allocation
 /// in Quinn, that is driven primarily by MAX_STREAMS, not MAX_DATA.
 const CONNECTION_RECEIVE_WINDOW_BYTES: VarInt = VarInt::from_u32(8 * 1024 * 1024);
+
+/// Conservative max Quic UDP payload size to take into consideration GRE case.
+///
+/// Quinn computes default max Quic UDP payload size as 1500 (common MTU) - 40 (IPv6 header)
+/// - 8 (UDP header) = 1452 bytes. Yet in case of GRE, we will instead have 1500 (common MTU) - 20
+///   (outer IPv4 header) - 4 (GRE header) - 20 (inner IPv4 header) - 8 (UDP header) = 1448 bytes.
+const MAX_QUIC_UDP_PAYLOAD: u16 = 1448;
 
 pub fn default_num_tpu_transaction_forward_receive_threads() -> usize {
     num_cpus::get().min(16)
@@ -128,6 +135,12 @@ pub(crate) fn configure_server(
     // quinn_proto::Connection::poll_transmit allocate only 1 MTU vs 10 * MTU for _each_ transmit.
     // See https://github.com/anza-xyz/agave/pull/1647.
     config.enable_segmentation_offload(false);
+
+    config.mtu_discovery_config(Some({
+        let mut mtu_config = MtuDiscoveryConfig::default();
+        mtu_config.upper_bound(MAX_QUIC_UDP_PAYLOAD);
+        mtu_config
+    }));
 
     Ok((server_config, cert_chain_pem))
 }
