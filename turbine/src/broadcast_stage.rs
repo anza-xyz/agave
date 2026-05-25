@@ -11,7 +11,9 @@ use {
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
     },
     agave_votor::event::VotorEventSender,
-    crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, bounded},
+    crossbeam_channel::{
+        Receiver, RecvError, RecvTimeoutError, SendError, Sender, TrySendError, bounded,
+    },
     itertools::Itertools,
     solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_gossip::{
@@ -70,6 +72,44 @@ const BROADCAST_CHANNEL_CAPACITY: usize = MAX_FEC_SETS_PER_SLOT as usize * 4;
 
 pub(crate) type RecordReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
 pub(crate) type TransmitReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
+
+/// Try to send into a bounded channel. If the channel is full,
+/// log an error and fall back to a blocking send so shreds are not dropped.
+/// A full channel means there is something very wrong with our node,
+/// so we want a loud signal but must preserve shreds so the validator
+/// does not start repairing its own blocks.
+fn try_send_or_block<T>(
+    sender: &Sender<T>,
+    msg: T,
+    channel_name: &str,
+) -> std::result::Result<(), SendError<T>> {
+    match sender.try_send(msg) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(msg)) => {
+            error!("The channel to {channel_name} is full, node is resource starved!");
+            sender.send(msg)
+        }
+        Err(TrySendError::Disconnected(msg)) => Err(SendError(msg)),
+    }
+}
+
+/// Fan a batch of shreds out to both the blockstore record path and the
+/// network transmit path. Each leg uses [`try_send_or_block`] so any full
+/// channel is logged loudly but never drops shreds.
+#[allow(clippy::type_complexity)]
+pub(crate) fn dispatch_shreds(
+    blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+    socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+    shreds: Arc<Vec<Shred>>,
+    batch_info: Option<BroadcastShredBatchInfo>,
+) -> std::result::Result<(), SendError<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>> {
+    try_send_or_block(
+        blockstore_sender,
+        (shreds.clone(), batch_info.clone()),
+        "blockstore",
+    )?;
+    try_send_or_block(socket_sender, (shreds, batch_info), "network egress")
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -427,7 +467,7 @@ impl BroadcastStage {
                     .all(|shred| shred.slot() == new_retransmit_slot)
             );
             if !data_shreds.is_empty() {
-                socket_sender.send((data_shreds, None))?;
+                try_send_or_block(socket_sender, (data_shreds, None), "network egress")?;
             }
 
             let coding_shreds = Arc::new(
@@ -442,7 +482,7 @@ impl BroadcastStage {
                     .all(|shred| shred.slot() == new_retransmit_slot)
             );
             if !coding_shreds.is_empty() {
-                socket_sender.send((coding_shreds, None))?;
+                try_send_or_block(socket_sender, (coding_shreds, None), "network egress")?;
             }
         }
 
