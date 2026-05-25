@@ -193,10 +193,16 @@ pub(super) struct SigVerifyCertStats {
     /// Number of times the cert was too far in the future and discarded.
     pub(super) too_far_in_future: u64,
 
+    /// The capacity of the channel to consensus pool.  (-1) indicates unbounded.
+    pub(super) pool_capacity: i64,
+    /// How many messages are outstanding on the channel.
+    pub(super) pool_outstanding_msgs: u64,
     /// Number of votes sent successfully over the channel to consensus pool.
     pub(super) pool_sent: u64,
-    /// Number of times the channel to consensus pool was full.
+    /// Number of times the channel to consensus pool was full and we resorted to blocking send.
     pub(super) pool_channel_full: u64,
+    /// Number of times we did an blocking send that returned.
+    pub(super) pool_channel_unblocked: u64,
 
     /// Stats for [`verify_and_send_certificates`].
     pub(super) fn_verify_and_send_certs_stats: WelfordStats,
@@ -212,8 +218,11 @@ impl SigVerifyCertStats {
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
+            pool_capacity,
+            pool_outstanding_msgs,
             pool_sent,
             pool_channel_full,
+            pool_channel_unblocked,
             fn_verify_and_send_certs_stats,
         } = other;
         self.certs_to_sig_verify += certs_to_sig_verify;
@@ -223,8 +232,11 @@ impl SigVerifyCertStats {
         self.stake_verification_failed += stake_verification_failed;
         self.signature_verification_failed += signature_verification_failed;
         self.too_far_in_future += too_far_in_future;
+        self.pool_capacity = pool_capacity;
+        self.pool_outstanding_msgs += pool_outstanding_msgs;
         self.pool_sent += pool_sent;
         self.pool_channel_full += pool_channel_full;
+        self.pool_channel_unblocked += pool_channel_unblocked;
         self.fn_verify_and_send_certs_stats
             .merge(fn_verify_and_send_certs_stats);
     }
@@ -238,10 +250,14 @@ impl SigVerifyCertStats {
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
+            pool_capacity,
+            pool_outstanding_msgs,
             pool_sent,
             pool_channel_full,
+            pool_channel_unblocked,
             fn_verify_and_send_certs_stats,
         } = self;
+
         datapoint_info!(
             "bls_cert_sigverify_stats",
             ("certs_to_sig_verify", *certs_to_sig_verify, i64),
@@ -259,8 +275,11 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("too_far_in_future", *too_far_in_future, i64),
+            ("pool_capacity", *pool_capacity, i64),
+            ("pool_outstanding_msgs", *pool_outstanding_msgs, i64),
             ("pool_sent", *pool_sent, i64),
             ("pool_channel_full", *pool_channel_full, i64),
+            ("pool_channel_unblocked", *pool_channel_unblocked, i64),
             (
                 "fn_verify_and_send_certs_count",
                 fn_verify_and_send_certs_stats.count(),
