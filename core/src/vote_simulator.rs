@@ -420,8 +420,9 @@ pub fn initialize_state_with(
 
     genesis_config.epoch_schedule = EpochSchedule::without_warmup();
     genesis_config.poh_config.hashes_per_tick = Some(4);
-    let (bank0, bank_forks) = Bank::new_with_config_for_tests(&genesis_config, bank_test_config)
-        .wrap_with_bank_forks_for_tests();
+    let (bank0, bank_forks) =
+        Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None)
+            .wrap_with_bank_forks_for_tests();
     bank0.set_block_id(Some(Hash::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {

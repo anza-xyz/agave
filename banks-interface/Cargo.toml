@@ -32,3 +32,6 @@ solana-transaction = { workspace = true, features = ["serde"] }
 solana-transaction-context = { workspace = true, features = ["serde"] }
 solana-transaction-error = { workspace = true, features = ["serde"] }
 tarpc = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

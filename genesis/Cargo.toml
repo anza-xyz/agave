@@ -74,3 +74,6 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

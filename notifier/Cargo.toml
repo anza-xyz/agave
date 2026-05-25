@@ -23,3 +23,6 @@ log = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 serde_json = { workspace = true }
 solana-hash = { workspace = true, features = ["std", "decode"] }
+
+[lints]
+workspace = true

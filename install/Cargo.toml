@@ -58,3 +58,6 @@ url = { workspace = true }
 [target."cfg(windows)".dependencies]
 winapi = { workspace = true, features = ["minwindef", "winuser"] }
 winreg = { workspace = true }
+
+[lints]
+workspace = true

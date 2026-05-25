@@ -35,3 +35,6 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 test-case = { workspace = true }
+
+[lints]
+workspace = true

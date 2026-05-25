@@ -13,6 +13,8 @@
 //!
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
 //! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
+#[cfg(target_os = "linux")]
+pub use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 use {
     crate::{
         FileSize,
@@ -426,7 +428,6 @@ pub fn large_file_buf_reader(
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
-        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 
         let mut reader = SequentialFileReaderBuilder::new()
             .shared_sqpoll(io_setup.shared_sqpoll_fd())

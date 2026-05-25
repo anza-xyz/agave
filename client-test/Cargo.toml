@@ -47,3 +47,6 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

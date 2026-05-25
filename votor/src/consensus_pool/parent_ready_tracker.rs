@@ -13,11 +13,12 @@
 //! a block with parent `b` in slot `s` will have their block finalized.
 
 use {
-    crate::{common::MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, event::VotorEvent},
+    crate::{common::MAX_NOTAR_FALLBACK_BLOCKS, event::VotorEvent},
     agave_votor_messages::consensus_message::Block,
     core::fmt,
-    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -108,7 +109,7 @@ impl ParentReadyTracker {
             self.cluster_info.0.id()
         );
         status.notar_fallbacks.push(block);
-        assert!(status.notar_fallbacks.len() <= MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE);
+        assert!(status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_BLOCKS);
 
         // Add this block as valid parent to skip connected future blocks
         for s in slot.saturating_add(1).. {
@@ -121,7 +122,7 @@ impl ParentReadyTracker {
                 status.parents_ready.push(block);
 
                 // Only notify for parent ready on first leader slots
-                if s % NUM_CONSECUTIVE_LEADER_SLOTS == 0 {
+                if s.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) {
                     events.push(VotorEvent::ParentReady {
                         slot: s,
                         parent_block: block,
@@ -192,7 +193,7 @@ impl ParentReadyTracker {
                 }
                 status.parents_ready.push(block);
                 // Only notify for parent ready on first leader slots
-                if s % NUM_CONSECUTIVE_LEADER_SLOTS == 0 {
+                if s.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) {
                     events.push(VotorEvent::ParentReady {
                         slot: s,
                         parent_block: block,
@@ -243,8 +244,8 @@ impl ParentReadyTracker {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::tests::get_cluster_info, itertools::Itertools,
-        solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS, solana_hash::Hash, solana_keypair::Keypair,
+        super::*, crate::tests::get_cluster_info, itertools::Itertools, solana_hash::Hash,
+        solana_keypair::Keypair,
     };
 
     #[test]
@@ -254,7 +255,7 @@ mod tests {
         let mut tracker = ParentReadyTracker::new(cluster_info, genesis);
         let mut events = vec![];
 
-        for i in 1..2 * NUM_CONSECUTIVE_LEADER_SLOTS {
+        for i in 1..2 * NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot {
             let block = (i, Hash::new_unique());
             tracker.add_new_notar_fallback_or_stronger(block, &mut events);
             assert_eq!(tracker.highest_parent_ready(), i + 1);

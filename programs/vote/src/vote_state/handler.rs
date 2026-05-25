@@ -242,7 +242,7 @@ impl VoteStateHandler {
         }
     }
 
-    pub(crate) fn last_voted_slot(&self) -> Option<Slot> {
+    pub fn last_voted_slot(&self) -> Option<Slot> {
         self.last_lockout().map(|v| v.slot())
     }
 

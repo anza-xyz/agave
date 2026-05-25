@@ -57,3 +57,6 @@ solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }
+
+[lints]
+workspace = true

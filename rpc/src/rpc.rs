@@ -780,8 +780,10 @@ impl JsonRpcRequestProcessor {
                 first_confirmed_block_in_epoch,
                 &addresses,
                 &|reward_type| -> bool {
+                    let is_staking_reward = reward_type == RewardType::Staking
+                        || reward_type == RewardType::DeactivatedStake;
                     reward_type == RewardType::Voting
-                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
+                        || (!epoch_has_partitioned_rewards && is_staking_reward)
                 },
             )
             .collect()
@@ -861,7 +863,10 @@ impl JsonRpcRequestProcessor {
                     block.rewards,
                     slot,
                     addresses,
-                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                    &|reward_type| -> bool {
+                        reward_type == RewardType::Staking
+                            || reward_type == RewardType::DeactivatedStake
+                    },
                 );
                 reward_map.extend(index_reward_map);
             }
@@ -3131,7 +3136,9 @@ pub mod rpc_bank {
                 }
             };
 
-            let slot_history = bank.get_slot_history();
+            let Some(slot_history) = bank.get_slot_history() else {
+                return Err(RpcCustomError::NoSlotHistory.into());
+            };
             if first_slot < slot_history.oldest() {
                 return Err(Error::invalid_params(format!(
                     "firstSlot, {}, is too small; min {}",
@@ -3678,16 +3685,14 @@ pub mod rpc_full {
             debug!("get_cluster_nodes rpc request received");
             let cluster_info = &meta.cluster_info;
             let socket_addr_space = cluster_info.socket_addr_space();
-            let my_shred_version = cluster_info.my_shred_version();
             Ok(cluster_info
                 .all_peers()
                 .iter()
                 .filter_map(|(contact_info, _)| {
-                    if my_shred_version == contact_info.shred_version()
-                        && contact_info
-                            .gossip()
-                            .map(|addr| socket_addr_space.check(&addr))
-                            .unwrap_or_default()
+                    if contact_info
+                        .gossip()
+                        .map(|addr| socket_addr_space.check(&addr))
+                        .unwrap_or_default()
                     {
                         let (version, feature_set, client_id) = if let Some(version) =
                             cluster_info.get_node_version(contact_info.pubkey())
@@ -3729,7 +3734,7 @@ pub mod rpc_full {
                             version,
                             client_id: client_id.map(|id| format!("{id}")),
                             feature_set,
-                            shred_version: Some(my_shred_version),
+                            shred_version: Some(contact_info.shred_version()),
                         })
                     } else {
                         None // Exclude spy nodes
@@ -7116,7 +7121,7 @@ pub mod tests {
             EpochSchedule::custom(TEST_SLOTS_PER_EPOCH, TEST_SLOTS_PER_EPOCH, false);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(TEST_SIGNATURE_FEE, 0);
 
-        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
+        let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
 
         // Add the test builtin.
         bank.add_builtin(

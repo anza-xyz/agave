@@ -22,3 +22,6 @@ solana-pubkey = { workspace = true }
 
 [dev-dependencies]
 solana-pubkey = { workspace = true, features = ["rand"] }
+
+[lints]
+workspace = true

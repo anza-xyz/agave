@@ -1,7 +1,6 @@
 use {
     super::{AccountShrinkThreshold, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION},
     crate::{
-        accounts_file::StorageAccess,
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
             AccountSecondaryIndexes, AccountsIndexConfig, ScanFilter,
@@ -18,7 +17,6 @@ pub struct AccountsDbConfig {
     pub index: Option<AccountsIndexConfig>,
     pub account_indexes: Option<AccountSecondaryIndexes>,
     pub bank_hash_details_dir: PathBuf,
-    pub shrink_paths: Option<Vec<PathBuf>>,
     pub shrink_ratio: AccountShrinkThreshold,
     /// The low and high watermark sizes for the read cache, in bytes.
     /// If None, defaults will be used.
@@ -38,7 +36,6 @@ pub struct AccountsDbConfig {
     pub skip_initial_hash_calc: bool,
     pub exhaustively_verify_refcounts: bool,
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
-    pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
     /// Number of threads for background operations (`thread_pool_background')
     pub num_background_threads: Option<NonZeroUsize>,
@@ -50,7 +47,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
     account_indexes: None,
     bank_hash_details_dir: PathBuf::new(), // tests don't use bank hash details
-    shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
     read_cache_evict_sample_size: None,
@@ -62,7 +58,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-    storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     num_background_threads: None,
     num_foreground_threads: None,
@@ -72,7 +67,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
     account_indexes: None,
     bank_hash_details_dir: PathBuf::new(), // benches don't use bank hash details
-    shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
     read_cache_evict_sample_size: None,
@@ -84,7 +78,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-    storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     num_background_threads: None,
     num_foreground_threads: None,

@@ -19,7 +19,6 @@ use {
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_file::StorageAccess,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -149,7 +148,6 @@ pub fn execute(
 
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
 
     let bind_addresses = {
         let parsed = matches
@@ -182,6 +180,11 @@ pub fn execute(
                 xdp_zero_copy,
             )
         });
+    if bind_addresses.len() > 1 && retransmit_xdp.is_some() {
+        Err(String::from(
+            "--xdp-cpu-cores cannot be used in a multihoming context",
+        ))?;
+    }
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -652,26 +655,6 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let account_shrink_paths: Option<Vec<PathBuf>> =
-        values_t!(matches, "account_shrink_path", String)
-            .map(|shrink_paths| shrink_paths.into_iter().map(PathBuf::from).collect())
-            .ok();
-    let account_shrink_paths = account_shrink_paths
-        .as_ref()
-        .map(|paths| {
-            create_and_canonicalize_directories(paths)
-                .map_err(|err| format!("unable to access account shrink path: {err}"))
-        })
-        .transpose()?;
-
-    let (account_shrink_run_paths, account_shrink_snapshot_paths) = account_shrink_paths
-        .map(|paths| {
-            create_all_accounts_run_and_snapshot_dirs(&paths)
-                .map_err(|err| format!("unable to create account subdirectories: {err}"))
-        })
-        .transpose()?
-        .unzip();
-
     let read_cache_limit_bytes =
         values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
             match limits.len() {
@@ -682,22 +665,6 @@ pub fn execute(
                 }
             }
         });
-
-    let storage_access = matches
-        .value_of("accounts_db_access_storages_method")
-        .map(|method| match method {
-            "mmap" => {
-                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
-                #[allow(deprecated)]
-                StorageAccess::Mmap
-            }
-            "file" => StorageAccess::File,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-access-storages-method")
-            }
-        })
-        .unwrap_or_default();
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -716,7 +683,6 @@ pub fn execute(
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
         bank_hash_details_dir: ledger_path.clone(),
-        shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
         read_cache_evict_sample_size: None,
@@ -735,7 +701,6 @@ pub fn execute(
         skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
-        storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
@@ -771,17 +736,6 @@ pub fn execute(
     let (account_run_paths, account_snapshot_paths) =
         create_all_accounts_run_and_snapshot_dirs(&account_paths)
             .map_err(|err| format!("unable to create account directories: {err}"))?;
-
-    // These snapshot paths are only used for initial clean up, add in shrink paths if they exist.
-    let account_snapshot_paths =
-        if let Some(account_shrink_snapshot_paths) = account_shrink_snapshot_paths {
-            account_snapshot_paths
-                .into_iter()
-                .chain(account_shrink_snapshot_paths)
-                .collect()
-        } else {
-            account_snapshot_paths
-        };
 
     let snapshot_config = new_snapshot_config(
         matches,

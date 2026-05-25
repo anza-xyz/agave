@@ -3,7 +3,7 @@ use {
         consensus::{heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice, tree_diff::TreeDiff},
         repair::{
             repair_generic_traversal::{get_closest_completion, get_unknown_last_index},
-            repair_service::{RepairMetrics, RepairService},
+            repair_service::{RepairEligibility, RepairMetrics, RepairService},
             repair_weighted_traversal,
             serve_repair::ShredRepairType,
         },
@@ -208,7 +208,7 @@ impl RepairWeight {
         max_new_shreds: usize,
         max_unknown_last_index_repairs: usize,
         max_closest_completion_repairs: usize,
-        ticks_per_second: u64,
+        repair_eligibility: &mut RepairEligibility,
         repair_metrics: &mut RepairMetrics,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
@@ -240,7 +240,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut best_shreds_repairs,
             max_new_shreds,
-            ticks_per_second,
+            repair_eligibility,
             outstanding_repairs,
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
@@ -277,7 +277,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
-            ticks_per_second,
+            repair_eligibility,
             outstanding_repairs,
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
@@ -505,7 +505,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
-        ticks_per_second: u64,
+        repair_eligibility: &mut RepairEligibility,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
         let root_tree = self.trees.get(&self.root).expect("Root tree must exist");
@@ -515,7 +515,7 @@ impl RepairWeight {
             slot_meta_cache,
             repairs,
             max_new_shreds,
-            ticks_per_second,
+            repair_eligibility,
             outstanding_repairs,
         );
     }
@@ -595,8 +595,8 @@ impl RepairWeight {
         }
     }
 
-    /// For all remaining trees (orphan and rooted), generate repairs for slots missing last_index info
-    /// prioritized by # shreds received.
+    /// For all remaining trees (orphan and rooted), generate legacy
+    /// unknown-last-index probes prioritized by known data shred count.
     fn get_best_unknown_last_index(
         &mut self,
         blockstore: &Blockstore,
@@ -633,7 +633,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
-        ticks_per_second: u64,
+        repair_eligibility: &mut RepairEligibility,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
         let mut repairs = Vec::default();
@@ -649,7 +649,7 @@ impl RepairWeight {
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
-                ticks_per_second,
+                repair_eligibility,
                 outstanding_repairs,
             );
             repairs.extend(new_repairs);

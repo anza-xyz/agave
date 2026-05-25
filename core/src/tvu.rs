@@ -18,7 +18,10 @@ use {
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
         epoch_specs::EpochSpecs,
-        repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
+        repair::{
+            block_id_repair_service::BlockIdRepairChannels,
+            repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
+        },
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
         shred_fetch_stage::{SHRED_FETCH_CHANNEL_SIZE, ShredFetchStage},
         voting_service::VotingService,
@@ -46,9 +49,12 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore::Blockstore, blockstore_cleanup_service::BlockstoreCleanupService,
-        blockstore_processor::TransactionStatusSender, entry_notifier_service::EntryNotifierSender,
-        leader_schedule_cache::LeaderScheduleCache, shred::filter::TurbineMode,
+        blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
+        blockstore_cleanup_service::BlockstoreCleanupService,
+        blockstore_processor::TransactionStatusSender,
+        entry_notifier_service::EntryNotifierSender,
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::filter::TurbineMode,
     },
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
@@ -57,8 +63,12 @@ use {
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank::MAX_ALPENGLOW_VOTE_ACCOUNTS, bank_forks::BankForks, commitment::BlockCommitmentCache,
-        prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
+        bank::MAX_ALPENGLOW_VOTE_ACCOUNTS,
+        bank_forks::BankForks,
+        bank_forks_controller::{BankForksCommandReceiver, BankForksController},
+        commitment::BlockCommitmentCache,
+        prioritization_fee_cache::PrioritizationFeeCache,
+        snapshot_controller::SnapshotController,
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
@@ -119,6 +129,7 @@ pub struct TvuSockets {
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
     pub alpenglow: Option<UdpSocket>,
+    pub block_id_repair: UdpSocket,
 }
 
 pub struct TvuConfig {
@@ -157,9 +168,13 @@ impl Default for TvuConfig {
 pub struct AlpenglowInitializationState {
     // Shared with block creation loop
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
+    pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
+    pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    pub bank_forks_controller: Arc<dyn BankForksController>,
+    pub bank_forks_controller_receiver: BankForksCommandReceiver,
 
     // Main communication channel
     pub votor_event_sender: VotorEventSender,
@@ -195,6 +210,7 @@ impl Tvu {
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
         ledger_signal_receiver: Receiver<bool>,
+        update_parent_receiver: UpdateParentReceiver,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         poh_controller: PohController,
@@ -239,12 +255,17 @@ impl Tvu {
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
             alpenglow: bls_socket,
+            block_id_repair,
         } = sockets;
 
         let AlpenglowInitializationState {
             leader_window_info_sender,
+            optimistic_parent_sender,
+            optimistic_parent_receiver,
             replay_highest_frozen,
             highest_parent_ready,
+            bank_forks_controller,
+            bank_forks_controller_receiver,
             votor_event_sender,
             votor_event_receiver,
             cancel,
@@ -337,6 +358,7 @@ impl Tvu {
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
+        let block_id_repair_socket = Arc::new(block_id_repair);
         let fetch_sockets: Vec<Arc<UdpSocket>> = fetch_sockets.into_iter().map(Arc::new).collect();
         let fetch_stage = ShredFetchStage::new(
             fetch_sockets,
@@ -393,6 +415,26 @@ impl Tvu {
             unbounded();
         let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
         let (popular_pruned_forks_sender, popular_pruned_forks_receiver) = unbounded();
+        // Create repair event channel for BlockIdRepairService
+        let (repair_event_sender, repair_event_receiver) = bounded(100);
+
+        // Create completed slots channel for BlockIdRepairService
+        let (completed_slots_sender, completed_slots_receiver) =
+            bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
+        blockstore.add_completed_slots_signal(completed_slots_sender);
+
+        let block_id_repair_channels = BlockIdRepairChannels {
+            repair_event_receiver,
+            completed_slots_receiver,
+        };
+
+        // Create switch block event channel for ReplayStage
+        // We emit a switch bank event when we observe a ParentReady.
+        // The event is immediately consumed and the latest is stored in ReplayStage.
+        // We overprovision at 100 leader windows - we would require almost 3 minutes of stuck
+        // replay to hit the limit.
+        let (switch_bank_sender, switch_bank_receiver) = bounded(100);
+
         let window_service = {
             let epoch_schedule = bank_forks
                 .read()
@@ -421,11 +463,13 @@ impl Tvu {
                 completed_data_sets_sender,
                 duplicate_slots_sender.clone(),
                 repair_service_channels,
+                block_id_repair_channels,
             );
             WindowService::new(
                 blockstore.clone(),
                 repair_socket,
                 ancestor_hashes_socket,
+                block_id_repair_socket,
                 exit.clone(),
                 repair_info,
                 window_service_channels,
@@ -463,30 +507,30 @@ impl Tvu {
             wait_to_vote_slot,
             vote_history,
             vote_history_storage: vote_history_storage.clone(),
+            generated_cert_types,
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             blockstore: blockstore.clone(),
             bank_forks: bank_forks.clone(),
             cluster_info: cluster_info.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
-            rpc_subscriptions: rpc_subscriptions.clone(),
-            snapshot_controller: snapshot_controller.clone(),
+            consensus_metrics_sender,
+            highest_finalized,
+            bank_forks_controller,
             bls_sender: bls_sender.clone(),
             commitment_sender: votor_commitment_sender,
-            drop_bank_sender: drop_bank_sender.clone(),
             bank_notification_sender: bank_notification_sender.clone(),
             leader_window_info_sender,
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
-            event_receiver: votor_event_receiver,
+            switch_bank_sender,
             own_vote_sender: consensus_message_sender.clone(),
+            reward_certs_sender,
+            repair_event_sender,
+            event_receiver: votor_event_receiver,
             consensus_message_receiver,
-            consensus_metrics_sender,
             consensus_metrics_receiver,
             reward_votes_receiver,
-            reward_certs_sender,
             build_reward_certs_receiver,
-            generated_cert_types,
-            highest_finalized,
         };
         let votor = Votor::new(votor_config);
 
@@ -508,16 +552,21 @@ impl Tvu {
             dumped_slots_sender,
             votor_event_sender,
             own_vote_sender: consensus_message_sender,
+            optimistic_parent_sender,
             lockouts_sender,
         };
 
         let replay_receivers = ReplayReceivers {
             ledger_signal_receiver,
+            update_parent_receiver,
+            optimistic_parent_receiver,
             duplicate_slots_receiver,
             ancestor_duplicate_slots_receiver,
             duplicate_confirmed_slots_receiver,
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
+            bank_forks_controller_receiver,
+            switch_bank_receiver,
         };
 
         let replay_stage_config = ReplayStageConfig {
@@ -544,7 +593,6 @@ impl Tvu {
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
-            migration_status,
         };
 
         let voting_service = VotingService::new(
@@ -691,7 +739,7 @@ pub mod tests {
         solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, bank_forks_controller::BankForksControllerHandle},
         solana_signer::Signer,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::{
@@ -726,6 +774,7 @@ pub mod tests {
         let BlockstoreSignals {
             blockstore,
             ledger_signal_receiver,
+            update_parent_receiver,
             ..
         } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default())
             .expect("Expected to successfully open ledger");
@@ -767,6 +816,7 @@ pub mod tests {
         );
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
+        let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
         let highest_parent_ready = Arc::new(RwLock::new((0, (0, Hash::default()))));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
             unbounded();
@@ -786,6 +836,9 @@ pub mod tests {
         });
         let (reward_certs_sender, _reward_certs_receiver) = bounded(1);
         let (_build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
+        let (bank_forks_controller, bank_forks_controller_receiver) =
+            BankForksControllerHandle::new();
+        let bank_forks_controller = Arc::new(bank_forks_controller);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -798,9 +851,11 @@ pub mod tests {
                 fetch: target1.sockets.tvu,
                 ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
                 alpenglow: target1.sockets.alpenglow,
+                block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,
             ledger_signal_receiver,
+            update_parent_receiver,
             Some(Arc::new(RpcSubscriptions::new_for_tests(
                 exit.clone(),
                 max_complete_transaction_status_slot,
@@ -843,6 +898,8 @@ pub mod tests {
             Arc::new(connection_cache),
             AlpenglowInitializationState {
                 leader_window_info_sender,
+                optimistic_parent_sender,
+                optimistic_parent_receiver,
                 replay_highest_frozen,
                 highest_parent_ready,
                 votor_event_sender,
@@ -853,6 +910,8 @@ pub mod tests {
                 bls_connection_cache: Arc::new(bls_connection_cache),
                 voting_service_test_override: None,
                 highest_finalized: Arc::new(RwLock::new(None)),
+                bank_forks_controller,
+                bank_forks_controller_receiver,
                 build_reward_certs_receiver,
                 reward_certs_sender,
             },

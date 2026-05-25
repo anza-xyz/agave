@@ -115,3 +115,6 @@ solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-c
 solana-time-utils = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

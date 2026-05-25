@@ -1,6 +1,6 @@
 use {
-    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_send_transaction_service::tpu_info::TpuInfo,
@@ -43,7 +43,9 @@ impl TpuInfo for ClusterTpuInfo {
     fn get_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
         let leaders: Vec<_> = (0..max_count)
-            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
+            .filter_map(|i| {
+                recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+            })
             .collect();
         drop(recorder);
         let mut unique_leaders = vec![];
@@ -60,7 +62,9 @@ impl TpuInfo for ClusterTpuInfo {
     fn get_not_unique_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
         let leader_pubkeys: Vec<_> = (0..max_count)
-            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
+            .filter_map(|i| {
+                recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+            })
             .collect();
         drop(recorder);
         leader_pubkeys
@@ -74,6 +78,7 @@ impl TpuInfo for ClusterTpuInfo {
 mod test {
     use {
         super::*,
+        solana_clock::Slot,
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -239,7 +244,7 @@ mod test {
         );
 
         let second_leader = solana_runtime::leader_schedule_utils::slot_leader_at(
-            slot + NUM_CONSECUTIVE_LEADER_SLOTS,
+            slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
             &bank,
         )
         .unwrap();
@@ -255,7 +260,7 @@ mod test {
         );
 
         let third_leader = solana_runtime::leader_schedule_utils::slot_leader_at(
-            slot + (2 * NUM_CONSECUTIVE_LEADER_SLOTS),
+            slot + (2 * NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot),
             &bank,
         )
         .unwrap();

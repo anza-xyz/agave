@@ -355,6 +355,20 @@ impl MigrationStatus {
         })
     }
 
+    /// Enable alpenglow for testing code
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn enable_alpenglow_for_tests(&self) {
+        let genesis_block = (0, Hash::new_unique());
+        self.record_feature_activation(0);
+        self.set_genesis_block(genesis_block);
+        self.set_genesis_certificate(Arc::new(Certificate {
+            cert_type: CertificateType::Genesis(genesis_block.0, genesis_block.1),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        }));
+        assert_eq!(self.enable_alpenglow_during_startup(), genesis_block.0);
+    }
+
     /// Initialize migration status based on feature flag activation and genesis certificate
     pub fn initialize(
         root_epoch: Epoch,

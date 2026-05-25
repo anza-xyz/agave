@@ -198,28 +198,32 @@ mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
-        solana_instruction::Instruction,
+        solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
             compiled_instruction::CompiledInstruction,
         },
+        solana_sdk_ids::vote,
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
-        solana_vote_interface::{self as vote, state::Vote},
     };
 
     fn vote_sanitized_versioned_transaction() -> SanitizedVersionedTransaction {
-        let bank_hash = Hash::new_unique();
         let block_hash = Hash::new_unique();
         let vote_keypair = Keypair::new();
         let node_keypair = Keypair::new();
         let auth_keypair = Keypair::new();
-        let votes = Vote::new(vec![1, 2, 3], bank_hash);
-        let vote_ix =
-            vote::instruction::vote(&vote_keypair.pubkey(), &auth_keypair.pubkey(), votes);
+        let vote_ix = Instruction::new_with_bytes(
+            vote::id(),
+            &[],
+            vec![
+                AccountMeta::new(vote_keypair.pubkey(), false),
+                AccountMeta::new_readonly(auth_keypair.pubkey(), true),
+            ],
+        );
         let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&node_keypair.pubkey()));
         vote_tx.partial_sign(&[&node_keypair], block_hash);
         vote_tx.partial_sign(&[&auth_keypair], block_hash);

@@ -33,6 +33,8 @@ pub enum Error {
     Decode(DecodeError),
     #[error("wrong encoding base")]
     WrongEncoding,
+    #[error("overlapping primary and fallback bitmaps")]
+    BitmapOverlap,
 }
 
 /// Verifies an Alpenglow `Certificate` and calculates the total signing stake.
@@ -178,6 +180,8 @@ fn verify_base3(
     match ranks {
         Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
         Decoded::Base3(ranks, fallback_ranks) => {
+            check_disjoint(&ranks, &fallback_ranks)?;
+
             // Must run sequentially because `rank_map` captures `total_stake` (FnMut).
             // We pass a mutable reference for the first call so we can reuse the
             // closure for the second.
@@ -191,15 +195,20 @@ fn verify_base3(
                 let agg_pubkey = aggregate_pubkeys(&primary_pubkeys)?;
                 Ok(agg_pubkey.verify_signature(signature, payload)?)
             } else {
-                let mut all_pubkeys = Vec::with_capacity(
-                    primary_pubkeys.len().saturating_add(fallback_pubkeys.len()),
-                );
-                all_pubkeys.extend_from_slice(&primary_pubkeys);
-                all_pubkeys.extend_from_slice(&fallback_pubkeys);
+                let agg_primary = aggregate_pubkeys(&primary_pubkeys)?;
+                let agg_fallback = aggregate_pubkeys(&fallback_pubkeys)?;
 
-                let mut all_messages = Vec::with_capacity(all_pubkeys.len());
-                all_messages.resize(primary_pubkeys.len(), payload);
-                all_messages.resize(all_pubkeys.len(), fallback_payload);
+                // SAFETY: `aggregate_pubkeys` strictly requires `PopVerified` public keys
+                // as input. Because every constituent key has already proven possession,
+                // the resulting aggregated key inherits this property and is mathematically
+                // protected against rogue-key attacks, making it safe to bypass the
+                // cryptographic check here.
+                let all_pubkeys = [
+                    unsafe { PopVerified::new_unchecked(*agg_primary) },
+                    unsafe { PopVerified::new_unchecked(*agg_fallback) },
+                ];
+
+                let all_messages = [payload, fallback_payload];
 
                 if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
                     Ok(SignatureProjective::verify_distinct_aggregated(
@@ -241,6 +250,21 @@ pub fn collect_pubkeys(
         pubkeys.push(pubkey);
     }
     Ok(pubkeys)
+}
+
+/// Ensures that no validator appears in both the primary and fallback bitmaps.
+fn check_disjoint(ranks: &BitVec<u8>, fallback_ranks: &BitVec<u8>) -> Result<(), Error> {
+    // Ensure both bitmaps are exactly the same length.
+    if ranks.len() != fallback_ranks.len() {
+        return Err(Error::WrongEncoding);
+    }
+
+    // Ensure no validator appears in both bitmaps.
+    // We use `iter_ones` for an allocation-free O(popcount) check.
+    if ranks.iter_ones().any(|i| fallback_ranks[i]) {
+        return Err(Error::BitmapOverlap);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -399,6 +423,34 @@ mod test {
             })
             .unwrap(),
             per_validator_stake * max_validators as u64
+        );
+    }
+
+    #[test]
+    fn test_check_disjoint() {
+        let mut ranks = BitVec::<u8>::new();
+        let mut fallback_ranks = BitVec::<u8>::new();
+        ranks.resize(10, false);
+        fallback_ranks.resize(10, false);
+
+        // Honest disjoint bitmaps
+        ranks.set(0, true);
+        fallback_ranks.set(1, true);
+        assert_eq!(check_disjoint(&ranks, &fallback_ranks), Ok(()));
+
+        // Malicious overlapping bitmaps
+        fallback_ranks.set(0, true);
+        assert_eq!(
+            check_disjoint(&ranks, &fallback_ranks),
+            Err(Error::BitmapOverlap)
+        );
+
+        // Mismatched lengths
+        let mut short_ranks = BitVec::<u8>::new();
+        short_ranks.resize(5, false);
+        assert_eq!(
+            check_disjoint(&short_ranks, &fallback_ranks),
+            Err(Error::WrongEncoding)
         );
     }
 }

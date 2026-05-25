@@ -9,7 +9,6 @@ use {
         },
     },
     agave_snapshots::SnapshotVersion,
-    solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
 use {
@@ -66,7 +65,6 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 pub fn bank_fields_from_snapshot_archives(
     snapshot_config: &SnapshotConfig,
-    storage_access: StorageAccess,
 ) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&snapshot_config.full_snapshot_archives_dir)
@@ -102,7 +100,6 @@ pub fn bank_fields_from_snapshot_archives(
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
-        storage_access,
         &io_setup,
     )?;
 
@@ -193,7 +190,6 @@ pub fn bank_from_snapshot_archives(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
         account_paths,
-        accounts_db_config.storage_access,
         &io_setup,
     )?;
 
@@ -393,7 +389,6 @@ pub fn bank_from_snapshot_dir(
             bank_snapshot,
             account_paths,
             next_append_vec_id.clone(),
-            accounts_db_config.storage_access,
         )?,
         "rebuild storages from snapshot dir"
     );
@@ -532,12 +527,10 @@ fn verify_slot_deltas(
 ) -> std::result::Result<(), VerifySlotDeltasError> {
     let max_root_entries = bank.status_cache.read().unwrap().max_root_entries();
     let info = verify_slot_deltas_structural(slot_deltas, bank.slot(), max_root_entries)?;
-    verify_slot_deltas_with_history(
-        &info.slots,
-        &bank.get_slot_history(),
-        bank.slot(),
-        max_root_entries,
-    )
+    let slot_history = bank
+        .get_slot_history()
+        .expect("snapshot bank must have slot history");
+    verify_slot_deltas_with_history(&info.slots, &slot_history, bank.slot(), max_root_entries)
 }
 
 /// Verify that the snapshot's slot deltas are not corrupt/invalid
@@ -733,12 +726,17 @@ pub fn bank_to_full_snapshot_archive(
 
     let snapshot_storages = snapshot_package.snapshot_storages;
 
+    let io_setup = IoSetupState::default()
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_shared_sqpoll()?;
     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &io_setup,
     )?;
 
     let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
@@ -748,6 +746,7 @@ pub fn bank_to_full_snapshot_archive(
         bank_snapshot_info.snapshot_dir,
         snapshot_storages,
         &snapshot_config,
+        &io_setup,
     )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
@@ -800,12 +799,17 @@ pub fn bank_to_incremental_snapshot_archive(
 
     let snapshot_storages = snapshot_package.snapshot_storages;
 
+    let io_setup = IoSetupState::default()
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_shared_sqpoll()?;
     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &io_setup,
     )?;
 
     let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
@@ -815,6 +819,7 @@ pub fn bank_to_incremental_snapshot_archive(
         bank_snapshot_info.snapshot_dir,
         snapshot_storages,
         &snapshot_config,
+        &io_setup,
     )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
@@ -845,9 +850,7 @@ mod tests {
             SnapshotVersion, error::VerifySlotDeltasError, paths::get_bank_snapshot_dir,
         },
         semver::Version,
-        solana_accounts_db::{
-            accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING, accounts_file::StorageAccess,
-        },
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -946,6 +949,7 @@ mod tests {
             bank_snapshot_package,
             snapshot_storages.as_slice(),
             should_flush_and_hard_link_storages,
+            &IoSetupState::default(),
         )?;
 
         Ok(())
@@ -1493,13 +1497,9 @@ mod tests {
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
-        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
-            &genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            BankTestConfig::default(),
-            vec![accounts_dir.clone()],
-        )
-        .wrap_with_bank_forks_for_tests();
+        let (bank0, bank_forks) =
+            Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
+                .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1628,9 +1628,8 @@ mod tests {
         );
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_bank_fields_from_snapshot(storage_access: StorageAccess) {
+    #[test]
+    fn test_bank_fields_from_snapshot() {
         let key1 = Keypair::new();
 
         let GenesisConfigInfo {
@@ -1668,8 +1667,7 @@ mod tests {
 
         bank_to_incremental_snapshot_archive(&snapshot_config, &bank2, full_snapshot_slot).unwrap();
 
-        let bank_fields =
-            bank_fields_from_snapshot_archives(&snapshot_config, storage_access).unwrap();
+        let bank_fields = bank_fields_from_snapshot_archives(&snapshot_config).unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());
         assert_eq!(bank_fields.parent_slot, bank2.parent_slot());
     }
@@ -1912,9 +1910,8 @@ mod tests {
     ///     - remove Account2's reference back to slot 2 by transferring from the mint to Account2
     ///     - take a full snap shot
     ///     - verify that recovery from full snapshot does not bring account1 back to life
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_snapshots_handle_zero_lamport_accounts(storage_access: StorageAccess) {
+    #[test]
+    fn test_snapshots_handle_zero_lamport_accounts() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1933,13 +1930,11 @@ mod tests {
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
         let bank_test_config = BankTestConfig {
-            accounts_db_config: AccountsDbConfig {
-                storage_access,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
+            accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
         };
 
-        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        let bank0 =
+            Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None);
 
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
         let leader = *bank0.leader();
@@ -2173,9 +2168,8 @@ mod tests {
         .unwrap();
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_bank_from_snapshot_dir_good(storage_access: StorageAccess) {
+    #[test]
+    fn test_bank_from_snapshot_dir_good() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::new_unique(),
@@ -2209,10 +2203,7 @@ mod tests {
             None, // leader_for_tests
             None,
             false,
-            AccountsDbConfig {
-                storage_access,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )

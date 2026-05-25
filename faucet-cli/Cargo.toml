@@ -27,3 +27,6 @@ solana-keypair = { workspace = true }
 solana-metrics = { workspace = true }
 solana-version = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

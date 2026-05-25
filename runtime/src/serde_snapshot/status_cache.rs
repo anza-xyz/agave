@@ -6,6 +6,7 @@ use shuttle::sync::Mutex;
 use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, snapshot_utils, status_cache::KeySlice},
+    agave_fs::io_setup::IoSetupState,
     bincode::{self, Options as _},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -30,38 +31,42 @@ pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,
 ) -> agave_snapshots::Result<u64> {
-    snapshot_utils::serialize_snapshot_data_file(status_cache_path, |stream| {
-        let snapshot_slot_deltas = slot_deltas
-            .iter()
-            .map(|slot_delta| {
-                let status_map = slot_delta.2.lock().unwrap();
-                let snapshot_status_map = status_map
-                    .iter()
-                    .map(|(key, value)| {
-                        (
-                            *key,
+    snapshot_utils::serialize_snapshot_data_file(
+        status_cache_path,
+        &IoSetupState::default(),
+        |stream| {
+            let snapshot_slot_deltas = slot_deltas
+                .iter()
+                .map(|slot_delta| {
+                    let status_map = slot_delta.2.lock().unwrap();
+                    let snapshot_status_map = status_map
+                        .iter()
+                        .map(|(key, value)| {
                             (
-                                value.0,
-                                value
-                                    .1
-                                    .iter()
-                                    .map(|(key_slice, result)| {
-                                        (
-                                            *key_slice,
-                                            result.clone().map_err(SerdeTransactionError::from),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-                (slot_delta.0, slot_delta.1, snapshot_status_map)
-            })
-            .collect::<Vec<_>>();
-        bincode::serialize_into(stream, &snapshot_slot_deltas)?;
-        Ok(())
-    })
+                                *key,
+                                (
+                                    value.0,
+                                    value
+                                        .1
+                                        .iter()
+                                        .map(|(key_slice, result)| {
+                                            (
+                                                *key_slice,
+                                                result.clone().map_err(SerdeTransactionError::from),
+                                            )
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                            )
+                        })
+                        .collect::<HashMap<_, _>>();
+                    (slot_delta.0, slot_delta.1, snapshot_status_map)
+                })
+                .collect::<Vec<_>>();
+            bincode::serialize_into(stream, &snapshot_slot_deltas)?;
+            Ok(())
+        },
+    )
 }
 
 /// Deserializes the status cache from file at `status_cache_path`

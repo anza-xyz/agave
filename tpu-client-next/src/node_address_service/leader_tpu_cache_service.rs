@@ -9,8 +9,9 @@ use {
         node_address_service::SlotReceiver,
     },
     async_trait::async_trait,
-    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error::Error as ClientError, response::RpcContactInfo},
@@ -292,13 +293,14 @@ fn leader_sockets(
     slot_leaders: &SlotLeaders,
     leader_tpu_map: &LeaderTpuMap,
 ) -> Vec<SocketAddr> {
-    let fanout_slots = (lookahead_leaders as u64).saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
-    let mut leader_sockets = Vec::with_capacity(lookahead_leaders as usize);
+    let lookahead_leaders = lookahead_leaders as usize;
+    let fanout_slots = lookahead_leaders.saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS.get()) as u64;
+    let mut leader_sockets = Vec::with_capacity(lookahead_leaders);
     // `slot_leaders.first_slot` might have been advanced since caller last read it. Take the
     // greater of the two values to ensure we are reading from the latest leader schedule.
     let current_slot = std::cmp::max(first_slot, slot_leaders.first_slot);
     for leader_slot in
-        (current_slot..current_slot + fanout_slots).step_by(NUM_CONSECUTIVE_LEADER_SLOTS as usize)
+        (current_slot..current_slot + fanout_slots).step_by(NUM_CONSECUTIVE_LEADER_SLOTS.get())
     {
         if let Some(leader) = slot_leaders.slot_leader(leader_slot) {
             if let Some(tpu_socket) = leader_tpu_map.get(leader) {

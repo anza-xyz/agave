@@ -19,7 +19,10 @@ use {
         contact_info::Protocol,
     },
     solana_keypair::Keypair,
-    solana_ledger::{blockstore::Blockstore, shred::Shred},
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
+    solana_ledger::{
+        blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache, shred::Shred,
+    },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
@@ -30,7 +33,7 @@ use {
     solana_time_utils::{AtomicInterval, timestamp},
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         sync::{
             Arc, Mutex, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -116,6 +119,7 @@ impl BroadcastStageType {
         exit_sender: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
@@ -130,7 +134,12 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                StandardBroadcastRun::new(shred_version, migration_status, votor_event_sender),
+                StandardBroadcastRun::new(
+                    shred_version,
+                    migration_status,
+                    votor_event_sender,
+                    leader_schedule_cache,
+                ),
                 xdp_sender,
             ),
 
@@ -455,6 +464,20 @@ pub enum BroadcastSocket<'a> {
     Xdp(&'a XdpSender),
 }
 
+/// Returns the pubkey of the next leader after `slot`, or None if it is us.
+fn next_broadcast_leader_pubkey(
+    leader_schedule_cache: &LeaderScheduleCache,
+    working_bank: &solana_runtime::bank::Bank,
+    my_pubkey: &Pubkey,
+    slot: Slot,
+) -> Option<Pubkey> {
+    let next_leader_slot = slot.saturating_add(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot);
+    leader_schedule_cache
+        .slot_leader_at(next_leader_slot, Some(working_bank))
+        .map(|next_leader| next_leader.id)
+        .filter(|next_leader_id| next_leader_id != my_pubkey)
+}
+
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
 /// turbine retransmit tree for each shred.
 pub fn broadcast_shreds(
@@ -465,6 +488,7 @@ pub fn broadcast_shreds(
     transmit_stats: &mut TransmitShredsStats,
     cluster_info: &ClusterInfo,
     bank_forks: &RwLock<BankForks>,
+    leader_schedule_cache: &LeaderScheduleCache,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
     let mut result = Ok(());
@@ -474,6 +498,12 @@ pub fn broadcast_shreds(
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
     };
+    let my_pubkey = cluster_info.id();
+    // Helper to find the next leader's pubkey (None if it is us)
+    let find_next_leader = |slot: Slot| -> Option<Pubkey> {
+        next_broadcast_leader_pubkey(leader_schedule_cache, &working_bank, &my_pubkey, slot)
+    };
+
     let packets: Vec<_> = shreds
         .iter()
         .chunk_by(|shred| shred.slot())
@@ -482,15 +512,28 @@ pub fn broadcast_shreds(
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
-
-            shreds.filter_map(move |shred| {
+            let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
+                cluster_info
+                    .lookup_contact_info(&leader, |node| {
+                        node.tvu(Protocol::UDP)
+                            .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
+                    })
+                    .flatten()
+            });
+            shreds.flat_map(move |shred| {
                 let key = shred.id();
-                let addr = cluster_nodes
-                    .get_broadcast_peer(&key)?
-                    .tvu(Protocol::UDP)
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
-
-                Some((shred.payload(), addr))
+                let maybe_standard_broadcast_peer = cluster_nodes
+                    .get_broadcast_peer(&key)
+                    .and_then(|ci| ci.tvu(Protocol::UDP))
+                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
+                // only send to next leader if not standard broadcast peer
+                let maybe_next_leader = maybe_next_leader_udp
+                    .filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
+                [maybe_next_leader, maybe_standard_broadcast_peer]
+                    .into_iter()
+                    .filter_map(move |tvu_addr: Option<SocketAddr>| {
+                        tvu_addr.map(|addr| (shred.payload(), addr))
+                    })
             })
         })
         .collect();
@@ -546,15 +589,18 @@ pub mod test {
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
             shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{
+            num::NonZeroUsize,
             path::Path,
             sync::{Arc, atomic::AtomicBool},
             thread::sleep,
@@ -627,6 +673,66 @@ pub mod test {
 
         assert_eq!(num_expected_data_shreds, data_index);
         assert_eq!(num_expected_coding_shreds, coding_index);
+    }
+
+    fn fixed_leader_schedule_cache(
+        slot_leaders: Vec<SlotLeader>,
+        repeat: usize,
+        bank: &Bank,
+    ) -> LeaderScheduleCache {
+        let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(bank);
+        leader_schedule_cache.set_fixed_leader_schedule(Some(FixedSchedule {
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+                slot_leaders,
+                NonZeroUsize::new(repeat).unwrap(),
+            )),
+        }));
+        leader_schedule_cache
+    }
+
+    #[test]
+    fn test_next_broadcast_leader_pubkey() {
+        let leader_a = Keypair::new();
+        let leader_b = Keypair::new();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let leader_schedule_cache = fixed_leader_schedule_cache(
+            vec![
+                SlotLeader {
+                    id: leader_a.pubkey(),
+                    vote_address: Pubkey::new_unique(),
+                },
+                SlotLeader {
+                    id: leader_b.pubkey(),
+                    vote_address: Pubkey::new_unique(),
+                },
+            ],
+            NUM_CONSECUTIVE_LEADER_SLOTS.get(),
+            &bank,
+        );
+
+        assert_eq!(
+            next_broadcast_leader_pubkey(&leader_schedule_cache, &bank, &leader_a.pubkey(), 0,),
+            Some(leader_b.pubkey())
+        );
+        assert_eq!(
+            next_broadcast_leader_pubkey(
+                &leader_schedule_cache,
+                &bank,
+                &leader_b.pubkey(),
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
+            ),
+            Some(leader_a.pubkey())
+        );
+        assert_eq!(
+            next_broadcast_leader_pubkey(
+                &leader_schedule_cache,
+                &bank,
+                &leader_a.pubkey(),
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
+            ),
+            None,
+        );
     }
 
     #[test]
@@ -707,12 +813,24 @@ pub mod test {
         let exit_sender = Arc::new(AtomicBool::new(false));
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().root_bank();
+        let root_bank = Bank::new_for_tests(&genesis_config);
+        root_bank.set_tick_height(root_bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&root_bank);
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let child_bank =
+            Bank::new_from_parent(root_bank.clone(), *root_bank.leader(), root_bank.slot() + 1);
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(child_bank)
+            .clone_without_scheduler();
 
         // Create votor event channel for test
         let (votor_event_sender, _votor_event_receiver) = bounded(100);
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks.read().unwrap().root_bank(),
+        ));
 
         // Start up the broadcast stage
         let broadcast_service = BroadcastStage::new(
@@ -723,7 +841,12 @@ pub mod test {
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender),
+            StandardBroadcastRun::new(
+                0,
+                Arc::new(MigrationStatus::default()),
+                votor_event_sender,
+                leader_schedule_cache,
+            ),
             None,
         );
 
@@ -753,17 +876,22 @@ pub mod test {
         let start_tick_height;
         let max_tick_height;
         let ticks_per_slot;
+        let num_expected_entries;
         let slot;
         {
             let bank = broadcast_service.bank;
             start_tick_height = bank.tick_height();
             max_tick_height = bank.max_tick_height();
             ticks_per_slot = bank.ticks_per_slot();
+            num_expected_entries = (max_tick_height - start_tick_height) as usize;
             slot = bank.slot();
             let ticks = create_ticks(max_tick_height - start_tick_height, 0, Hash::default());
             for (i, tick) in ticks.into_iter().enumerate() {
                 entry_sender
-                    .send((bank.clone(), (EntryOrMarker::Entry(tick), i as u64 + 1)))
+                    .send((
+                        bank.clone(),
+                        (EntryOrMarker::Entry(tick), start_tick_height + i as u64 + 1),
+                    ))
                     .expect("Expect successful send to broadcast service");
             }
         }
@@ -779,12 +907,11 @@ pub mod test {
                 .blockstore
                 .get_slot_entries(slot, 0)
                 .expect("Expect entries to be present");
-            if entries.len() >= max_tick_height as usize {
+            if entries.len() >= num_expected_entries {
                 break;
             }
             sleep(Duration::from_millis(1000));
         }
-        assert_eq!(entries.len(), max_tick_height as usize);
 
         drop(entry_sender);
         drop(retransmit_slots_sender);
@@ -792,5 +919,6 @@ pub mod test {
             .broadcast_service
             .join()
             .expect("Expect successful join of broadcast service");
+        assert_eq!(entries.len(), num_expected_entries);
     }
 }

@@ -84,3 +84,6 @@ solana-sdk-ids = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["bank-client"] }
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

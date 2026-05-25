@@ -23,7 +23,7 @@ mod tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AtomicAccountsFileId,
                 get_temp_accounts_paths,
             },
-            accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+            accounts_file::{AccountsFile, AccountsFileError},
         },
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -37,14 +37,12 @@ mod tests {
             sync::{Arc, OnceLock},
         },
         tempfile::TempDir,
-        test_case::{test_case, test_matrix},
     };
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
     fn copy_append_vecs<P: AsRef<Path>>(
         accounts_db: &AccountsDb,
         output_dir: P,
-        storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
@@ -57,11 +55,8 @@ mod tests {
             std::fs::copy(storage_path, &output_path)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, _num_accounts) = AccountsFile::new_from_file(
-                output_path,
-                storage_entry.accounts.len(),
-                storage_access,
-            )?;
+            let (accounts_file, _num_accounts) =
+                AccountsFile::new_from_file(output_path, storage_entry.accounts.len())?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
@@ -79,10 +74,8 @@ mod tests {
     }
 
     /// Test roundtrip serialize/deserialize of a bank
-    #[test_matrix(
-        [#[allow(deprecated)] StorageAccess::Mmap, StorageAccess::File]
-    )]
-    fn test_serialize_bank_snapshot(storage_access: StorageAccess) {
+    #[test]
+    fn test_serialize_bank_snapshot() {
         let leader_id = Pubkey::new_unique();
         let GenesisConfigInfo {
             mut genesis_config, ..
@@ -160,7 +153,7 @@ mod tests {
         // Create a directory to simulate AppendVecs unpackaged from a snapshot tar
         let copied_accounts = TempDir::new().unwrap();
         let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts_db, copied_accounts.path(), storage_access).unwrap();
+            copy_append_vecs(accounts_db, copied_accounts.path()).unwrap();
 
         let cursor = Cursor::new(buf.as_slice());
         let mut reader = BufReader::new(cursor);
@@ -198,9 +191,8 @@ mod tests {
         bank.force_flush_accounts_cache();
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_extra_fields_eof(storage_access: StorageAccess) {
+    #[test]
+    fn test_extra_fields_eof() {
         agave_logger::setup();
         let leader_id = Pubkey::new_unique();
         let GenesisConfigInfo { genesis_config, .. } =
@@ -252,12 +244,8 @@ mod tests {
         };
         let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
         let copied_accounts = TempDir::new().unwrap();
-        let storage_and_next_append_vec_id = copy_append_vecs(
-            &bank.rc.accounts.accounts_db,
-            copied_accounts.path(),
-            storage_access,
-        )
-        .unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(&bank.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
         let (dbank, _) = crate::serde_snapshot::bank_from_streams(
             &mut snapshot_streams,
             &dbank_paths,

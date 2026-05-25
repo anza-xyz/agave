@@ -1,14 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 //! The `net_utils` module assists with networking
 
-// Activate some of the Rust 2024 lints to make the future migration easier.
-#![warn(if_let_rescope)]
-#![warn(keyword_idents_2024)]
-#![warn(rust_2024_incompatible_pat)]
-#![warn(tail_expr_drop_order)]
-#![warn(unsafe_attr_outside_unsafe)]
-#![warn(unsafe_op_in_unsafe_fn)]
-
 pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
@@ -64,7 +56,7 @@ pub const VALIDATOR_PORT_RANGE: PortRange = (
     crate::sockets::UNIQUE_ALLOC_BASE_PORT,
 );
 
-pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 25; // VALIDATOR_PORT_RANGE must be at least this wide
+pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 26; // VALIDATOR_PORT_RANGE must be at least this wide
 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;

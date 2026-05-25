@@ -143,8 +143,11 @@ fn test_account_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -264,7 +267,7 @@ fn test_block_subscription() {
     let pubsub_addr = pubsub_addr();
     let pub_cfg = PubSubConfig {
         enable_block_subscription: true,
-        ..PubSubConfig::default()
+        ..PubSubConfig::default_for_tests()
     };
     let (trigger, pubsub_service) = PubSubService::new(pub_cfg, &subscriptions, pubsub_addr);
 
@@ -345,8 +348,11 @@ fn test_program_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -429,8 +435,11 @@ fn test_root_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -478,8 +487,11 @@ fn test_slot_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         optimistically_confirmed_bank,
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -555,8 +567,11 @@ async fn test_slot_subscription_async() {
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
         ));
-        let (trigger, pubsub_service) =
-            PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+        let (trigger, pubsub_service) = PubSubService::new(
+            PubSubConfig::default_for_tests(),
+            &subscriptions,
+            pubsub_addr,
+        );
 
         check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(100));
 

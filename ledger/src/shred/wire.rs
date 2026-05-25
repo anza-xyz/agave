@@ -114,7 +114,7 @@ pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
 
 // The caller should verify first that the shred is data and not code!
 #[inline]
-pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
+pub(crate) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
     debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
     let bytes = <[u8; 2]>::try_from(shred.get(83..83 + 2)?).unwrap();
     Some(u16::from_le_bytes(bytes))

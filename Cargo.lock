@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "agave-banking-stage-ingress-types"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "agave-bls-cert-verify"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-votor",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "agave-feature-set"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "agave-fs"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-io-uring",
  "io-uring",
@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-plugin-interface"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "log",
  "solana-clock",
@@ -133,7 +133,7 @@ dependencies = [
 
 [[package]]
 name = "agave-install"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "bincode",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "agave-io-uring"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "io-uring",
  "libc",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "agave-logger"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "env_logger",
  "libc",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "agave-math-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-math-utils",
  "num-traits",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "agave-precompiles"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "agave-random"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "rand 0.9.4",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "agave-reserved-account-keys"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "solana-frozen-abi",
@@ -253,11 +253,11 @@ dependencies = [
 
 [[package]]
 name = "agave-scheduler-bindings"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 
 [[package]]
 name = "agave-scheduling-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "agave-snapshots"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-fs",
  "agave-logger",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "agave-store-histogram"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "clap 2.33.3",
  "solana-version",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "agave-transaction-view"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-transaction-view",
  "bincode",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "agave-validator"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-snapshots",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-math-utils",
@@ -464,6 +464,7 @@ dependencies = [
  "solana-gossip",
  "solana-hash 4.3.0",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -491,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor-messages"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor-messages",
@@ -514,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "agave-watchtower"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "clap 2.33.3",
@@ -535,10 +536,11 @@ dependencies = [
 
 [[package]]
 name = "agave-xdp"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-xdp-ebpf",
  "arc-swap",
+ "arrayvec",
  "aya",
  "bytes",
  "caps",
@@ -551,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "agave-xdp-ebpf"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "aya",
  "aya-ebpf",
@@ -1061,9 +1063,9 @@ dependencies = [
 
 [[package]]
 name = "assert_cmd"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39bae1d3fa576f7c6519514180a72559268dd7d1fe104070956cb687bc6673bd"
+checksum = "2aa3a22042e45de04255c7bf3626e239f450200fd0493c1e382263544b20aea6"
 dependencies = [
  "anstyle",
  "bstr 1.4.0",
@@ -2609,29 +2611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dlopen2"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e2c5bd4158e66d1e215c49b837e11d62f3267b30c92f1d171c4d3105e3dc4d4"
-dependencies = [
- "dlopen2_derive",
- "libc",
- "once_cell",
- "winapi",
-]
-
-[[package]]
-name = "dlopen2_derive"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "788160fb30de9cdd857af31c6a2675904b16ece8fc2737b2c7127ba368c9d0f4"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "downcast"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3224,7 +3203,7 @@ dependencies = [
 
 [[package]]
 name = "gen-syscall-list"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "regex",
 ]
@@ -3471,16 +3450,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hex-literal"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
-
-[[package]]
 name = "hidapi"
-version = "2.6.5"
+version = "2.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1b71e1f4791fb9e93b9d7ee03d70b501ab48f6151432fbcadeabc30fe15396e"
+checksum = "c78dadfc12f865bc3fcac3897e64533b930737ceb9ef245c8277de98d0b010e9"
 dependencies = [
  "cc",
  "cfg-if 1.0.4",
@@ -4816,9 +4789,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.2"
+version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
  "bitflags 2.11.1",
  "cfg-if 1.0.4",
@@ -5044,15 +5017,14 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "openssl"
-version = "0.10.78"
+version = "0.10.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38c4372413cdaaf3cc79dd92d29d7d9f5ab09b51b10dded508fb90bb70b9222"
+checksum = "a45fa2aa886c42762255da344f0a0d313e254066c46aad76f300c3d3da62d967"
 dependencies = [
  "bitflags 2.11.1",
  "cfg-if 1.0.4",
  "foreign-types",
  "libc",
- "once_cell",
  "openssl-macros",
  "openssl-sys",
 ]
@@ -5085,9 +5057,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.114"
+version = "0.9.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13ce1245cd07fcc4cfdb438f7507b0c7e4f3849a69fd84d52374c66d83741bb6"
+checksum = "f28a22dc7140cda5f096e5e7724a6962ca81a7f8bfd2979f9b18c11af56318c4"
 dependencies = [
  "cc",
  "libc",
@@ -5737,7 +5709,7 @@ dependencies = [
 
 [[package]]
 name = "proto"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "protobuf-src",
  "tonic-prost-build",
@@ -5774,9 +5746,9 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "6.1.0"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acef24e715f0ce9ac6491004da1c35c919c60517f976f61e0f05f34d22e873ec"
+checksum = "4917daeaee8127b0a7e0b9c68ad8ed834b4b0eb8c8c186eb0fba8d3ecc2cd6d5"
 dependencies = [
  "prost 0.11.9",
 ]
@@ -6071,7 +6043,7 @@ dependencies = [
 
 [[package]]
 name = "rbpf-cli"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 
 [[package]]
 name = "redox_syscall"
@@ -6295,9 +6267,9 @@ dependencies = [
 
 [[package]]
 name = "rpassword"
-version = "7.5.1"
+version = "7.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2501c67132bd19c3005b0111fba298907ef002c8c1cf68e25634707e38bf66fe"
+checksum = "5ac5b223d9738ef56e0b98305410be40fa0941bf6036c56f1506751e43552d64"
 dependencies = [
  "libc",
  "rtoolbox",
@@ -6693,9 +6665,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.149"
+version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
  "itoa",
  "memchr",
@@ -6718,9 +6690,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5414fad8e6907dbdd5bc441a50ae8d6e26151a03b1de04d89a5576de61d01f"
+checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
 dependencies = [
  "serde_core",
  "serde_with_macros",
@@ -6728,9 +6700,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
+checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -7058,7 +7030,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "Inflector",
  "assert_matches",
@@ -7101,7 +7073,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder-client-types"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -7127,7 +7099,7 @@ dependencies = [
 
 [[package]]
 name = "solana-accounts-cluster-bench"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "clap 2.33.3",
@@ -7171,7 +7143,7 @@ dependencies = [
 
 [[package]]
 name = "solana-accounts-db"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-fs",
  "agave-logger",
@@ -7185,7 +7157,6 @@ dependencies = [
  "dashmap",
  "itertools 0.14.0",
  "log",
- "memmap2 0.9.10",
  "memoffset 0.9.1",
  "modular-bitfield",
  "num_cpus",
@@ -7309,7 +7280,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "borsh",
  "futures 0.3.32",
@@ -7339,7 +7310,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-interface"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "serde",
  "solana-account 4.3.0",
@@ -7357,7 +7328,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-server"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -7418,9 +7389,10 @@ dependencies = [
 
 [[package]]
 name = "solana-bloom"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "bencher",
+ "bincode",
  "bv",
  "fnv",
  "rand 0.9.4",
@@ -7434,6 +7406,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signature",
  "solana-time-utils",
+ "wincode",
 ]
 
 [[package]]
@@ -7467,15 +7440,15 @@ dependencies = [
 
 [[package]]
 name = "solana-bls12-381-syscall"
-version = "4.1.0-alpha.0"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28a699aa5e660203c17c18ceaef0eff78c67fd5193f4dbe90a07148e06030ab6"
 dependencies = [
  "blst",
  "blstrs",
  "bytemuck",
  "bytemuck_derive",
- "criterion",
  "group",
- "hex-literal",
  "pairing",
 ]
 
@@ -7505,13 +7478,14 @@ dependencies = [
 
 [[package]]
 name = "solana-bpf-loader-program"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "bincode",
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
+ "shuttle",
  "solana-account 4.3.0",
  "solana-bincode",
  "solana-bpf-loader-program",
@@ -7545,7 +7519,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bpf-loader-program-tests"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "assert_matches",
@@ -7567,7 +7541,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bucket-map"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "ahash 0.8.12",
@@ -7589,7 +7563,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "solana-bpf-loader-program",
@@ -7606,7 +7580,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins-default-costs"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
@@ -7618,7 +7592,7 @@ dependencies = [
 
 [[package]]
 name = "solana-clap-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "chrono",
@@ -7649,7 +7623,7 @@ dependencies = [
 
 [[package]]
 name = "solana-clap-v3-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "chrono",
@@ -7683,7 +7657,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -7768,7 +7742,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-config"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "anyhow",
  "dirs-next",
@@ -7781,7 +7755,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-output"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -7824,7 +7798,7 @@ dependencies = [
 
 [[package]]
 name = "solana-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "async-trait",
  "bincode",
@@ -7860,7 +7834,7 @@ dependencies = [
 
 [[package]]
 name = "solana-client-test"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "futures-util",
@@ -7913,9 +7887,9 @@ dependencies = [
 
 [[package]]
 name = "solana-clock"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95cf11109c3b6115cc510f1e31f06fdd52f504271bc24ef5f1249fbbcae5f9f3"
+checksum = "5ea35d8f69b67daddb921a9da7f78ca591b533cf5e98833cd9ae62fdc2e4652c"
 dependencies = [
  "serde",
  "serde_derive",
@@ -7947,7 +7921,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "solana-fee-structure",
  "solana-program-runtime",
@@ -7955,7 +7929,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-instruction"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -7994,14 +7968,14 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-program"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "solana-program-runtime",
 ]
 
 [[package]]
 name = "solana-compute-budget-program-bench"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "criterion",
@@ -8032,7 +8006,7 @@ dependencies = [
 
 [[package]]
 name = "solana-connection-cache"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "async-trait",
@@ -8052,11 +8026,12 @@ dependencies = [
 
 [[package]]
 name = "solana-core"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
  "agave-feature-set",
+ "agave-fs",
  "agave-logger",
  "agave-math-utils",
  "agave-reserved-account-keys",
@@ -8195,6 +8170,7 @@ dependencies = [
  "tempfile",
  "test-case",
  "thiserror 2.0.18",
+ "tikv-jemalloc-ctl",
  "tikv-jemallocator",
  "tokio",
  "tokio-util 0.7.18",
@@ -8204,7 +8180,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cost-model"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -8275,9 +8251,9 @@ dependencies = [
 
 [[package]]
 name = "solana-curve25519"
-version = "4.0.0"
+version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0ee66a3e25ed8d20ed6fcd1ac71735415ff1edaf33ff1ec2118826eba927bcc"
+checksum = "14b4d2a4bf0d0b0a86c22111917e86e8bd39a7b31420fb2c7d73eb83761fc7af"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -8318,7 +8294,7 @@ dependencies = [
 
 [[package]]
 name = "solana-download-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-snapshots",
  "log",
@@ -8342,7 +8318,7 @@ dependencies = [
 
 [[package]]
 name = "solana-ed25519-program-tests"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "rand 0.9.4",
@@ -8358,7 +8334,7 @@ dependencies = [
 
 [[package]]
 name = "solana-entry"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
@@ -8366,7 +8342,6 @@ dependencies = [
  "assert_matches",
  "criterion",
  "crossbeam-channel",
- "dlopen2",
  "log",
  "num_cpus",
  "proptest",
@@ -8376,6 +8351,7 @@ dependencies = [
  "solana-address 2.6.0",
  "solana-bls-signatures",
  "solana-clock",
+ "solana-cost-model",
  "solana-entry",
  "solana-hash 4.3.0",
  "solana-keypair",
@@ -8408,9 +8384,9 @@ dependencies = [
 
 [[package]]
 name = "solana-epoch-rewards"
-version = "3.0.1"
+version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5e7b0ba210593ba8ddd39d6d234d81795d1671cebf3026baa10d5dc23ac42f0"
+checksum = "1cddf2388b28291210d9aa60690740733cab527531f06ed153c4d388951e407c"
 dependencies = [
  "serde",
  "serde_derive",
@@ -8475,7 +8451,7 @@ dependencies = [
 
 [[package]]
 name = "solana-faucet"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -8501,7 +8477,7 @@ dependencies = [
 
 [[package]]
 name = "solana-faucet-cli"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "clap 2.33.3",
@@ -8536,7 +8512,7 @@ dependencies = [
 
 [[package]]
 name = "solana-fee"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "solana-fee-structure",
@@ -8581,9 +8557,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.3.0"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f104c19593391e9b8a6d8eedf4df92ddc7908949ee3740927c05ebef5fed6e2c"
+checksum = "d5b2792cc4cd4eaa419104dac4bed8e57b3189de001f9139b04f84b1a6f12d4a"
 dependencies = [
  "bincode",
  "boxcar",
@@ -8608,9 +8584,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.3.0"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b04663357817fddb4755c6359005038c12e110ab04d1ac5048482551f95b160"
+checksum = "4efd54c3f198403955addf2160af0ccc30294a04cf34e155c775d69960e1f0f6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8619,7 +8595,7 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -8699,7 +8675,7 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-snapshots",
  "log",
@@ -8712,7 +8688,7 @@ dependencies = [
 
 [[package]]
 name = "solana-geyser-plugin-manager"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-geyser-plugin-interface",
  "arc-swap",
@@ -8720,6 +8696,7 @@ dependencies = [
  "crossbeam-channel",
  "json5",
  "jsonrpc-core",
+ "lazy-lru",
  "libloading",
  "log",
  "serde_json",
@@ -8727,6 +8704,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-clock",
  "solana-entry",
+ "solana-gossip",
  "solana-hash 4.3.0",
  "solana-ledger",
  "solana-measure",
@@ -8744,13 +8722,12 @@ dependencies = [
 
 [[package]]
 name = "solana-gossip"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-random",
  "anyhow",
  "arc-swap",
- "arrayvec",
  "assert_matches",
  "bincode",
  "bs58",
@@ -8773,7 +8750,6 @@ dependencies = [
  "serde-big-array",
  "serde_bytes",
  "serial_test",
- "siphasher 1.0.2",
  "solana-bloom",
  "solana-client",
  "solana-clock",
@@ -8808,7 +8784,11 @@ dependencies = [
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
+ "solana-wincode-varint",
  "static_assertions",
+ "strum",
+ "strum_macros",
+ "tempfile",
  "test-case",
  "thiserror 2.0.18",
  "wincode",
@@ -8816,7 +8796,7 @@ dependencies = [
 
 [[package]]
 name = "solana-gossip-cli"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "clap 2.33.3",
@@ -8948,7 +8928,7 @@ dependencies = [
 
 [[package]]
 name = "solana-keygen"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-votor-messages",
  "bs58",
@@ -8993,9 +8973,9 @@ dependencies = [
 
 [[package]]
 name = "solana-last-restart-slot"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcda154ec827f5fc1e4da0af3417951b7e9b8157540f81f936c4a8b1156134d0"
+checksum = "426711c6564b790026e45cabec3c64b971864c48b6b2d83c0ebf52a118bb4cda"
 dependencies = [
  "serde",
  "serde_derive",
@@ -9006,7 +8986,7 @@ dependencies = [
 
 [[package]]
 name = "solana-lattice-hash"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -9020,7 +9000,7 @@ dependencies = [
 
 [[package]]
 name = "solana-leader-schedule"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-random",
  "itertools 0.14.0",
@@ -9035,7 +9015,7 @@ dependencies = [
 
 [[package]]
 name = "solana-ledger"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -9183,7 +9163,7 @@ dependencies = [
 
 [[package]]
 name = "solana-local-cluster"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -9258,11 +9238,11 @@ dependencies = [
 
 [[package]]
 name = "solana-measure"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 
 [[package]]
 name = "solana-merkle-tree"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "fast-math",
  "hex",
@@ -9292,7 +9272,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "bencher",
  "crossbeam-channel",
@@ -9326,7 +9306,7 @@ checksum = "ae8dd4c280dca9d046139eb5b7a5ac9ad10403fbd64964c7d7571214950d758f"
 
 [[package]]
 name = "solana-net-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "anyhow",
@@ -9387,7 +9367,7 @@ dependencies = [
 
 [[package]]
 name = "solana-notifier"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "log",
  "reqwest 0.12.28",
@@ -9448,12 +9428,13 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-random",
  "agave-transaction-view",
  "ahash 0.8.12",
+ "arc-swap",
  "assert_matches",
  "bencher",
  "bincode",
@@ -9495,7 +9476,7 @@ dependencies = [
 
 [[package]]
 name = "solana-poh"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-votor-messages",
@@ -9532,7 +9513,7 @@ dependencies = [
 
 [[package]]
 name = "solana-poh-bench"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "clap 3.2.23",
@@ -9636,7 +9617,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-binaries"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "bincode",
  "solana-account 4.3.0",
@@ -9696,7 +9677,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-runtime"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "base64 0.22.1",
@@ -9751,7 +9732,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-test"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -9835,7 +9816,7 @@ dependencies = [
 
 [[package]]
 name = "solana-pubsub-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9859,7 +9840,7 @@ dependencies = [
 
 [[package]]
 name = "solana-quic-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "async-lock",
@@ -9889,7 +9870,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rayon-threadlimit"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "log",
  "num_cpus",
@@ -9898,7 +9879,7 @@ dependencies = [
 
 [[package]]
 name = "solana-remote-wallet"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "console 0.16.3",
@@ -9953,7 +9934,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
@@ -9998,6 +9979,7 @@ dependencies = [
  "solana-hash 4.3.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-message",
@@ -10012,7 +9994,6 @@ dependencies = [
  "solana-program-pack",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
- "solana-rayon-threadlimit",
  "solana-rent",
  "solana-rpc",
  "solana-rpc-client-api",
@@ -10057,7 +10038,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "async-trait",
@@ -10104,7 +10085,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-api"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
@@ -10123,7 +10104,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-nonce-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "anyhow",
  "clap 2.33.3",
@@ -10152,7 +10133,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-types"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -10178,7 +10159,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-test"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "async-trait",
@@ -10215,7 +10196,7 @@ dependencies = [
 
 [[package]]
 name = "solana-runtime"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-feature-set",
@@ -10359,7 +10340,7 @@ dependencies = [
 
 [[package]]
 name = "solana-runtime-transaction"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
@@ -10385,7 +10366,6 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
- "solana-vote-interface",
  "wincode",
 ]
 
@@ -10397,9 +10377,9 @@ checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
 
 [[package]]
 name = "solana-sbpf"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1b120fcbbc0d8562997183bef32c76a28400ecae7d8c9fff279d33002783a29"
+checksum = "7f84c593fa3d4131045b606dec5acf9d8eac73791bc786ca9911057aec8f43ec"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -10497,7 +10477,7 @@ dependencies = [
 
 [[package]]
 name = "solana-send-transaction-service"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "async-trait",
@@ -10547,9 +10527,9 @@ dependencies = [
 
 [[package]]
 name = "solana-serialize-utils"
-version = "3.1.1"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d7cc401931d178472358e6b78dc72d031dc08f752d7410f0e8bd259dd6f02fa"
+checksum = "761357b0853c9623bf12c1d2314b3d6160a85b087b84c45224fb85766d22616b"
 dependencies = [
  "solana-instruction-error",
  "solana-pubkey 4.2.0",
@@ -10643,9 +10623,9 @@ dependencies = [
 
 [[package]]
 name = "solana-slot-hashes"
-version = "3.0.1"
+version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2585f70191623887329dfb5078da3a00e15e3980ea67f42c2e10b07028419f43"
+checksum = "0a57c158c35629f9e302ab385f16b15813f4927a31c27dda72f3df828bb08d93"
 dependencies = [
  "serde",
  "serde_derive",
@@ -10656,9 +10636,9 @@ dependencies = [
 
 [[package]]
 name = "solana-slot-history"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f914f6b108f5bba14a280b458d023e3621c9973f27f015a4d755b50e88d89e97"
+checksum = "0622d03a823770f7763afd866e012b296d5a3cbbbe51e110b5bd9ab3441efdca"
 dependencies = [
  "bv",
  "serde",
@@ -10679,7 +10659,7 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-accounts"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "clap 2.33.3",
  "solana-account 4.3.0",
@@ -10733,7 +10713,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-reserved-account-keys",
  "base64 0.22.1",
@@ -10773,9 +10753,8 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
- "bincode",
  "bs58",
  "enum-iterator",
  "prost 0.14.3",
@@ -10793,13 +10772,14 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status",
  "test-case",
+ "thiserror 2.0.18",
  "tonic-prost-build",
  "wincode",
 ]
 
 [[package]]
 name = "solana-streamer"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-xdp",
@@ -10842,8 +10822,10 @@ dependencies = [
 
 [[package]]
 name = "solana-svm"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
+ "agave-precompiles",
  "ahash 0.8.12",
  "assert_matches",
  "bincode",
@@ -10852,6 +10834,8 @@ dependencies = [
  "log",
  "openssl",
  "percentage",
+ "prost 0.11.9",
+ "protosol",
  "qualifier_attr",
  "rand 0.9.4",
  "serde",
@@ -10870,6 +10854,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash 4.3.0",
  "solana-instruction",
+ "solana-instruction-error",
  "solana-instructions-sysvar",
  "solana-keypair",
  "solana-loader-v3-interface",
@@ -10916,7 +10901,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-callback"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "solana-account 4.3.0",
  "solana-clock",
@@ -10926,22 +10911,22 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-feature-set"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 
 [[package]]
 name = "solana-svm-log-collector"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "solana-svm-measure"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 
 [[package]]
 name = "solana-svm-timings"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "eager",
  "enum-iterator",
@@ -10950,7 +10935,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-transaction"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "solana-hash 4.3.0",
  "solana-message",
@@ -10966,7 +10951,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-type-overrides"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "futures 0.3.32",
  "rand 0.9.4",
@@ -10975,7 +10960,7 @@ dependencies = [
 
 [[package]]
 name = "solana-syscalls"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "bincode",
@@ -10983,13 +10968,12 @@ dependencies = [
  "num-traits",
  "solana-account 4.3.0",
  "solana-account-info",
- "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
  "solana-bn254",
  "solana-clock",
  "solana-cpi",
- "solana-curve25519 4.0.0",
+ "solana-curve25519 4.0.1",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-fee-calculator",
@@ -11055,7 +11039,7 @@ dependencies = [
 
 [[package]]
 name = "solana-system-program"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "bincode",
@@ -11147,7 +11131,7 @@ dependencies = [
 
 [[package]]
 name = "solana-test-validator"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
@@ -11206,7 +11190,7 @@ checksum = "0ced92c60aa76ec4780a9d93f3bd64dfa916e1b998eacc6f1c110f3f444f02c9"
 
 [[package]]
 name = "solana-tls-utils"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "rustls",
  "solana-keypair",
@@ -11217,7 +11201,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tokens"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "assert_matches",
@@ -11268,7 +11252,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tps-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "log",
  "solana-account 4.3.0",
@@ -11299,7 +11283,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "futures-util",
  "indicatif",
@@ -11310,6 +11294,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-connection-cache",
  "solana-epoch-schedule",
+ "solana-leader-schedule",
  "solana-message",
  "solana-pubkey 4.2.0",
  "solana-pubsub-client",
@@ -11326,7 +11311,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client-next"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -11341,6 +11326,7 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -11385,7 +11371,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-context"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "bincode",
  "qualifier_attr",
@@ -11423,7 +11409,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-status"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -11463,11 +11449,12 @@ dependencies = [
  "spl-token-interface",
  "spl-token-metadata-interface",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]
 name = "solana-transaction-status-client-types"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -11490,7 +11477,7 @@ dependencies = [
 
 [[package]]
 name = "solana-turbine"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -11511,11 +11498,13 @@ dependencies = [
  "rayon",
  "solana-clock",
  "solana-cluster-type",
+ "solana-cost-model",
  "solana-entry",
  "solana-genesis-config",
  "solana-gossip",
  "solana-hash 4.3.0",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -11543,7 +11532,7 @@ dependencies = [
 
 [[package]]
 name = "solana-udp-client"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "async-trait",
  "solana-connection-cache",
@@ -11556,7 +11545,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-logic"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
  "solana-clock",
@@ -11573,7 +11562,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-pool"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-logger",
@@ -11616,7 +11605,7 @@ checksum = "c5d2face763df5afeaa9509b9019968860e69cc1531ec8b4a2e6c7b702204d5a"
 
 [[package]]
 name = "solana-version"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -11627,11 +11616,13 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-sanitize",
  "solana-serde-varint",
+ "solana-wincode-varint",
+ "wincode",
 ]
 
 [[package]]
 name = "solana-vote"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "arbitrary",
@@ -11643,6 +11634,7 @@ dependencies = [
  "serde",
  "solana-account 4.3.0",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -11696,7 +11688,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-program"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -11732,6 +11724,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-wincode-varint"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6679e72a01dcfe7ff180f0e9d3a0d165e4e9664426930014f2702e7571c259c7"
+dependencies = [
+ "wincode",
+]
+
+[[package]]
 name = "solana-zero-copy"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11744,7 +11745,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-elgamal-proof-program"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -11758,7 +11759,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-elgamal-proof-program-tests"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "bytemuck",
  "solana-account 4.3.0",
@@ -11848,7 +11849,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-token-proof-program"
-version = "4.1.0-alpha.0"
+version = "4.2.0-alpha.0"
 dependencies = [
  "solana-program-runtime",
 ]
@@ -11928,12 +11929,12 @@ dependencies = [
 
 [[package]]
 name = "spl-memo-interface"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d4e2aedd58f858337fa609af5ad7100d4a243fdaf6a40d6eb4c28c5f19505d3"
+checksum = "3745d384b0afee980d43d62b66c27bdcbbd03507732b8d3626d3413cb72084f2"
 dependencies = [
  "solana-instruction",
- "solana-pubkey 3.0.0",
+ "solana-pubkey 4.2.0",
 ]
 
 [[package]]
@@ -12036,9 +12037,9 @@ dependencies = [
 
 [[package]]
 name = "spl-token-interface"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c564ac05a7c8d8b12e988a37d82695b5ba4db376d07ea98bc4882c81f96c7f3"
+checksum = "7143c4e676984047a400e2fbd7ac29a1659f2b1b52b897cfde19316b562e4589"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -12253,9 +12254,9 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tar"
-version = "0.4.45"
+version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
 dependencies = [
  "filetime",
  "libc",
@@ -12423,10 +12424,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "tikv-jemalloc-sys"
-version = "0.6.0+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+name = "tikv-jemalloc-ctl"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd3c60906412afa9c2b5b5a48ca6a5abe5736aec9eb48ad05037a677e52e4e2d"
+checksum = "661f1f6a57b3a36dc9174a2c10f19513b4866816e13425d3e418b11cc37bc24c"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd8aa5b2ab86a2cefa406d889139c162cbb230092f7d1d7cbc1716405d852a3b"
 dependencies = [
  "cc",
  "libc",
@@ -12527,9 +12539,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.52.2"
+version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "110a78583f19d5cdb2c5ccf321d1290344e71313c6c37d43520d386027d18386"
+checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
  "bytes",
  "libc",
@@ -12674,9 +12686,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fec7c61a0695dc1887c1b53952990f3ad2e3a31453e1f49f10e75424943a93ec"
+checksum = "ac2a5518c70fa84342385732db33fb3f44bc4cc748936eb5833d2df34d6445ef"
 dependencies = [
  "async-trait",
  "axum",
@@ -12704,9 +12716,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-build"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1882ac3bf5ef12877d7ed57aad87e75154c11931c2ba7e6cde5e22d63522c734"
+checksum = "c68f61875ac5293cf72e6c8cf0158086428c82c37229e98c840878f1706b0322"
 dependencies = [
  "prettyplease 0.2.37",
  "proc-macro2",
@@ -12716,9 +12728,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-prost"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a55376a0bbaa4975a3f10d009ad763d8f4108f067c7c2e74f3001fb49778d309"
+checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
 dependencies = [
  "bytes",
  "prost 0.14.3",
@@ -12727,9 +12739,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-prost-build"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3144df636917574672e93d0f56d7edec49f90305749c668df5101751bb8f95a"
+checksum = "654e5643eff75d7f8c99197ce1440ed19a3474eada74c12bbac488b2cafdae27"
 dependencies = [
  "prettyplease 0.2.37",
  "proc-macro2",
@@ -13334,10 +13346,11 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4c754f1fc41250f2f742a27ba0fcc9f73df1dec23f6878490770855d43c322d"
+checksum = "37095eb18dd6254c66217edc61a29d83d51f8818de8a2ffe88e4584ad73fb5f9"
 dependencies = [
+ "bv",
  "bytes",
  "pastey",
  "proc-macro2",
@@ -13348,9 +13361,9 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e070787599c7c067b89598cd3eda440cca1b69eda9e0ff7c725fc8679ce9eb4"
+checksum = "e262d55d1261f31e2cfe49cc6385a421d14d99faa0526bbe3cc1bda0d3005c62"
 dependencies = [
  "darling 0.21.3",
  "proc-macro2",

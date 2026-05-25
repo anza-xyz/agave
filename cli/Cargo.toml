@@ -110,3 +110,6 @@ solana-sha256-hasher = { workspace = true }
 solana-test-validator = { path = "../test-validator" }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true
