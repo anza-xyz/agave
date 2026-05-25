@@ -337,7 +337,7 @@ impl<U: Umem> TxLoop<U> {
                         if l3_inner_packet_len > gre.mtu as usize
                             || l3_outer_gre_packet_len > next_hop.mtu as usize
                         {
-                            log::warn!(
+                            log::debug!(
                                 "dropping packet: GRE payload exceeds MTU for {addr}: L3 inner \
                                  packet length {l3_inner_packet_len}, L3 outer GRE packet length \
                                  {l3_outer_gre_packet_len}, MTU: {mtu}, underlay_mtu: \
