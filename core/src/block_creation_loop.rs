@@ -1015,6 +1015,9 @@ fn handle_parent_ready(
         let batch: PacketBatch = packets.into();
         let banking_packet_batch = Arc::new(vec![batch]);
         ctx.banking_stage_sender
+            // technically this send can evict to make room (which may drop a few packets)
+            // but this should (hopefully) not be significant amounts since we are evicting
+            // at most 1 batch.
             .send(banking_packet_batch)
             .map_err(|_| PohRecorderError::RescheduleTransactionsError(slot))?;
     }

@@ -43,6 +43,10 @@ pub(crate) struct SigVerifyWorkerStats {
     pub(crate) total_dedup_time_us: Arc<AtomicUsize>,
     pub(crate) total_valid_packets: Arc<AtomicUsize>,
     pub(crate) total_verify_time_us: Arc<AtomicUsize>,
+    /// Max occupancy of the banking_stage channel sampled immediately before each send.
+    pub(crate) max_pre_send_len: Arc<AtomicUsize>,
+    /// Count of sends where the EvictingSender had to drop a batch to make room.
+    pub(crate) eviction_drops: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -292,12 +296,28 @@ impl SigVerifyWorkerPool {
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
 
         let banking_packet_batch = BankingPacketBatch::new(vec![batch]);
-        if let Err(err) = state
+        // Sample backlog before the push: measures consumer health without
+        // including this batch's own contribution.
+        state
+            .stats
+            .max_pre_send_len
+            .fetch_max(state.banking_stage_sender.len(), Ordering::Relaxed);
+        match state
             .banking_stage_sender
             .send(banking_packet_batch.clone())
         {
-            error!("sigverify send failed: {err:?}");
-            return false;
+            Ok(0) => {} // avoid poking atomics if nothing was evicted (typical case)
+            Ok(evicted) => {
+                // record evicted amount into metrics
+                state
+                    .stats
+                    .eviction_drops
+                    .fetch_add(evicted, Ordering::Relaxed);
+            }
+            Err(err) => {
+                error!("sigverify send to banking failed: {err:?}");
+                return false;
+            }
         }
         if should_forward {
             Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
