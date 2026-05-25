@@ -408,8 +408,6 @@ impl KeystoneWallet {
                 }
             });
 
-        let mfp_hex = mfp.map(hex::encode).unwrap_or_else(|| "<none>".to_string());
-
         Ok((version, mfp))
     }
 
@@ -509,9 +507,7 @@ impl KeystoneWallet {
 
         if let Some(device_error) = json.get(JSON_FIELD_ERROR).and_then(|v| v.as_str()) {
             if !device_error.trim().is_empty() {
-                return Err(RemoteWalletError::KeystoneError(format!(
-                    "{device_error}"
-                )));
+                return Err(RemoteWalletError::KeystoneError(format!("{device_error}")));
             }
         }
 
@@ -630,18 +626,17 @@ impl RemoteWallet<rusb::Device<rusb::Context>> for KeystoneWallet {
             Err(err) => (Pubkey::default(), Some(err)),
         };
 
-        Ok(RemoteWalletInfo {
+        let mut info = RemoteWalletInfo {
             model,
             manufacturer: Manufacturer::Keystone,
             serial,
-            host_device_path: format!(
-                "{:04x}:{:04x}",
-                device_descriptor.vendor_id(),
-                device_descriptor.product_id()
-            ),
+            host_device_path: String::new(),
             pubkey,
             error,
-        })
+        };
+        info.host_device_path = info.get_pretty_path();
+
+        Ok(info)
     }
 
     fn get_pubkey(

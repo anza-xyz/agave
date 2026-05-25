@@ -24,6 +24,7 @@ dev-context-only-utils = [
     "solana-client/dev-context-only-utils",
 ]
 remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
+remote-wallet-keystone = ["solana-remote-wallet/keystone"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]

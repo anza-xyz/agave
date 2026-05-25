@@ -70,6 +70,32 @@ impl std::fmt::Display for Manufacturer {
     }
 }
 
+impl Manufacturer {
+    /// Returns `true` when the corresponding hardware-wallet backend has been
+    /// compiled in.  Feature-gated wallets (e.g. Keystone) will return `false`
+    /// if built without the matching crate feature.
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Ledger | Self::Trezor | Self::Unknown => true,
+            #[cfg(feature = "keystone")]
+            Self::Keystone => true,
+            #[cfg(not(feature = "keystone"))]
+            Self::Keystone => false,
+        }
+    }
+
+    pub fn check_enabled(&self) -> Result<(), LocatorError> {
+        if self.is_enabled() {
+            Ok(())
+        } else {
+            Err(LocatorError::DisabledWallet(format!(
+                "{self} wallet support is not enabled. \
+                 Rebuild with `--features remote-wallet-keystone` to use {self} devices.",
+            )))
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum LocatorError {
     #[error(transparent)]
@@ -78,6 +104,8 @@ pub enum LocatorError {
     PubkeyError(#[from] ParsePubkeyError),
     #[error(transparent)]
     UriReferenceError(#[from] URIReferenceError),
+    #[error("{0}")]
+    DisabledWallet(String),
     #[error("unimplemented scheme")]
     UnimplementedScheme,
     #[error("infallible")]
@@ -153,6 +181,7 @@ impl Locator {
         P: TryInto<Pubkey, Error = PE>,
     {
         let manufacturer = manufacturer.try_into().map_err(|e| e.into())?;
+        manufacturer.check_enabled()?;
         let pubkey = if let Some(pubkey) = pubkey {
             Some(pubkey.try_into().map_err(|e| e.into())?)
         } else {

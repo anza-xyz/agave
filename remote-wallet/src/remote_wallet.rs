@@ -1,9 +1,11 @@
+#[cfg(feature = "keystone")]
+use crate::keystone::KeystoneWallet;
+#[cfg(all(feature = "hidapi", feature = "keystone"))]
+use rusb::UsbContext;
 #[cfg(feature = "hidapi")]
 use {crate::ledger::is_valid_ledger, parking_lot::Mutex, std::sync::Arc};
-use rusb::UsbContext;
 use {
     crate::{
-        keystone::KeystoneWallet,
         ledger::LedgerWallet,
         ledger_error::LedgerError,
         locator::{Locator, LocatorError, Manufacturer},
@@ -62,6 +64,7 @@ pub enum RemoteWalletError {
     #[error("trezor error: {0}")]
     TrezorError(String),
 
+    #[cfg(feature = "keystone")]
     #[error("keystone error: {0}")]
     KeystoneError(String),
 
@@ -88,6 +91,7 @@ impl From<RemoteWalletError> for SignerError {
             RemoteWalletError::InvalidInput(input) => SignerError::InvalidInput(input),
             RemoteWalletError::LedgerError(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::TrezorError(e) => SignerError::Protocol(e),
+            #[cfg(feature = "keystone")]
             RemoteWalletError::KeystoneError(e) => SignerError::Protocol(e),
             RemoteWalletError::NoDeviceFound => SignerError::NoDeviceFound,
             RemoteWalletError::Protocol(e) => SignerError::Protocol(e.to_string()),
@@ -134,6 +138,7 @@ impl RemoteWalletManager {
         let mut errors = vec![];
         Self::scan_ledger_devices(&usb, &mut detected_devices, &mut errors);
         Self::scan_trezor_devices(&mut detected_devices, &mut errors);
+        #[cfg(feature = "keystone")]
         Self::scan_keystone_devices(&mut detected_devices, &mut errors);
         let num_curr_devices = detected_devices.len();
         *self.devices.write() = detected_devices;
@@ -221,7 +226,7 @@ impl RemoteWalletManager {
         }
     }
 
-    #[cfg(feature = "hidapi")]
+    #[cfg(all(feature = "hidapi", feature = "keystone"))]
     fn scan_keystone_devices(
         detected_devices: &mut Vec<Device>,
         errors: &mut Vec<RemoteWalletError>,
@@ -232,10 +237,7 @@ impl RemoteWalletManager {
                     if let Ok(desc) = device.device_descriptor() {
                         // Some firmware modes may expose a different PID; use VID-based prefilter,
                         // then still prefer known Keystone VID/PID path.
-                        if crate::keystone::is_valid_keystone(
-                            desc.vendor_id(),
-                            desc.product_id(),
-                        ) {
+                        if crate::keystone::is_valid_keystone(desc.vendor_id(), desc.product_id()) {
                             match device.open() {
                                 Ok(handle) => match KeystoneWallet::new(device.clone(), handle) {
                                     Ok(mut keystone) => match keystone.read_device(&device) {
@@ -376,6 +378,7 @@ pub struct Device {
 pub enum RemoteWalletType {
     Ledger(Rc<LedgerWallet>),
     Trezor(Rc<TrezorWallet>),
+    #[cfg(feature = "keystone")]
     Keystone(Rc<KeystoneWallet>),
 }
 
@@ -388,6 +391,7 @@ impl RemoteWalletType {
         match self {
             Self::Ledger(wallet) => wallet.get_pubkey(derivation_path, confirm_key),
             Self::Trezor(wallet) => wallet.get_pubkey(derivation_path, confirm_key),
+            #[cfg(feature = "keystone")]
             Self::Keystone(wallet) => wallet.get_pubkey(derivation_path, confirm_key),
         }
     }
@@ -400,6 +404,7 @@ impl RemoteWalletType {
         match self {
             Self::Ledger(wallet) => wallet.sign_message(derivation_path, message),
             Self::Trezor(wallet) => wallet.sign_message(derivation_path, message),
+            #[cfg(feature = "keystone")]
             Self::Keystone(wallet) => wallet.sign_message(derivation_path, message),
         }
     }

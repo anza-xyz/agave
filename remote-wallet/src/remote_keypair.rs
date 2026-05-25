@@ -3,8 +3,7 @@ use {
         ledger::get_wallet_from_info,
         locator::Locator,
         remote_wallet::{
-            RemoteWallet, RemoteWalletError, RemoteWalletInfo, RemoteWalletManager,
-            RemoteWalletType,
+            RemoteWalletError, RemoteWalletInfo, RemoteWalletManager, RemoteWalletType,
         },
     },
     solana_derivation_path::DerivationPath,
@@ -61,6 +60,21 @@ pub fn generate_remote_keypair(
     confirm_key: bool,
     keypair_name: &str,
 ) -> Result<RemoteKeypair, RemoteWalletError> {
+    locator.manufacturer.check_enabled()?;
+    #[cfg(feature = "keystone")]
+    if matches!(
+        locator.manufacturer,
+        crate::locator::Manufacturer::Keystone
+    ) {
+        return generate_keystone_remote_keypair(
+            locator,
+            derivation_path,
+            wallet_manager,
+            confirm_key,
+            keypair_name,
+        );
+    }
+
     let remote_wallet_info = RemoteWalletInfo::parse_locator(locator);
     let remote_wallet = get_wallet_from_info(remote_wallet_info, keypair_name, wallet_manager)?;
     let path = format!("{}{}", remote_wallet.path, derivation_path.get_query());
@@ -70,4 +84,30 @@ pub fn generate_remote_keypair(
         confirm_key,
         path,
     )
+}
+
+#[cfg(feature = "keystone")]
+fn generate_keystone_remote_keypair(
+    locator: Locator,
+    derivation_path: DerivationPath,
+    wallet_manager: &RemoteWalletManager,
+    confirm_key: bool,
+    keypair_name: &str,
+) -> Result<RemoteKeypair, RemoteWalletError> {
+    let manufacturer = locator.manufacturer;
+    let mut remote_wallet_info = RemoteWalletInfo::parse_locator(locator);
+    remote_wallet_info.pubkey = Pubkey::default();
+
+    let remote_wallet = get_wallet_from_info(remote_wallet_info, keypair_name, wallet_manager)?;
+    let wallet_type = remote_wallet.wallet_type;
+    let pubkey = wallet_type.get_pubkey(&derivation_path, confirm_key)?;
+    let locator = Locator::new_from_parts(manufacturer, Some(pubkey))?;
+    let path = format!("{locator}{}", derivation_path.get_query());
+
+    Ok(RemoteKeypair {
+        wallet_type,
+        derivation_path,
+        pubkey,
+        path,
+    })
 }
