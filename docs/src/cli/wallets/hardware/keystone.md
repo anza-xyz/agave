@@ -64,6 +64,32 @@ Replace `ledger` with `keystone` in the examples and use your own keypair URL.
 
 ## Troubleshooting
 
+### Linux USB permissions
+
+On Linux, you may need development headers and a udev rule before the CLI can
+open the Keystone USB device.
+
+Install the required system packages:
+
+```bash
+sudo apt-get install build-essential libudev-dev
+```
+
+Create a Keystone udev rule:
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="3001", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/99-keystone.rules
+```
+
+Reload udev rules:
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Disconnect and reconnect the Keystone device after reloading the rules.
+
 ### `?` is ignored in zsh
 
 `?` is a special character in zsh. If you do not rely on this feature, you can add the following to your `~/.zshrc`:
