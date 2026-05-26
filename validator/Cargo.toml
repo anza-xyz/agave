@@ -112,6 +112,7 @@ solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-test-validator = { workspace = true, features = ["agave-unstable-api"] }
 solana-time-utils = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
