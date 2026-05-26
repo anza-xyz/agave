@@ -275,7 +275,10 @@ pub enum VoteHistoryError {
     IoError(#[from] std::io::Error),
 
     #[error("Serialization Error: {0}")]
-    SerializeError(#[from] wincode::Error),
+    SerializeError(#[from] wincode::WriteError),
+
+    #[error("Deserialization Error: {0}")]
+    DeserializeError(#[from] wincode::ReadError),
 
     #[error("The signature on the saved vote history is invalid")]
     InvalidSignature,
@@ -294,18 +297,6 @@ impl VoteHistoryError {
         } else {
             false
         }
-    }
-}
-
-impl From<wincode::WriteError> for VoteHistoryError {
-    fn from(err: wincode::WriteError) -> Self {
-        VoteHistoryError::SerializeError(wincode::Error::WriteError(err))
-    }
-}
-
-impl From<wincode::ReadError> for VoteHistoryError {
-    fn from(err: wincode::ReadError) -> Self {
-        VoteHistoryError::SerializeError(wincode::Error::ReadError(err))
     }
 }
 

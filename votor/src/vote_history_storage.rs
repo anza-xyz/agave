@@ -7,10 +7,10 @@ use {
     solana_signer::Signer,
     std::{
         fs::{self, File},
-        io::{self, BufReader, Write},
+        io::{self, BufReader, BufWriter},
         path::PathBuf,
     },
-    wincode::{SchemaRead, SchemaWrite, io::std_write::WriteAdapter},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub type Result<T> = std::result::Result<T, VoteHistoryError>;
@@ -31,25 +31,22 @@ impl SavedVoteHistoryVersions {
                 if !t.signature.verify(node_pubkey.as_ref(), &t.data) {
                     return Err(VoteHistoryError::InvalidSignature);
                 }
-                wincode::deserialize(&t.data)
-                    .map(VoteHistoryVersions::Current)
-                    .map_err(VoteHistoryError::from)
+                wincode::deserialize(&t.data).map(VoteHistoryVersions::Current)?
             }
         };
-        vote_history.and_then(|vote_history: VoteHistoryVersions| {
-            let vote_history = vote_history.convert_to_current();
-            if vote_history.node_pubkey != *node_pubkey {
-                return Err(VoteHistoryError::WrongVoteHistory(format!(
-                    "node_pubkey is {:?} but found vote history for {:?}",
-                    node_pubkey, vote_history.node_pubkey
-                )));
-            }
-            Ok(vote_history)
-        })
+        let vote_history = vote_history.convert_to_current();
+        if vote_history.node_pubkey != *node_pubkey {
+            return Err(VoteHistoryError::WrongVoteHistory(format!(
+                "node_pubkey is {:?} but found vote history for {:?}",
+                node_pubkey, vote_history.node_pubkey
+            )));
+        }
+        Ok(vote_history)
     }
 
-    fn serialize_into<W: Write>(&self, writer: W) -> Result<()> {
-        wincode::serialize_into(WriteAdapter::new(writer), self).map_err(VoteHistoryError::from)
+    fn serialize_into(&self, file: &mut File) -> Result<()> {
+        wincode::serialize_into(BufWriter::new(file), self)?;
+        Ok(())
     }
 
     fn pubkey(&self) -> Pubkey {
@@ -90,7 +87,7 @@ impl SavedVoteHistory {
             )));
         }
 
-        let data = wincode::serialize(&vote_history).map_err(VoteHistoryError::from)?;
+        let data = wincode::serialize(&vote_history)?;
         let signature = keypair.sign_message(&data);
         Ok(Self {
             signature,
@@ -149,9 +146,8 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
         let file = File::open(&filename)?;
         let mut stream = BufReader::new(file);
 
-        wincode::deserialize_from(&mut stream)
-            .map_err(VoteHistoryError::from)
-            .and_then(|t: SavedVoteHistoryVersions| t.try_into_vote_history(node_pubkey))
+        let saved_vote_history: SavedVoteHistoryVersions = wincode::deserialize_from(&mut stream)?;
+        saved_vote_history.try_into_vote_history(node_pubkey)
     }
 
     fn store(&self, saved_vote_history: &SavedVoteHistoryVersions) -> Result<()> {
