@@ -3721,7 +3721,7 @@ impl AccountsDb {
         //          |                           |
         //          V                           |
         // S3 store_accounts_for_shrink()/      | index
-        //        update_index_stored_accounts()| (replaces existing store_id, offset in stores)
+        //        update_index_shrunk_accounts()| (replaces existing store_id, offset in stores)
         //          |                           |
         //          V                           |
         // S4 do_shrink_slot_store()/           | map of stores (removes old entry)
@@ -5136,6 +5136,54 @@ impl AccountsDb {
         }
     }
 
+    /// Updates the accounts index for the shrink path: each account at `accounts.slot(i)` has
+    /// its existing index entry replaced to point at the rewritten storage at `target_slot`.
+    ///
+    /// Unlike `update_index_stored_accounts` this does not collect reclaims — the caller is
+    /// responsible for the source storage's alive-bytes accounting. Secondary indexes are also
+    /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
+    fn update_index_shrunk_accounts<'a>(
+        &self,
+        infos: Vec<AccountInfo>,
+        accounts: &impl StorableAccounts<'a>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
+        thread_pool: &ThreadPool,
+    ) {
+        let target_slot = accounts.target_slot();
+        let len = std::cmp::min(accounts.len(), infos.len());
+
+        let update = |start, end| {
+            (start..end).for_each(|i| {
+                let info: AccountInfo = infos[i];
+                debug_assert!(!info.is_cached());
+                accounts.account(i, |account| {
+                    let old_slot = accounts.slot(i);
+                    self.accounts_index
+                        .replace(target_slot, old_slot, account.pubkey(), info);
+                });
+            });
+        };
+
+        let threshold = 1;
+        if matches!(
+            update_index_thread_selection,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        ) && len > threshold
+        {
+            let chunk_size = len.div_ceil(thread_pool.current_num_threads());
+            let batches = 1 + len / chunk_size;
+            thread_pool.install(|| {
+                (0..batches).into_par_iter().for_each(|batch| {
+                    let start = batch * chunk_size;
+                    let end = std::cmp::min(start + chunk_size, len);
+                    update(start, end)
+                })
+            });
+        } else {
+            update(0, len);
+        }
+    }
+
     fn should_not_shrink(alive_bytes: u64, total_bytes: u64) -> bool {
         alive_bytes >= total_bytes
     }
@@ -5558,10 +5606,9 @@ impl AccountsDb {
         let write_accounts_us = write_accounts_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
-        self.update_index_stored_accounts(
+        self.update_index_shrunk_accounts(
             infos,
             &accounts,
-            UpsertReclaim::IgnoreReclaims,
             update_index_thread_selection,
             &self.thread_pool_background,
         );

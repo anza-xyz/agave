@@ -572,6 +572,51 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
+    /// Replaces the slot list entry at `old_slot` with `(slot, account_info)`.
+    ///
+    /// Panics if `old_slot` is not present in the slot list, or if more than one entry at
+    /// `old_slot` is found (which would indicate prior corruption).
+    pub fn replace(
+        &self,
+        pubkey: &Pubkey,
+        new_value: PreAllocatedAccountMapEntry<T>,
+        old_slot: Slot,
+    ) {
+        let (slot, account_info) = new_value.into();
+        debug_assert!(
+            !account_info.is_cached(),
+            "Replace should only be used for uncached accounts"
+        );
+        let mut should_write_through = false;
+
+        self.get_or_create_index_entry_for_pubkey(pubkey, |entry| {
+            let mut slot_list = entry.slot_list_write_lock();
+            let mut found_slot = false;
+            let slot_list_length = slot_list.retain_and_count(|cur_item| {
+                if cur_item.0 == old_slot {
+                    assert!(
+                        !found_slot,
+                        "duplicate entry at slot {old_slot} in slot_list"
+                    );
+                    found_slot = true;
+                    *cur_item = (slot, account_info);
+                }
+                true
+            });
+            assert!(
+                found_slot,
+                "Expected to find a slot to replace in the slot list"
+            );
+            entry.mark_dirty();
+
+            should_write_through =
+                self.should_write_through && slot_list_length == 1 && entry.ref_count() == 1;
+        });
+        if should_write_through {
+            self.write_through(pubkey, slot, account_info);
+        }
+    }
+
     /// Gets an entry for `pubkey` and calls `callback` with it.
     /// If the entry is not in the index, an empty entry will be created and passed to `callback`.
     /// If the entry is in the index, it will be passed to `callback` as is.
