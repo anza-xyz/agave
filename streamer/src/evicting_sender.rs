@@ -4,10 +4,19 @@ use {
 };
 
 /// A sender implementation that evicts the oldest message when the channel is full.
-#[derive(Clone)]
 pub struct EvictingSender<T> {
     sender: Sender<T>,
     receiver: Receiver<T>,
+}
+
+// Manual implementation because the auto-derived `Clone` requires `T: Clone`.
+impl<T> Clone for EvictingSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            receiver: self.receiver.clone(),
+        }
+    }
 }
 
 impl<T> EvictingSender<T> {

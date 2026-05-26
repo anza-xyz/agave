@@ -2,7 +2,7 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
     chrono::{DateTime, Local},
-    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError, unbounded},
+    crossbeam_channel::{Receiver, SendError, TryRecvError, TrySendError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -52,13 +52,12 @@ pub const DISABLED_BAKING_TRACE_DIR: DirByteLimit = 0;
 pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit =
     TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD * TRACE_FILE_ROTATE_COUNT;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ActiveTracer {
-    trace_sender: Sender<TimedTracedEvent>,
+    trace_sender: EvictingSender<TimedTracedEvent>,
     exit: Arc<AtomicBool>,
 }
 
-#[derive(Debug)]
 pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
@@ -205,7 +204,9 @@ impl BankingTracer {
                     ));
                 }
 
-                let (trace_sender, trace_receiver) = unbounded();
+                // 3 ingress channels (non-vote, tpu-vote, gossip-vote) - so use 3x capacity here.
+                let (trace_sender, trace_receiver) =
+                    EvictingSender::new_bounded(3 * BANKING_PACKET_CHANNEL_SIZE);
 
                 let file_appender = Self::create_file_appender(path, rotate_threshold_size)?;
 
