@@ -47,7 +47,7 @@ use {
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::{HASH_BYTES, Hash},
     solana_keypair::Keypair,
-    solana_measure::measure::Measure,
+    solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -101,7 +101,7 @@ pub use {
         blockstore::error::{BlockstoreError, Result},
         blockstore_db::{default_num_compaction_threads, default_num_flush_threads},
         blockstore_meta::{OptimisticSlotMetaVersioned, SlotMeta},
-        blockstore_metrics::BlockstoreInsertionMetrics,
+        blockstore_metrics::{BlockstoreInsertionMetrics, BlockstoreSwitchBankMetrics},
     },
     blockstore_purge::PurgeType,
     rocksdb::properties as RocksProperties,
@@ -2363,9 +2363,15 @@ impl Blockstore {
             "Cannot switch from Original location"
         );
 
-        let lock = self.insert_shreds_lock.lock().unwrap();
+        let mut metrics = BlockstoreSwitchBankMetrics::default();
+
+        let mut total_measure = Measure::start("switch_block_from_alternate_total");
+
+        let (lock, lock_time_us) = measure_us!(self.insert_shreds_lock.lock().unwrap());
+        metrics.lock_elapsed_us = lock_time_us;
 
         // 1. Backup the original block if needed
+        let mut backup_measure = Measure::start("switch_block_from_alternate_backup");
         if let Some(dmr) = self.get_double_merkle_root(slot, BlockLocation::Original)? {
             let backup_location = BlockLocation::Alternate { block_id: dmr };
             if self
@@ -2375,8 +2381,11 @@ impl Blockstore {
                 self.copy_shreds_locked(&lock, slot, BlockLocation::Original, backup_location)?;
             }
         }
+        backup_measure.stop();
+        metrics.backup_elapsed_us = backup_measure.as_us();
 
         // 2. Purge the original column data, keeping alternate columns intact
+        let mut purge_measure = Measure::start("switch_block_from_alternate_purge");
         self.purge_slot_cleanup_chaining_keep_alt(slot)
             .or_else(|err| {
                 if matches!(err, BlockstoreError::SlotUnavailable) {
@@ -2386,14 +2395,19 @@ impl Blockstore {
                     Err(err)
                 }
             })?;
+        purge_measure.stop();
+        metrics.purge_elapsed_us = purge_measure.as_us();
 
         // 3. Copy shreds from alternate location to original
+        let mut copy_measure = Measure::start("switch_block_from_alternate_copy");
         let alt_meta = self
             .meta_from_location(slot, from_location)?
             .expect("Alternate slot must have SlotMeta");
         debug_assert!(alt_meta.is_full(), "Alternate slot must be full");
 
         self.copy_shreds_locked(&lock, slot, from_location, BlockLocation::Original)?;
+        copy_measure.stop();
+        metrics.copy_elapsed_us = copy_measure.as_us();
 
         // 4. Verify the switch was successful
         debug_assert!(
@@ -2402,7 +2416,10 @@ impl Blockstore {
                 .is_full(),
             "Slot must be full after switch"
         );
+        total_measure.stop();
+        metrics.total_elapsed_us = total_measure.as_us();
 
+        metrics.report_metrics(slot, from_location);
         Ok(())
     }
 
@@ -2833,7 +2850,12 @@ impl Blockstore {
             write_batch,
             shred_source,
         );
-        newly_completed_data_sets.extend(completed_data_sets);
+
+        if matches!(location, BlockLocation::Original) {
+            // We don't currently notify RPC when we complete data sets in alternate columns. This can be extended in the future
+            // if necessary.
+            newly_completed_data_sets.extend(completed_data_sets);
+        }
         merkle_root_metas
             .entry((location, erasure_set))
             .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
@@ -6475,6 +6497,34 @@ pub fn test_all_empty_or_min(blockstore: &Blockstore, min_slot: Slot) {
             .unwrap()
             .next()
             .map(|(slot, _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_meta_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _), _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_index_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _), _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_data_shred_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _, _), _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_merkle_root_meta_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _, _), _)| slot >= min_slot)
             .unwrap_or(true);
     assert!(condition_met);
 }
