@@ -84,6 +84,7 @@ pub enum CliCommand {
     LiveSlots,
     Logs {
         filter: RpcTransactionLogsFilter,
+        tree: bool,
     },
     Rent {
         data_length: usize,
@@ -917,7 +918,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             process_leader_schedule(&rpc_client, config, *epoch).await
         }
         CliCommand::LiveSlots => process_live_slots(config),
-        CliCommand::Logs { filter } => process_logs(config, filter),
+        CliCommand::Logs { filter, tree } => process_logs(config, filter, *tree),
         CliCommand::Rent {
             data_length,
             use_lamports_unit,
