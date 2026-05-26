@@ -170,7 +170,10 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
 
 #[cfg(test)]
 mod test {
-    use {super::*, agave_votor_messages::vote::Vote, solana_keypair::Keypair, tempfile::TempDir};
+    use {
+        super::*, agave_votor_messages::vote::Vote, solana_keypair::Keypair, solana_signer::Signer,
+        tempfile::TempDir,
+    };
 
     #[test]
     fn test_file_vote_history_storage() {
@@ -235,5 +238,37 @@ mod test {
         // NullVoteHistoryStorage::save() always succeeds
         storage.store(&saved_vote_history_versions).unwrap();
         assert!(storage.load(&pubkey).is_err());
+    }
+
+    #[test]
+    fn test_load_corrupt_vote_history_storage_returns_deserialize_error() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let pubkey = Pubkey::new_unique();
+
+        fs::write(storage.filename(&pubkey), [1, 2, 3]).unwrap();
+
+        let error = storage.load(&pubkey).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::DeserializeError(_)));
+    }
+
+    #[test]
+    fn test_load_signed_corrupt_vote_history_data_returns_deserialize_error() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let data = Vec::new();
+        let saved_vote_history = SavedVoteHistory {
+            signature: keypair.sign_message(&data),
+            data,
+            node_pubkey: pubkey,
+        };
+        storage
+            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .unwrap();
+
+        let error = storage.load(&pubkey).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::DeserializeError(_)));
     }
 }
