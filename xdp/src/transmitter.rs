@@ -79,6 +79,7 @@ pub struct BytesTxPacket {
     src_addr: SocketAddrV4,
     dst_addrs: XdpAddrs,
     ecn: Option<EcnCodepoint>,
+    allow_mtu_overflow: bool,
     payload: Bytes,
 }
 
@@ -97,8 +98,14 @@ impl BytesTxPacket {
             src_addr,
             dst_addrs: dst_addrs.into(),
             ecn,
+            allow_mtu_overflow: false,
             payload,
         }
+    }
+
+    /// Sets whether MTU overflow is possible for this packet.
+    pub fn set_allow_mtu_overflow(&mut self, allow: bool) {
+        self.allow_mtu_overflow = allow;
     }
 }
 
@@ -112,6 +119,8 @@ impl BytesTxPacket {
     ) -> Self {
         Self
     }
+
+    pub fn set_allow_mtu_overflow(&mut self, _allow: bool) {}
 }
 
 #[cfg(target_os = "linux")]
@@ -133,6 +142,10 @@ impl TxPacket for BytesTxPacket {
 
     fn ecn(&self) -> Option<EcnCodepoint> {
         self.ecn
+    }
+
+    fn allow_mtu_overflow(&self) -> bool {
+        self.allow_mtu_overflow
     }
 }
 

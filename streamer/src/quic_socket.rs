@@ -266,10 +266,9 @@ impl QuicXdpSender {
         let src_addr = SocketAddrV4::new(src_ip, self.src_addr.port());
         let ecn = ecn.map(quinn_ecn_to_xdp);
 
-        self.xdp_sender.try_send(
-            sender_idx,
-            BytesTxPacket::new(src_addr, destination, ecn, payload),
-        )
+        let mut packet = BytesTxPacket::new(src_addr, destination, ecn, payload);
+        packet.set_allow_mtu_overflow(true);
+        self.xdp_sender.try_send(sender_idx, packet)
     }
 }
 
