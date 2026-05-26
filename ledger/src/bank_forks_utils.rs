@@ -17,7 +17,10 @@ use {
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
     },
     log::*,
-    solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
+    solana_accounts_db::{
+        accounts_update_notifier_interface::AccountsUpdateNotifier,
+        utils::move_and_async_delete_path_contents,
+    },
     solana_genesis_config::GenesisConfig,
     solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
     std::{
@@ -214,6 +217,13 @@ pub fn try_load_bank_forks_from_snapshot(
         // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
         // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
         snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+
+        // Storages on disk from a previous run are kept around so fastboot can use them. Now
+        // that we've committed to loading from an archive instead, drop them — the archive will
+        // be extracted into these dirs and any leftover files would just be orphans.
+        for account_path in account_paths {
+            move_and_async_delete_path_contents(account_path);
+        }
 
         snapshot_bank_utils::bank_from_snapshot_archives(
             account_paths,

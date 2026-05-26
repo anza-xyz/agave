@@ -46,7 +46,7 @@ use {
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::{move_and_async_delete_path_contents, validate_account_paths_for_direct_io},
+        utils::validate_account_paths_for_direct_io,
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
@@ -821,13 +821,12 @@ impl Validator {
         let genesis_config = load_genesis(config, ledger_path)?;
         metrics_config_sanity_check(genesis_config.cluster_type)?;
 
-        info!("Validating and cleaning accounts paths...");
+        info!("Validating accounts paths...");
         *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
-        let mut timer = Measure::start("validate_and_clean_accounts_paths");
+        let mut timer = Measure::start("validate_account_paths");
         validate_account_paths(config)?;
-        cleanup_accounts_paths(config);
         timer.stop();
-        info!("Validating and cleaning accounts paths done. {timer}");
+        info!("Validating accounts paths done. {timer}");
 
         snapshot_utils::purge_incomplete_bank_snapshots(&config.snapshot_config.bank_snapshots_dir);
         snapshot_utils::purge_old_bank_snapshots_at_startup(
@@ -2894,20 +2893,6 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     }
 
     online_stake_percentage as u64
-}
-
-fn cleanup_accounts_paths(config: &ValidatorConfig) {
-    // Clean account storages only when we'll load from a snapshot archive. Fastboot loads from
-    // the existing storages in `<account_path>/run/`, and the rebuild path prunes any leftover
-    // stale storages itself.
-    let cleanup_account_paths =
-        snapshot_utils::get_highest_loadable_bank_snapshot(&config.snapshot_config).is_none()
-            || config.use_snapshot_archives_at_startup == UseSnapshotArchivesAtStartup::Always;
-    if cleanup_account_paths {
-        for account_path in &config.account_paths {
-            move_and_async_delete_path_contents(account_path);
-        }
-    }
 }
 
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {
