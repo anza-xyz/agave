@@ -946,14 +946,21 @@ impl Bank {
                             commission_lamports,
                             burned_lamports,
                             is_vote_account,
-                            ..
                         },
                     )| {
                         let maybe_commission_account =
                             self.get_account_with_fixed_root_no_cache(commission_pubkey);
                         let mut commission_account = if custom_commission_collector {
+                            // If the account doesn't exist, the vote commission
+                            // may be enough lamports to cover rent-exemption
+                            // and properly create the commission account.
                             maybe_commission_account.unwrap_or_default()
                         } else {
+                            // Before SIMD-0232, commission accounts were always
+                            // vote accounts, which cannot be closed unless the
+                            // account hasn't voted for at least a full epoch.
+                            // This means that `maybe_commission_account` should
+                            // always exist.
                             let Some(commission_account) = maybe_commission_account else {
                                 debug!(
                                     "commission account {commission_pubkey} missing at \
