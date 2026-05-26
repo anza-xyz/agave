@@ -262,7 +262,11 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .takes_value(false)
                         .conflicts_with("address")
                         .help("Include vote transactions when monitoring all transactions"),
-                ),
+                )
+                .arg(Arg::with_name("tree").long("tree").takes_value(false).help(
+                    "Render each transaction's logs as a nested CPI invocation tree instead of a \
+                     flat line stream",
+                )),
         )
         .subcommand(
             SubCommand::with_name("block-production")
@@ -1456,6 +1460,7 @@ pub fn parse_logs(
 ) -> Result<CliCommandInfo, CliError> {
     let address = pubkey_of_signer(matches, "address", wallet_manager)?;
     let include_votes = matches.is_present("include_votes");
+    let tree = matches.is_present("tree");
 
     let filter = match address {
         None => {
@@ -1468,10 +1473,17 @@ pub fn parse_logs(
         Some(address) => RpcTransactionLogsFilter::Mentions(vec![address.to_string()]),
     };
 
-    Ok(CliCommandInfo::without_signers(CliCommand::Logs { filter }))
+    Ok(CliCommandInfo::without_signers(CliCommand::Logs {
+        filter,
+        tree,
+    }))
 }
 
-pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> ProcessResult {
+pub fn process_logs(
+    config: &CliConfig,
+    filter: &RpcTransactionLogsFilter,
+    tree: bool,
+) -> ProcessResult {
     println!(
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
@@ -1503,9 +1515,18 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
                         .map(|err| err.to_string())
                         .unwrap_or_else(|| "Ok".to_string())
                 );
-                println!("  Log Messages:");
-                for log in logs.value.logs {
-                    println!("    {log}");
+                if tree {
+                    println!("  CPI Tree:");
+                    let frames = crate::log_tree::cpi_tree(&logs.value.logs);
+                    let rendered = crate::log_tree::format_cpi_tree(&frames);
+                    for line in rendered.lines() {
+                        println!("    {line}");
+                    }
+                } else {
+                    println!("  Log Messages:");
+                    for log in logs.value.logs {
+                        println!("    {log}");
+                    }
                 }
             }
             Err(err) => {
