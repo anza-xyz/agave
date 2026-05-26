@@ -848,7 +848,7 @@ mod tests {
             SnapshotVersion, error::VerifySlotDeltasError, paths::get_bank_snapshot_dir,
         },
         semver::Version,
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsFileId},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -2173,6 +2173,93 @@ mod tests {
         }
         let next_id = bank.accounts().accounts_db.next_id.load(Ordering::Relaxed) as usize;
         assert_eq!(max_id, next_id - 1);
+    }
+
+    /// Drop a stale `<slot>.<id>` file into the account_paths run dir before calling
+    /// `bank_from_snapshot_dir`, and verify that the fastboot rebuild path removes it (because
+    /// the `(slot, id)` pair isn't in the storages list) while keeping the snapshot's own
+    /// storage files in place and producing a working bank.
+    #[test]
+    fn test_bank_from_snapshot_dir_prunes_stale_storage() {
+        use solana_accounts_db::accounts_file::AccountsFile;
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            1_000_000 * LAMPORTS_PER_SOL,
+        );
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let bank = Bank::new_for_tests(&genesis_config);
+        bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
+
+        create_bank_snapshot_from_bank(
+            &bank_snapshots_dir,
+            &bank,
+            SnapshotVersion::default(),
+            true,
+        )
+        .unwrap();
+        let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        let account_paths = &bank.rc.accounts.accounts_db.paths;
+
+        // Collect the legit paths (created by `create_bank_snapshot_from_bank` above) before
+        // we drop any stale files, so we can assert they survive the prune.
+        let pre_load_legit_files: Vec<_> = account_paths
+            .iter()
+            .flat_map(|account_path| {
+                fs::read_dir(account_path)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+            })
+            .collect();
+        assert!(
+            !pre_load_legit_files.is_empty(),
+            "expected at least one accounts storage file"
+        );
+
+        // Pick a `(slot, id)` that the snapshot doesn't reference. The snapshot only covers
+        // storages up to `bank.slot()`, so a far-future slot is guaranteed to be stale.
+        let stale_slot = bank.slot() + 1_000;
+        let stale_id = AccountsFileId::MAX;
+        let stale_files: Vec<_> = account_paths
+            .iter()
+            .map(|account_path| {
+                let stale = account_path.join(AccountsFile::file_name(stale_slot, stale_id));
+                fs::write(&stale, b"junk").unwrap();
+                stale
+            })
+            .collect();
+
+        let bank_constructed = bank_from_snapshot_dir(
+            account_paths,
+            &bank_snapshot,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(bank_constructed, bank);
+
+        for stale in stale_files {
+            assert!(
+                !stale.exists(),
+                "stale storage file '{}' should have been pruned",
+                stale.display(),
+            );
+        }
+        for legit in pre_load_legit_files {
+            assert!(
+                legit.exists(),
+                "snapshot storage file '{}' should have survived the prune",
+                legit.display(),
+            );
+        }
     }
 
     /// Ensure bank_from_snapshot_dir() catches a snapshot with incorrect capitalization.

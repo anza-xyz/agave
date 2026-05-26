@@ -1363,7 +1363,7 @@ fn prune_stale_storages(account_paths: &[PathBuf], storages_list: StoragesList) 
                     "Removing stale storage file '{}' not in storages list",
                     path.display(),
                 );
-                move_and_async_delete_path(&path);
+                fs::remove_file(&path)?
             }
         }
     }
@@ -1759,7 +1759,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         bincode::{deserialize_from, serialize_into},
-        solana_accounts_db::accounts_file::AccountsFileProvider,
+        solana_accounts_db::accounts_file::{AccountsFile, AccountsFileProvider},
         solana_hash::Hash,
         std::{convert::TryFrom, mem::size_of},
         tempfile::NamedTempFile,
@@ -2725,5 +2725,35 @@ mod tests {
 
         // scenario 9: all good
         assert!(is_bank_snapshot_complete(bank_snapshot_dir));
+    }
+
+    #[test]
+    fn test_prune_stale_storages() {
+        let account_path = tempfile::TempDir::new().unwrap();
+        // Files that belong to the snapshot.
+        let keep_a = account_path.path().join(AccountsFile::file_name(100, 1));
+        let keep_b = account_path.path().join(AccountsFile::file_name(200, 2));
+        // A stale storage file that should be removed.
+        let stale = account_path.path().join(AccountsFile::file_name(300, 3));
+        // A non-storage filename — should be left alone.
+        let untouched = account_path.path().join("something_else.txt");
+        for path in [&keep_a, &keep_b, &stale, &untouched] {
+            fs::write(path, b"x").unwrap();
+        }
+
+        let storages_list = StoragesList::from_items(vec![
+            StorageListItem { slot: 100, id: 1 },
+            StorageListItem { slot: 200, id: 2 },
+        ]);
+        prune_stale_storages(
+            std::slice::from_ref(&account_path.path().to_path_buf()),
+            storages_list,
+        )
+        .unwrap();
+
+        assert!(keep_a.exists(), "expected storage file was deleted");
+        assert!(keep_b.exists(), "expected storage file was deleted");
+        assert!(!stale.exists(), "stale storage file was not removed");
+        assert!(untouched.exists(), "non-storage file was wrongly removed");
     }
 }
