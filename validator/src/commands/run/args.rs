@@ -547,6 +547,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Refuse to start if saved tower state is not found"),
     )
     .arg(
+        clap::Arg::with_name("do_not_require_vote_history")
+            .long("do-not-require-vote-history")
+            .takes_value(false)
+            .help("Do not require saved vote history state for startup"),
+    )
+    .arg(
         Arg::with_name("expected_genesis_hash")
             .long("expected-genesis-hash")
             .value_name("HASH")
