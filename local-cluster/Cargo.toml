@@ -16,7 +16,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 dev-context-only-utils = [
     "solana-core/dev-context-only-utils",
-    "agave-feature-set/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
 ]
 
