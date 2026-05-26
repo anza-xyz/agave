@@ -59,6 +59,14 @@ pub const MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES: usize = 1;
 pub const MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE: usize = 3;
 pub const MAX_NOTAR_FALLBACK_BLOCKS: usize = 7;
 
+/// Maximum number of validators we provision capacity for in consensus
+/// data structures (certificate bitmaps, per-validator caches, etc.).
+///
+/// There are around 1500 validators currently. For a clean power-of-two
+/// implementation, we should choose either 2048 or 4096. Choose a more
+/// conservative number 4096 for now.
+pub const MAXIMUM_VALIDATORS: usize = 4096;
+
 pub const SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY: Fraction = Fraction::from_percentage(40);
 pub const SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP: Fraction = Fraction::from_percentage(20);
 pub const SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP: Fraction = Fraction::from_percentage(60);

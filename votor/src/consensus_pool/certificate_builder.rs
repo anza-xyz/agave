@@ -1,19 +1,11 @@
 use {
+    crate::common::MAXIMUM_VALIDATORS,
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
     solana_signer_store::{EncodeError, encode_base2, encode_base3},
     thiserror::Error,
 };
-
-/// Maximum number of validators in a certificate.
-///
-/// There are around 1500 validators currently. For a clean power-of-two
-/// implementation, we should choose either 2048 or 4096. Choose a more
-/// conservative number 4096 for now. During build() we will cut off end
-/// of the bitmaps if the tail contains only zeroes, so actual bitmap
-/// length will be less than or equal to this number.
-const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, Error, PartialEq, Eq)]

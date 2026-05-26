@@ -16,7 +16,7 @@ use {
     },
     crate::{
         repair::{
-            outstanding_requests::OutstandingRequests,
+            outstanding_requests::{OutstandingRequests, RegisterResponseResult},
             packet_threshold::DynamicPacketToProcessThreshold,
             repair_service::{REPAIR_MS, RepairInfo, RepairStats},
             serve_repair::{BlockIdRepairResponse, BlockIdRepairType, RepairProtocol},
@@ -24,7 +24,7 @@ use {
         shred_fetch_stage::SHRED_FETCH_CHANNEL_SIZE,
     },
     agave_votor::{
-        common::DELTA,
+        common::{DELTA, MAXIMUM_VALIDATORS},
         event::{RepairEvent, RepairEventReceiver},
     },
     agave_votor_messages::consensus_message::Block,
@@ -66,7 +66,7 @@ use {
     },
 };
 
-type OutstandingBlockIdRepairs = OutstandingRequests<BlockIdRepairType>;
+type OutstandingBlockIdRepairs = OutstandingRequests<BlockIdRepairType, Pubkey>;
 
 const MAX_REPAIR_REQUESTS_PER_ITERATION: usize = 200;
 const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 11;
@@ -181,6 +181,12 @@ struct RepairState {
     /// These are re-processed each iteration until Turbine/Eager repair completes or marks the slot dead.
     /// Only the lowest slots are retained if the queue reaches [`MAX_PENDING_REPAIR_EVENTS`].
     pending_repair_events: BTreeSet<RepairEvent>,
+
+    /// Peers that responded with a definitively-bad metadata repair response
+    /// (e.g. invalid Merkle proof, or a parent_info that doesn't match the
+    /// requested block id). We won't sample them for further metadata
+    /// requests until they get evicted from the LRU.
+    blacklisted_peers: LruCache<Pubkey, ()>,
 
     /// Requests that have been sent, mapped to the timestamp they were sent.
     /// Used for retry logic - requests that exceed `2 * DELTA`
@@ -333,6 +339,7 @@ impl BlockIdRepairService {
                     sent_requests: HashMap::default(),
                     requested_blocks: HashSet::default(),
                     pending_repair_events: BTreeSet::default(),
+                    blacklisted_peers: LruCache::new(MAXIMUM_VALIDATORS),
                     response_stats: BlockIdRepairResponsesStats::default(),
                     request_stats: BlockIdRepairRequestsStats::default(),
                 };
@@ -577,21 +584,37 @@ impl BlockIdRepairService {
 
         debug!("{my_pubkey}: Received response: {response:?}, nonce={nonce}");
 
-        let Some(request) =
-            // verify the response (and check merkle proof validity)
-            state.outstanding_requests.register_response(
-                nonce,
-                &response,
-                timestamp(),
-                // If valid return the original request
-                |block_id_request| *block_id_request,
-            )
-        else {
-            debug!(
-                "{my_pubkey}: Response with invalid nonce {nonce} or failed verification for {response:?}"
-            );
-            state.response_stats.invalid_packets += 1;
-            return;
+        // verify the response (and check merkle proof validity)
+        let request = match state.outstanding_requests.register_response(
+            nonce,
+            &response,
+            timestamp(),
+            // If valid return the original request
+            |block_id_request| *block_id_request,
+        ) {
+            RegisterResponseResult::Success(request) => request,
+            RegisterResponseResult::InvalidResponse(Some(peer)) => {
+                // The nonce was one we sent, and the response failed
+                // `verify_response` (bad Merkle proof, mismatching slot/block
+                // id, etc.). Only the peer we sent the nonce to could have
+                // produced a response that decodes against this nonce, so
+                // attribute the failure and blacklist them.
+                debug!(
+                    "{my_pubkey}: Blacklisting peer {peer} after invalid metadata response: \
+                     {response:?}"
+                );
+                state.blacklisted_peers.put(peer, ());
+                state.response_stats.invalid_packets += 1;
+                state.response_stats.blacklisted_peers += 1;
+                return;
+            }
+            RegisterResponseResult::InvalidResponse(None)
+            | RegisterResponseResult::Expired(_)
+            | RegisterResponseResult::UnknownNonce => {
+                debug!("{my_pubkey}: Response with unknown/expired nonce {nonce} for {response:?}");
+                state.response_stats.invalid_packets += 1;
+                return;
+            }
         };
 
         debug!("{my_pubkey}: Received valid response for request {request:?}");
@@ -955,6 +978,7 @@ impl BlockIdRepairService {
                             block_id_repair_type,
                             &mut state.peers_cache,
                             &mut state.outstanding_requests,
+                            &state.blacklisted_peers,
                         )
                         .inspect_err(|e| {
                             error!(
@@ -1144,6 +1168,7 @@ mod tests {
             sent_requests: HashMap::default(),
             requested_blocks: HashSet::default(),
             pending_repair_events: BTreeSet::default(),
+            blacklisted_peers: LruCache::new(MAXIMUM_VALIDATORS),
             response_stats: BlockIdRepairResponsesStats::default(),
             request_stats: BlockIdRepairRequestsStats::default(),
         };
@@ -1590,6 +1615,134 @@ mod tests {
 
         // Verify: invalid packet stat was incremented
         assert_eq!(state.response_stats.invalid_packets, 1);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_invalid_proof_blacklists_peer() {
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+        let peer_pubkey = Pubkey::new_unique();
+
+        // Send a `ParentAndFecSetCount` request, recording the peer it was
+        // sent to as the metadata so the response handler can attribute a
+        // verification failure back to them.
+        let request = BlockIdRepairType::ParentAndFecSetCount {
+            slot: 100,
+            // We deliberately use a random block_id so the proof in the
+            // response cannot possibly validate against it.
+            block_id: Hash::new_unique(),
+        };
+        let nonce = state.outstanding_requests.add_request_with_metadata(
+            request,
+            timestamp(),
+            Some(peer_pubkey),
+        );
+
+        // Build a response with a syntactically valid but cryptographically
+        // bad Merkle proof — this is exactly the "expensive to verify, ends
+        // up rejected" case the blacklist is meant to penalize.
+        let fec_set_count = 2u32;
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count,
+            parent_info: (99, Hash::new_unique()),
+            parent_proof: vec![0u8; SIZE_OF_MERKLE_PROOF_ENTRY * 2],
+        };
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        assert!(state.blacklisted_peers.contains_key(&peer_pubkey));
+        assert_eq!(state.response_stats.blacklisted_peers, 1);
+        assert_eq!(state.response_stats.invalid_packets, 1);
+        assert_eq!(state.response_stats.parent_fec_set_count_responses, 0);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_unknown_nonce_does_not_blacklist() {
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        // A bad proof on a nonce we never sent: no peer attribution, no
+        // blacklist. Anyone can spew junk UDP at our port; we must not
+        // blacklist over that.
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count: 2,
+            parent_info: (99, Hash::new_unique()),
+            parent_proof: vec![0u8; SIZE_OF_MERKLE_PROOF_ENTRY * 2],
+        };
+        let data = serialize_response(&response, 42u32);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        assert!(state.blacklisted_peers.is_empty());
+        assert_eq!(state.response_stats.blacklisted_peers, 0);
+        assert_eq!(state.response_stats.invalid_packets, 1);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_valid_proof_does_not_blacklist() {
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+        let peer_pubkey = Pubkey::new_unique();
+
+        // Build a valid Merkle proof so verify_response will accept it.
+        let parent_slot = 99u64;
+        let parent_block_id = Hash::new_unique();
+        let fec_set_count = 2u32;
+        let fec_set_count_usize = usize::try_from(fec_set_count).unwrap();
+        let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
+        let parent_info_leaf = hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+        let mut leaves = fec_set_roots.clone();
+        leaves.push(parent_info_leaf);
+        let (block_id, proofs) = build_merkle_tree(&leaves);
+        let parent_proof = proofs[fec_set_count_usize].clone();
+
+        let request = BlockIdRepairType::ParentAndFecSetCount {
+            slot: 100,
+            block_id,
+        };
+        let nonce = state.outstanding_requests.add_request_with_metadata(
+            request,
+            timestamp(),
+            Some(peer_pubkey),
+        );
+
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count,
+            parent_info: (parent_slot, parent_block_id),
+            parent_proof,
+        };
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        assert!(state.blacklisted_peers.is_empty());
+        assert_eq!(state.response_stats.blacklisted_peers, 0);
+        assert_eq!(state.response_stats.parent_fec_set_count_responses, 1);
     }
 
     #[test]
