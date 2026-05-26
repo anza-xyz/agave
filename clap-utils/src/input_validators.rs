@@ -7,6 +7,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_keypair::read_keypair_file,
+    solana_native_token::sol_str_to_lamports,
     solana_pubkey::{MAX_SEED_LEN, Pubkey},
     solana_signature::Signature,
     std::{fmt::Display, ops::RangeBounds, str::FromStr},
@@ -301,11 +302,11 @@ pub fn is_amount<T>(amount: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
-    if amount.as_ref().parse::<u64>().is_ok() || amount.as_ref().parse::<f64>().is_ok() {
+    if sol_str_to_lamports(amount.as_ref()).is_some() {
         Ok(())
     } else {
         Err(format!(
-            "Unable to parse input amount as integer or float, provided: {amount}"
+            "Unable to parse input amount as a number of SOL, provided: {amount}"
         ))
     }
 }
@@ -314,14 +315,11 @@ pub fn is_amount_or_all<T>(amount: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
-    if amount.as_ref().parse::<u64>().is_ok()
-        || amount.as_ref().parse::<f64>().is_ok()
-        || amount.as_ref() == "ALL"
-    {
+    if sol_str_to_lamports(amount.as_ref()).is_some() || amount.as_ref() == "ALL" {
         Ok(())
     } else {
         Err(format!(
-            "Unable to parse input amount as integer or float, provided: {amount}"
+            "Unable to parse input amount as a number of SOL or 'ALL', provided: {amount}"
         ))
     }
 }
@@ -330,15 +328,15 @@ pub fn is_amount_or_all_or_available<T>(amount: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
-    if amount.as_ref().parse::<u64>().is_ok()
-        || amount.as_ref().parse::<f64>().is_ok()
+    if sol_str_to_lamports(amount.as_ref()).is_some()
         || amount.as_ref() == "ALL"
         || amount.as_ref() == "AVAILABLE"
     {
         Ok(())
     } else {
         Err(format!(
-            "Unable to parse input amount as integer or float, provided: {amount}"
+            "Unable to parse input amount as a number of SOL, 'ALL', or 'AVAILABLE', provided: \
+             {amount}"
         ))
     }
 }
@@ -500,6 +498,39 @@ mod tests {
         assert!(is_derivation("4294967296").is_err());
         assert!(is_derivation("a/b").is_err());
         assert!(is_derivation("0/4294967296").is_err());
+    }
+
+    #[test]
+    fn test_is_amount() {
+        // Valid SOL amounts are accepted.
+        assert!(is_amount("0").is_ok());
+        assert!(is_amount("1").is_ok());
+        assert!(is_amount("1.5").is_ok());
+        assert!(is_amount("0.5025").is_ok());
+        // Largest whole-SOL amount that still fits in u64 lamports.
+        assert!(is_amount("18446744073").is_ok());
+
+        // Inputs the SOL parser cannot represent are now rejected up front.
+        // These previously passed validation as floats and then either panicked
+        // (`unwrap` on a `None`) or silently saturated when converted to lamports.
+        assert!(is_amount("1e9").is_err());
+        assert!(is_amount("1.5e3").is_err());
+        assert!(is_amount("inf").is_err());
+        assert!(is_amount("NaN").is_err());
+        assert!(is_amount("abc").is_err());
+        assert!(is_amount(".").is_err());
+        // Overflows u64 lamports (value * LAMPORTS_PER_SOL > u64::MAX).
+        assert!(is_amount("999999999999").is_err());
+        assert!(is_amount("18446744074").is_err());
+
+        // Keyword variants accept their keywords in addition to SOL amounts.
+        assert!(is_amount_or_all("1.5").is_ok());
+        assert!(is_amount_or_all("ALL").is_ok());
+        assert!(is_amount_or_all("AVAILABLE").is_err());
+        assert!(is_amount_or_all("1e9").is_err());
+        assert!(is_amount_or_all_or_available("ALL").is_ok());
+        assert!(is_amount_or_all_or_available("AVAILABLE").is_ok());
+        assert!(is_amount_or_all_or_available("1e9").is_err());
     }
 
     #[test]
