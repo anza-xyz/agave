@@ -132,7 +132,11 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
     /// Inserts `inner_key` into `key`'s map.
     pub fn insert(&self, key: &Pubkey, inner_key: &Pubkey) {
         // Note: Always lock the reverse index first, so we synchronize with remove().
-        let reverse_index_entry = self.reverse_index.entry(*inner_key).or_default();
+        // Pre-size to 1 to avoid push() over-allocating an empty Vec to capacity 4.
+        let reverse_index_entry = self
+            .reverse_index
+            .entry(*inner_key)
+            .or_insert_with(|| RwLock::new(Vec::with_capacity(1)));
         let mut outer_keys = reverse_index_entry.write().unwrap();
 
         // Now insert into the index.
@@ -368,5 +372,48 @@ mod tests {
             secondary_index.stats.num_inner_keys.load(Ordering::Relaxed),
             0,
         );
+    }
+
+    /// Regression guard for reverse-index entry capacity. Each entry must be
+    /// created with capacity 1. An empty Vec plus push() would over-allocate to
+    /// capacity 4 (Rust RawVec rule), wasting 96 bytes per entry.
+    #[test]
+    fn test_reverse_index_entry_not_over_allocated() {
+        let secondary_index =
+            SecondaryIndex::<RwLockSecondaryIndexEntry>::new("test_secondary_index");
+        let outer_key = Pubkey::new_unique();
+        let inner_key = Pubkey::new_unique();
+
+        secondary_index.insert(&outer_key, &inner_key);
+
+        let reverse_entry = secondary_index
+            .reverse_index
+            .get(&inner_key)
+            .expect("reverse index entry should exist after insert");
+        let outer_keys = reverse_entry.read().unwrap();
+        assert_eq!(outer_keys.len(), 1);
+        assert_eq!(outer_keys[0], outer_key);
+        // Regression guard: `or_default()` + push() would make this 4.
+        assert_eq!(outer_keys.capacity(), 1);
+    }
+
+    /// A reverse entry with multiple outer keys still grows correctly when
+    /// started at capacity 1, exercising the push() realloc path.
+    #[test]
+    fn test_reverse_index_multiple_outer_keys() {
+        let secondary_index =
+            SecondaryIndex::<RwLockSecondaryIndexEntry>::new("test_secondary_index");
+        let inner_key = Pubkey::new_unique();
+        let outer_key_1 = Pubkey::new_unique();
+        let outer_key_2 = Pubkey::new_unique();
+
+        secondary_index.insert(&outer_key_1, &inner_key);
+        secondary_index.insert(&outer_key_2, &inner_key);
+
+        let reverse_entry = secondary_index.reverse_index.get(&inner_key).unwrap();
+        let outer_keys = reverse_entry.read().unwrap();
+        assert_eq!(outer_keys.len(), 2);
+        assert!(outer_keys.contains(&outer_key_1));
+        assert!(outer_keys.contains(&outer_key_2));
     }
 }
