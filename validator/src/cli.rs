@@ -137,6 +137,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(true)
             .multiple(true)
             .help("Path to accounts shrink path which can hold a compacted account set."),
+        usage_warning: "Shrink paths are no longer used.",
     );
     add_arg!(
         // deprecated in v4.2.0; the `mmap` value was deprecated in v4.0.0, and now mmap mode has

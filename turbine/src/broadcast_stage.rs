@@ -13,12 +13,13 @@ use {
     agave_votor::event::VotorEventSender,
     crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
-    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::Slot,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::Protocol,
     },
     solana_keypair::Keypair,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache, shred::Shred,
     },
@@ -470,7 +471,7 @@ fn next_broadcast_leader_pubkey(
     my_pubkey: &Pubkey,
     slot: Slot,
 ) -> Option<Pubkey> {
-    let next_leader_slot = slot.saturating_add(NUM_CONSECUTIVE_LEADER_SLOTS);
+    let next_leader_slot = slot.saturating_add(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot);
     leader_schedule_cache
         .slot_leader_at(next_leader_slot, Some(working_bank))
         .map(|next_leader| next_leader.id)
@@ -706,7 +707,7 @@ pub mod test {
                     vote_address: Pubkey::new_unique(),
                 },
             ],
-            NUM_CONSECUTIVE_LEADER_SLOTS as usize,
+            NUM_CONSECUTIVE_LEADER_SLOTS.get(),
             &bank,
         );
 
@@ -719,7 +720,7 @@ pub mod test {
                 &leader_schedule_cache,
                 &bank,
                 &leader_b.pubkey(),
-                NUM_CONSECUTIVE_LEADER_SLOTS,
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
             ),
             Some(leader_a.pubkey())
         );
@@ -728,7 +729,7 @@ pub mod test {
                 &leader_schedule_cache,
                 &bank,
                 &leader_a.pubkey(),
-                NUM_CONSECUTIVE_LEADER_SLOTS,
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
             ),
             None,
         );

@@ -38,12 +38,14 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
+wincode = { workspace = true, features = ["bv"] }
 
 [dev-dependencies]
 bencher = { workspace = true }
+bincode = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-hash = { workspace = true, features = ["atomic"] }
+solana-hash = { workspace = true, features = ["atomic", "wincode"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signature = { workspace = true, features = ["std"] }
 

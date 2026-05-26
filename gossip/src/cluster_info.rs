@@ -36,7 +36,7 @@ use {
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
             MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
             PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, split_gossip_messages,
+            Protocol, PruneData, deserialize_protocol, split_gossip_messages,
         },
         weighted_shuffle::WeightedShuffle,
     },
@@ -132,6 +132,11 @@ pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIV
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
+// Contact-info save/restore handles trusted local data, so disable wincode's
+// default 4 MiB preallocation limit (which defends untrusted wire input).
+type ContactInfoFileConfig =
+    wincode::config::Configuration<true, { wincode::config::PREALLOCATION_SIZE_LIMIT_DISABLED }>;
+
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
     #[error("NoPeers")]
@@ -182,8 +187,6 @@ impl ClusterInfo {
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
-                &mut rand::rng(),
-                Instant::now(),
                 GOSSIP_PING_CACHE_TTL,
                 GOSSIP_PING_CACHE_RATE_LIMIT_DELAY,
                 GOSSIP_PING_CACHE_CAPACITY,
@@ -328,7 +331,11 @@ impl ClusterInfo {
         match File::create(tmp_filename) {
             Ok(file) => {
                 let mut writer = BufWriter::new(file);
-                if let Err(err) = bincode::serialize_into(&mut writer, &nodes) {
+                if let Err(err) = wincode::config::serialize_into(
+                    &mut writer,
+                    &nodes,
+                    ContactInfoFileConfig::new(),
+                ) {
                     warn!(
                         "Failed to serialize contact info info {}: {}",
                         tmp_filename.display(),
@@ -375,12 +382,14 @@ impl ClusterInfo {
         }
 
         let nodes: Vec<CrdsValue> = match File::open(&filename) {
-            Ok(file) => {
-                bincode::deserialize_from(&mut BufReader::new(file)).unwrap_or_else(|err| {
-                    warn!("Failed to deserialize {}: {}", filename.display(), err);
-                    vec![]
-                })
-            }
+            Ok(file) => wincode::config::deserialize_from(
+                &mut BufReader::new(file),
+                ContactInfoFileConfig::new(),
+            )
+            .unwrap_or_else(|err| {
+                warn!("Failed to deserialize {}: {}", filename.display(), err);
+                vec![]
+            }),
             Err(err) => {
                 warn!("Failed to open {}: {}", filename.display(), err);
                 vec![]
@@ -2090,8 +2099,11 @@ impl ClusterInfo {
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
         ) -> Option<(SocketAddr, Protocol)> {
-            let mut protocol: Protocol =
-                stats.record_received_packet(packet.deserialize_slice::<Protocol, _>(..))?;
+            let result: wincode::ReadResult<Protocol> = packet
+                .data(..)
+                .ok_or(wincode::ReadError::Custom("packet discarded"))
+                .and_then(deserialize_protocol);
+            let mut protocol: Protocol = stats.record_received_packet(result)?;
             protocol.sanitize().ok()?;
             if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
                 &mut protocol
@@ -2495,9 +2507,20 @@ fn make_gossip_packet_batch<S: Borrow<SocketAddr>>(
     recycler: &PacketBatchRecycler,
     stats: &GossipStats,
 ) -> RecycledPacketBatch {
-    let record_gossip_packet = |(_, pkt): &(_, Protocol)| stats.record_gossip_packet(pkt);
-    let pkts = pkts.into_iter().inspect(record_gossip_packet);
-    RecycledPacketBatch::new_with_recycler_data_and_dests(recycler, "gossip_packet_batch", pkts)
+    let pkts = pkts.into_iter();
+    let mut batch =
+        RecycledPacketBatch::new_with_recycler(recycler, pkts.len(), "gossip_packet_batch");
+    for (addr, pkt) in pkts {
+        let addr = addr.borrow();
+        if !addr.ip().is_unspecified() && addr.port() != 0 {
+            if let Some(packet) = make_gossip_packet(addr, &pkt, stats) {
+                batch.push(packet);
+            }
+        } else {
+            trace!("Dropping packet, as destination is unknown");
+        }
+    }
+    batch
 }
 
 #[inline]
@@ -2506,16 +2529,22 @@ fn make_gossip_packet(
     pkt: &Protocol,
     stats: &GossipStats,
 ) -> Option<Packet> {
-    match Packet::from_data(Some(addr.borrow()), pkt) {
-        Err(err) => {
+    let mut packet = Packet::default();
+    let size = {
+        let buffer = packet.buffer_mut();
+        let initial_len = buffer.len();
+        let mut writer: &mut [u8] = buffer;
+        if let Err(err) = wincode::serialize_into(&mut writer, pkt) {
             error!("failed to write gossip packet: {err:?}");
-            None
+            return None;
         }
-        Ok(out) => {
-            stats.record_gossip_packet(pkt);
-            Some(out)
-        }
-    }
+        initial_len - writer.len()
+    };
+    let meta = packet.meta_mut();
+    meta.size = size;
+    meta.set_socket_addr(addr.borrow());
+    stats.record_gossip_packet(pkt);
+    Some(packet)
 }
 
 #[cfg(test)]
@@ -2530,7 +2559,6 @@ mod tests {
             protocol::tests::new_rand_remote_node,
             socketaddr,
         },
-        bincode::serialize,
         itertools::izip,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
@@ -2727,9 +2755,14 @@ mod tests {
             pongs.into_iter()
         ) {
             assert_eq!(packet.meta().socket_addr(), socket);
-            let bytes = serialize(&pong).unwrap();
+            let bytes = wincode::serialize(&pong).unwrap();
+            assert_eq!(bytes, bincode::serialize(&pong).unwrap());
             match packet.deserialize_slice(..).unwrap() {
-                Protocol::PongMessage(pong) => assert_eq!(serialize(&pong).unwrap(), bytes),
+                Protocol::PongMessage(pong) => {
+                    let pong_bytes = wincode::serialize(&pong).unwrap();
+                    assert_eq!(pong_bytes, bincode::serialize(&pong).unwrap());
+                    assert_eq!(pong_bytes, bytes);
+                }
                 _ => panic!("invalid packet!"),
             }
         }
@@ -2791,6 +2824,46 @@ mod tests {
         cluster_info.insert_info(d);
         let gossip_crds = cluster_info.gossip.crds.read().unwrap();
         assert!(gossip_crds.get::<&CrdsValue>(&label).is_some());
+    }
+
+    #[test]
+    fn test_save_restore_contact_info_round_trip() {
+        let tmpdir = tempfile::tempdir().unwrap();
+
+        let self_keypair = Arc::new(Keypair::new());
+        let self_ci = ContactInfo::new_localhost(&self_keypair.pubkey(), timestamp());
+        let mut cluster_info_a =
+            ClusterInfo::new(self_ci, self_keypair, SocketAddrSpace::Unspecified);
+        // Sets contact_info_path; no file to load yet.
+        cluster_info_a.restore_contact_info(tmpdir.path(), 0);
+
+        let peer1 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let peer2 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let peer1_pubkey = *peer1.pubkey();
+        let peer2_pubkey = *peer2.pubkey();
+        cluster_info_a.insert_info(peer1);
+        cluster_info_a.insert_info(peer2);
+        cluster_info_a.save_contact_info();
+
+        let other_keypair = Arc::new(Keypair::new());
+        let other_ci = ContactInfo::new_localhost(&other_keypair.pubkey(), timestamp());
+        let mut cluster_info_b =
+            ClusterInfo::new(other_ci, other_keypair, SocketAddrSpace::Unspecified);
+        cluster_info_b.restore_contact_info(tmpdir.path(), 0);
+
+        let gossip_crds = cluster_info_b.gossip.crds.read().unwrap();
+        assert!(
+            gossip_crds
+                .get::<&CrdsValue>(&CrdsValueLabel::ContactInfo(peer1_pubkey))
+                .is_some(),
+            "peer1 missing after restore"
+        );
+        assert!(
+            gossip_crds
+                .get::<&CrdsValue>(&CrdsValueLabel::ContactInfo(peer2_pubkey))
+                .is_some(),
+            "peer2 missing after restore"
+        );
     }
 
     fn assert_in_range(x: u16, range: (u16, u16)) {

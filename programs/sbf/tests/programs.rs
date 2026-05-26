@@ -323,8 +323,7 @@ fn test_program_sbf_sanity() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         let result = match effects.result {
             Some(err) => Err(err),
@@ -390,8 +389,7 @@ fn test_program_sbf_loader_deprecated() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         assert!(effects.result.is_none());
     }
@@ -512,8 +510,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     // in elf inside syscall table. In this case, `sol_alloc_free_` can't be
     // found in syscall table. Hence, the verification fails and the deployment
     // fails.
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
 }
@@ -572,7 +569,7 @@ fn test_program_sbf_duplicate_accounts() {
                 accounts,
                 instruction,
             };
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap()
+            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
         };
 
         let effects = execute(&[1]);
@@ -624,8 +621,7 @@ fn test_program_sbf_duplicate_accounts() {
             accounts,
             instruction,
         };
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
         assert!(effects.result.is_none());
     }
 }
@@ -677,7 +673,7 @@ fn test_program_sbf_error_handling() {
                 instruction,
             };
 
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap()
+            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
         };
 
         let effects = execute(&[1]);
@@ -769,8 +765,7 @@ fn test_return_data_and_log_data_syscall() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         assert!(effects.result.is_none());
 
@@ -1474,8 +1469,7 @@ fn test_program_sbf_program_id_spoofing() {
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert_eq!(
         effects.result,
@@ -1542,8 +1536,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert_eq!(effects.result, Some(InstructionError::MissingAccount));
 }
@@ -1588,8 +1581,7 @@ fn test_program_sbf_ro_modify() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         assert_eq!(
             effects.result,
@@ -1626,7 +1618,7 @@ fn test_program_sbf_call_depth() {
             instruction,
         };
 
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap()
+        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
     };
 
     let effects = execute(compute_budget.max_call_depth - 1);
@@ -1669,8 +1661,7 @@ fn test_program_sbf_compute_budget() {
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert_eq!(
         effects.result,
@@ -1753,8 +1744,7 @@ fn assert_instruction_count() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         let consumption = compute_budget
             .compute_unit_limit
@@ -1882,8 +1872,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert!(effects.result.is_none());
     assert_eq!(input_data, effects.return_data);
@@ -2408,8 +2397,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
         assert_eq!(effects.result, Some(InstructionError::UnsupportedProgramId));
     }
 }
@@ -2455,8 +2443,7 @@ fn test_program_reads_from_program_account() {
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
     assert!(effects.result.is_none());
 }
 
@@ -2498,8 +2485,7 @@ fn test_program_sbf_c_dup() {
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
     assert!(effects.result.is_none());
 }
 
@@ -2705,8 +2691,7 @@ fn test_program_sbf_ro_account_modify() {
             instruction,
         };
 
-        let effects =
-            execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         assert_eq!(effects.result, Some(InstructionError::ReadonlyDataModified));
     }
@@ -4621,8 +4606,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert_eq!(
         effects.result,
@@ -5707,8 +5691,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
         instruction,
     };
 
-    let effects =
-        execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap();
+    let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
     assert!(effects.result.is_none());
     // `num_accounts * 2` will be added as return data.

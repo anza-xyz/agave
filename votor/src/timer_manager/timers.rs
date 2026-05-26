@@ -1,7 +1,8 @@
 use {
     crate::{event::VotorEvent, timer_manager::stats::TimerManagerStats},
     crossbeam_channel::Sender,
-    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::Slot,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
         cmp::Reverse,
@@ -22,7 +23,9 @@ fn calculate_timeout_multiplier(slot: Slot, standstill_slot: Option<Slot>) -> f6
         Some(standstill_slot) => {
             // Calculate number of leader windows since standstill
             let slots_since_standstill = slot.saturating_sub(standstill_slot);
-            let leader_windows = slots_since_standstill / NUM_CONSECUTIVE_LEADER_SLOTS;
+            let leader_windows = slots_since_standstill
+                .checked_div(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot)
+                .expect("NUM_CONSECUTIVE_LEADER_SLOTS is non-zero");
             // Extend timeout by 5% for each leader window
             1.05_f64.powi(leader_windows as i32)
         }

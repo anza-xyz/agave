@@ -31,7 +31,7 @@ pub struct AccountStorageEntry {
 
     pub(crate) num_alive_bytes: AtomicUsize,
 
-    /// offsets to accounts that are zero lamport single ref stored in this
+    /// offsets to accounts that are zero lamport single ref (ZLSR) stored in this
     /// storage. These are still alive. But, shrink will be able to remove them.
     ///
     /// NOTE: It's possible that one of these zero lamport single ref accounts

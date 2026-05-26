@@ -22,7 +22,6 @@ use {
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_client::connection_cache::ConnectionCache,
-    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_entry::{
         block_component::{
             BlockComponent, BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedBlockMarker,
@@ -35,6 +34,7 @@ use {
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_keypair::Keypair,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS as NUM_CONSECUTIVE_LEADER_SLOTS_NZ,
     solana_ledger::{
         block_error::BlockError,
         blockstore::{
@@ -79,6 +79,8 @@ use {
     test_case::test_case,
     trees::{Tree, tr},
 };
+
+const NUM_CONSECUTIVE_LEADER_SLOTS: Slot = NUM_CONSECUTIVE_LEADER_SLOTS_NZ.get() as Slot;
 
 static_assertions::const_assert!(REFRESH_VOTE_BLOCKHEIGHT < solana_clock::MAX_PROCESSING_AGE);
 

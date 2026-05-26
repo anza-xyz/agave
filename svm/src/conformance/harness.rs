@@ -65,7 +65,7 @@ pub fn execute_instr(
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
-) -> Option<InstrEffects> {
+) -> InstrEffects {
     execute_instr_with_callback(
         input,
         &DefaultCallback,
@@ -82,7 +82,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
-) -> Option<InstrEffects> {
+) -> InstrEffects {
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
@@ -91,7 +91,10 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 
     let rent = sysvar_cache.get_rent().unwrap();
     let program_id = &input.instruction.program_id;
-    let loader_key = program_cache.find(program_id)?.account_owner();
+    let loader_key = program_cache
+        .find(program_id)
+        .expect("program not loaded in cache")
+        .account_owner();
 
     let (sanitized_message, transaction_accounts) =
         mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key);
@@ -176,7 +179,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         })
         .collect::<Vec<_>>();
 
-    Some(InstrEffects {
+    InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
             Some(code)
         } else {
@@ -193,11 +196,11 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         cu_avail,
         return_data,
         logs,
-    })
+    }
 }
 
 #[cfg(feature = "conformance")]
-pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
+pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let cu_avail = input.cu_avail;
     let instr_context = InstrContext::from(input);
 
@@ -235,13 +238,13 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
         cache
     };
 
-    let instr_effects = execute_instr(
+    execute_instr(
         &instr_context,
         &compute_budget,
         &mut program_cache,
         &sysvar_cache,
-    );
-    instr_effects.map(Into::into)
+    )
+    .into()
 }
 
 /// # Safety
@@ -261,9 +264,7 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
         return 0;
     };
-    let Some(instr_effects) = execute_instr_proto(instr_context) else {
-        return 0;
-    };
+    let instr_effects = execute_instr_proto(instr_context);
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
     let out_vec = instr_effects.encode_to_vec();
     if out_vec.len() > out_slice.len() {
@@ -424,8 +425,7 @@ mod tests {
         .unwrap();
 
         // Execute the instruction.
-        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
-            .expect("Instruction execution should succeed");
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         // Verify the results.
         assert_eq!(effects.result, None);

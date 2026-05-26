@@ -229,7 +229,6 @@ derive_more = { version = "2.1.1", features = ["full"] }
 dialoguer = "0.12.0"
 digest = "0.10.7"
 dirs-next = "2.0.0"
-dlopen2 = "0.8.2"
 dyn-clone = "1.0.20"
 eager = "0.1.0"
 ed25519-dalek = "=1.0.1"
@@ -251,7 +250,7 @@ hex = "0.4.3"
 hex-literal = "1.1.0"
 hidapi = { version = "2.6.6", default-features = false }
 histogram = "0.6.9"
-http = "1.4.0"
+http = "1.4.1"
 humantime = "2.3.0"
 hyper-util = "0.1.20"
 imbl = "7.0.0"
@@ -280,7 +279,7 @@ libsecp256k1 = { version = "0.7.2", default-features = false, features = [
     "std",
     "static-context",
 ] }
-log = "0.4.29"
+log = "0.4.30"
 lru = "0.18.0"
 lz4 = "1.28.1"
 memmap2 = "0.9.10"
@@ -326,14 +325,13 @@ seqlock = "0.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 serde_with = { version = "3.20.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "3.4.0"
 shaq = { version = "3.0.0" }
 shuttle = "0.7.1"
 signal-hook = "0.4.4"
-siphasher = "1.0.2"
 slab = "0.4.12"
 slotmap = "1.0.7"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
@@ -518,12 +516,13 @@ solana-version = { path = "version", version = "=4.2.0-alpha.0", features = ["ag
 solana-vote = { path = "vote", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote-interface = "6.0.0"
 solana-vote-program = { path = "programs/vote", version = "=4.2.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
+solana-wincode-varint = "1.0.0"
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-zk-sdk = "5.0.1"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 spl-associated-token-account-interface = "2.0.0"
 spl-generic-token = "2.0.0"
-spl-memo-interface = "2.0.0"
+spl-memo-interface = "2.1.0"
 spl-pod = "0.7.3"
 spl-token-2022-interface = "2.1.0"
 spl-token-confidential-transfer-proof-extraction = "0.5.1"
