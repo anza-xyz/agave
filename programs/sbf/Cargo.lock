@@ -9406,8 +9406,6 @@ dependencies = [
 name = "solana-svm"
 version = "4.2.0-alpha.0"
 dependencies = [
- "agave-feature-set",
- "agave-precompiles",
  "ahash 0.8.12",
  "log",
  "percentage",

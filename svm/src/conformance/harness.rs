@@ -3,11 +3,8 @@
 use {
     super::context::{InstrContext, InstrEffects},
     crate::message_processor::process_message,
-    agave_feature_set::FeatureSet,
-    agave_precompiles::{get_precompile, is_precompile},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
-    solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
         loaded_programs::{
@@ -31,15 +28,25 @@ use {
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         sysvar::fill_sysvar_cache_from_accounts,
     },
+    agave_feature_set::FeatureSet,
+    agave_precompiles::{get_precompile, is_precompile},
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+    solana_precompile_error::PrecompileError,
     std::ffi::c_int,
 };
 
-/// Default callback. Full precompile support.
+/// Default callback. No precompile support.
 struct DefaultCallback;
 
-impl InvokeContextCallback for DefaultCallback {
+impl InvokeContextCallback for DefaultCallback {}
+
+/// Conformance callback. Full precompile support across all features.
+#[cfg(feature = "conformance")]
+struct ConformanceCallback;
+
+#[cfg(feature = "conformance")]
+impl InvokeContextCallback for ConformanceCallback {
     fn is_precompile(&self, program_id: &Pubkey) -> bool {
         is_precompile(program_id, |_| true)
     }
@@ -238,8 +245,9 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         cache
     };
 
-    execute_instr(
+    execute_instr_with_callback(
         &instr_context,
+        &ConformanceCallback,
         &compute_budget,
         &mut program_cache,
         &sysvar_cache,
