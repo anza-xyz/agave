@@ -105,11 +105,6 @@ pub(super) fn send_certs_to_pool(
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
     stats: &mut SigVerifyCertStats,
 ) -> Result<(), SigVerifyCertError> {
-    let capacity = match channel_to_pool.capacity() {
-        None => -1,
-        Some(c) => c.try_into().unwrap(),
-    };
-    stats.pool_capacity = capacity;
     if messages.is_empty() {
         return Ok(());
     }
@@ -125,7 +120,6 @@ pub(super) fn send_certs_to_pool(
             error!("certs channel to consensus pool is full.  Doing a blocking send.");
             match channel_to_pool.send(msgs) {
                 Ok(()) => {
-                    stats.pool_channel_unblocked += 1;
                     info!("certs channel to consensus pool has space again");
                     Ok(())
                 }
