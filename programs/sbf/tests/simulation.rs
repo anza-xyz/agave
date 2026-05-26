@@ -61,7 +61,7 @@ fn test_no_panic_rpc_client() {
     agave_logger::setup();
 
     let program_id = Pubkey::new_unique();
-    let (test_validator, payer) = TestValidatorGenesis::default()
+    let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
         .add_program("solana_sbf_rust_simulation", program_id)
         .start();
     let rpc_client = test_validator.get_rpc_client();

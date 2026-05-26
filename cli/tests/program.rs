@@ -59,7 +59,7 @@ fn test_validator_genesis(
     mint_keypair: &Keypair,
     features: LoaderV3Features,
 ) -> TestValidatorGenesis {
-    let mut genesis = TestValidatorGenesis::default();
+    let mut genesis = TestValidatorGenesis::default_for_tests();
     genesis
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
@@ -3235,7 +3235,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidatorGenesis::default()
+    let test_validator = TestValidatorGenesis::default_for_tests()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
             lamports_per_byte: 1,

@@ -8352,6 +8352,7 @@ dependencies = [
  "solana-svm-type-overrides",
  "solana-system-interface 3.2.0",
  "solana-sysvar",
+ "solana-test-validator",
  "solana-transaction",
  "solana-transaction-error",
  "solana-vote",

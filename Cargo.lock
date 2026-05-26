@@ -10932,6 +10932,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-syscalls",
+ "solana-test-validator",
  "solana-transaction",
  "solana-validator-exit",
  "tokio",
