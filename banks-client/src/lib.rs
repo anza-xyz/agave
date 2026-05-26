@@ -13,7 +13,8 @@ pub use {
 use {
     borsh::BorshDeserialize,
     futures::future::join_all,
-    solana_account::{Account, from_account},
+    serde::de::DeserializeOwned,
+    solana_account::Account,
     solana_banks_interface::{
         BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation,
@@ -26,7 +27,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_signature::Signature,
-    solana_sysvar::SysvarSerialize,
+    solana_sysvar_id::SysvarId,
     solana_transaction::versioned::VersionedTransaction,
     tarpc::{
         ClientMessage, Response, Transport,
@@ -183,14 +184,13 @@ impl BanksClient {
     }
 
     /// Return the cluster Sysvar
-    pub async fn get_sysvar<T: SysvarSerialize>(&self) -> Result<T, BanksClientError> {
+    pub async fn get_sysvar<T: DeserializeOwned + SysvarId>(&self) -> Result<T, BanksClientError> {
         let sysvar = self
             .get_account(T::id())
             .await?
             .ok_or(BanksClientError::ClientError("Sysvar not present"))?;
-        from_account::<T, _>(&sysvar).ok_or(BanksClientError::ClientError(
-            "Failed to deserialize sysvar",
-        ))
+        bincode::deserialize(&sysvar.data)
+            .map_err(|_| BanksClientError::ClientError("Failed to deserialize sysvar"))
     }
 
     /// Return the cluster rent

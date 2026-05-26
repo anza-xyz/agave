@@ -5,7 +5,7 @@ use {
     ahash::HashMap,
     itertools::Itertools,
     rand::{Rng, rng},
-    solana_account::from_account,
+    solana_account::ReadableAccount,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -146,7 +146,7 @@ impl VoteStorage {
     pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
-            .and_then(|account| from_account::<SlotHashes, _>(&account));
+            .and_then(|account| bincode::deserialize(account.data()).ok());
         if slot_hashes.is_none() {
             error!(
                 "Slot hashes sysvar doesn't exist on bank {}. Including all votes without \

@@ -64,6 +64,11 @@ use {
         },
         stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache},
         status_cache::{SlotDelta, StatusCache},
+        sysvar_account::{
+            create_account_shared_data_with_fields as create_account,
+            create_account_shared_data_with_size_and_fields as create_account_with_size,
+            from_account,
+        },
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
@@ -83,7 +88,6 @@ use {
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
-        create_account_shared_data_with_fields as create_account, from_account,
     },
     solana_accounts_db::{
         account_locks::validate_account_locks,
@@ -134,6 +138,7 @@ use {
         invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         program_cache_entry::ProgramCacheEntry,
+        sysvar_account,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -172,7 +177,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
-    solana_sysvar::{self as sysvar, SysvarSerialize, last_restart_slot::LastRestartSlot},
+    solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
     solana_time_utils::years_as_slots,
     solana_transaction::{
@@ -2467,11 +2472,13 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: SysvarSerialize + SysvarId,
+        T: Serialize + SysvarId,
     {
+        let size = sysvar_account::account_size_of::<T>().expect("unsupported sysvar");
         self.update_sysvar_account(&T::id(), |account| {
-            create_account(
+            create_account_with_size(
                 sysvar,
+                size,
                 self.inherit_specially_retained_account_fields(account),
             )
         });

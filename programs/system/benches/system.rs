@@ -2,14 +2,17 @@ use solana_program_runtime::solana_sbpf::program::BuiltinFunctionDefinition;
 #[allow(deprecated)]
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    solana_account::{self as account, AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_nonce::{
         state::{DurableNonce, State},
         versions::Versions,
     },
-    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_program_runtime::{
+        invoke_context::mock_process_instruction,
+        sysvar_account::create_account_shared_data_for_test,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{
@@ -277,7 +280,7 @@ impl TestSetup {
             (nonce_address, nonce_account),
             (
                 blockhash_id,
-                account::create_account_shared_data_for_test(
+                create_account_shared_data_for_test(
                     // create a populated RecentBlockhashes sysvar account
                     &RecentBlockhashes::from_iter(vec![
                         IterItem(0u64, &Hash::default(), 0);
@@ -285,10 +288,7 @@ impl TestSetup {
                     ]),
                 ),
             ),
-            (
-                rent_id,
-                account::create_account_shared_data_for_test(&Rent::free()),
-            ),
+            (rent_id, create_account_shared_data_for_test(&Rent::free())),
         ];
 
         self.instruction_accounts = vec![
@@ -361,7 +361,7 @@ impl TestSetup {
             (nonce_address, nonce_account),
             (
                 blockhash_id,
-                account::create_account_shared_data_for_test(
+                create_account_shared_data_for_test(
                     // create a populated RecentBlockhashes sysvar account
                     &RecentBlockhashes::from_iter(vec![
                         IterItem(0u64, &Hash::default(), 0);
@@ -440,7 +440,7 @@ impl TestSetup {
             ),
             (
                 blockhash_id,
-                account::create_account_shared_data_for_test(
+                create_account_shared_data_for_test(
                     // create a populated RecentBlockhashes sysvar account
                     &RecentBlockhashes::from_iter(vec![
                         IterItem(0u64, &Hash::default(), 0);
@@ -448,10 +448,7 @@ impl TestSetup {
                     ]),
                 ),
             ),
-            (
-                rent_id,
-                account::create_account_shared_data_for_test(&Rent::free()),
-            ),
+            (rent_id, create_account_shared_data_for_test(&Rent::free())),
         ];
 
         self.instruction_accounts = vec![

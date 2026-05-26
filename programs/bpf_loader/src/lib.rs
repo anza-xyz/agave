@@ -1093,15 +1093,16 @@ mod tests {
         assert_matches::assert_matches,
         rand::Rng,
         solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount,
-            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
-            program_metrics::ProgramStatistics, vm::calculate_heap_cost, with_mock_invoke_context,
+            program_metrics::ProgramStatistics,
+            sysvar_account::create_account_shared_data_for_test as create_account_for_test,
+            vm::calculate_heap_cost, with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -1224,7 +1225,7 @@ mod tests {
         let rent = Rent::default();
         let mut program_account =
             AccountSharedData::new(rent.minimum_balance(elf.len()), 0, loader_id);
-        program_account.set_data(elf);
+        program_account.set_data_from_slice(&elf);
         program_account.set_executable(true);
         program_account
     }
@@ -1689,7 +1690,7 @@ mod tests {
     fn truncate_data(account: &mut AccountSharedData, len: usize) {
         let mut data = account.data().to_vec();
         data.truncate(len);
-        account.set_data(data);
+        account.set_data_from_slice(&data);
     }
 
     #[test]
@@ -3841,7 +3842,7 @@ mod tests {
             0..255,
             |bytes: &mut [u8]| {
                 let mut program_account = AccountSharedData::new(1, 0, &loader_id);
-                program_account.set_data(bytes.to_vec());
+                program_account.set_data_from_slice(bytes);
                 program_account.set_executable(true);
                 process_instruction(
                     &program_id,

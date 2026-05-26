@@ -4,13 +4,14 @@ extern crate test;
 
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
-    solana_account::{Account, AccountSharedData, create_account_for_test},
+    solana_account::{Account, AccountSharedData},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_program_runtime::{
         invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
         solana_sbpf::program::BuiltinFunctionDefinition,
+        sysvar_account::create_account_shared_data_for_test,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
@@ -79,11 +80,11 @@ fn create_accounts() -> (
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
-            AccountSharedData::from(create_account_for_test(&slot_hashes)),
+            create_account_shared_data_for_test(&slot_hashes),
         ),
         (
             sysvar::clock::id(),
-            AccountSharedData::from(create_account_for_test(&clock)),
+            create_account_shared_data_for_test(&clock),
         ),
         (authority_pubkey, AccountSharedData::default()),
     ];

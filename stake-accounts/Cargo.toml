@@ -19,6 +19,7 @@ remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
+bincode = { workspace = true }
 clap = { workspace = true }
 solana-account = { workspace = true }
 solana-clap-utils = { workspace = true }

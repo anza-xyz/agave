@@ -1,5 +1,5 @@
 use {
-    solana_account::{ReadableAccount, state_traits::StateMut},
+    solana_account::ReadableAccount,
     solana_clock::SECONDS_PER_DAY,
     solana_instruction::Instruction,
     solana_message::Message,
@@ -17,13 +17,11 @@ pub(crate) fn derive_stake_account_address(base_pubkey: &Pubkey, i: usize) -> Pu
     Pubkey::create_with_seed(base_pubkey, &i.to_string(), &stake::program::id()).unwrap()
 }
 
-fn from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> Option<StakeStateV2> {
-    account.state().ok()
+fn from(account: &impl ReadableAccount) -> Option<StakeStateV2> {
+    bincode::deserialize(account.data()).ok()
 }
 
-pub(crate) fn lockup_from<T: ReadableAccount + StateMut<StakeStateV2>>(
-    account: &T,
-) -> Option<Lockup> {
+pub(crate) fn lockup_from(account: &impl ReadableAccount) -> Option<Lockup> {
     from(account).and_then(|state: StakeStateV2| state.lockup())
 }
 

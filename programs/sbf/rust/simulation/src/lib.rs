@@ -1,12 +1,13 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    bincode::deserialize,
     solana_account_info::{AccountInfo, next_account_info},
     solana_clock::Clock,
     solana_msg::msg,
     solana_program_error::ProgramResult,
     solana_pubkey::{Pubkey, declare_id},
-    solana_sysvar::{Sysvar, SysvarSerialize},
+    solana_sysvar::{Sysvar, clock},
     std::convert::TryInto,
 };
 
@@ -28,7 +29,8 @@ pub fn process_instruction(
     let slot: u64 = u64::from_le_bytes(data[data.len() - 8..].try_into().unwrap());
 
     let clock_from_cache = Clock::get().unwrap();
-    let clock_from_account = Clock::from_account_info(clock_account_info).unwrap();
+    assert!(clock::check_id(clock_account_info.key));
+    let clock_from_account: Clock = deserialize(&clock_account_info.data.borrow()).unwrap();
 
     msg!("next_slot from slot history is {:?} ", slot);
     msg!("clock from cache is in slot {:?} ", clock_from_cache.slot);

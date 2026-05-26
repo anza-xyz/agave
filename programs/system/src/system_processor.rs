@@ -572,16 +572,14 @@ mod tests {
         solana_nonce_account::{SystemAccountKind, get_system_account_kind},
         solana_program_runtime::{
             invoke_context::mock_process_instruction,
-            solana_sbpf::program::BuiltinFunctionDefinition, with_mock_invoke_context,
+            solana_sbpf::program::BuiltinFunctionDefinition,
+            sysvar_account::create_account_shared_data_for_test, with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
     };
     #[allow(deprecated)]
     use {
-        solana_account::{
-            self as account, Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-            ReadableAccount, create_account_shared_data_with_fields, to_account,
-        },
+        solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
@@ -637,16 +635,11 @@ mod tests {
     where
         I: IntoIterator<Item = IterItem<'a>>,
     {
-        let mut account = create_account_shared_data_with_fields::<RecentBlockhashes>(
-            &RecentBlockhashes::default(),
-            DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-        );
         let sorted = BinaryHeap::from_iter(recent_blockhash_iter);
         let sorted_iter = IntoIterSorted::new(sorted);
         let recent_blockhash_iter = sorted_iter.take(MAX_ENTRIES);
         let recent_blockhashes: RecentBlockhashes = recent_blockhash_iter.collect();
-        to_account(&recent_blockhashes, &mut account);
-        account
+        create_account_shared_data_for_test(&recent_blockhashes)
     }
     fn create_default_recent_blockhashes_account() -> AccountSharedData {
         #[allow(deprecated)]
@@ -656,7 +649,7 @@ mod tests {
         ])
     }
     fn create_default_rent_account() -> AccountSharedData {
-        account::create_account_shared_data_for_test(&Rent::free())
+        create_account_shared_data_for_test(&Rent::free())
     }
 
     #[test]
@@ -1524,7 +1517,7 @@ mod tests {
                     if sysvar::recent_blockhashes::check_id(&meta.pubkey) {
                         create_default_recent_blockhashes_account()
                     } else if sysvar::rent::check_id(&meta.pubkey) {
-                        account::create_account_shared_data_for_test(&Rent::free())
+                        create_account_shared_data_for_test(&Rent::free())
                     } else {
                         AccountSharedData::new(0, 0, &Pubkey::new_unique())
                     },

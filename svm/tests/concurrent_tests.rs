@@ -168,7 +168,7 @@ fn svm_concurrent() {
     let mut check_data = vec![Vec::new(); THREADS];
     let read_account = Pubkey::new_unique();
     let mut account_data = AccountSharedData::default();
-    account_data.set_data(AMOUNT.to_le_bytes().to_vec());
+    account_data.set_data_from_slice(&AMOUNT.to_le_bytes());
     account_data.set_rent_epoch(u64::MAX);
     account_data.set_lamports(1);
     mock_bank

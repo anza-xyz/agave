@@ -3,12 +3,12 @@ use {
     solana_clock::Slot,
     solana_instruction::{AccountMeta, Instruction},
     solana_msg::msg,
-    solana_program_error::ProgramResult,
+    solana_program_error::{ProgramError, ProgramResult},
     solana_program_test::{ProgramTest, ProgramTestContext, processor},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_sysvar::{
-        Sysvar, SysvarSerialize,
+        Sysvar,
         last_restart_slot::{self, LastRestartSlot},
     },
     solana_transaction::Transaction,
@@ -34,7 +34,12 @@ fn sysvar_last_restart_slot_process_instruction(
     );
 
     let last_restart_slot_account = &accounts[0];
-    let slot_via_account = LastRestartSlot::from_account_info(last_restart_slot_account)?;
+    if !last_restart_slot::check_id(last_restart_slot_account.key) {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let slot_via_account: LastRestartSlot =
+        bincode::deserialize(&last_restart_slot_account.data.borrow())
+            .map_err(|_| ProgramError::InvalidArgument)?;
     msg!("slot via account: {:?}", slot_via_account);
 
     assert_eq!(

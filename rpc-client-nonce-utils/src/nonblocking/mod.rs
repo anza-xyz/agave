@@ -3,7 +3,7 @@
 pub mod blockhash_query;
 
 use {
-    solana_account::{Account, ReadableAccount, state_traits::StateMut},
+    solana_account::{Account, ReadableAccount},
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_nonce::{
@@ -122,11 +122,10 @@ pub fn account_identity_ok<T: ReadableAccount>(account: &T) -> Result<(), Error>
 /// # })?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn state_from_account<T: ReadableAccount + StateMut<Versions>>(
-    account: &T,
-) -> Result<State, Error> {
+pub fn state_from_account<T: ReadableAccount>(account: &T) -> Result<State, Error> {
     account_identity_ok(account)?;
-    let versions = StateMut::<Versions>::state(account).map_err(|_| Error::InvalidAccountData)?;
+    let versions: Versions =
+        bincode::deserialize(account.data()).map_err(|_| Error::InvalidAccountData)?;
     Ok(State::from(versions))
 }
 
@@ -217,9 +216,7 @@ pub fn state_from_account<T: ReadableAccount + StateMut<Versions>>(
 /// # })?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn data_from_account<T: ReadableAccount + StateMut<Versions>>(
-    account: &T,
-) -> Result<Data, Error> {
+pub fn data_from_account<T: ReadableAccount>(account: &T) -> Result<Data, Error> {
     state_from_account(account).and_then(|ref s| data_from_state(s).cloned())
 }
 

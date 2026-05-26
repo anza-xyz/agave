@@ -28,6 +28,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_program_runtime::sysvar_account::account_size,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{stake as stake_program, sysvar},
@@ -35,13 +36,10 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
-    solana_sysvar::{
-        SysvarSerialize,
-        epoch_rewards::{self, EpochRewards},
-    },
+    solana_sysvar::epoch_rewards,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
-    std::{borrow::Borrow, sync::Arc},
+    std::borrow::Borrow,
 };
 
 // Default amount received by the validator
@@ -559,14 +557,16 @@ pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u
 }
 
 pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> u64 {
-    let data = vec![0; EpochRewards::size_of()];
-    let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
-
-    let account = AccountSharedData::create_from_existing_shared_data(
+    let lamports = std::cmp::max(
+        genesis_config
+            .rent
+            .minimum_balance(account_size::EPOCH_REWARDS),
+        1,
+    );
+    let account = AccountSharedData::new_rent_epoch(
         lamports,
-        Arc::new(data),
-        sysvar::id(),
-        false,
+        account_size::EPOCH_REWARDS,
+        &sysvar::id(),
         u64::MAX,
     );
 

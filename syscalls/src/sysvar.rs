@@ -1,9 +1,10 @@
 use {
     super::*, crate::translate_mut,
     solana_program_runtime::execution_budget::SVMTransactionExecutionCost, solana_sbpf::ebpf,
+    solana_sysvar_id::SysvarId,
 };
 
-fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
+fn get_sysvar<T: std::fmt::Debug + Clone + SysvarId>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: u64,
     invoke_context: &mut InvokeContext,

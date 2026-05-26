@@ -745,8 +745,8 @@ pub(crate) async fn process_upgrade_nonce_account(
 mod tests {
     use {
         super::*,
-        crate::{clap_app::get_clap_app, cli::parse_command},
-        solana_account::{Account, state_traits::StateMut},
+        crate::{account_state::StateMut, clap_app::get_clap_app, cli::parse_command},
+        solana_account::Account,
         solana_keypair::{Keypair, read_keypair_file, write_keypair},
         solana_nonce::{
             self as nonce,
