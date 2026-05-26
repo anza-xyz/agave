@@ -45,7 +45,7 @@ use {
         },
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils,
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -81,9 +81,6 @@ const PROCESS_SLOTS_HELP_STRING: &str =
 
 #[derive(Error, Debug)]
 pub(crate) enum LoadAndProcessLedgerError {
-    #[error("failed to clean orphaned account snapshot directories: {0}")]
-    CleanOrphanedAccountSnapshotDirectories(#[source] std::io::Error),
-
     #[error("failed to create all run and snapshot directories: {0}")]
     CreateAllAccountsRunAndSnapshotDirectories(#[source] std::io::Error),
 
@@ -291,10 +288,6 @@ pub fn load_and_process_ledger(
     info!("{measure_clean_account_paths}");
 
     snapshot_utils::purge_incomplete_bank_snapshots(&snapshot_config.bank_snapshots_dir);
-
-    info!("Cleaning contents of account snapshot paths: {account_snapshot_paths:?}");
-    clean_orphaned_account_snapshot_dirs(&account_snapshot_paths)
-        .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
 
     let geyser_plugin_active = arg_matches.is_present("geyser_plugin_config");
     let (accounts_update_notifier, transaction_notifier) = if geyser_plugin_active {

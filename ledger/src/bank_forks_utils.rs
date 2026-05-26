@@ -220,10 +220,11 @@ pub fn try_load_bank_forks_from_snapshot(
 
         // Storages on disk from a previous run are kept around so fastboot can use them. Now
         // that we've committed to loading from an archive instead, drop them — the archive will
-        // be extracted into these dirs and any leftover files would just be orphans.
+        // be extracted into the run dirs and any leftover files would just be orphans.
         for account_path in account_paths {
             move_and_async_delete_path_contents(account_path);
         }
+        snapshot_utils::wipe_account_snapshot_dirs(account_paths);
 
         snapshot_bank_utils::bank_from_snapshot_archives(
             account_paths,

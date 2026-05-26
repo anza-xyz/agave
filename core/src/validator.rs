@@ -39,7 +39,7 @@ use {
         voting_service::VotingServiceOverride,
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
-    anyhow::{Context, Result, anyhow},
+    anyhow::{Result, anyhow},
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
@@ -132,7 +132,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -832,13 +832,6 @@ impl Validator {
         snapshot_utils::purge_old_bank_snapshots_at_startup(
             &config.snapshot_config.bank_snapshots_dir,
         );
-
-        info!("Cleaning orphaned account snapshot directories...");
-        let mut timer = Measure::start("clean_orphaned_account_snapshot_dirs");
-        clean_orphaned_account_snapshot_dirs(&config.account_snapshot_paths)
-            .context("failed to clean orphaned account snapshot directories")?;
-        timer.stop();
-        info!("Cleaning orphaned account snapshot directories done. {timer}");
 
         // token used to cancel tpu-client-next, streamer and BLS streamer.
         let cancel = CancellationToken::new();

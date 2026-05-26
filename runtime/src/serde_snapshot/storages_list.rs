@@ -28,13 +28,19 @@ pub struct StoragesList {
 
 impl StoragesList {
     pub fn new_from_storages(snapshot_storages: &[Arc<AccountStorageEntry>]) -> Self {
-        let list = snapshot_storages
-            .iter()
-            .map(|storage| StorageListItem {
-                slot: storage.slot(),
-                id: storage.id(),
-            })
-            .collect();
+        Self::from_items(
+            snapshot_storages
+                .iter()
+                .map(|storage| StorageListItem {
+                    slot: storage.slot(),
+                    id: storage.id(),
+                })
+                .collect(),
+        )
+    }
+
+    /// Build a `StoragesList` from an existing `Vec` of items.
+    pub fn from_items(list: Vec<StorageListItem>) -> Self {
         Self { list }
     }
 

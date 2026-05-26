@@ -835,9 +835,8 @@ mod tests {
             genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
-                clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
-                get_bank_snapshots, get_highest_bank_snapshot, get_highest_loadable_bank_snapshot,
-                purge_all_bank_snapshots, purge_bank_snapshot,
+                create_tmp_accounts_dir_for_tests, get_bank_snapshots, get_highest_bank_snapshot,
+                get_highest_loadable_bank_snapshot, purge_all_bank_snapshots, purge_bank_snapshot,
                 purge_bank_snapshots_older_than_slot, purge_incomplete_bank_snapshots,
                 purge_old_bank_snapshots, purge_old_bank_snapshots_at_startup,
                 snapshot_storage_rebuilder::get_slot_and_append_vec_id,
@@ -1787,37 +1786,6 @@ mod tests {
         fs::remove_file(status_cache_file).unwrap();
         let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         assert_eq!(snapshot.slot, 1);
-    }
-
-    /// Simulates a leftover `<account_path>/snapshot/<slot>/` dir from a pre-refactor version
-    /// and verifies the cleanup helper removes it.
-    #[test]
-    fn test_clean_orphaned_account_snapshot_dirs() {
-        let account_snapshot_path = tempfile::TempDir::new().unwrap();
-        let legacy_slot_dir = account_snapshot_path.path().join("123");
-        fs::create_dir_all(&legacy_slot_dir).unwrap();
-        fs::write(legacy_slot_dir.join("123.0"), b"junk").unwrap();
-        assert!(legacy_slot_dir.exists());
-
-        clean_orphaned_account_snapshot_dirs(slice::from_ref(
-            &account_snapshot_path.path().to_path_buf(),
-        ))
-        .unwrap();
-
-        // move_and_async_delete_path renames before async-deleting, so the original is gone
-        // even if the eventual deletion hasn't completed.
-        assert!(!legacy_slot_dir.exists());
-    }
-
-    /// Cleanup should tolerate empty / missing account snapshot dirs.
-    #[test]
-    fn test_clean_orphaned_account_snapshot_dirs_empty() {
-        let account_snapshot_path = tempfile::TempDir::new().unwrap();
-        clean_orphaned_account_snapshot_dirs(slice::from_ref(
-            &account_snapshot_path.path().to_path_buf(),
-        ))
-        .unwrap();
-        clean_orphaned_account_snapshot_dirs(&[]).unwrap();
     }
 
     #[test_case(false)]
