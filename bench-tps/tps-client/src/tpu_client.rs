@@ -1,5 +1,6 @@
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
+    rayon::prelude::*,
     solana_account::Account,
     solana_commitment_config::CommitmentConfig,
     solana_connection_cache::connection_cache::{
@@ -25,11 +26,17 @@ where
 {
     fn send_transaction(&self, transaction: VersionedTransaction) -> TpsClientResult<Signature> {
         let signature = transaction.signatures[0];
-        self.try_send_transaction(&transaction)?;
+        let wire_transaction =
+            bincode::serialize(&transaction).expect("serialize Transaction in send_transaction");
+        self.try_send_wire_transaction(wire_transaction)?;
         Ok(signature)
     }
     fn send_batch(&self, transactions: Vec<VersionedTransaction>) -> TpsClientResult<()> {
-        self.try_send_transaction_batch(&transactions)?;
+        let wire_transactions = transactions
+            .into_par_iter()
+            .map(|tx| bincode::serialize(&tx).expect("serialize Transaction in send_batch"))
+            .collect::<Vec<_>>();
+        self.try_send_wire_transaction_batch(wire_transactions)?;
         Ok(())
     }
     fn get_latest_blockhash(&self) -> TpsClientResult<Hash> {

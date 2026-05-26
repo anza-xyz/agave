@@ -1,0 +1,76 @@
+[package]
+name = "solana-tps-client"
+publish = false
+version = "4.1.0-alpha.0"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+description = "Blockchain, Rebuilt for Scale"
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+license = "Apache-2.0"
+edition = "2021"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+bank-client = ["dep:solana-client-traits", "dep:solana-runtime"]
+dev-context-only-utils = []
+
+[dependencies]
+bincode = "1.3.3"
+log = "0.4.28"
+rayon = "1.11.0"
+solana-account = "3"
+solana-client = "=4.0.0-beta.2"
+solana-client-traits = { version = "3", optional = true }
+solana-clock = "3"
+solana-commitment-config = "3"
+solana-connection-cache = { version = "=4.0.0-beta.2", default-features = false, features = ["agave-unstable-api"] }
+solana-epoch-info = "3"
+solana-hash = "3"
+solana-message = "3"
+solana-pubkey = "3"
+solana-rpc-client = { version = "=4.0.0-beta.2", default-features = false }
+solana-rpc-client-api = "=4.0.0-beta.2"
+solana-runtime = { version = "=4.0.0-beta.2", features = ["agave-unstable-api"], optional = true }
+solana-signature = "3"
+solana-signer = "3"
+solana-tpu-client = { version = "=4.0.0-beta.2", default-features = false, features = ["agave-unstable-api"] }
+solana-transaction = "3"
+solana-transaction-error = "3"
+solana-transaction-status = { version = "=4.0.0-beta.2", features = ["agave-unstable-api"] }
+thiserror = "2.0.17"
+
+[dev-dependencies]
+solana-runtime = { version = "=4.0.0-beta.2", features = ["agave-unstable-api", "dev-context-only-utils"] }
+tempfile = "3.23.0"
+
+[lints.rust]
+boxed_slice_into_iter = "deny"
+dependency_on_unit_never_type_fallback = "deny"
+deprecated_safe_2024 = "deny"
+impl_trait_overcaptures = "deny"
+missing_unsafe_on_extern = "deny"
+never_type_fallback_flowing_into_unsafe = "deny"
+rust_2024_guarded_string_incompatible_syntax = "deny"
+rust_2024_incompatible_pat = "deny"
+rust_2024_prelude_collisions = "deny"
+static_mut_refs = "deny"
+unsafe_attr_outside_unsafe = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+]
+
+[lints.clippy]
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+used_underscore_binding = "deny"

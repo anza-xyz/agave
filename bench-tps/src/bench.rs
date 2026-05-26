@@ -2,9 +2,9 @@ use {
     crate::{
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         log_transaction_service::{
-            SignatureBatchSender, TransactionInfoBatch, create_log_transactions_service_and_sender,
+            create_log_transactions_service_and_sender, SignatureBatchSender, TransactionInfoBatch,
         },
-        perf_utils::{SampleStats, sample_txs},
+        perf_utils::{sample_txs, SampleStats},
         send_batch::*,
     },
     chrono::Utc,
@@ -18,9 +18,10 @@ use {
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
-    solana_message::{
-        Message, VersionedMessage,
+    solana_message::Message,
+    solana_message_v4::{
         v1::{Message as V1Message, TransactionConfig},
+        VersionedMessage as VersionedMessageV4,
     },
     solana_metrics::{self, datapoint_info},
     solana_native_token::Sol,
@@ -30,16 +31,16 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_time_utils::timestamp,
     solana_tps_client::*,
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
     spl_instruction_padding_interface::instruction::wrap_instruction,
     std::{
         collections::{HashSet, VecDeque},
         process::exit,
         sync::{
-            Arc, RwLock,
             atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
+            Arc, RwLock,
         },
-        thread::{Builder, JoinHandle, sleep},
+        thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -772,8 +773,16 @@ fn transfer_with_compute_unit_price_and_padding_v1(
     let message =
         V1Message::try_compile_with_config(&from_pubkey, &instructions, recent_blockhash, config)
             .unwrap();
-    let versioned_message = VersionedMessage::V1(message);
-    VersionedTransaction::try_new(versioned_message, &[from_keypair]).unwrap()
+    let versioned_message = VersionedMessageV4::V1(message);
+    // Build with v4 types then convert to v3 via serialization round-trip.
+    // wincode produces bincode-compatible bytes.
+    let v4_tx = solana_transaction_v4::versioned::VersionedTransaction::try_new(
+        versioned_message,
+        &[from_keypair],
+    )
+    .unwrap();
+    let bytes = wincode::serialize(&v4_tx).unwrap();
+    bincode::deserialize(&bytes).unwrap()
 }
 
 fn get_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?Sized>(
@@ -1315,7 +1324,7 @@ mod tests {
         agave_feature_set::FeatureSet,
         solana_commitment_config::CommitmentConfig,
         solana_fee_calculator::FeeRateGovernor,
-        solana_genesis_config::{GenesisConfig, create_genesis_config},
+        solana_genesis_config::{create_genesis_config, GenesisConfig},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::state::State,
         solana_runtime::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},

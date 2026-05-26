@@ -88,10 +88,7 @@ fn create_test_validator_and_client() -> (
 
     let test_validator = TestValidatorGenesis::default()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
-        .rent(Rent {
-            lamports_per_byte: 1,
-            ..Rent::default()
-        })
+        .rent(Rent::with_lamports_per_byte(1))
         .faucet_addr(Some(faucet_addr))
         .add_program(
             "spl_instruction_padding",

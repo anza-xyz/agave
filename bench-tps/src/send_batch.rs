@@ -10,7 +10,7 @@ use {
     solana_message::Message,
     solana_nonce::state::State,
     solana_pubkey::Pubkey,
-    solana_signer::{Signer, signers::Signers},
+    solana_signer::{signers::Signers, Signer},
     solana_system_interface::instruction as system_instruction,
     solana_tps_client::*,
     solana_transaction::Transaction,
@@ -18,8 +18,8 @@ use {
         collections::HashSet,
         marker::Send,
         sync::{
-            Arc, Mutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc, Mutex,
         },
         thread::sleep,
         time::{Duration, Instant},

@@ -80,6 +80,9 @@ dropspecial)
 check)
   badTomls=()
   for Cargo_toml in "${Cargo_tomls[@]}"; do
+    if [[ $Cargo_toml == ./bench-tps/* ]]; then
+      continue
+    fi
     if grep "^version = { workspace = true }" "$Cargo_toml" &>/dev/null; then
       continue
     fi
