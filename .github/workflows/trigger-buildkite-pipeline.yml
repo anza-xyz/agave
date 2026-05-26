@@ -111,6 +111,7 @@ jobs:
           build_meta_data: "${{ steps.prepare.outputs.build_meta_data }}"
           commit: "${{ steps.prepare.outputs.commit }}"
           message: "${{ steps.prepare.outputs.message }}"
+          pull_request_base_branch: "${{ github.event.pull_request.base.ref }}"
 
       - name: Summary
         env:
