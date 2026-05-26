@@ -19,6 +19,7 @@ use {
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
+        slot_params::{DEFAULT_MAX_ENTRY_BYTES_PER_SLOT, LEGACY_SLOT_PARAMS},
         stake_history::StakeHistory,
         stake_utils,
         stakes::{DeserializableStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes},
@@ -46,6 +47,7 @@ use {
         accounts_scan::ScanError,
         ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
+        partitioned_rewards::PartitionedEpochRewardsConfig,
     },
     solana_client_traits::SyncClient,
     solana_clock::{
@@ -57,8 +59,11 @@ use {
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_cost_model::block_cost_limits::{
-        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
+    solana_cost_model::{
+        block_cost_limits::{
+            MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
+        },
+        shred_limit::{DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT},
     },
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
@@ -6589,6 +6594,81 @@ fn test_ns_per_slot() {
     assert_eq!(
         bank.ns_per_slot_at_slot(bank.slot().saturating_add(1)),
         bank.ns_per_slot
+    );
+}
+
+#[test]
+fn test_slot_params_use_genesis_baseline_without_features() {
+    let (mut genesis_config, _) = create_genesis_config(1_000_000);
+    genesis_config.poh_config.target_tick_duration = Duration::from_millis(10);
+    let genesis_ns_per_slot = genesis_config.ns_per_slot();
+    let genesis_slots_per_year = genesis_config.slots_per_year();
+    let stake_account_stores_per_block = 17;
+    let mut accounts_db_config = ACCOUNTS_DB_CONFIG_FOR_TESTING;
+    accounts_db_config.partitioned_epoch_rewards_config =
+        PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
+
+    let bank = Bank::new_from_genesis(
+        &genesis_config,
+        Arc::<RuntimeConfig>::default(),
+        Vec::new(),
+        None,
+        accounts_db_config,
+        None,
+        None,
+        Arc::default(),
+        None,
+        None,
+    );
+    let baseline_params = bank.slot_params.baseline_params();
+
+    assert_ne!(baseline_params, LEGACY_SLOT_PARAMS);
+    assert_eq!(bank.ns_per_slot, genesis_ns_per_slot);
+    assert_eq!(baseline_params.ns_per_slot(), genesis_ns_per_slot);
+    assert_eq!(bank.ns_per_slot_at_slot(bank.slot()), genesis_ns_per_slot);
+    assert_eq!(
+        bank.ns_per_slot_at_slot(bank.slot().saturating_add(1)),
+        genesis_ns_per_slot
+    );
+    assert_eq!(
+        bank.slots_per_year.to_bits(),
+        genesis_slots_per_year.to_bits()
+    );
+    assert_eq!(
+        baseline_params.slots_per_year().to_bits(),
+        genesis_slots_per_year.to_bits()
+    );
+    assert_eq!(
+        baseline_params.hashes_per_tick(),
+        genesis_config.hashes_per_tick()
+    );
+    assert_eq!(
+        bank.epoch_duration_in_years(0).to_bits(),
+        (bank.get_slots_in_epoch(0) as f64 / genesis_slots_per_year).to_bits()
+    );
+    assert_eq!(
+        bank.slot_range_duration_in_years(0, 64).to_bits(),
+        (64.0 / genesis_slots_per_year).to_bits()
+    );
+    assert_eq!(
+        bank.partitioned_rewards_stake_account_stores_per_block,
+        stake_account_stores_per_block
+    );
+    assert_eq!(
+        baseline_params.partitioned_epoch_rewards_stake_account_stores_per_block(),
+        stake_account_stores_per_block
+    );
+    assert_eq!(
+        bank.max_data_shreds_per_slot(),
+        DEFAULT_MAX_DATA_SHREDS_PER_SLOT
+    );
+    assert_eq!(
+        bank.max_code_shreds_per_slot(),
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT
+    );
+    assert_eq!(
+        bank.max_entry_bytes_per_slot(),
+        DEFAULT_MAX_ENTRY_BYTES_PER_SLOT
     );
 }
 

@@ -33,6 +33,11 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
+pub use {
+    crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
+    solana_reward_info::RewardType,
+};
 use {
     crate::{
         account_saver::collect_accounts_to_store,
@@ -56,6 +61,7 @@ use {
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
+        slot_params::{SlotParams, SlotParamsArchive},
         stake_account::StakeAccount,
         stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
@@ -107,11 +113,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{
-        block_cost_limits::simd_0286_block_limit,
-        cost_tracker::CostTracker,
-        shred_limit::{DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT},
-    },
+    solana_cost_model::{block_cost_limits::simd_0286_block_limit, cost_tracker::CostTracker},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -217,10 +219,6 @@ use {
     solana_nonce as nonce,
     solana_nonce_account::{SystemAccountKind, get_system_account_kind},
     solana_program_runtime::sysvar_cache::SysvarCache,
-};
-pub use {
-    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
-    solana_reward_info::RewardType,
 };
 
 /// params to `verify_accounts_hash`
@@ -607,6 +605,7 @@ impl PartialEq for Bank {
             ns_per_slot,
             genesis_creation_time,
             slots_per_year,
+            slot_params: _,
             slot,
             bank_id: _,
             epoch,
@@ -734,9 +733,6 @@ impl BankFieldsToSerialize {
 pub enum RewardCalculationEvent<'a, 'b> {
     Staking(&'a Pubkey, &'b InflationPointCalculationEvent),
 }
-/// Default maximum serialized entry bytes a bank may accept in one slot.
-pub const DEFAULT_MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
-
 /// type alias is not supported for trait in rust yet. As a workaround, we define the
 /// `RewardCalcTracer` trait explicitly and implement it on any type that implement
 /// `Fn(&RewardCalculationEvent) + Send + Sync`.
@@ -879,6 +875,9 @@ pub struct Bank {
 
     /// The number of slots per year, used for inflation
     slots_per_year: f64,
+
+    /// Slot-scoped parameter history used for slot-relative parameter lookups.
+    slot_params: SlotParamsArchive,
 
     /// Bank slot (i.e. block)
     slot: Slot,
@@ -1170,6 +1169,7 @@ impl Bank {
             ns_per_slot: u128::default(),
             genesis_creation_time: UnixTimestamp::default(),
             slots_per_year: f64::default(),
+            slot_params: SlotParamsArchive::default(),
             slot: Slot::default(),
             bank_id: BankId::default(),
             epoch: Epoch::default(),
@@ -1400,6 +1400,7 @@ impl Bank {
             ns_per_slot: parent.ns_per_slot,
             genesis_creation_time: parent.genesis_creation_time,
             slots_per_year: parent.slots_per_year,
+            slot_params: parent.slot_params.clone(),
             epoch_schedule,
             rent_collector: Self::get_rent_collector_from(&parent.rent_collector, epoch),
             max_tick_height: slot
@@ -2090,6 +2091,7 @@ impl Bank {
             ns_per_slot: fields.ns_per_slot,
             genesis_creation_time: fields.genesis_creation_time,
             slots_per_year: fields.slots_per_year,
+            slot_params: SlotParamsArchive::default(),
             slot,
             bank_id: 0,
             epoch,
@@ -2167,6 +2169,11 @@ impl Bank {
             )
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
+
+        bank.refresh_slot_params_with_baseline(Self::genesis_config_slot_params(
+            genesis_config,
+            bank.partitioned_rewards_stake_account_stores_per_block,
+        ));
 
         bank.initialize_after_snapshot_restore(|| rewards_calculation_thread_pool);
 
@@ -2653,16 +2660,76 @@ impl Bank {
         });
     }
 
+    /// Rebuilds cached slot params while preserving the supplied slot-0 baseline.
+    ///
+    /// The cache is not serialized into snapshots; it is reconstructed from
+    /// existing Bank fields during genesis and snapshot restore.
+    fn refresh_slot_params_with_baseline(&mut self, baseline_params: SlotParams) {
+        self.slot_params = SlotParamsArchive::new(&self.epoch_schedule, baseline_params);
+    }
+
+    /// Builds slot-0 params from the genesis config.
+    fn genesis_config_slot_params(
+        genesis_config: &GenesisConfig,
+        partitioned_rewards_stake_account_stores_per_block: u64,
+    ) -> SlotParams {
+        SlotParams::genesis_baseline(
+            genesis_config.ns_per_slot(),
+            genesis_config.slots_per_year(),
+            genesis_config.hashes_per_tick(),
+            partitioned_rewards_stake_account_stores_per_block,
+        )
+    }
+
+    /// Returns the slot params effective at `slot`.
+    fn slot_params_at_slot(&self, slot: Slot) -> SlotParams {
+        self.slot_params.params_at_slot(slot)
+    }
+
+    /// Returns the effective slot duration for `slot`.
+    pub fn ns_per_slot_at_slot(&self, slot: Slot) -> u128 {
+        self.slot_params_at_slot(slot).ns_per_slot()
+    }
+
+    /// Returns slots/year for the slot params active at `epoch` start.
+    fn slots_per_year_for_epoch(&self, epoch: Epoch) -> f64 {
+        let first_slot = self.epoch_schedule().get_first_slot_in_epoch(epoch);
+        self.slot_params_at_slot(first_slot).slots_per_year()
+    }
+
+    /// Returns the wall-clock duration in years for `[start_slot, end_slot)`.
+    fn slot_range_duration_in_years(&self, start_slot: Slot, end_slot: Slot) -> f64 {
+        if start_slot >= end_slot {
+            return 0.0;
+        }
+
+        let mut cursor = start_slot;
+        let mut params = self.slot_params.baseline_params();
+        let mut duration = 0.0;
+
+        for (effective_slot, effective_params) in self.slot_params.param_transitions() {
+            if *effective_slot <= start_slot {
+                params = *effective_params;
+                continue;
+            }
+            if *effective_slot >= end_slot {
+                break;
+            }
+
+            duration += (*effective_slot - cursor) as f64 / params.slots_per_year();
+            cursor = *effective_slot;
+            params = *effective_params;
+        }
+
+        duration + (end_slot - cursor) as f64 / params.slots_per_year()
+    }
+
     pub fn epoch_duration_in_years(&self, epoch: Epoch) -> f64 {
         // period: time that has passed as a fraction of a year, basically the length of
         //  an epoch as a fraction of a year
         //  calculated as: slots_elapsed / (slots / year)
-        self.epoch_schedule().get_slots_in_epoch(epoch) as f64 / self.slots_per_year
-    }
-
-    /// Returns the slot duration to use for `slot`.
-    pub fn ns_per_slot_at_slot(&self, _slot: Slot) -> u128 {
-        self.ns_per_slot
+        self.epoch_schedule().get_slots_in_epoch(epoch) as f64
+            / self.slots_per_year_for_epoch(epoch)
     }
 
     pub fn max_processing_age(&self) -> usize {
@@ -2689,22 +2756,27 @@ impl Bank {
         })
     }
 
+    /// Returns slots since inflation started, aligned to the first slot used for rewards accrual.
     fn get_inflation_num_slots(&self) -> u64 {
-        let inflation_activation_slot = self.get_inflation_start_slot();
-        // Normalize inflation_start to align with the start of rewards accrual.
-        let inflation_start_slot = self.epoch_schedule().get_first_slot_in_epoch(
-            self.epoch_schedule()
-                .get_epoch(inflation_activation_slot)
-                .saturating_sub(1),
-        );
+        let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
         self.epoch_schedule().get_first_slot_in_epoch(self.epoch()) - inflation_start_slot
     }
 
+    /// Returns the inflation rewards start slot aligned to an epoch boundary.
+    fn inflation_start_slot_aligned_to_rewards(&self) -> Slot {
+        let inflation_activation_slot = self.get_inflation_start_slot();
+        self.epoch_schedule().get_first_slot_in_epoch(
+            self.epoch_schedule()
+                .get_epoch(inflation_activation_slot)
+                .saturating_sub(1),
+        )
+    }
+
+    /// Returns elapsed inflation time in years for slots since inflation started.
     pub fn slot_in_year_for_inflation(&self) -> f64 {
         let num_slots = self.get_inflation_num_slots();
-
-        // calculated as: num_slots / (slots / year)
-        num_slots as f64 / self.slots_per_year
+        let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
+        self.slot_range_duration_in_years(inflation_start_slot, inflation_start_slot + num_slots)
     }
 
     /// For a given `capitalization` (total_supply in lamports) and `epoch`, returns the
@@ -2971,6 +3043,10 @@ impl Bank {
         self.slots_per_year = genesis_config.slots_per_year();
 
         self.epoch_schedule = genesis_config.epoch_schedule.clone();
+        self.refresh_slot_params_with_baseline(Self::genesis_config_slot_params(
+            genesis_config,
+            self.partitioned_rewards_stake_account_stores_per_block,
+        ));
 
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
@@ -4872,16 +4948,16 @@ impl Bank {
     ///
     /// Limit changes are delayed by an epoch, so a root bank can derive the
     /// limit for any slot inside the shred intake window.
-    pub fn max_data_shreds_per_slot_for_slot(&self, _slot: Slot) -> u32 {
-        DEFAULT_MAX_DATA_SHREDS_PER_SLOT
+    pub fn max_data_shreds_per_slot_for_slot(&self, slot: Slot) -> u32 {
+        self.slot_params_at_slot(slot).max_data_shreds_per_slot()
     }
 
     /// Returns the code shred limit applicable to `slot`.
     ///
     /// Limit changes are delayed by an epoch, so a root bank can derive the
     /// limit for any slot inside the shred intake window.
-    pub fn max_code_shreds_per_slot_for_slot(&self, _slot: Slot) -> u32 {
-        DEFAULT_MAX_CODE_SHREDS_PER_SLOT
+    pub fn max_code_shreds_per_slot_for_slot(&self, slot: Slot) -> u32 {
+        self.slot_params_at_slot(slot).max_code_shreds_per_slot()
     }
 
     pub fn max_entry_bytes_per_slot(&self) -> u64 {
@@ -6432,6 +6508,12 @@ impl Bank {
         bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(slot, epoch);
         bank.accounts_lt_hash = Mutex::new(fields.accounts_lt_hash);
         bank.bank_hash_stats = AtomicBankHashStats::new(&fields.bank_hash_stats);
+        bank.refresh_slot_params_with_baseline(SlotParams::genesis_baseline(
+            bank.ns_per_slot,
+            bank.slots_per_year,
+            bank.hashes_per_tick,
+            bank.partitioned_rewards_stake_account_stores_per_block,
+        ));
 
         bank
     }
