@@ -979,7 +979,8 @@ pub fn output_slot(
                     BlockComponent::EntryBatch(entries) => entries.last().map(|entry| entry.hash),
                     BlockComponent::BlockMarker(_) => None,
                 })
-                .unwrap_or_else(|| panic!("Rooted slot {slot:?} must have blockhash"));
+                .filter(|_| meta.is_full())
+                .unwrap_or_default();
             let parent_slot = meta.parent_slot.unwrap_or(0);
 
             let mut components = Vec::with_capacity(raw_components.len());
