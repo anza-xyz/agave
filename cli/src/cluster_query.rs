@@ -1518,7 +1518,20 @@ pub fn process_logs(
                 );
                 if tree {
                     let frames = crate::log_tree::cpi_tree(&logs.value.logs);
-                    let rendered = crate::log_tree::format_cpi_tree("CPI Tree:", &frames);
+                    // Include the transaction-total CU on the header line.
+                    // `transaction_total_cu` returns `None` when every
+                    // top-level frame is a native program (BPF Loader,
+                    // top-level System Program, etc.) since those don't
+                    // emit `consumed N of M compute units` lines. Falling
+                    // back to `(0 CU)` in that case would misreport; the
+                    // honest text below makes the limitation explicit.
+                    let header = match crate::log_tree::transaction_total_cu(&frames) {
+                        Some(total) => {
+                            format!("CPI Tree ({} CU):", crate::log_tree::with_commas(total))
+                        }
+                        None => "CPI Tree (no compute units in logs):".to_string(),
+                    };
+                    let rendered = crate::log_tree::format_cpi_tree(&header, &frames);
                     for line in rendered.lines() {
                         println!("  {line}");
                     }
