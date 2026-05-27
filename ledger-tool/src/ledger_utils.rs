@@ -10,10 +10,7 @@ use {
     log::*,
     solana_accounts_db::{
         accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
-        utils::{
-            create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
-            validate_account_paths_for_direct_io,
-        },
+        utils::{create_all_accounts_run_and_snapshot_dirs, validate_account_paths_for_direct_io},
     },
     solana_clock::Slot,
     solana_core::{
@@ -35,7 +32,6 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
-    solana_measure::measure_time,
     solana_pubkey::Pubkey,
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::{
@@ -275,17 +271,6 @@ pub fn load_and_process_ledger(
             ]),
     )
     .map_err(LoadAndProcessLedgerError::ValidateAccountPaths)?;
-
-    let (_, measure_clean_account_paths) = measure_time!(
-        account_paths.iter().for_each(|path| {
-            if path.exists() {
-                info!("Cleaning contents of account path: {}", path.display());
-                move_and_async_delete_path_contents(path);
-            }
-        }),
-        "Cleaning account paths"
-    );
-    info!("{measure_clean_account_paths}");
 
     snapshot_utils::purge_incomplete_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
