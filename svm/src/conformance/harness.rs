@@ -3,11 +3,8 @@
 use {
     super::context::{InstrContext, InstrEffects},
     crate::message_processor::process_message,
-    agave_feature_set::FeatureSet,
-    agave_precompiles::{get_precompile, is_precompile},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
-    solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
         loaded_programs::{
@@ -27,19 +24,27 @@ use {
 };
 #[cfg(feature = "conformance")]
 use {
-    super::{
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        sysvar::fill_sysvar_cache_from_accounts,
-    },
+    super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+    agave_feature_set::FeatureSet,
+    agave_precompiles::{get_precompile, is_precompile},
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+    solana_account::ReadableAccount,
+    solana_precompile_error::PrecompileError,
     std::ffi::c_int,
 };
 
-/// Default callback. Full precompile support.
+/// Default callback. No precompile support.
 struct DefaultCallback;
 
-impl InvokeContextCallback for DefaultCallback {
+impl InvokeContextCallback for DefaultCallback {}
+
+/// Conformance callback. Full precompile support across all features.
+#[cfg(feature = "conformance")]
+struct ConformanceCallback;
+
+#[cfg(feature = "conformance")]
+impl InvokeContextCallback for ConformanceCallback {
     fn is_precompile(&self, program_id: &Pubkey) -> bool {
         is_precompile(program_id, |_| true)
     }
@@ -65,7 +70,7 @@ pub fn execute_instr(
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
-) -> Option<InstrEffects> {
+) -> InstrEffects {
     execute_instr_with_callback(
         input,
         &DefaultCallback,
@@ -82,7 +87,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
-) -> Option<InstrEffects> {
+) -> InstrEffects {
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
@@ -91,7 +96,10 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 
     let rent = sysvar_cache.get_rent().unwrap();
     let program_id = &input.instruction.program_id;
-    let loader_key = program_cache.find(program_id)?.account_owner();
+    let loader_key = program_cache
+        .find(program_id)
+        .expect("program not loaded in cache")
+        .account_owner();
 
     let (sanitized_message, transaction_accounts) =
         mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key);
@@ -176,7 +184,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         })
         .collect::<Vec<_>>();
 
-    Some(InstrEffects {
+    InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
             Some(code)
         } else {
@@ -193,11 +201,11 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         cu_avail,
         return_data,
         logs,
-    })
+    }
 }
 
 #[cfg(feature = "conformance")]
-pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
+pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let cu_avail = input.cu_avail;
     let instr_context = InstrContext::from(input);
 
@@ -213,7 +221,13 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     // When testing with protobuf, we fill the sysvar cache from input accounts.
     let sysvar_cache = {
         let mut cache = SysvarCache::default();
-        fill_sysvar_cache_from_accounts(&mut cache, &instr_context.accounts);
+        cache.fill_missing_entries(|pubkey, callbackback| {
+            if let Some(account) = instr_context.accounts.iter().find(|(key, _)| key == pubkey)
+                && account.1.lamports() > 0
+            {
+                callbackback(account.1.data());
+            }
+        });
         cache
     };
 
@@ -235,13 +249,14 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
         cache
     };
 
-    let instr_effects = execute_instr(
+    execute_instr_with_callback(
         &instr_context,
+        &ConformanceCallback,
         &compute_budget,
         &mut program_cache,
         &sysvar_cache,
-    );
-    instr_effects.map(Into::into)
+    )
+    .into()
 }
 
 /// # Safety
@@ -261,9 +276,7 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
         return 0;
     };
-    let Some(instr_effects) = execute_instr_proto(instr_context) else {
-        return 0;
-    };
+    let instr_effects = execute_instr_proto(instr_context);
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
     let out_vec = instr_effects.encode_to_vec();
     if out_vec.len() > out_slice.len() {
@@ -280,23 +293,19 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 mod tests {
     use {
         super::{
-            super::{
-                programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-                sysvar::fill_sysvar_cache_from_accounts,
-            },
+            super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
             *,
         },
         solana_account::Account,
         solana_instruction::{AccountMeta, Instruction},
+        solana_rent::Rent,
         solana_svm_feature_set::SVMFeatureSet,
-        solana_sysvar_id::SysvarId,
     };
 
     #[test]
     fn test_system_program_exec() {
         let system_program_id = solana_sdk_ids::system_program::id();
         let native_loader_id = solana_sdk_ids::native_loader::id();
-        let sysvar_id = solana_sysvar_id::id();
 
         let from_pubkey = Pubkey::new_from_array([1u8; 32]);
         let to_pubkey = Pubkey::new_from_array([2u8; 32]);
@@ -304,17 +313,6 @@ mod tests {
         let cu_avail = 10000u64;
         let slot = 10;
         let feature_set = SVMFeatureSet::default();
-
-        // Create Clock sysvar.
-        let clock = solana_clock::Clock {
-            slot,
-            ..Default::default()
-        };
-        let clock_data = bincode::serialize(&clock).unwrap();
-
-        // Create Rent sysvar.
-        let rent = solana_rent::Rent::default();
-        let rent_data = bincode::serialize(&rent).unwrap();
 
         // Build the instruction context.
         let context = InstrContext {
@@ -350,26 +348,6 @@ mod tests {
                         rent_epoch: u64::MAX,
                     },
                 ),
-                (
-                    solana_clock::Clock::id(),
-                    Account {
-                        lamports: 1,
-                        data: clock_data,
-                        owner: sysvar_id,
-                        executable: false,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
-                (
-                    solana_rent::Rent::id(),
-                    Account {
-                        lamports: 1,
-                        data: rent_data,
-                        owner: sysvar_id,
-                        executable: false,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
             ],
             instruction: Instruction {
                 program_id: system_program_id,
@@ -402,7 +380,13 @@ mod tests {
 
         // Create Sysvar Cache.
         let mut sysvar_cache = SysvarCache::default();
-        fill_sysvar_cache_from_accounts(&mut sysvar_cache, &context.accounts);
+        sysvar_cache.fill_missing_entries(|pubkey, callback| {
+            if pubkey == &solana_sdk_ids::sysvar::rent::id() {
+                let rent = Rent::default();
+                let rent_data = bincode::serialize(&rent).unwrap();
+                callback(&rent_data);
+            }
+        });
 
         // Create Program Cache
         let mut program_cache = new_program_cache_with_builtins(slot);
@@ -424,8 +408,7 @@ mod tests {
         .unwrap();
 
         // Execute the instruction.
-        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
-            .expect("Instruction execution should succeed");
+        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
         // Verify the results.
         assert_eq!(effects.result, None);

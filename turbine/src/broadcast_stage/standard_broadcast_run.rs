@@ -305,8 +305,8 @@ impl StandardBroadcastRun {
         receive_results: ReceiveResults,
         bank_forks: &RwLock<BankForks>,
     ) -> Result<()> {
-        let (bsend, brecv) = unbounded();
-        let (ssend, srecv) = unbounded();
+        let (bsend, brecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
+        let (ssend, srecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         self.process_receive_results(
             keypair,
             blockstore,
@@ -362,8 +362,7 @@ impl StandardBroadcastRun {
                     was_interrupted: true,
                 });
                 let shreds = Arc::new(shreds);
-                socket_sender.send((shreds.clone(), batch_info.clone()))?;
-                blockstore_sender.send((shreds, batch_info))?;
+                dispatch_shreds(blockstore_sender, socket_sender, shreds, batch_info)?;
             }
             // If blockstore already has shreds for this slot,
             // it should not recreate the slot:
@@ -463,8 +462,7 @@ impl StandardBroadcastRun {
 
         let shreds = Arc::new(shreds);
         debug_assert!(shreds.iter().all(|shred| shred.slot() == bank.slot()));
-        socket_sender.send((shreds.clone(), batch_info.clone()))?;
-        blockstore_sender.send((shreds, batch_info))?;
+        dispatch_shreds(blockstore_sender, socket_sender, shreds, batch_info)?;
 
         coding_send_time.stop();
 

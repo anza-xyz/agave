@@ -126,7 +126,8 @@ mod serde_snapshot_tests {
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
-        let storage_files = open_storage_files(storage_entries.iter().map(|s| s.as_ref()), false)?;
+        let storage_files = open_storage_files(storage_entries.iter().map(|s| s.as_ref()), false)
+            .collect::<io::Result<Vec<_>>>()?;
         let mut buf_reader =
             storage_file_buf_reader(MAX_BUFFER_SIZE, false, &IoSetupState::default())?;
         for (storage_entry, file) in storage_entries.iter().zip(storage_files.iter()) {

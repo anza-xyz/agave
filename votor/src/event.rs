@@ -4,7 +4,10 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_runtime::bank::Bank,
-    std::{sync::Arc, time::Instant},
+    std::{
+        sync::{Arc, Mutex},
+        time::Instant,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -119,13 +122,10 @@ impl RepairEvent {
     }
 }
 
-pub type SwitchBankEventSender = Sender<SwitchBankEvent>;
-pub type SwitchBankEventReceiver = Receiver<SwitchBankEvent>;
-
-/// Event sent to replay_stage when a bank needs to be switched as a result of a ParentReady
+/// Event sent to replay_stage when a bank needs to be switched as a result of a ParentReady.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SwitchBankEvent {
-    /// We need to switch any existing banks to this bank including ancestors
+    /// We need to switch any existing banks to this bank including ancestors.
     Switch { slot: Slot, block_id: Hash },
 }
 
@@ -134,5 +134,31 @@ impl SwitchBankEvent {
         match self {
             SwitchBankEvent::Switch { slot, block_id } => (*slot, *block_id),
         }
+    }
+}
+
+/// Shared single-cell holding the most recent switch-bank request from votor to replay.
+///
+/// Used instead of a channel because replay only ever acts on the latest event — buffering
+/// older events doesn't help, and blocking on a full channel could lead to a stall in Votor.
+/// Writer (votor) advances monotonically via [`Self::try_advance`]; reader (replay) pulls the
+/// current value via [`Self::take`].
+#[derive(Clone, Default)]
+pub struct LatestSwitchRequest(Arc<Mutex<Option<SwitchBankEvent>>>);
+
+impl LatestSwitchRequest {
+    /// Records `event` as the latest pending request, iff it is strictly newer than what's
+    /// currently held. Returns the previous value (if any) when it was overwritten.
+    pub fn try_advance(&self, event: SwitchBankEvent) -> Option<SwitchBankEvent> {
+        let mut guard = self.0.lock().unwrap();
+        match guard.as_ref() {
+            Some(cur) if event <= *cur => None,
+            _ => guard.replace(event),
+        }
+    }
+
+    /// Atomically takes the current request, leaving the cell empty.
+    pub fn take(&self) -> Option<SwitchBankEvent> {
+        self.0.lock().unwrap().take()
     }
 }

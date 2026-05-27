@@ -34,8 +34,7 @@ use {
     },
     agave_votor::{
         event::{
-            CompletedBlock, LeaderWindowInfo, SwitchBankEvent, SwitchBankEventReceiver, VotorEvent,
-            VotorEventSender,
+            CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, VotorEvent, VotorEventSender,
         },
         root_utils,
         vote_history_storage::SavedVoteHistory,
@@ -461,7 +460,7 @@ pub struct ReplayReceivers {
     pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
     pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
-    pub switch_bank_receiver: SwitchBankEventReceiver,
+    pub latest_switch_request: LatestSwitchRequest,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -776,7 +775,7 @@ impl ReplayStage {
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
-            switch_bank_receiver,
+            latest_switch_request,
         } = receivers;
 
         trace!("replay stage");
@@ -1046,7 +1045,7 @@ impl ReplayStage {
                     );
                     Self::process_switch_bank_events(
                         &my_pubkey,
-                        &switch_bank_receiver,
+                        &latest_switch_request,
                         &mut pending_switch,
                         &blockstore,
                         &bank_forks,
@@ -2369,7 +2368,7 @@ impl ReplayStage {
     /// this in `pending_switch`
     fn process_switch_bank_events(
         my_pubkey: &Pubkey,
-        switch_bank_receiver: &SwitchBankEventReceiver,
+        latest_switch_request: &LatestSwitchRequest,
         pending_switch: &mut Option<(Slot, Hash)>,
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
@@ -2378,13 +2377,11 @@ impl ReplayStage {
     ) -> Result<(), BlockstoreError> {
         let root = bank_forks.read().unwrap().root();
 
-        if let Some(switch_bank_event) = switch_bank_receiver
-            .try_iter()
-            .max()
-            .filter(|SwitchBankEvent::Switch { slot, .. }| *slot > root)
+        if let Some((slot, block_id)) = latest_switch_request
+            .take()
+            .map(|ev| ev.block())
+            .filter(|(slot, _)| *slot > root)
         {
-            let (slot, block_id) = switch_bank_event.block();
-
             // Overwrite the pending switch, later switches take precedence
             if Some(slot) >= pending_switch.map(|(slot, _)| slot) {
                 if let Some(prev_switch_request) = pending_switch.replace((slot, block_id)) {

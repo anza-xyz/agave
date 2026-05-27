@@ -16,6 +16,18 @@ use {
 // file fits entirely within the buffer.
 pub const ACCOUNT_STORAGE_MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
+#[cfg(not(target_os = "linux"))]
+const READER_STACK_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Concrete reader type returned by [`storage_file_buf_reader`].
+///
+/// The concrete type is exposed (rather than `impl FileBufRead<'a>`) so callers
+/// can use inherent methods like `rebind`.
+#[cfg(target_os = "linux")]
+type StorageFileBufReader<'a> = buffered_reader::SequentialFileReader<'a>;
+#[cfg(not(target_os = "linux"))]
+type StorageFileBufReader<'a> = buffered_reader::BufferedReader<'a, READER_STACK_BUFFER_SIZE>;
+
 /// When `use_page_cache` is `true`, direct I/O is forced off regardless of
 /// `io_setup.use_direct_io` so that reads can hit the kernel's page cache.
 /// Otherwise, the `io_setup.use_direct_io` setting is honored.
@@ -23,35 +35,31 @@ pub fn storage_file_buf_reader<'a>(
     max_buf_size: usize,
     use_page_cache: bool,
     io_setup: &IoSetupState,
-) -> io::Result<impl FileBufRead<'a> + use<'a>> {
+) -> io::Result<StorageFileBufReader<'a>> {
     #[cfg(target_os = "linux")]
-    let reader = buffered_reader::SequentialFileReaderBuilder::new()
-        .shared_sqpoll(io_setup.shared_sqpoll_fd())
-        .use_direct_io(io_setup.use_direct_io && !use_page_cache)
-        .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
-        .build(max_buf_size)?;
+    {
+        buffered_reader::SequentialFileReaderBuilder::new()
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .use_direct_io(io_setup.use_direct_io && !use_page_cache)
+            .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+            .build(max_buf_size)
+    }
     #[cfg(not(target_os = "linux"))]
-    let reader = {
+    {
         let _ = (max_buf_size, use_page_cache, io_setup);
-        const READER_STACK_BUFFER_SIZE: usize = 64 * 1024;
-        buffered_reader::BufferedReader::<READER_STACK_BUFFER_SIZE>::new()
-    };
-    Ok(reader)
+        Ok(StorageFileBufReader::new())
+    }
 }
 
-/// Returns a file handle for each storage suitable for archive-style reads
-/// matching `use_direct_io` (see [`OpenFileForArchive`]).
-///
-/// Returned as a `Vec` so the handles outlive the buffered reader they'll be
-/// fed into.
+/// Lazy iterator yielding a file handle for each storage suitable for
+/// archive-style reads matching `use_direct_io` (see [`OpenFileForArchive`]).
 pub fn open_storage_files<'s>(
-    storages: impl IntoIterator<Item = &'s AccountStorageEntry>,
+    storages: impl IntoIterator<Item = &'s AccountStorageEntry> + 's,
     use_direct_io: bool,
-) -> io::Result<Vec<OpenFileForArchive<'s>>> {
+) -> impl Iterator<Item = io::Result<OpenFileForArchive<'s>>> + 's {
     storages
         .into_iter()
-        .map(|storage| storage.accounts.open_file_for_archive(use_direct_io))
-        .collect()
+        .map(move |storage| storage.accounts.open_file_for_archive(use_direct_io))
 }
 
 /// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
@@ -207,7 +215,9 @@ mod tests {
 
         storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
-        let files = open_storage_files(iter::once(&storage), false).unwrap();
+        let files = open_storage_files(iter::once(&storage), false)
+            .collect::<io::Result<Vec<_>>>()
+            .unwrap();
         let mut buf_reader = storage_file_buf_reader(
             ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
             false,
@@ -284,7 +294,9 @@ mod tests {
         let storage = storage.reopen_as_readonly().unwrap_or(storage);
 
         // Create the reader and check the length
-        let files = open_storage_files(iter::once(&storage), false).unwrap();
+        let files = open_storage_files(iter::once(&storage), false)
+            .collect::<io::Result<Vec<_>>>()
+            .unwrap();
         let mut file_reader = storage_file_buf_reader(
             ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
             false,
@@ -406,7 +418,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Now iterate through all the possible snapshot slots and verify correctness
-        let files = open_storage_files(iter::once(&storage), false).unwrap();
+        let files = open_storage_files(iter::once(&storage), false)
+            .collect::<io::Result<Vec<_>>>()
+            .unwrap();
         let mut file_reader = storage_file_buf_reader(
             ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
             false,

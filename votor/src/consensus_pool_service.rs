@@ -84,6 +84,7 @@ impl ConsensusPoolService {
     fn maybe_update_root_and_send_new_certificates(
         consensus_pool: &mut ConsensusPool,
         sharable_banks: &SharableBanks,
+        my_pubkey: &Pubkey,
         bls_sender: &Sender<BLSOp>,
         new_finalized_slot: Option<Slot>,
         new_certificates_to_send: Vec<Arc<Certificate>>,
@@ -103,10 +104,45 @@ impl ConsensusPoolService {
         consensus_pool.maybe_prune(bank.slot());
         stats.prune_old_state_called += 1;
         // Send new certificates to peers
-        Self::send_certificates(bls_sender, new_certificates_to_send, stats)
+        Self::send_certificates(
+            sharable_banks,
+            my_pubkey,
+            bls_sender,
+            new_certificates_to_send,
+            stats,
+        )
     }
 
     fn send_certificates(
+        sharable_banks: &SharableBanks,
+        my_pubkey: &Pubkey,
+        bls_sender: &Sender<BLSOp>,
+        certificates_to_send: Vec<Arc<Certificate>>,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), AddVoteError> {
+        let num_certs = certificates_to_send.len();
+        if num_certs == 0 {
+            return Ok(());
+        }
+        // If we are not a staked identity (hot spare / RPC / new validator / failed VAT)
+        // we should not send out the certificate. A2A quic only accepts connections
+        // from staked identities
+        if !Self::is_current_identity_staked(sharable_banks, my_pubkey) {
+            stats.certificates_skipped_unstaked += num_certs;
+            return Ok(());
+        }
+        Self::enqueue_certificates(bls_sender, certificates_to_send, stats)
+    }
+
+    fn is_current_identity_staked(sharable_banks: &SharableBanks, my_pubkey: &Pubkey) -> bool {
+        sharable_banks
+            .root()
+            .current_epoch_staked_nodes()
+            .get(my_pubkey)
+            .is_some_and(|stake| *stake > 0)
+    }
+
+    fn enqueue_certificates(
         bls_sender: &Sender<BLSOp>,
         certificates_to_send: Vec<Arc<Certificate>>,
         stats: &mut ConsensusPoolServiceStats,
@@ -164,6 +200,7 @@ impl ConsensusPoolService {
         Self::maybe_update_root_and_send_new_certificates(
             consensus_pool,
             &ctx.sharable_banks,
+            &ctx.cluster_info.id(),
             &ctx.bls_sender,
             new_finalized_slot,
             new_certificates_to_send,
@@ -265,6 +302,8 @@ impl ConsensusPoolService {
                 stats.standstill = true;
                 standstill_timer = Instant::now();
                 match Self::send_certificates(
+                    &ctx.sharable_banks,
+                    &ctx.cluster_info.id(),
                     &ctx.bls_sender,
                     consensus_pool.get_certs_for_standstill(),
                     &mut stats,
@@ -669,7 +708,7 @@ mod tests {
             let vote_keypair = &ctx.validator_keypairs[my_rank].vote_keypair;
             let bls_keypair =
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-            let vote_serialized = bincode::serialize(&notarize_vote).unwrap();
+            let vote_serialized = wincode::serialize(&notarize_vote).unwrap();
             let message = ConsensusMessage::Vote(VoteMessage {
                 vote: notarize_vote,
                 signature: bls_keypair.sign(&vote_serialized).into(),
@@ -697,6 +736,7 @@ mod tests {
                 ConsensusPoolService::maybe_update_root_and_send_new_certificates(
                     &mut ctx.consensus_pool,
                     &ctx.sharable_banks,
+                    &ctx.my_pubkey,
                     &ctx.bls_sender,
                     new_finalized_slot,
                     new_certificates_to_send,
@@ -778,6 +818,7 @@ mod tests {
         ConsensusPoolService::maybe_update_root_and_send_new_certificates(
             &mut ctx.consensus_pool,
             &ctx.sharable_banks,
+            &ctx.my_pubkey,
             &ctx.bls_sender,
             new_finalized_slot,
             new_certificates_to_send,
@@ -902,6 +943,8 @@ mod tests {
 
         let mut stats = ConsensusPoolServiceStats::new();
         let result = ConsensusPoolService::send_certificates(
+            &ctx.sharable_banks,
+            &ctx.my_pubkey,
             &ctx.bls_sender,
             certificates.clone(),
             &mut stats,
@@ -924,6 +967,38 @@ mod tests {
     }
 
     #[test]
+    fn test_send_certificates_skips_unstaked_identity() {
+        let ctx = TestContext::default();
+        let certificates = vec![
+            Arc::new(Certificate {
+                cert_type: CertificateType::Skip(1),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            }),
+            Arc::new(Certificate {
+                cert_type: CertificateType::Skip(2),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            }),
+        ];
+        let unstaked_identity = Pubkey::new_unique();
+        let mut stats = ConsensusPoolServiceStats::new();
+
+        let result = ConsensusPoolService::send_certificates(
+            &ctx.sharable_banks,
+            &unstaked_identity,
+            &ctx.bls_sender,
+            certificates,
+            &mut stats,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(stats.certificates_sent.0, 0);
+        assert_eq!(stats.certificates_skipped_unstaked.0, 2);
+        assert!(ctx.bls_receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn test_send_certificates_channel_disconnected() {
         let ctx = TestContext::default();
         drop(ctx.bls_receiver); // Disconnect channel
@@ -935,8 +1010,13 @@ mod tests {
         })];
 
         let mut stats = ConsensusPoolServiceStats::new();
-        let result =
-            ConsensusPoolService::send_certificates(&ctx.bls_sender, certificates, &mut stats);
+        let result = ConsensusPoolService::send_certificates(
+            &ctx.sharable_banks,
+            &ctx.my_pubkey,
+            &ctx.bls_sender,
+            certificates,
+            &mut stats,
+        );
 
         assert!(matches!(result, Err(AddVoteError::ChannelDisconnected(_))));
     }
@@ -958,6 +1038,7 @@ mod tests {
         let result = ConsensusPoolService::maybe_update_root_and_send_new_certificates(
             &mut ctx.consensus_pool,
             &ctx.sharable_banks,
+            &ctx.my_pubkey,
             &ctx.bls_sender,
             Some(5), // new finalized slot
             certificates,

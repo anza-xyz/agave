@@ -10,6 +10,7 @@ use {
     solana_pubkey::Pubkey,
     std::collections::{HashMap, HashSet, hash_map::Entry},
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -33,7 +34,7 @@ impl VoteHistoryVersions {
     derive(AbiExample),
     frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
 )]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
     pub node_pubkey: Pubkey,
@@ -274,7 +275,10 @@ pub enum VoteHistoryError {
     IoError(#[from] std::io::Error),
 
     #[error("Serialization Error: {0}")]
-    SerializeError(#[from] bincode::Error),
+    SerializeError(#[from] wincode::WriteError),
+
+    #[error("Deserialization Error: {0}")]
+    DeserializeError(#[from] wincode::ReadError),
 
     #[error("The signature on the saved vote history is invalid")]
     InvalidSignature,

@@ -1339,8 +1339,6 @@ impl ServeRepair {
         assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
 
         let mut ping_cache = PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
             REPAIR_PING_CACHE_TTL,
             REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
             REPAIR_PING_CACHE_CAPACITY,
@@ -1956,7 +1954,10 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
-        std::{io::Cursor, net::Ipv4Addr},
+        std::{
+            io::Cursor,
+            net::{Ipv4Addr, SocketAddrV4},
+        },
     };
 
     fn discard_malformed_repair_requests(
@@ -1998,8 +1999,6 @@ mod tests {
         let remote_keypair = Keypair::new();
         let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
         let mut ping_cache = PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
             REPAIR_PING_CACHE_TTL,
             REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
             REPAIR_PING_CACHE_CAPACITY,
@@ -3172,5 +3171,42 @@ mod tests {
         // over the allowed limit, should fail
         response.push((request_slot, Hash::new_unique()));
         assert!(!repair.verify_response(&AncestorHashesResponse::Hashes(response)));
+    }
+
+    // A second check() within REPAIR_PING_CACHE_RATE_LIMIT_DELAY must not generate
+    // a new ping. If it did, it would overwrite the stored token and invalidate the Pong,
+    // making Ping fail for no reason.
+    #[test]
+    fn test_repair_no_ping_overwrite_within_rate_limit_delay() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8001));
+        let remote_keypair = Keypair::new();
+        let remote_node = (remote_keypair.pubkey(), remote_socket);
+        let mut cache = PingCache::new(
+            REPAIR_PING_CACHE_TTL,
+            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_CAPACITY,
+        );
+        let now = Instant::now();
+
+        let (_, ping1) = cache.check(&mut rng, &this_node, now, remote_node);
+        let ping1 = ping1.expect("should generate ping for unknown node");
+
+        // Second check within REPAIR_PING_CACHE_RATE_LIMIT_DELAY must not generate
+        // a new ping — that would overwrite the stored hash and invalidate the in-flight pong.
+        let within_delay = now + REPAIR_PING_CACHE_RATE_LIMIT_DELAY - Duration::from_millis(1);
+        let (_, ping2) = cache.check(&mut rng, &this_node, within_delay, remote_node);
+        assert!(
+            ping2.is_none(),
+            "must not generate a second ping within REPAIR_PING_CACHE_RATE_LIMIT_DELAY"
+        );
+
+        // Pong for ping1 must still be valid — token was not overwritten.
+        let pong1 = solana_gossip::ping_pong::Pong::new(&ping1, &remote_keypair);
+        assert!(
+            cache.add(&pong1, remote_socket, within_delay),
+            "pong for original ping must still be valid — token was not overwritten"
+        );
     }
 }

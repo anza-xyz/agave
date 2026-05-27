@@ -812,7 +812,7 @@ mod tests {
             BLSKeypair::derive_from_signer(&keypairs[rank].vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
         let signature: BLSSignature = bls_keypair
-            .sign(bincode::serialize(vote).unwrap().as_slice())
+            .sign(wincode::serialize(vote).unwrap().as_slice())
             .into();
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
@@ -2098,7 +2098,7 @@ mod tests {
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
 
-        let signed_message = bincode::serialize(&vote).unwrap();
+        let signed_message = wincode::serialize(&vote).unwrap();
         vote_message
             .signature
             .verify(&bls_keypair.public, &signed_message)

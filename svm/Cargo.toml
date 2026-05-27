@@ -20,6 +20,8 @@ name = "solana_svm"
 default = ["metrics"]
 agave-unstable-api = []
 conformance = [
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
@@ -28,8 +30,6 @@ conformance = [
     "solana-pubkey/default",
 ]
 dev-context-only-utils = [
-    "dep:agave-feature-set",
-    "dep:agave-precompiles",
     "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",

@@ -6,7 +6,7 @@ use {
         commitment::{CommitmentType, update_commitment_cache},
         consensus_metrics::ConsensusMetricsEvent,
         event::{
-            CompletedBlock, RepairEvent, RepairEventSender, SwitchBankEvent, SwitchBankEventSender,
+            CompletedBlock, LatestSwitchRequest, RepairEvent, RepairEventSender, SwitchBankEvent,
             VotorEvent, VotorEventReceiver,
         },
         event_handler::stats::EventHandlerStats,
@@ -218,7 +218,7 @@ impl EventHandler {
 
         // We need to ensure that we've replayed the parent bank.
         if parent_slot > vctx.sharable_banks.root().slot() {
-            request_switch(&ctx.switch_bank_sender, *my_pubkey, parent_block)?;
+            request_switch(&ctx.latest_switch_request, *my_pubkey, parent_block);
         }
 
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
@@ -880,28 +880,14 @@ fn request_repair(
     }
 }
 
-/// Sends a switch bank event to replay.
-fn request_switch(
-    sender: &SwitchBankEventSender,
-    my_pubkey: Pubkey,
-    block: Block,
-) -> Result<(), EventLoopError> {
+/// Updates the latest switch-bank request for replay to consume.
+fn request_switch(latest: &LatestSwitchRequest, my_pubkey: Pubkey, block: Block) {
     let (slot, block_id) = block;
     let event = SwitchBankEvent::Switch { slot, block_id };
-    match sender.try_send(event) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Full(event)) => {
-            error!(
-                "{my_pubkey}: Switch bank event channel is full, this should not happen. Blocking \
-                 to send event for slot {slot}"
-            );
-            sender
-                .send(event)
-                .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            Err(EventLoopError::SenderDisconnected(SendError(())))
-        }
+    if let Some(prev) = latest.try_advance(event) {
+        trace!(
+            "{my_pubkey}: Overwriting previous switch request {prev:?} with ({slot}, {block_id})"
+        );
     }
 }
 
@@ -912,7 +898,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             consensus_metrics::ConsensusMetricsEventReceiver,
-            event::{LeaderWindowInfo, RepairEventReceiver, SwitchBankEventReceiver},
+            event::{LeaderWindowInfo, RepairEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
                 VoteHistoryStorage,
@@ -967,8 +953,6 @@ mod tests {
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
         repair_event_receiver: RepairEventReceiver,
-        #[allow(dead_code)]
-        switch_bank_receiver: SwitchBankEventReceiver,
         shared_context: SharedContext,
         voting_context: VotingContext,
         root_context: RootContext,
@@ -1032,7 +1016,7 @@ mod tests {
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
         let (repair_event_sender, repair_event_receiver) = unbounded();
-        let (switch_bank_sender, switch_bank_receiver) = unbounded();
+        let latest_switch_request = LatestSwitchRequest::default();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender,
             exit,
@@ -1092,7 +1076,7 @@ mod tests {
             blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
             repair_event_sender,
-            switch_bank_sender,
+            latest_switch_request,
         };
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
@@ -1136,7 +1120,6 @@ mod tests {
             cluster_info,
             consensus_metrics_receiver,
             repair_event_receiver,
-            switch_bank_receiver,
             highest_parent_ready,
             shared_context,
             voting_context,
@@ -1334,7 +1317,7 @@ mod tests {
 
         fn check_for_votes(&mut self, expected_votes: &[Vote]) {
             for v in expected_votes {
-                let expected_vote_serialized = bincode::serialize(v).unwrap();
+                let expected_vote_serialized = wincode::serialize(v).unwrap();
                 let signature: BLSSignature =
                     self.my_bls_keypair.sign(&expected_vote_serialized).into();
                 let expected_message = ConsensusMessage::Vote(VoteMessage {
@@ -1354,7 +1337,7 @@ mod tests {
         }
 
         fn check_for_vote(&mut self, expected_vote: &Vote) {
-            let expected_vote_serialized = bincode::serialize(expected_vote).unwrap();
+            let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
             let signature: BLSSignature =
                 self.my_bls_keypair.sign(&expected_vote_serialized).into();
             let expected_message = ConsensusMessage::Vote(VoteMessage {
