@@ -446,6 +446,20 @@ impl VersionedBlockMarker {
         let g = BlockMarkerV1::GenesisCertificate(LengthPrefixed::new(g));
         VersionedBlockMarker::V1(g)
     }
+
+    pub fn is_update_parent(&self) -> bool {
+        match self {
+            VersionedBlockMarker::V1(BlockMarkerV1::UpdateParent(_)) => true,
+            VersionedBlockMarker::V1(_) => false,
+        }
+    }
+
+    pub fn is_footer(&self) -> bool {
+        match self {
+            VersionedBlockMarker::V1(BlockMarkerV1::BlockFooter(_)) => true,
+            VersionedBlockMarker::V1(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

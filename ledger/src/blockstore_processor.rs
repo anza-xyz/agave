@@ -22,7 +22,7 @@ use {
     solana_clock::Slot,
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::{
-        block_component::{BlockComponent, VersionedBlockMarker},
+        block_component::BlockComponent,
         entry::{self, Entry, EntrySlice, EntryType, create_ticks},
     },
     solana_genesis_config::GenesisConfig,
@@ -1861,13 +1861,17 @@ fn confirm_slot_with_components(
                 )?;
             }
             BlockComponent::BlockMarker(marker) => {
+                if marker.is_footer() {
+                    // The footer path mutates vote accounts directly to pay rewards.
+                    // All prior transactions must finish first so vote account view is deterministic.
+                    if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
+                        timing.batch_execute.totals.accumulate(&execute_time);
+                        result?;
+                    }
+                }
                 if let Some(parent_bank) = bank.parent() {
-                    let allow_initial_update_parent = replay_starts_at_update_parent
-                        && matches!(
-                            &marker,
-                            VersionedBlockMarker::V1(marker)
-                                if marker.as_update_parent().is_some()
-                        );
+                    let allow_initial_update_parent =
+                        replay_starts_at_update_parent && marker.is_update_parent();
                     processor
                         .on_marker(
                             bank.clone_without_scheduler(),
