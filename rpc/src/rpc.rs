@@ -4371,6 +4371,8 @@ const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 // Cap base64 based on the largest supported transaction version,
 // which is v1 (4096 bytes).
 const MAX_BASE64_SIZE: usize = 5464; // ceil(4096 / 3) * 4
+// Legacy/v0 transactions are still capped at PACKET_DATA_SIZE (1232 bytes).
+const MAX_BASE64_LEGACY_SIZE: usize = 1644; // ceil(1232 / 3) * 4
 
 // V1+ messages start with 0x81 (or higher). In base64 the top 6 bits of 0x81
 // Comparing the first two chars against "gQ" detects V1+ before decoding.
@@ -4404,22 +4406,22 @@ where
         }
         TransactionBinaryEncoding::Base64 => {
             inc_new_counter_info!("rpc-base64_encoded_tx", 1);
-            let max_raw_size = if encoded
+            let (max_encoded_size, max_raw_size) = if encoded
                 .as_bytes()
                 .get(..2)
                 .is_some_and(|p| p >= V1_BASE64_PREFIX_LOWER_BOUND)
             {
-                solana_message::v1::MAX_TRANSACTION_SIZE
+                (MAX_BASE64_SIZE, solana_message::v1::MAX_TRANSACTION_SIZE)
             } else {
-                PACKET_DATA_SIZE
+                (MAX_BASE64_LEGACY_SIZE, PACKET_DATA_SIZE)
             };
-            if encoded.len() > MAX_BASE64_SIZE {
+            if encoded.len() > max_encoded_size {
                 return Err(Error::invalid_params(format!(
                     "base64 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
                     type_name::<T>(),
                     encoded.len(),
-                    MAX_BASE64_SIZE,
-                    solana_message::v1::MAX_TRANSACTION_SIZE,
+                    max_encoded_size,
+                    max_raw_size,
                 )));
             }
             let bytes = BASE64_STANDARD
@@ -9162,10 +9164,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_decode_and_deserialize_too_large_encoded_base64_payload_fails() {
+    fn test_decode_and_deserialize_too_large_encoded_base64_v1_payload_fails() {
         // +3 because +2 still fits in base64 encoded worst-case
         let too_big = solana_message::v1::MAX_TRANSACTION_SIZE + 3;
-        let tx_ser = vec![0xffu8; too_big];
+        let mut tx_ser = vec![0xffu8; too_big];
+        tx_ser[0] = solana_message::v1::V1_PREFIX;
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         let tx64_len = tx64.len();
@@ -9176,6 +9179,26 @@ pub mod tests {
                 "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
                  encoded/raw {MAX_BASE64_SIZE}/{})",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
+            ))
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_too_large_encoded_base64_legacy_payload_fails() {
+        // Legacy/v0 payloads must bail out before decoding when they exceed the
+        // legacy base64 cap, even if they would fit under the v1 cap.
+        let too_big = PACKET_DATA_SIZE + 3;
+        let tx_ser = vec![0x00u8; too_big];
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        let tx64_len = tx64.len();
+        assert!(tx64_len > MAX_BASE64_LEGACY_SIZE && tx64_len < MAX_BASE64_SIZE);
+        assert_eq!(
+            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
+            Error::invalid_params(format!(
+                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
+                 encoded/raw {MAX_BASE64_LEGACY_SIZE}/{PACKET_DATA_SIZE})",
             ))
         );
     }
@@ -9279,24 +9302,6 @@ pub mod tests {
                 "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
                  bytes (max: {} bytes)",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
-            ))
-        );
-    }
-
-    #[test]
-    fn test_decode_and_deserialize_oversize_non_v1_base64_payload_fails() {
-        // +2 because +1 still fits in base64 encoded worst-case
-        let too_big = PACKET_DATA_SIZE + 2;
-        let tx_ser = vec![0x00u8; too_big];
-        assert_ne!(tx_ser[0], solana_message::v1::V1_PREFIX);
-
-        let tx64 = BASE64_STANDARD.encode(&tx_ser);
-        assert_eq!(
-            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
-            Error::invalid_params(format!(
-                "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
-                 bytes (max: {PACKET_DATA_SIZE} bytes)",
             ))
         );
     }
