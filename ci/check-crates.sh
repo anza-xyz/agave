@@ -88,7 +88,9 @@ for file in "${files[@]}"; do
     exit 1
   fi
 
-  response=$(curl -s https://crates.io/api/v1/crates/"$crate_name"/owners)
+  # crates.io API docs state to include a user-agent header:
+  # https://crates.io/data-access#api
+  response=$(curl -A 'Anza (https://github.com/anza-xyz/agave)' -s https://crates.io/api/v1/crates/"$crate_name"/owners)
   errors=$(echo "$response" | jq .errors)
   if [[ $errors != "null" ]]; then
     details=$(echo "$response" | jq .errors | jq -r ".[0].detail")
