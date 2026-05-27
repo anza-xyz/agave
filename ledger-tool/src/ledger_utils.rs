@@ -367,6 +367,26 @@ pub fn load_and_process_ledger(
             )
         })
         .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
+
+    // With hard-linking gone, an AppendVec's Drop removes the only copy of the storage file by
+    // default. For a fastboot load we don't want that — the files belong to the validator's
+    // local state and need to outlive this process. Storages ledger-tool creates itself (archive
+    // or genesis load) can be cleaned up normally. We detect fastboot via the bank snapshot dir
+    // at the root slot: archive/genesis paths went through `discard_previous_run_state`, which
+    // purges those dirs, so its presence here means we loaded from it.
+    {
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let loaded_from_fastboot = snapshot_config
+            .bank_snapshots_dir
+            .join(root_bank.slot().to_string())
+            .is_dir();
+        if loaded_from_fastboot {
+            for storage in root_bank.get_snapshot_storages(None) {
+                storage.disable_remove_on_drop();
+            }
+        }
+    }
+
     let leader_schedule_cache =
         LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
 
