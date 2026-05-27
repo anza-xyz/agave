@@ -265,7 +265,9 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                 )
                 .arg(Arg::with_name("tree").long("tree").takes_value(false).help(
                     "Render each transaction's logs as a nested CPI invocation tree instead of a \
-                     flat line stream",
+                     flat line stream. Each transaction also gets a Solana Explorer URL inferred \
+                     from --url (canonical RPCs map to named clusters; localhost or third-party \
+                     RPCs use Explorer's cluster=custom&customUrl=... form).",
                 )),
         )
         .subcommand(
@@ -1479,6 +1481,54 @@ pub fn parse_logs(
     }))
 }
 
+/// Map an RPC URL to the query string a Solana Explorer link should carry.
+/// Canonical Solana RPCs (mainnet-beta, testnet, devnet) round-trip to
+/// their named clusters; anything else (`localhost`, third-party RPCs, a
+/// raw IP, etc.) uses Explorer's `cluster=custom&customUrl=<encoded>` form
+/// so the link points at the same chain the user is watching.
+fn explorer_query_for_rpc(rpc_url: &str) -> String {
+    let trimmed = rpc_url.trim_end_matches('/');
+    match trimmed {
+        "https://api.mainnet-beta.solana.com" => "cluster=mainnet-beta".to_string(),
+        "https://api.testnet.solana.com" => "cluster=testnet".to_string(),
+        "https://api.devnet.solana.com" => "cluster=devnet".to_string(),
+        custom => format!(
+            "cluster=custom&customUrl={}",
+            percent_encode_component(custom)
+        ),
+    }
+}
+
+/// Percent-encode a string for use as a URL query parameter value, per
+/// RFC 3986 (only unreserved ASCII passes through; everything else gets
+/// `%XX`). Hand-rolled so we don't pull in a crate just for this.
+///
+/// Uses RFC 3986 encoding (space → `%20`) rather than form encoding
+/// (space → `+`). The two diverge only on space; Explorer's `customUrl`
+/// is decoded via `URLSearchParams` which would interpret `+` as space,
+/// so `%20` is unambiguous either way. Realistic inputs (RPC URLs) won't
+/// contain spaces, but we encode strictly to keep the behavior right
+/// under any input.
+fn percent_encode_component(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    // Worst case is 3x expansion: one byte -> `%XX`. Most realistic input
+    // stays close to 1x; sizing for the worst case avoids any reallocation.
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(HEX[(byte >> 4) as usize] as char);
+                out.push(HEX[(byte & 0x0F) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
 pub fn process_logs(
     config: &CliConfig,
     filter: &RpcTransactionLogsFilter,
@@ -1509,6 +1559,17 @@ pub fn process_logs(
                 println!(); // keep em separated
                 println!("Transaction executed in slot {}:", logs.context.slot);
                 println!("  Signature: {}", logs.value.signature);
+                // In tree mode, every transaction gets an Explorer URL
+                // inferred from --url. The two extra spaces after
+                // "Explorer:" align the URL with the value column under
+                // "Signature:".
+                if tree {
+                    println!(
+                        "  Explorer:  https://explorer.solana.com/tx/{}?{}",
+                        logs.value.signature,
+                        explorer_query_for_rpc(&config.json_rpc_url)
+                    );
+                }
                 println!(
                     "  Status: {}",
                     logs.value
@@ -2215,6 +2276,43 @@ mod tests {
         solana_keypair::{Keypair, write_keypair},
         tempfile::NamedTempFile,
     };
+
+    #[test]
+    fn explorer_query_maps_canonical_rpcs_to_named_clusters() {
+        assert_eq!(
+            explorer_query_for_rpc("https://api.mainnet-beta.solana.com"),
+            "cluster=mainnet-beta"
+        );
+        assert_eq!(
+            explorer_query_for_rpc("https://api.testnet.solana.com"),
+            "cluster=testnet"
+        );
+        assert_eq!(
+            explorer_query_for_rpc("https://api.devnet.solana.com"),
+            "cluster=devnet"
+        );
+        // Trailing slash should be tolerated.
+        assert_eq!(
+            explorer_query_for_rpc("https://api.devnet.solana.com/"),
+            "cluster=devnet"
+        );
+    }
+
+    #[test]
+    fn explorer_query_falls_back_to_custom_for_unknown_rpc() {
+        // Localhost (surfpool / solana-test-validator default).
+        assert_eq!(
+            explorer_query_for_rpc("http://localhost:8899"),
+            "cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899"
+        );
+        // A third-party devnet RPC: the substring "devnet" must not trick
+        // us into the named cluster, because Explorer's `cluster=devnet`
+        // points to api.devnet.solana.com, not this URL.
+        assert_eq!(
+            explorer_query_for_rpc("https://devnet.helius-rpc.com"),
+            "cluster=custom&customUrl=https%3A%2F%2Fdevnet.helius-rpc.com"
+        );
+    }
 
     fn make_tmp_file() -> (String, NamedTempFile) {
         let tmp_file = NamedTempFile::new().unwrap();
