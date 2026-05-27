@@ -17,6 +17,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
+        io,
         net::{IpAddr, SocketAddr, SocketAddrV4},
         thread,
         time::Duration,
@@ -77,7 +78,6 @@ pub struct TxLoopConfig {
 
 pub struct TxLoopBuilder<U: Umem> {
     cpu_id: usize,
-    queue_id: QueueId,
     zero_copy: bool,
     src_mac: MacAddress,
     queue: DeviceQueue,
@@ -131,7 +131,6 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
 
         TxLoopBuilder {
             cpu_id,
-            queue_id,
             zero_copy,
             src_mac,
             queue,
@@ -140,10 +139,9 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         }
     }
 
-    pub fn build(self) -> TxLoop<OwnedUmem<PageAlignedMemory>> {
+    pub fn build(self) -> Result<TxLoop<OwnedUmem<PageAlignedMemory>>, io::Error> {
         let TxLoopBuilder {
             cpu_id,
-            queue_id,
             zero_copy,
             src_mac,
             queue,
@@ -151,8 +149,16 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
             umem,
         } = self;
 
-        let Ok((socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-            panic!("failed to create AF_XDP socket on queue {queue_id:?}");
+        let queue_id = queue.id();
+        let (socket, tx) = match Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) {
+            Ok(socket_tx) => socket_tx,
+            Err(err) => {
+                log::error!(
+                    "failed to create AF_XDP TX socket for queue {queue_id:?} on CPU {cpu_id}: \
+                     {err}"
+                );
+                return Err(err);
+            }
         };
 
         let Tx {
@@ -163,13 +169,13 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         } = tx;
         let ring = ring.unwrap();
 
-        TxLoop {
+        Ok(TxLoop {
             cpu_id,
             src_mac,
             socket,
             ring,
             completion,
-        }
+        })
     }
 }
 

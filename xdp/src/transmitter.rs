@@ -197,7 +197,7 @@ impl TransmitterBuilder {
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             },
             log::debug,
-            std::collections::HashSet,
+            std::{collections::HashSet, io},
         };
         let XdpConfig {
             interface: maybe_interface,
@@ -268,7 +268,7 @@ impl TransmitterBuilder {
         let tx_loops = tx_loop_builders
             .into_iter()
             .map(|tx_loop_builder| tx_loop_builder.build())
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, io::Error>>()?;
 
         let tables_result = RoutingTables::from_netlink(RouteTable::Main);
 
