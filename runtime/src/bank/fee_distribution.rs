@@ -30,8 +30,12 @@ pub(super) enum DepositFeeError {
     ReservedCollector,
 }
 
-/// Helper enum used to distinguish collector types allowed by SIMD-0232
-pub(super) enum CollectorType {
+/// Helper enum used to distinguish external collector types allowed by
+/// SIMD-0232.
+///
+/// The term "external" is used to exclude the vote account itself, which is a
+/// valid collector.
+pub(super) enum ExternalCollectorType {
     /// A rent-exempt, non-incinerator, non-reserved account owned by the system
     /// program
     SystemAccount,
@@ -250,7 +254,7 @@ impl Bank {
         reserved_account_keys: &ReservedAccountKeys,
         rent: &Rent,
         relax_post_execution_balance_checks: bool,
-    ) -> Result<CollectorType, DepositFeeError> {
+    ) -> Result<ExternalCollectorType, DepositFeeError> {
         if !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
@@ -262,14 +266,14 @@ impl Bank {
         // Don't perform rent check on the incinerator, so that the deposit
         // always works. The incinerator is run at the end of a block
         if *collector_id == incinerator::id() {
-            Ok(CollectorType::Incinerator)
+            Ok(ExternalCollectorType::Incinerator)
         } else {
             if !rent.is_exempt(account.lamports(), account.data().len())
                 && (!relax_post_execution_balance_checks || pre_lamports == 0)
             {
                 Err(DepositFeeError::InvalidRentPayingAccount)
             } else {
-                Ok(CollectorType::SystemAccount)
+                Ok(ExternalCollectorType::SystemAccount)
             }
         }
     }

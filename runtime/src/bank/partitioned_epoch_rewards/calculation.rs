@@ -9,7 +9,7 @@ use {
     crate::{
         bank::{
             RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-            fee_distribution::CollectorType, null_tracer,
+            fee_distribution::ExternalCollectorType, null_tracer,
         },
         inflation_rewards::{
             adjust_delegation_for_rent,
@@ -52,18 +52,6 @@ struct RewardsAccumulator {
     total_stake_rewards_lamports: u64,
 }
 
-/// If a commission account is used by multiple vote accounts, the reported
-/// `commission_bps` may be incorrect. To keep things simple and correct, don't
-/// report `commission_bps` if there's any variation.
-fn unset_commission_bps_if_different(src: &RewardCommission, dst: &mut RewardCommission) {
-    if dst
-        .commission_bps
-        .is_some_and(|bps| Some(bps) != src.commission_bps)
-    {
-        dst.commission_bps = None;
-    }
-}
-
 /// Merge the lamport and `is_vote_account` fields of two `RewardCommission`s
 ///
 /// This pays special attention to the case where `is_vote_account` does not
@@ -75,7 +63,10 @@ fn unset_commission_bps_if_different(src: &RewardCommission, dst: &mut RewardCom
 /// * vote account B sets itself as the inflation reward collector
 ///
 /// In that situation, the rewards for vote account A will get burned, but the
-/// rewards for vote account B will not.
+/// rewards for vote account B will not. According to the rules of SIMD-0232,
+/// a collector account must either be the vote account itself or a system
+/// account that fulfills certain criteria. In the case of vote account A, we
+/// are already sure that the collector account is invalid.
 ///
 /// NOTE: if vote account B sets a system account as its inflation collector,
 /// then the commission lamports for vote account A will NOT get burned here,
@@ -126,7 +117,6 @@ impl RewardsAccumulator {
         self.reward_commissions
             .entry(commission_pubkey)
             .and_modify(|dst_reward_commission| {
-                unset_commission_bps_if_different(&reward_commission, dst_reward_commission);
                 accumulate_lamports(&reward_commission, dst_reward_commission);
             })
             .or_insert(reward_commission);
@@ -153,7 +143,6 @@ impl RewardsAccumulator {
             dst.reward_commissions
                 .entry(commission_pubkey)
                 .and_modify(|dst_reward_commission: &mut RewardCommission| {
-                    unset_commission_bps_if_different(&reward_commission, dst_reward_commission);
                     accumulate_lamports(&reward_commission, dst_reward_commission);
                 })
                 .or_insert(reward_commission);
@@ -992,8 +981,8 @@ impl Bank {
                                 rent,
                                 relax_post_exec_min_balance_check,
                             ) {
-                                Ok(CollectorType::SystemAccount) => {}
-                                Ok(CollectorType::Incinerator) => {
+                                Ok(ExternalCollectorType::SystemAccount) => {}
+                                Ok(ExternalCollectorType::Incinerator) => {
                                     total_incinerator_lamports
                                         .fetch_add(*commission_lamports, Relaxed);
                                 }
