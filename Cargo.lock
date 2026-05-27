@@ -7507,7 +7507,6 @@ dependencies = [
  "dirs-next",
  "serde",
  "serde_yaml",
- "solana-clap-utils",
  "solana-commitment-config",
  "url 2.5.8",
 ]
