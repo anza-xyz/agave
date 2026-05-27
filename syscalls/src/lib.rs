@@ -2780,7 +2780,7 @@ declare_builtin_function!(
         let Some((idx, region)) = memory_mapping.find_region(region_base_address) else {
             return Err(SyscallError::InvalidPointer.into());
         };
-        if region.vm_addr != region_base_address || !region.writable {
+        if region.vm_addr != region_base_address || !(region.writable || region.access_violation_handler_payload.is_some()) {
             return Err(SyscallError::InvalidPointer.into());
         }
         if let Some(_increase_bytes) = new_len.checked_sub(region.len) {

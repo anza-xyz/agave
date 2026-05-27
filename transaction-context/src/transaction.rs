@@ -512,7 +512,46 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(())
     }
 
-    /// Returns a new account data write access handler
+    pub fn abi_v2_access_violation_handler(&self) -> AccessViolationHandler {
+        let accounts = Rc::clone(&self.accounts);
+        Box::new(
+            move |region: &mut MemoryRegion,
+                  _address_space_reserved_for_account: u64,
+                  access_type: AccessType,
+                  _vm_addr: u64,
+                  _len: u64| {
+                if access_type == AccessType::Load {
+                    return;
+                }
+
+                if region.writable {
+                    // The region has already been made writable
+                    return;
+                }
+
+                let Some(index_in_transaction) = region.access_violation_handler_payload else {
+                    // This region is not a writable account.
+                    return;
+                };
+
+                // The call below can't really fail. If they fail because of a bug,
+                // whatever is writing will trigger an EbpfError::AccessViolation like
+                // if the region was readonly, and the transaction will fail gracefully.
+                let Ok(mut account) = accounts.try_borrow_mut(index_in_transaction) else {
+                    debug_assert!(false);
+                    return;
+                };
+
+                // Only copy the account when the access is a store, otherwise no need to copy.
+                *region = MemoryRegion::new(
+                    &raw mut account.data_as_mut_slice()[..],
+                    account.guest_pointer(),
+                );
+            },
+        )
+    }
+
+    /// Returns a new account data write access handler for ABIv1
     pub fn access_violation_handler(
         &self,
         virtual_address_space_adjustments: bool,
@@ -822,7 +861,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
 
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
-    use super::*;
+    use {super::*, std::sync::Arc};
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
@@ -1733,5 +1772,61 @@ mod tests {
                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(3u64))
         );
         assert_eq!(r4.len, 0);
+    }
+
+    #[test]
+    fn test_abi_v2_access_violation_handler() {
+        let accounts = vec![
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::create_from_existing_shared_data(
+                    40,
+                    Arc::new(vec![1, 2]),
+                    Pubkey::new_unique(),
+                    false,
+                    2,
+                ),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::create_from_existing_shared_data(
+                    20,
+                    Arc::new(vec![3, 4]),
+                    Pubkey::new_unique(),
+                    false,
+                    2,
+                ),
+            ),
+        ];
+
+        let tx_context = TransactionContext::new(accounts, Rent::default(), 4, 4, 2);
+
+        let data = [0u8; 8];
+        let mut region = MemoryRegion::new(&raw const data[..], 0x80);
+        let handler = tx_context.abi_v2_access_violation_handler();
+
+        handler(&mut region, 0, AccessType::Load, 0, 0);
+        assert!(!region.writable);
+        assert_eq!(region.host_addr, data.as_ptr() as u64);
+
+        region.writable = true;
+        handler(&mut region, 0, AccessType::Store, 0, 0);
+        assert!(region.writable);
+        assert_eq!(region.host_addr, data.as_ptr() as u64);
+
+        region.writable = false;
+        handler(&mut region, 0, AccessType::Store, 0, 0);
+        assert!(!region.writable);
+        assert_eq!(region.host_addr, data.as_ptr() as u64);
+
+        region.access_violation_handler_payload = Some(1);
+        region.writable = false;
+        handler(&mut region, 0, AccessType::Store, 0, 0);
+        assert!(region.writable);
+        assert!(region.access_violation_handler_payload.is_none());
+        assert_eq!(
+            region.host_addr,
+            tx_context.accounts.try_borrow(1).unwrap().data().as_ptr() as u64
+        );
     }
 }

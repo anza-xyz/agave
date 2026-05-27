@@ -174,6 +174,10 @@ impl TransactionAccountViewMut<'_> {
     pub(crate) fn is_shared(&self) -> bool {
         Arc::strong_count(&self.private_fields.payload) > 1
     }
+
+    pub fn guest_pointer(&self) -> u64 {
+        self.abi_account.payload.ptr()
+    }
 }
 
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
@@ -286,7 +290,7 @@ impl TransactionAccounts {
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.shared_account_fields.len()
     }
 
@@ -504,12 +508,8 @@ impl TransactionAccounts {
             .zip(accounts_regions.iter_mut())
         {
             unsafe {
-                // Creating regions as writable, so the compiler knows the underlying memory
-                // may change.
-                // Writing permissions are updated in a later stage at `update_account_permissions`.
-                let account_data = Arc::make_mut(&mut (*private_fields.get()).payload);
                 *region = MemoryRegion::new(
-                    &raw mut account_data[..],
+                    &raw const (*(*private_fields.get()).payload)[..],
                     (*shared_fields.get()).payload.ptr(),
                 );
             };
@@ -520,7 +520,7 @@ impl TransactionAccounts {
         for (idx, region) in accounts_regions.iter_mut().skip(accounts_no).enumerate() {
             region.vm_addr = GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(
                 GUEST_REGION_SIZE.saturating_mul(accounts_no.saturating_add(idx) as u64),
-            )
+            );
         }
     }
 }

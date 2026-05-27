@@ -255,7 +255,7 @@ fn test_write_to_accounts() {
     let acc_1 = AccountSharedData::create_from_existing_shared_data(
         223450,
         vec![1, 2, 3].into(),
-        system_program::id(),
+        program_id,
         false,
         64,
     );
@@ -265,7 +265,7 @@ fn test_write_to_accounts() {
     let acc_2 = AccountSharedData::create_from_existing_shared_data(
         90123,
         vec![4, 5, 6].into(),
-        acc_1_key,
+        program_id,
         false,
         64,
     );
@@ -312,7 +312,7 @@ fn account_permissions_update() {
     let acc_1 = AccountSharedData::create_from_existing_shared_data(
         223450,
         vec![1, 2, 3].into(),
-        system_program::id(),
+        program_id,
         false,
         64,
     );
@@ -322,11 +322,21 @@ fn account_permissions_update() {
     let acc_2 = AccountSharedData::create_from_existing_shared_data(
         90123,
         vec![4, 5, 6].into(),
-        acc_1_key,
+        program_id,
         false,
         64,
     );
     bank.store_account(&acc_2_key, &acc_2);
+
+    let acc_3_key = Pubkey::new_unique();
+    let acc_3 = AccountSharedData::create_from_existing_shared_data(
+        90123,
+        vec![4, 5, 6].into(),
+        system_program::id(),
+        false,
+        64,
+    );
+    bank.store_account(&acc_3_key, &acc_3);
 
     let metas_for_ix_1 = vec![
         AccountMeta::new(acc_1_key, false),
@@ -343,6 +353,13 @@ fn account_permissions_update() {
     let data = [1u8];
     let ix_2 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_2);
 
+    let metas_for_ix_3 = vec![
+        AccountMeta::new(acc_3_key, false),
+        AccountMeta::new_readonly(acc_1_key, false),
+    ];
+    let data = [1u8];
+    let ix_3 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_3);
+
     let message = Message::new(&[ix_1, ix_2], Some(&mint_keypair.pubkey()));
     let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
     let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
@@ -351,6 +368,12 @@ fn account_permissions_update() {
 
     let second_ix = logs.last().unwrap();
     assert!(second_ix.contains("Access violation"));
+
+    let message = Message::new(&[ix_3], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+    let third_ix = logs.get(2).unwrap();
+    assert!(third_ix.contains("Access violation"));
 }
 
 fn common_set_buffer_length(test_discr: u8) -> CommittedTransaction {
@@ -470,6 +493,6 @@ fn buffer_resize_somebody_elses_account() {
             .unwrap()
             .last()
             .unwrap()
-            .contains("program other than the account's owner changed the size")
+            .contains("Invalid pointer")
     );
 }

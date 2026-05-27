@@ -558,9 +558,14 @@ fn initialize_abi_v2_areas<C: ContextObject>(
     // Doing a lazy initialization in case we don't have any ABIv2 instruction in the transaction.
     if !invoke_context.memory_contexts.abi_v2_regions_exist() {
         let abi_v2_regions = create_abiv2_regions(invoke_context.transaction_context);
-        invoke_context
-            .memory_contexts
-            .create_abi_v2_mappings(abi_v2_regions, executable);
+        let access_violation_handler = invoke_context
+            .transaction_context
+            .abi_v2_access_violation_handler();
+        invoke_context.memory_contexts.create_abi_v2_mappings(
+            abi_v2_regions,
+            executable,
+            access_violation_handler,
+        );
     }
 
     invoke_context
