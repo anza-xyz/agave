@@ -9,7 +9,7 @@ use {
     core::fmt::{Debug, Formatter},
 };
 
-/// A non-owning version of [`CompiledInstruction`] that references
+/// A non-owning version of [`solana_message::compiled_instruction::CompiledInstruction`] that references
 /// slices of account indexes and data.
 // `program_id_index` is still owned, as it is a simple u8.
 #[derive(Debug, PartialEq, Eq, Clone)]

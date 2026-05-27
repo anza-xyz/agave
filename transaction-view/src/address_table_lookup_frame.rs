@@ -13,7 +13,7 @@ use {
     solana_signature::Signature,
 };
 
-/// A non-owning version of [`v0::MessageAddressTableLookup`] that references
+/// A non-owning version of [`solana_message::v0::MessageAddressTableLookup`] that references
 /// slices of writable and readonly lookup indexes.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct MessageAddressTableLookupView<'a> {
