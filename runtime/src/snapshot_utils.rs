@@ -564,6 +564,9 @@ pub fn serialize_snapshot(
                     storage.flush().map_err(|err| {
                         AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
                     })?;
+                    // We're about to mark this snapshot fastboot-loadable. Pin the storage
+                    // file so it outlives the validator-exit Drop chain.
+                    storage.disable_remove_on_drop();
                 }
                 let flush_us = flush_measure.end_as_us();
 
