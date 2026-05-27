@@ -762,6 +762,14 @@ pub fn write_storages_list_to_snapshot(
     io_setup: &IoSetupState,
 ) -> Result<FileSize> {
     let storages_list = StoragesList::new_from_storages(snapshot_storages);
+    serialize_storages_list_to_snapshot(bank_snapshot_dir, storages_list, io_setup)
+}
+
+fn serialize_storages_list_to_snapshot(
+    bank_snapshot_dir: impl AsRef<Path>,
+    storages_list: StoragesList,
+    io_setup: &IoSetupState,
+) -> Result<FileSize> {
     let storages_list_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_STORAGES_LIST_FILENAME);
@@ -1320,14 +1328,11 @@ fn spawn_streaming_snapshot_dir_files(
 ///
 /// Walks `<bank_snapshot_dir>/accounts_hardlinks/`, follows each symlink to its
 /// `<account_path>/snapshot/<slot>/` target, and renames each storage file there back into
-/// `<account_path>/run/`. Returns the derived storages list. Tears down the legacy directories
-/// (the `accounts_hardlinks/` symlink dir and the whole `<account_path>/snapshot/` tree) on
-/// success so subsequent restarts go through the normal new-format path (next teardown writes
-/// the storages list file).
-fn migrate_legacy_hardlinks(
-    bank_snapshot_dir: &Path,
-    account_run_paths: &[PathBuf],
-) -> Result<StoragesList> {
+/// `<account_path>/run/`. Writes the derived storages list into the bank snapshot dir so the
+/// load path can always read it from disk. Tears down the legacy directories (the
+/// `accounts_hardlinks/` symlink dir and the whole `<account_path>/snapshot/` tree) on success
+/// so subsequent restarts go through the normal new-format path.
+fn migrate_legacy_hardlinks(bank_snapshot_dir: &Path, account_run_paths: &[PathBuf]) -> Result<()> {
     let accounts_hardlinks_dir = bank_snapshot_dir.join("accounts_hardlinks");
     let mut items: Vec<StorageListItem> = Vec::new();
 
@@ -1398,6 +1403,14 @@ fn migrate_legacy_hardlinks(
         }
     }
 
+    // Persist the derived list to disk before tearing down legacy state, so a crash mid-migration
+    // doesn't leave us with neither the hardlinks nor the new-format file.
+    serialize_storages_list_to_snapshot(
+        bank_snapshot_dir,
+        StoragesList::from_items(items),
+        &IoSetupState::default(),
+    )?;
+
     // Tear down the legacy state so we don't repeat this migration: drop the bank snapshot's
     // `accounts_hardlinks/` symlink dir and wipe each `<account_path>/snapshot/` tree (catches
     // both the per-slot dirs we just emptied and any orphans from older purged snapshots).
@@ -1409,7 +1422,11 @@ fn migrate_legacy_hardlinks(
     })?;
     wipe_account_snapshot_dirs(account_run_paths);
 
-    Ok(StoragesList::from_items(items))
+    // Bump the fastboot version so subsequent loads take the normal 3.0+ path instead of
+    // re-running the migration (which would fail now that the hardlinks dir is gone).
+    mark_bank_snapshot_as_loadable(bank_snapshot_dir)?;
+
+    Ok(())
 }
 
 /// Removes storage files from `account_paths` whose `(slot, id)` pair isn't listed in the
@@ -1481,17 +1498,16 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     // lt hash check at startup verifies the surviving storages.
     let storages_list_path =
         bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STORAGES_LIST_FILENAME);
-    let storages_list = if storages_list_path.exists() {
-        deserialize_storages_list(&storages_list_path, MAX_STORAGES_LIST_FILE_SIZE)?
-    } else {
+    if !storages_list_path.exists() {
         // Legacy (2.0.0) bank snapshot: storages live as hardlinks under
         // `<account_path>/snapshot/<slot>/`, with symlinks in
         // `<bank_snapshot_dir>/accounts_hardlinks/` tying them to the bank snapshot. Move the
-        // files back into `<account_path>/run/` and derive the storages list on the fly. The
-        // legacy dirs are torn down here — next teardown will write the new-format storages
-        // list so subsequent restarts go through the normal path.
-        migrate_legacy_hardlinks(bank_snapshot_dir, account_paths)?
-    };
+        // files back into `<account_path>/run/` and write out the storages list so the load
+        // path below can read it like any other 3.0+ snapshot.
+        migrate_legacy_hardlinks(bank_snapshot_dir, account_paths)?;
+    }
+    let storages_list =
+        deserialize_storages_list(&storages_list_path, MAX_STORAGES_LIST_FILE_SIZE)?;
     prune_stale_storages(account_paths, storages_list)?;
 
     let snapshot_file_path = snapshot_info.snapshot_path();
