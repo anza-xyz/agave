@@ -47,6 +47,7 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
+        evicting_sender::EvictingSender,
         quic::{
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_weighted_qos_server,
@@ -86,6 +87,10 @@ pub const MAX_VOTES_PER_SECOND: u64 = 20;
 /// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
 /// be conservative max of obsersed on mnb during high-load events.
 const TPU_CHANNEL_SIZE: usize = 50_000;
+
+/// Size of the channel between the vote streamer and the TPU sigverify stage.
+/// Chosen based on nominal voting load for a cluster with ~2000 validators + some margin.
+pub(crate) const TPU_VOTE_CHANNEL_SIZE: usize = 4_000;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -161,13 +166,15 @@ impl Tpu {
         } = sockets;
 
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
-        let (vote_packet_sender, vote_packet_receiver) = unbounded();
+        let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
+        let evicting_vote_sender =
+            EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),
             &packet_sender,
-            &vote_packet_sender,
+            &evicting_vote_sender,
             forwarded_packet_receiver,
             poh_recorder,
             None, // coalesce
