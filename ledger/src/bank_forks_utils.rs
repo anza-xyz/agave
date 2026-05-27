@@ -24,7 +24,7 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
     std::{
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
     thiserror::Error,
@@ -62,6 +62,19 @@ pub enum BankForksUtilsError {
 }
 
 pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>);
+
+/// Tear down state left over from a previous run: purges old bank snapshots, wipes the account
+/// run dirs, and wipes the legacy snapshot sibling trees.
+///
+/// Call from any load path that commits to NOT fastbooting (archive load, genesis boot) —
+/// i.e. anywhere the existing storages must not be loaded.
+pub fn discard_previous_run_state(bank_snapshots_dir: &Path, account_paths: &[PathBuf]) {
+    snapshot_utils::purge_all_bank_snapshots(bank_snapshots_dir);
+    for account_path in account_paths {
+        move_and_async_delete_path_contents(account_path);
+    }
+    snapshot_utils::wipe_account_snapshot_dirs(account_paths);
+}
 
 /// Load the banks via genesis
 pub fn load_bank_forks_from_genesis(
@@ -212,19 +225,10 @@ pub fn try_load_bank_forks_from_snapshot(
             path: fastboot_snapshot.snapshot_path(),
         })?
     } else {
-        // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
-        // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
-        // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
-        // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
-        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
-
-        // Storages on disk from a previous run are kept around so fastboot can use them. Now
-        // that we've committed to loading from an archive instead, drop them — the archive will
-        // be extracted into the run dirs and any leftover files would just be orphans.
-        for account_path in account_paths {
-            move_and_async_delete_path_contents(account_path);
-        }
-        snapshot_utils::wipe_account_snapshot_dirs(account_paths);
+        // Committed to loading from a snapshot archive — the existing storages a previous run
+        // left around (kept for fastboot) are now orphans, and the archive will be extracted
+        // into the (cleared) run dirs.
+        discard_previous_run_state(&snapshot_config.bank_snapshots_dir, account_paths);
 
         snapshot_bank_utils::bank_from_snapshot_archives(
             account_paths,

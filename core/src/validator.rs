@@ -2243,6 +2243,11 @@ fn load_blockstore(
 
     let (bank_forks, starting_snapshot_hashes) = bank_from_snapshot_opt
         .unwrap_or_else(|| {
+            // Clean run from genesis — must not use any existing state from previous runs.
+            bank_forks_utils::discard_previous_run_state(
+                &config.snapshot_config.bank_snapshots_dir,
+                &config.account_paths,
+            );
             bank_forks_utils::load_bank_forks_from_genesis(
                 genesis_config,
                 &blockstore,

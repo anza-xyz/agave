@@ -365,6 +365,11 @@ pub fn load_and_process_ledger(
         )
         .transpose()
         .unwrap_or_else(|| {
+            // Clean run from genesis — must not use any existing state from previous runs.
+            bank_forks_utils::discard_previous_run_state(
+                &snapshot_config.bank_snapshots_dir,
+                &account_paths,
+            );
             bank_forks_utils::load_bank_forks_from_genesis(
                 genesis_config,
                 &blockstore,
