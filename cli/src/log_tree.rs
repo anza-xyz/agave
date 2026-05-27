@@ -22,7 +22,7 @@
 //!     (`sol_log_data`, which Anchor's `emit!` macro uses).
 //!
 //! Both kinds are preserved regardless of outcome, and crucially the
-//! interleaving order between Msg and Data is preserved. 
+//! interleaving order between Msg and Data is preserved.
 //!
 //! When a program executes a CPI, the child's `invoke` / `success` lines
 //! interleave with the parent's own logging, and the bracket in `invoke [n]`
@@ -246,6 +246,43 @@ fn push_into_parent_or_roots(
     }
 }
 
+/// Format an integer with US-style thousands separators (`53402` →
+/// `"53,402"`). Used for CU values in the renderer and on the
+/// transaction-total header so numbers stay scannable at the kind of
+/// magnitudes Solana transactions tend to land at (1.4M CU budget).
+pub fn with_commas(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, b) in s.bytes().enumerate() {
+        // Insert a separator before every group of three digits, counting
+        // back from the end. The `i > 0` guard skips a leading comma when
+        // the digit count is a clean multiple of three.
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
+}
+
+/// Sum of the top-level frames' `compute_units`, or `None` if no frame
+/// contributes a value. Returning `None` distinguishes "no CU data in the
+/// logs" (e.g. a transaction whose only instruction is a native program
+/// like the BPF Loader or a top-level System Program transfer, neither of
+/// which emits `consumed N of M compute units` lines) from the impossible
+/// case of "every BPF program consumed exactly zero".
+///
+/// Children are intentionally not summed: Solana's per-frame `consumed`
+/// already includes any CPI children's consumption (verified against
+/// `TransactionStatusMeta::compute_units_consumed` / Explorer), so
+/// descending would double-count.
+pub fn transaction_total_cu(frames: &[CpiFrame]) -> Option<u64> {
+    frames
+        .iter()
+        .filter_map(|f| f.compute_units)
+        .fold(None, |acc, cu| Some(acc.unwrap_or(0) + cu))
+}
+
 enum LogLine {
     Invoke(String),
     Consumed(u64),
@@ -324,7 +361,7 @@ fn write_frame(out: &mut String, frame: &CpiFrame, prefix: &str, is_last: bool) 
         CpiOutcome::Truncated => write!(out, "TRUNCATED ").unwrap(),
     }
     if let Some(cu) = frame.compute_units {
-        write!(out, "({cu} CU) ").unwrap();
+        write!(out, "({} CU) ", with_commas(cu)).unwrap();
     }
     writeln!(out, "{}", frame.program_id).unwrap();
 
@@ -557,8 +594,8 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Mint (5000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
-                ├── MintTo (1500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+            └── Mint (5,000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+                ├── MintTo (1,500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
                 │   └── (50 CU) 11111111111111111111111111111111
                 └── (100 CU) 22222222222222222222222222222222222222222222
             ",
@@ -579,7 +616,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Withdraw FAILED: custom program error: 0x7d1 (3100 CU) \
+            └── Withdraw FAILED: custom program error: 0x7d1 (3,100 CU) \
              GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
             ",
         );
@@ -636,7 +673,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── EmitTwo (1500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
+            └── EmitTwo (1,500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
                   >> data: BqfPDIBaUMVcAAAA
                   >> data: AnotherBase64String
             ",
@@ -664,9 +701,9 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Mint (5000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+            └── Mint (5,000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
                 │ >> data: ParentDataPayload
-                └── MintTo (1500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+                └── MintTo (1,500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
             ",
         );
     }
@@ -739,7 +776,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Mix (1500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
+            └── Mix (1,500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
                   >> log:  step 1
                   >> data: FirstData
                   >> log:  step 2
@@ -771,5 +808,71 @@ mod tests {
                 Data("AnotherBase64String".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn with_commas_inserts_thousands_separators() {
+        assert_eq!(with_commas(0), "0");
+        assert_eq!(with_commas(42), "42");
+        assert_eq!(with_commas(999), "999");
+        assert_eq!(with_commas(1_000), "1,000");
+        assert_eq!(with_commas(53_402), "53,402");
+        assert_eq!(with_commas(1_234_567_890), "1,234,567,890");
+    }
+
+    #[test]
+    fn transaction_total_cu_sums_top_level_frames() {
+        // Three top-level frames with known CU; the helper should sum them.
+        // Mirrors the Phoenix-style transaction whose Explorer total (53,402)
+        // we verified matches the top-level-frame sum.
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            consumed(&PROG_A, 4_817),
+            success(&PROG_A),
+            invoke(&PROG_B, 1),
+            consumed(&PROG_B, 9_497),
+            success(&PROG_B),
+            invoke(&TOKEN_PROG, 1),
+            consumed(&TOKEN_PROG, 17_173),
+            success(&TOKEN_PROG),
+        ];
+        let tree = cpi_tree(&logs);
+        assert_eq!(transaction_total_cu(&tree), Some(31_487));
+    }
+
+    #[test]
+    fn transaction_total_cu_returns_none_when_no_frame_has_cu() {
+        // BPF Loader-only and System-Program-only transactions are real:
+        // native programs don't emit `consumed` lines, so every top-level
+        // frame ends up with `compute_units: None`. The helper must
+        // distinguish that from a true zero so the renderer can label the
+        // case explicitly instead of misreporting "0 CU".
+        let logs = vec![invoke(&SYSTEM_PROG, 1), success(&SYSTEM_PROG)];
+        let tree = cpi_tree(&logs);
+        assert_eq!(tree[0].compute_units, None);
+        assert_eq!(transaction_total_cu(&tree), None);
+    }
+
+    #[test]
+    fn transaction_total_cu_does_not_double_count_children() {
+        // Per-frame `consumed` is cumulative in Solana: the parent's value
+        // already includes any CPI children's consumption (verified against
+        // Explorer for tx 2p5cKaWqMRiYZNfk7...). The helper must sum only
+        // root frames; descending into children would double-count.
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            invoke(&TOKEN_PROG, 2),
+            consumed(&TOKEN_PROG, 500),
+            success(&TOKEN_PROG),
+            consumed(&PROG_A, 1_500),
+            success(&PROG_A),
+        ];
+        let tree = cpi_tree(&logs);
+        // Sanity: parent has Some(1_500), child has Some(500). The 500 is
+        // *included* in the 1_500, so the transaction total is 1_500, not
+        // 2_000.
+        assert_eq!(tree[0].compute_units, Some(1_500));
+        assert_eq!(tree[0].children[0].compute_units, Some(500));
+        assert_eq!(transaction_total_cu(&tree), Some(1_500));
     }
 }
