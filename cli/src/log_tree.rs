@@ -11,48 +11,71 @@
 //! Program <id> failed: <message>
 //! ```
 //!
-//! Anything else (a program's own `Program log: ...` messages, `Program
-//! return: ...` data, runtime chatter like `account X signer_key().is_none()`,
-//! etc.) we capture verbatim as a diagnostic attached to whichever frame is
-//! currently open. We don't interpret it further; that's a layer above this
-//! module.
+//! Everything else a program (or the runtime) emits while a frame is open
+//! lands in `frame.logs`, a `Vec<FrameLog>` that preserves arrival order
+//! across two variants:
+//!   - `FrameLog::Msg(String)` for `Program log: <text>` (`msg!` /
+//!     `sol_log`), plus any unprefixed runtime diagnostic emitted in an
+//!     error-condition path (a line without our structural `Program `
+//!     prefix).
+//!   - `FrameLog::Data(String)` for `Program data: <base64>`
+//!     (`sol_log_data`, which Anchor's `emit!` macro uses).
 //!
-//! When a program does a CPI, the child's `invoke` / `success` lines
+//! Both kinds are preserved regardless of outcome, and crucially the
+//! interleaving order between Msg and Data is preserved. 
+//!
+//! When a program executes a CPI, the child's `invoke` / `success` lines
 //! interleave with the parent's own logging, and the bracket in `invoke [n]`
 //! reflects the call depth. (We don't actually use the bracket value to drive
 //! the parse; it's only there to validate that the line is shaped like an
 //! invoke. The depth falls out of how the stack pushes and pops naturally.)
 //!
-//! Everything that follows rests on one runtime invariant: a callee cannot
-//! outlive its caller. SBF physically can't return control to a parent CPI
-//! until every child it kicked off has finished. So the sequence of `invoke`
-//! and `success` / `failed:` lines is **well-nested**: every "open" is
-//! matched by a "close" that arrives before any earlier "open" closes. (Same
-//! property that makes `({[]})` a legal arithmetic expression and `({)[]}` a
-//! nonsense one.)
+//! All that follows rests on one runtime invariant: a callee cannot outlive its
+//! caller. SBF physically can't return control to a parent CPI until every
+//! child it kicked off has finished. So the sequence of `invoke` and `success`
+//! / `failed:` lines is **well-nested**: every "open" is matched by a "close"
+//! that arrives before any earlier "open" closes. (Same property that makes
+//! `({[]})` a legal arithmetic expression and `({)[]}` a nonsensical one.)
 //!
-//! Equivalently: closes happen in reverse order of opens. Which is exactly
-//! the access pattern of a stack, so the algorithm essentially writes itself:
+//! Equivalently: closes happen in reverse order of opens. Which is the access
+//! pattern of a stack, so the algorithm essentially writes itself:
 //!
 //!   - `invoke` -> push a new frame
 //!   - `success` or `failed:` -> pop (it'll always be the right one to close,
 //!     by the invariant above)
 //!   - everything in between -> annotate whatever is on top
 //!
-//! The only way the brackets fail to balance is truncation: the log stream
-//! cuts off mid-transaction. (The process died, the RPC dropped frames,
-//! the buffer filled up; take your pick.) For that case, every frame gets
-//! seeded with `outcome: Truncated` on push, so anything left on the stack
-//! at end-of-stream bubbles up with a useful, distinguishable outcome rather
-//! than being silently dropped or quietly misattributed as `Failed`. (It
-//! didn't technically fail; we just don't know what happened to it. "Absence
-//! of evidence" and "evidence of absence" are not the same thing, and the
-//! consumer of this tree may care about that distinction.)
+//! The only way the brackets fail to balance is truncation: the log stream cuts
+//! off mid-transaction. (The process died, the RPC dropped frames, the buffer
+//! filled up; take your pick.) For that case, every frame is initialized with
+//! `outcome: Truncated` on push, so anything left on the stack at end-of-stream
+//! bubbles up with a useful, distinguishable outcome rather than being silently
+//! dropped or quietly misattributed as `Failed`. (It didn't technically fail;
+//! we just don't know what happened to it. "Absence of evidence" and "evidence
+//! of absence" are not the same thing, and the consumer of this tree may care
+//! about that distinction.)
 
 use {
     solana_pubkey::Pubkey,
     std::{fmt::Write, str::FromStr},
 };
+
+// Connectors are written on the same line as a child's content. Spines are
+// continuation prefixes written under a frame on lines that follow its
+// header (other children, or the frame's own log entries).
+//
+// `CONN_BRANCH`/`CONN_LAST` are the standard `cargo tree` glyphs. Each is
+// 4 columns wide so that nested frames align consistently.
+const CONN_BRANCH: &str = "├── ";
+const CONN_LAST: &str = "└── ";
+const SPINE_CONTINUE: &str = "│   ";
+const SPINE_END: &str = "    ";
+
+// Log-block spines (used for the `>> log:` / `>> data:` rows). 2 columns
+// each so they slot just under the frame header without trying to align
+// with sibling connectors.
+const LOG_SPINE_CONTINUE: &str = "│ ";
+const LOG_SPINE_END: &str = "  ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpiFrame {
@@ -60,7 +83,30 @@ pub struct CpiFrame {
     pub outcome: CpiOutcome,
     pub compute_units: Option<u64>,
     pub instruction_name: Option<String>,
+    /// Order preserving record of `msg!` strings, `emit!` payloads, and
+    /// unprefixed runtime diagnostics emitted while this frame was on the
+    /// stack. Both `Msg` and `Data` variants share the same Vec so the
+    /// interleaving the runtime produced survives the parse; a consumer can
+    /// reconstruct the flat-log content for this frame from `logs` alone.
+    /// Survives every outcome (unlike a diagnostics buffer that gets discarded
+    /// on success).
+    pub logs: Vec<FrameLog>,
     pub children: Vec<CpiFrame>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameLog {
+    /// `Program log: <text>` from `msg!` / `sol_log` (excluding the special
+    /// `Program log: Instruction: <name>` form, which populates
+    /// `CpiFrame::instruction_name`). The parser also routes any unprefixed
+    /// runtime diagnostic into this variant (e.g. error-condition messages
+    /// without the structural `Program ` prefix): they don't have a
+    /// destructured shape, and `Msg` keeps the renderer logic uniform.
+    Msg(String),
+    /// `Program data: <base64>` from `sol_log_data`. Anchor's `emit!` macro
+    /// boils down to this syscall. We use the literal log term "data" rather
+    /// than "events"; event semantics layer above us via per-program IDLs.
+    Data(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +114,6 @@ pub enum CpiOutcome {
     Success,
     Failed {
         message: Option<String>,
-        diagnostics: Vec<String>,
     },
     /// Frame whose closing line never arrived: the stream ended with this
     /// frame still open. Distinct from `Failed` because we don't actually
@@ -78,47 +123,49 @@ pub enum CpiOutcome {
 
 /// Walk the log stream once with a stack of in-progress frames. The mapping
 /// is the obvious one: `invoke` pushes a frame, `success` / `failed:` pops
-/// it, `consumed` and `Program log: ...` lines annotate whatever is on top.
-///
-/// `diags` runs as a second stack parallel to `stack` (one buffer per frame).
-/// Keeping the two separate means a successful pop can throw the diag buffer
-/// away cheaply rather than having to clone it into the frame just to then
-/// discard it; the buffer only ever gets embedded into a frame when the
-/// frame ends in `Failed`.
+/// it, `consumed` annotates the top frame's compute count, and
+/// `Program log:` / `Program data:` / unprefixed runtime chatter all append
+/// to the top frame's `logs` (in arrival order, preserving the interleaving
+/// the runtime emitted).
 pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
     let mut roots: Vec<CpiFrame> = Vec::new();
     let mut stack: Vec<CpiFrame> = Vec::new();
-    let mut diags: Vec<Vec<String>> = Vec::new();
 
     for log in logs {
         if let Some(name) = log.strip_prefix("Program log: Instruction: ") {
             // The `Instruction:` line is what programs that follow the
             // convention (Anchor's dispatch macro, SPL Token) emit right
-            // before the handler body runs. Anything we've buffered up to
-            // this point is by definition pre-handler chatter, so clear it:
-            // we want this frame's diagnostics to be what the handler said,
-            // not what came before. In practice the buffer is usually empty
-            // here (Anchor and SPL Token don't emit logs between invoke and
-            // their Instruction: line), so this is mostly defensive.
-            if let Some(top) = diags.last_mut() {
-                top.clear();
-            }
-            // First `Instruction:` line wins. Defensive: in practice the
-            // programs I've looked at (Anchor's dispatch, SPL Token) emit
-            // exactly one such line per handler, so this check is just
-            // belt-and-braces. But if a program ever does emit a second one
-            // mid-handler, the first one is almost certainly the canonical
-            // name and last-wins would be the wrong default.
+            // before the handler body runs. Anything `Msg` we've already
+            // buffered is pre-handler chatter and isn't what the user wants
+            // to see in this frame's logs; clear those. Any `Data` entries
+            // we keep, since `emit!` before the dispatcher's `Instruction:`
+            // line is an unusual but legitimate emission worth preserving.
+            //
+            // Start Condition
             if let Some(frame) = stack.last_mut() {
+                frame
+                    .logs
+                    .retain(|entry| !matches!(entry, FrameLog::Msg(_)));
+                // First `Instruction:` line wins. In practice the programs
+                // I've looked at (Anchor's dispatch, SPL Token) emit exactly
+                // one per handler; this check is belt-and-braces in case a
+                // program ever emits a second one mid-handler (the first
+                // would still be the canonical dispatcher name).
                 if frame.instruction_name.is_none() {
                     frame.instruction_name = Some(name.to_string());
                 }
             }
             continue;
         }
-        if let Some(diag) = log.strip_prefix("Program log: ") {
-            if let Some(top) = diags.last_mut() {
-                top.push(diag.to_string());
+        if let Some(text) = log.strip_prefix("Program log: ") {
+            if let Some(frame) = stack.last_mut() {
+                frame.logs.push(FrameLog::Msg(text.to_string()));
+            }
+            continue;
+        }
+        if let Some(payload) = log.strip_prefix("Program data: ") {
+            if let Some(frame) = stack.last_mut() {
+                frame.logs.push(FrameLog::Data(payload.to_string()));
             }
             continue;
         }
@@ -128,7 +175,7 @@ pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
                 let Ok(program_id) = Pubkey::from_str(&program) else {
                     continue;
                 };
-                // Pre-seed `outcome: Truncated`. If the frame never sees a
+                // Initialize `outcome: Truncated`. If the frame never sees a
                 // status line (because the stream got cut off), this is the
                 // outcome it'll bubble up with, no special case in the
                 // happy path needed.
@@ -137,9 +184,9 @@ pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
                     outcome: CpiOutcome::Truncated,
                     compute_units: None,
                     instruction_name: None,
+                    logs: Vec::new(),
                     children: Vec::new(),
                 });
-                diags.push(Vec::new());
             }
             LogLine::Consumed(cu) => {
                 if let Some(frame) = stack.last_mut() {
@@ -150,44 +197,37 @@ pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
                 let Some(mut frame) = stack.pop() else {
                     continue;
                 };
-                let frame_diags = diags.pop().unwrap_or_default();
                 frame.outcome = match status {
                     Status::Success => CpiOutcome::Success,
-                    Status::Failed { message } => CpiOutcome::Failed {
-                        message,
-                        diagnostics: frame_diags,
-                    },
+                    Status::Failed { message } => CpiOutcome::Failed { message },
                 };
                 push_into_parent_or_roots(frame, &mut stack, &mut roots);
             }
             LogLine::Other => {
                 // The catch-all: lines that aren't `invoke` / `consumed` /
-                // status and don't start with `Program log:`. In practice
-                // this is where `process_instruction:` and `solana_runtime:`
-                // chatter ends up, plus the runtime's bare diagnostic lines
-                // (the classic example being `account X signer_key().is_none()`
-                // emitted before a Config-program signer-failure). These are
-                // often the most useful thing in a failure trace, so we keep
-                // them as raw diagnostics on the current frame.
+                // status and don't start with `Program log:` or `Program
+                // data:`. Covers any unprefixed runtime diagnostic that
+                // happens to land in the log stream (an error-condition
+                // line, for example). Bucketed as `Msg` because there's no
+                // structural shape to destructure and the renderer treats
+                // it the same as any other text payload on a frame.
                 //
-                // No current frame ⇒ nowhere to attach ⇒ drop it. (Doesn't
-                // happen today, but it's a defined behavior rather than a
+                // No current frame -> nowhere to attach -> drop it. (Doesn't
+                // happen today, but it's defined behavior rather than a
                 // panic so future runtime changes can't blow us up here.)
-                if let Some(top) = diags.last_mut() {
-                    top.push(log.clone());
+                if let Some(frame) = stack.last_mut() {
+                    frame.logs.push(FrameLog::Msg(log.clone()));
                 }
             }
         }
     }
 
-    // End-of-stream drain. Anything still on the stack at this point is a
-    // frame we never saw close, so its pre-seeded `Truncated` outcome is what
-    // gets used. The innermost frame pops first, which means it attaches to
-    // its truncated parent as a child before the parent itself bubbles up;
-    // the resulting hierarchy mirrors what we *would* have seen if the
-    // stream had completed.
+    // Drain whatever's still on the stack with its pre-seeded `Truncated`
+    // outcome. Innermost-first pop order is what preserves the parent/child
+    // hierarchy in the truncated tail; the resulting tree shape matches
+    // what we'd have got from a complete stream, just with `Truncated`
+    // outcomes wherever we lost sight.
     while let Some(frame) = stack.pop() {
-        let _ = diags.pop();
         push_into_parent_or_roots(frame, &mut stack, &mut roots);
     }
 
@@ -247,30 +287,31 @@ fn classify(log: &str) -> LogLine {
     }
 }
 
-/// Render `frames` as `cargo tree`-style box-art. Three rules cover it:
+/// Render `frames` as `cargo tree`-style box-art under a synthetic header.
+/// The header acts as a visible parent so the multiple top-level frames a
+/// transaction can contain (one per instruction) hang together as siblings
+/// rather than reading as flush-left strangers.
 ///
-///   - root frames sit flush at column zero. (Yes, one transaction can have
-///     several roots; each top-level instruction is its own root.)
-///   - non-last children use `├── `, last child uses `└── `
-///   - continuation under a non-last branch uses `│   ` to keep the vertical
-///     spine visible. Continuation under a last branch is plain spaces; no
-///     spine, because nothing further down branches off it.
-pub fn format_cpi_tree(frames: &[CpiFrame]) -> String {
+/// Rules:
+///   - First line is `header`, verbatim.
+///   - Each frame becomes a child of the header: non-last gets
+///     `CONN_BRANCH` (`├── `), the last gets `CONN_LAST` (`└── `).
+///   - Continuation under a non-last branch uses `SPINE_CONTINUE` (`│   `)
+///     to keep the vertical spine visible. Continuation under a last
+///     branch is `SPINE_END` (`    `); no spine, because nothing further
+///     down branches off it.
+pub fn format_cpi_tree(header: &str, frames: &[CpiFrame]) -> String {
     let mut out = String::new();
-    for frame in frames {
-        write_frame(&mut out, frame, "", true, true);
+    writeln!(out, "{header}").unwrap();
+    let last_idx = frames.len().saturating_sub(1);
+    for (i, frame) in frames.iter().enumerate() {
+        write_frame(&mut out, frame, "", i == last_idx);
     }
     out
 }
 
-fn write_frame(out: &mut String, frame: &CpiFrame, prefix: &str, is_last: bool, is_root: bool) {
-    let connector = if is_root {
-        ""
-    } else if is_last {
-        "└── "
-    } else {
-        "├── "
-    };
+fn write_frame(out: &mut String, frame: &CpiFrame, prefix: &str, is_last: bool) {
+    let connector = if is_last { CONN_LAST } else { CONN_BRANCH };
     write!(out, "{prefix}{connector}").unwrap();
     if let Some(name) = &frame.instruction_name {
         write!(out, "{name} ").unwrap();
@@ -287,16 +328,32 @@ fn write_frame(out: &mut String, frame: &CpiFrame, prefix: &str, is_last: bool, 
     }
     writeln!(out, "{}", frame.program_id).unwrap();
 
-    let child_prefix = if is_root {
-        String::new()
-    } else if is_last {
-        format!("{prefix}    ")
+    let child_prefix = if is_last {
+        format!("{prefix}{SPINE_END}")
     } else {
-        format!("{prefix}│   ")
+        format!("{prefix}{SPINE_CONTINUE}")
     };
+    // Log entries sit between the frame header and any children, in arrival
+    // order. The spine continues to the children when any follow, terminates
+    // otherwise; keeps a stray `│` from dangling under a leaf frame.
+    let log_spine = if frame.children.is_empty() {
+        LOG_SPINE_END
+    } else {
+        LOG_SPINE_CONTINUE
+    };
+    for entry in &frame.logs {
+        match entry {
+            FrameLog::Msg(text) => {
+                writeln!(out, "{child_prefix}{log_spine}>> log:  {text}").unwrap();
+            }
+            FrameLog::Data(payload) => {
+                writeln!(out, "{child_prefix}{log_spine}>> data: {payload}").unwrap();
+            }
+        }
+    }
     let last_idx = frame.children.len().saturating_sub(1);
     for (i, child) in frame.children.iter().enumerate() {
-        write_frame(out, child, &child_prefix, i == last_idx, false);
+        write_frame(out, child, &child_prefix, i == last_idx);
     }
 }
 
@@ -310,10 +367,93 @@ fn parse_depth_bracket(token: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Aliased to dodge the crate-root `pubkey!` macro_rules in `lib.rs`,
+    // which has a totally unrelated clap-builder signature.
+    use {super::*, solana_pubkey::pubkey as pk};
 
-    fn lines(s: &[&str]) -> Vec<String> {
-        s.iter().map(|x| x.to_string()).collect()
+    // ---- Pubkey fixtures ----
+    // Named program ids referenced across tests. The `pk!` macro is
+    // `solana_pubkey::pubkey!`, which rejects invalid base58 or wrong byte
+    // length at compile time, so a typo here fails the build rather than
+    // silently dropping a frame from a test's expected tree.
+    const SYSTEM_PROG: Pubkey = pk!("11111111111111111111111111111111");
+    const TOKEN_PROG: Pubkey = pk!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const CONFIG_PROG: Pubkey = pk!("Config1111111111111111111111111111111111111");
+    // Generic test programs (no specific real-world program). The identity
+    // doesn't matter to the parser; we just need stable distinct pubkeys.
+    const PROG_A: Pubkey = pk!("GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2");
+    const PROG_B: Pubkey = pk!("6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg");
+    const PROG_C: Pubkey = pk!("22222222222222222222222222222222222222222222");
+
+    // ---- Flat-log-line constructors ----
+    // The total-CU value in `consumed` doesn't affect parsing; we hard-code a
+    // generic 200000 so call sites stay short.
+    fn invoke(pk: &Pubkey, depth: u8) -> String {
+        format!("Program {pk} invoke [{depth}]")
+    }
+    fn instruction(name: &str) -> String {
+        format!("Program log: Instruction: {name}")
+    }
+    fn program_log(text: &str) -> String {
+        format!("Program log: {text}")
+    }
+    fn program_data(payload: &str) -> String {
+        format!("Program data: {payload}")
+    }
+    fn consumed(pk: &Pubkey, cu: u64) -> String {
+        format!("Program {pk} consumed {cu} of 200000 compute units")
+    }
+    fn success(pk: &Pubkey) -> String {
+        format!("Program {pk} success")
+    }
+    fn failed(pk: &Pubkey, msg: &str) -> String {
+        format!("Program {pk} failed: {msg}")
+    }
+
+    // ---- Render assertion ----
+    /// Compare a rendered tree against a multi-line literal, after dedenting
+    /// the literal by its common leading indent. Lets renderer tests write
+    /// the expected output as it should appear, with normal source-code
+    /// indentation, instead of as a long backslash-escaped string.
+    fn assert_render_eq(actual: &str, expected: &str) {
+        let normalized = dedent(expected);
+        if actual != normalized {
+            eprintln!("=== expected ===\n{normalized}");
+            eprintln!("=== actual ===\n{actual}");
+            panic!("render mismatch (diff above)");
+        }
+    }
+
+    fn dedent(s: &str) -> String {
+        // `trim_start_matches('\n')` drops the leading newline that comes
+        // from writing the literal across multiple source lines. `trim_end`
+        // drops any trailing whitespace, including the indent on the line
+        // that holds the closing quote, so we don't carry a phantom blank
+        // line into the output.
+        let trimmed = s.trim_start_matches('\n').trim_end();
+        let lines: Vec<&str> = trimmed.lines().collect();
+        // Min leading-whitespace count across non-blank lines: that's the
+        // common source indent. Blank lines are skipped or they'd pull the
+        // dedent down to zero.
+        let indent = lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+        let stripped: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                if l.len() >= indent {
+                    l[indent..].to_string()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect();
+        let mut out = stripped.join("\n");
+        out.push('\n'); // match the trailing-newline shape of writeln output
+        out
     }
 
     #[test]
@@ -323,18 +463,16 @@ mod tests {
 
     #[test]
     fn nested_cpi_attaches_child_under_parent() {
-        let logs = lines(&[
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 invoke [1]",
-            "Program log: Instruction: Mint",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
-            "Program log: Instruction: MintTo",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1500 of 198000 compute \
-             units",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 consumed 5000 of 200000 compute \
-             units",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 success",
-        ]);
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            instruction("Mint"),
+            invoke(&TOKEN_PROG, 2),
+            instruction("MintTo"),
+            consumed(&TOKEN_PROG, 1500),
+            success(&TOKEN_PROG),
+            consumed(&PROG_A, 5000),
+            success(&PROG_A),
+        ];
         let tree = cpi_tree(&logs);
         assert_eq!(tree.len(), 1);
         assert_eq!(tree[0].instruction_name.as_deref(), Some("Mint"));
@@ -348,33 +486,28 @@ mod tests {
     }
 
     #[test]
-    fn failed_frame_carries_message_and_diagnostics() {
-        let logs = lines(&[
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 invoke [1]",
-            "Program log: Instruction: Withdraw",
-            "Program log: AnchorError caused by account: vault. Error Code: ConstraintHasOne.",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 failed: custom program error: \
-             0x7d1",
-        ]);
+    fn failed_frame_carries_message_and_logs() {
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            instruction("Withdraw"),
+            program_log("AnchorError caused by account: vault. Error Code: ConstraintHasOne."),
+            failed(&PROG_A, "custom program error: 0x7d1"),
+        ];
         let tree = cpi_tree(&logs);
-        let CpiOutcome::Failed {
-            message,
-            diagnostics,
-        } = &tree[0].outcome
-        else {
+        let CpiOutcome::Failed { message } = &tree[0].outcome else {
             panic!("expected Failed");
         };
         assert_eq!(message.as_deref(), Some("custom program error: 0x7d1"));
-        assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].contains("ConstraintHasOne"));
+        assert_eq!(tree[0].logs.len(), 1);
+        let FrameLog::Msg(text) = &tree[0].logs[0] else {
+            panic!("expected Msg variant");
+        };
+        assert!(text.contains("ConstraintHasOne"));
     }
 
     #[test]
     fn unclosed_frames_drain_as_truncated() {
-        let logs = lines(&[
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 invoke [1]",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
-        ]);
+        let logs = vec![invoke(&PROG_A, 1), invoke(&TOKEN_PROG, 2)];
         let tree = cpi_tree(&logs);
         assert_eq!(tree.len(), 1);
         assert_eq!(tree[0].outcome, CpiOutcome::Truncated);
@@ -382,74 +515,261 @@ mod tests {
     }
 
     #[test]
-    fn unprefixed_runtime_diagnostic_captured() {
-        let logs = lines(&[
-            "Program Config1111111111111111111111111111111111111 invoke [1]",
-            "account J2kSTGu6eod7MUAy2nNZhFW5ye5ZdhAri6bcJJHRhhXy signer_key().is_none()",
-            "Program Config1111111111111111111111111111111111111 failed: missing required \
-             signature for instruction",
-        ]);
+    fn unprefixed_runtime_line_captured_as_msg() {
+        let logs = vec![
+            invoke(&CONFIG_PROG, 1),
+            // The bare runtime diagnostic. No `Program log:` prefix, no
+            // structural shape; it's the cause of the upcoming failure.
+            "account J2kSTGu6eod7MUAy2nNZhFW5ye5ZdhAri6bcJJHRhhXy signer_key().is_none()"
+                .to_string(),
+            failed(&CONFIG_PROG, "missing required signature for instruction"),
+        ];
         let tree = cpi_tree(&logs);
-        let CpiOutcome::Failed { diagnostics, .. } = &tree[0].outcome else {
-            panic!("expected Failed");
+        assert!(matches!(tree[0].outcome, CpiOutcome::Failed { .. }));
+        assert_eq!(tree[0].logs.len(), 1);
+        let FrameLog::Msg(text) = &tree[0].logs[0] else {
+            panic!("expected Msg variant");
         };
-        assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].contains("signer_key().is_none()"));
+        assert!(text.contains("signer_key().is_none()"));
     }
 
     #[test]
     fn format_nested_grandchild_extends_pipe_through_non_last_branch() {
-        let logs = lines(&[
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 invoke [1]",
-            "Program log: Instruction: Mint",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
-            "Program log: Instruction: MintTo",
-            "Program 11111111111111111111111111111111 invoke [3]",
-            "Program 11111111111111111111111111111111 consumed 50 of 197000 compute units",
-            "Program 11111111111111111111111111111111 success",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1500 of 198000 compute \
-             units",
-            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
-            "Program 22222222222222222222222222222222222222222222 invoke [2]",
-            "Program 22222222222222222222222222222222222222222222 consumed 100 of 198000 compute \
-             units",
-            "Program 22222222222222222222222222222222222222222222 success",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 consumed 5000 of 200000 compute \
-             units",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 success",
-        ]);
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            instruction("Mint"),
+            invoke(&TOKEN_PROG, 2),
+            instruction("MintTo"),
+            invoke(&SYSTEM_PROG, 3),
+            consumed(&SYSTEM_PROG, 50),
+            success(&SYSTEM_PROG),
+            consumed(&TOKEN_PROG, 1500),
+            success(&TOKEN_PROG),
+            invoke(&PROG_C, 2),
+            consumed(&PROG_C, 100),
+            success(&PROG_C),
+            consumed(&PROG_A, 5000),
+            success(&PROG_A),
+        ];
         let tree = cpi_tree(&logs);
-        let out = format_cpi_tree(&tree);
-        assert_eq!(
-            out,
-            "Mint (5000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2\n├── MintTo (1500 CU) \
-             TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n│   └── (50 CU) \
-             11111111111111111111111111111111\n└── (100 CU) \
-             22222222222222222222222222222222222222222222\n"
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            └── Mint (5000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+                ├── MintTo (1500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+                │   └── (50 CU) 11111111111111111111111111111111
+                └── (100 CU) 22222222222222222222222222222222222222222222
+            ",
         );
     }
 
     #[test]
     fn format_failed_frame_shows_message() {
-        let logs = lines(&[
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 invoke [1]",
-            "Program log: Instruction: Withdraw",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 consumed 3100 of 200000 compute \
-             units",
-            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 failed: custom program error: \
-             0x7d1",
-        ]);
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            instruction("Withdraw"),
+            consumed(&PROG_A, 3100),
+            failed(&PROG_A, "custom program error: 0x7d1"),
+        ];
         let tree = cpi_tree(&logs);
-        let out = format_cpi_tree(&tree);
-        assert_eq!(
-            out,
-            "Withdraw FAILED: custom program error: 0x7d1 (3100 CU) \
-             GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2\n"
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            └── Withdraw FAILED: custom program error: 0x7d1 (3100 CU) \
+             GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+            ",
         );
     }
 
     #[test]
-    fn format_empty_tree_yields_empty_string() {
-        assert_eq!(format_cpi_tree(&[]), "");
+    fn format_empty_tree_yields_only_header() {
+        assert_eq!(format_cpi_tree("CPI Tree:", &[]), "CPI Tree:\n");
+    }
+
+    #[test]
+    fn format_multiple_roots_group_under_header() {
+        // The case the synthetic header was introduced for: a transaction
+        // with several top-level instructions reads as one tree, not as a
+        // flush-left list of strangers.
+        let logs = vec![
+            invoke(&SYSTEM_PROG, 1),
+            success(&SYSTEM_PROG),
+            invoke(&TOKEN_PROG, 1),
+            instruction("Foo"),
+            consumed(&TOKEN_PROG, 200),
+            success(&TOKEN_PROG),
+            invoke(&PROG_A, 1),
+            success(&PROG_A),
+        ];
+        let tree = cpi_tree(&logs);
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            ├── 11111111111111111111111111111111
+            ├── Foo (200 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+            └── GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+            ",
+        );
+    }
+
+    #[test]
+    fn format_frame_with_data_no_children_uses_plain_pad() {
+        // Frame has data lines but no children; the data lines terminate
+        // under the frame so no spine is needed.
+        let logs = vec![
+            invoke(&PROG_B, 1),
+            instruction("EmitTwo"),
+            program_data("BqfPDIBaUMVcAAAA"),
+            program_data("AnotherBase64String"),
+            consumed(&PROG_B, 1500),
+            success(&PROG_B),
+        ];
+        let tree = cpi_tree(&logs);
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            └── EmitTwo (1500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
+                  >> data: BqfPDIBaUMVcAAAA
+                  >> data: AnotherBase64String
+            ",
+        );
+    }
+
+    #[test]
+    fn format_frame_with_data_and_children_uses_spine() {
+        // Frame has data AND children; the data lines use `│ ` so the spine
+        // visually connects them to the children branching below.
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            instruction("Mint"),
+            program_data("ParentDataPayload"),
+            invoke(&TOKEN_PROG, 2),
+            instruction("MintTo"),
+            consumed(&TOKEN_PROG, 1500),
+            success(&TOKEN_PROG),
+            consumed(&PROG_A, 5000),
+            success(&PROG_A),
+        ];
+        let tree = cpi_tree(&logs);
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            └── Mint (5000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+                │ >> data: ParentDataPayload
+                └── MintTo (1500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+            ",
+        );
+    }
+
+    #[test]
+    fn format_frame_with_no_data_omits_data_lines() {
+        let logs = vec![
+            invoke(&SYSTEM_PROG, 1),
+            consumed(&SYSTEM_PROG, 100),
+            success(&SYSTEM_PROG),
+        ];
+        let tree = cpi_tree(&logs);
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            └── (100 CU) 11111111111111111111111111111111
+            ",
+        );
+    }
+
+    #[test]
+    fn logs_and_data_preserve_interleaved_order() {
+        // A handler that alternates `msg!` and `emit!` should produce a
+        // `frame.logs` that interleaves Msg and Data variants in exactly the
+        // order the runtime emitted them.
+        let logs = vec![
+            invoke(&PROG_B, 1),
+            instruction("Mix"),
+            program_log("step 1"),
+            program_data("FirstData"),
+            program_log("step 2"),
+            program_data("SecondData"),
+            program_log("step 3"),
+            consumed(&PROG_B, 1500),
+            success(&PROG_B),
+        ];
+        let tree = cpi_tree(&logs);
+        assert_eq!(tree.len(), 1);
+        use FrameLog::*;
+        assert_eq!(
+            tree[0].logs,
+            vec![
+                Msg("step 1".to_string()),
+                Data("FirstData".to_string()),
+                Msg("step 2".to_string()),
+                Data("SecondData".to_string()),
+                Msg("step 3".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn format_interleaved_logs_and_data() {
+        // Renderer should emit `>> log:` and `>> data:` entries in the same
+        // arrival order they appear in `frame.logs`.
+        let logs = vec![
+            invoke(&PROG_B, 1),
+            instruction("Mix"),
+            program_log("step 1"),
+            program_data("FirstData"),
+            program_log("step 2"),
+            consumed(&PROG_B, 1500),
+            success(&PROG_B),
+        ];
+        let tree = cpi_tree(&logs);
+        let out = format_cpi_tree("CPI Tree:", &tree);
+        assert_render_eq(
+            &out,
+            "
+            CPI Tree:
+            └── Mix (1500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
+                  >> log:  step 1
+                  >> data: FirstData
+                  >> log:  step 2
+            ",
+        );
+    }
+
+    #[test]
+    fn success_frame_captures_data_entries() {
+        // `Program data: <base64>` lines come from `sol_log_data` (Anchor's
+        // `emit!`). They survive a `Success` pop, unlike pre-this-refactor
+        // diagnostics did not.
+        let logs = vec![
+            invoke(&PROG_B, 1),
+            instruction("EmitTwo"),
+            program_data("BqfPDIBaUMVcAAAA"),
+            program_data("AnotherBase64String"),
+            consumed(&PROG_B, 1500),
+            success(&PROG_B),
+        ];
+        let tree = cpi_tree(&logs);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].outcome, CpiOutcome::Success);
+        use FrameLog::*;
+        assert_eq!(
+            tree[0].logs,
+            vec![
+                Data("BqfPDIBaUMVcAAAA".to_string()),
+                Data("AnotherBase64String".to_string()),
+            ]
+        );
     }
 }

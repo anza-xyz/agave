@@ -1506,6 +1506,7 @@ pub fn process_logs(
     loop {
         match receiver.recv() {
             Ok(logs) => {
+                println!(); // keep em separated
                 println!("Transaction executed in slot {}:", logs.context.slot);
                 println!("  Signature: {}", logs.value.signature);
                 println!(
@@ -1516,11 +1517,10 @@ pub fn process_logs(
                         .unwrap_or_else(|| "Ok".to_string())
                 );
                 if tree {
-                    println!("  CPI Tree:");
                     let frames = crate::log_tree::cpi_tree(&logs.value.logs);
-                    let rendered = crate::log_tree::format_cpi_tree(&frames);
+                    let rendered = crate::log_tree::format_cpi_tree("CPI Tree:", &frames);
                     for line in rendered.lines() {
-                        println!("    {line}");
+                        println!("  {line}");
                     }
                 } else {
                     println!("  Log Messages:");
