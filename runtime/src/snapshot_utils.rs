@@ -1344,8 +1344,8 @@ fn migrate_legacy_hardlinks(
                 symlink_path.display(),
             ))
         })?;
-        // snapshot_slot_dir = `<account_path>/snapshot/<slot>/`. The account run dir is its
-        // grandparent + `run`.
+        // snapshot_slot_dir = `<X>/snapshot/<slot>/`. The account run dir is its
+        // grandparent + `run` (i.e. `<X>/run`).
         let run_dir = snapshot_slot_dir
             .parent()
             .and_then(Path::parent)
@@ -1356,6 +1356,21 @@ fn migrate_legacy_hardlinks(
                 ))
             })?
             .join(ACCOUNTS_RUN_DIR);
+        // The legacy snapshot was taken against the account paths in use at the time. If
+        // those have changed (e.g. the operator reconfigured `account_paths` while upgrading
+        // Agave), the run dir we just derived isn't one we're loading into — bail rather than
+        // silently writing files into a location nobody's reading from.
+        if !account_paths.contains(&run_dir) {
+            return Err(IoError::other(format!(
+                "legacy hardlink target '{}' points to run dir '{}' which is not in the current \
+                 account paths ({:?}); the account paths configuration has changed since this \
+                 snapshot was taken — load from a snapshot archive instead",
+                snapshot_slot_dir.display(),
+                run_dir.display(),
+                account_paths,
+            ))
+            .into());
+        }
 
         for file_entry in fs::read_dir(&snapshot_slot_dir).map_err(|err| {
             IoError::other(format!(
