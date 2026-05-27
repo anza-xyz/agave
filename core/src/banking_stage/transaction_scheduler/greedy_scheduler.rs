@@ -101,8 +101,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
         let mut schedulable_threads = ThreadSet::any(num_threads);
         for thread_id in 0..num_threads {
-            if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                >= target_cu_per_thread
+            if self.common.consume_work_senders[thread_id].is_full()
+                || self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
+                    >= target_cu_per_thread
             {
                 schedulable_threads.remove(thread_id);
             }
@@ -203,9 +204,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
                     // if there are no more schedulable threads, stop scheduling.
-                    if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                        + self.common.batches.total_cus()[thread_id]
-                        >= target_cu_per_thread
+                    if self.common.consume_work_senders[thread_id].is_full()
+                        || self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
+                            + self.common.batches.total_cus()[thread_id]
+                            >= target_cu_per_thread
                     {
                         schedulable_threads.remove(thread_id);
                         if schedulable_threads.is_empty() {

@@ -19,7 +19,7 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::{BankingPacketReceiver, SchedulerPriorityFloor},
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
@@ -518,9 +518,12 @@ impl BankingStage {
         threads.push(self.spawn_vote_worker());
 
         // Create channels for communication between scheduler and workers
+        const CHANNEL_CAPACITY: usize = 10_000; // unlikely we'll ever hit this given default configuration.
+
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
-            (0..num_workers).map(|_| unbounded()).unzip();
-        let (finished_work_sender, finished_work_receiver) = unbounded();
+            (0..num_workers).map(|_| bounded(CHANNEL_CAPACITY)).unzip();
+        let (finished_work_sender, finished_work_receiver) =
+            bounded(num_workers.saturating_mul(CHANNEL_CAPACITY));
 
         // Spawn the worker threads
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
