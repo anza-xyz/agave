@@ -439,8 +439,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
                             ) => {}
-                            (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Closed)
-                                if existing.account_owner != entry.account_owner => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
                                 error!(
