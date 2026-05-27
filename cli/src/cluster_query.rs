@@ -1518,18 +1518,22 @@ pub fn process_logs(
                 );
                 if tree {
                     let frames = crate::log_tree::cpi_tree(&logs.value.logs);
-                    // Include the transaction-total CU on the header line.
-                    // `transaction_total_cu` returns `None` when every
-                    // top-level frame is a native program (BPF Loader,
-                    // top-level System Program, etc.) since those don't
-                    // emit `consumed N of M compute units` lines. Falling
-                    // back to `(0 CU)` in that case would misreport; the
-                    // honest text below makes the limitation explicit.
-                    let header = match crate::log_tree::transaction_total_cu(&frames) {
-                        Some(total) => {
-                            format!("CPI Tree ({} CU):", crate::log_tree::with_commas(total))
-                        }
-                        None => "CPI Tree (no compute units in logs):".to_string(),
+                    // Header shows `(consumed / budget CU)` when CU data is
+                    // available. `transaction_total_cu` returns `None` when
+                    // every top-level frame is a native program (BPF Loader,
+                    // top-level System Program, etc.) that doesn't emit
+                    // `consumed N of M compute units` lines; in that case
+                    // we fall back to the explicit note rather than
+                    // misreporting "0 CU".
+                    let total = crate::log_tree::transaction_total_cu(&frames);
+                    let budget = crate::log_tree::transaction_compute_budget(&frames);
+                    let header = match (total, budget) {
+                        (Some(t), Some(b)) => format!(
+                            "CPI Tree ({} / {} CU):",
+                            crate::log_tree::with_commas(t),
+                            crate::log_tree::with_commas(b)
+                        ),
+                        _ => "CPI Tree (no compute units in logs):".to_string(),
                     };
                     let rendered = crate::log_tree::format_cpi_tree(&header, &frames);
                     for line in rendered.lines() {
