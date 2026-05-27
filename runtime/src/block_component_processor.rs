@@ -351,7 +351,7 @@ impl BlockComponentProcessor {
         Self::update_bank_with_footer_fields(
             &bank,
             block_producer_time_nanos,
-            bank_hash,
+            Some(bank_hash),
             reward_cert,
             footer_input
                 .as_ref()
@@ -503,14 +503,17 @@ impl BlockComponentProcessor {
     pub fn update_bank_with_footer_fields(
         bank: &Bank,
         block_producer_time_nanos: i64,
-        bank_hash: Hash,
+        bank_hash: Option<Hash>,
         reward_cert: Option<ValidatedRewardCert>,
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     ) -> Result<(), BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
         calc_vote_rewards_update_vote_states(bank, reward_cert, final_cert_input)?;
-        // Record expected bank hash from footer for later verification when the bank is frozen.
-        bank.set_expected_bank_hash(bank_hash);
+
+        if let Some(hash) = bank_hash {
+            // Record expected bank hash from footer for later verification when the bank is frozen.
+            bank.set_expected_bank_hash(hash);
+        }
         Ok(())
     }
 }

@@ -297,7 +297,7 @@ impl EventHandler {
                         .or_default()
                         .push((block, parent_block));
                 }
-                Self::check_rootable_blocks(
+                Self::check_rootable_blocks_and_bank_hash_mismatches(
                     my_pubkey,
                     ctx,
                     vctx,
@@ -433,7 +433,7 @@ impl EventHandler {
                 finalized_blocks.insert(block);
                 request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
 
-                Self::check_rootable_blocks(
+                Self::check_rootable_blocks_and_bank_hash_mismatches(
                     my_pubkey,
                     ctx,
                     vctx,
@@ -809,7 +809,10 @@ impl EventHandler {
     /// - Block has a finalization certificate
     ///
     /// If so set root on the highest block that fits these conditions
-    fn check_rootable_blocks(
+    ///
+    /// Additionally check if any of the finalized blocks is frozen with a bank hash mismatch.
+    /// If so panic as it is unrecoverable.
+    fn check_rootable_blocks_and_bank_hash_mismatches(
         my_pubkey: &Pubkey,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
@@ -825,6 +828,24 @@ impl EventHandler {
             .iter()
             .filter_map(|&(slot, block_id)| {
                 let bank = bank_forks_r.get(slot)?;
+
+                // Check for bank hash mismatch
+                if bank.is_frozen()
+                    && bank.block_id() == Some(block_id)
+                    && let Some(expected_hash) = bank.expected_bank_hash()
+                    && expected_hash != bank.hash()
+                {
+                    panic!(
+                        "{my_pubkey}: Slot {slot} block_id {block_id} has been finalized, however \
+                         we have a bank hash mismatch. The cluster bank hash is {expected_hash} \
+                         however we computed {}. At this point we will be unable to recover. \
+                         Please save a copy of your ledger to share on discord and restart from a \
+                         snapshot > {slot}.",
+                        bank.hash(),
+                    );
+                }
+
+                // Check if this block is rootable
                 (slot > old_root
                     && vctx.vote_history.voted(slot)
                     && bank.is_frozen()
@@ -1691,6 +1712,41 @@ mod tests {
         assert_eq!(dropped_banks[0].slot(), 0);
         // The bank forks root should be updated to 1
         assert_eq!(test_context.bank_forks.read().unwrap().root(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "we have a bank hash mismatch")]
+    fn test_finalized_block_with_bank_hash_mismatch_panics() {
+        let mut test_context = setup();
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank = test_context.create_block_only(1, root_bank);
+        let block_id = bank.block_id().unwrap();
+        let expected_hash = Hash::new_unique();
+        bank.set_expected_bank_hash(expected_hash);
+
+        test_context.send_finalized_event((1, block_id), true);
+    }
+
+    #[test]
+    fn test_finalized_different_block_id_with_bank_hash_mismatch_does_not_panic() {
+        let mut test_context = setup();
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank = test_context.create_block_only(1, root_bank);
+        let expected_hash = Hash::new_unique();
+        bank.set_expected_bank_hash(expected_hash);
+        let finalized_block_id = Hash::new_unique();
+
+        test_context.send_finalized_event((1, finalized_block_id), true);
     }
 
     #[test]
