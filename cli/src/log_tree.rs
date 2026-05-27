@@ -77,11 +77,29 @@ const SPINE_END: &str = "    ";
 const LOG_SPINE_CONTINUE: &str = "│ ";
 const LOG_SPINE_END: &str = "  ";
 
+/// The two CU values the runtime reports together on a
+/// `Program X consumed N of M compute units` line. Paired in a single
+/// struct because either both are emitted (BPF programs) or neither is
+/// (native programs that don't run in the SBPF VM).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComputeUnits {
+    /// What this frame consumed. Cumulative: includes the program's CPI
+    /// children's consumption, so summing top-level frames gives the
+    /// transaction total (matches `TransactionStatusMeta::compute_units_consumed`).
+    pub consumed: u64,
+    /// Compute units remaining in the transaction's budget at the moment
+    /// this frame started executing. For the first top-level instruction
+    /// this equals the transaction's total CU budget; for subsequent
+    /// frames it's the running remainder after earlier frames consumed
+    /// from the same budget.
+    pub available_at_start: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpiFrame {
     pub program_id: Pubkey,
     pub outcome: CpiOutcome,
-    pub compute_units: Option<u64>,
+    pub compute_units: Option<ComputeUnits>,
     pub instruction_name: Option<String>,
     /// Order preserving record of `msg!` strings, `emit!` payloads, and
     /// unprefixed runtime diagnostics emitted while this frame was on the
@@ -279,13 +297,24 @@ pub fn with_commas(n: u64) -> String {
 pub fn transaction_total_cu(frames: &[CpiFrame]) -> Option<u64> {
     frames
         .iter()
-        .filter_map(|f| f.compute_units)
+        .filter_map(|f| f.compute_units.as_ref().map(|cu| cu.consumed))
         .fold(None, |acc, cu| Some(acc.unwrap_or(0) + cu))
+}
+
+/// Transaction-wide CU budget: the `available_at_start` value of the first
+/// top-level frame that had any CU data. For Solana transactions this
+/// equals the per-instruction default (200,000) × instruction count, capped
+/// at 1,400,000, *unless* the tx used `ComputeBudgetInstruction::set_compute_unit_limit`
+/// to override. Returns `None` when no frame reported CU at all.
+pub fn transaction_compute_budget(frames: &[CpiFrame]) -> Option<u64> {
+    frames
+        .iter()
+        .find_map(|f| f.compute_units.as_ref().map(|cu| cu.available_at_start))
 }
 
 enum LogLine {
     Invoke(String),
-    Consumed(u64),
+    Consumed(ComputeUnits),
     Status(Status),
     Other,
 }
@@ -317,8 +346,25 @@ fn classify(log: &str) -> LogLine {
             let message = (!raw.is_empty()).then(|| raw.to_string());
             LogLine::Status(Status::Failed { message })
         }
-        ["Program", _, "consumed", cu, "of", _, "compute", "units"] => {
-            cu.parse::<u64>().map_or(LogLine::Other, LogLine::Consumed)
+        [
+            "Program",
+            _,
+            "consumed",
+            consumed,
+            "of",
+            available,
+            "compute",
+            "units",
+        ] => {
+            // Both values must parse; if either is malformed we fall back to
+            // `Other` rather than constructing a half-known `ComputeUnits`.
+            match (consumed.parse::<u64>(), available.parse::<u64>()) {
+                (Ok(consumed), Ok(available_at_start)) => LogLine::Consumed(ComputeUnits {
+                    consumed,
+                    available_at_start,
+                }),
+                _ => LogLine::Other,
+            }
         }
         _ => LogLine::Other,
     }
@@ -361,7 +407,13 @@ fn write_frame(out: &mut String, frame: &CpiFrame, prefix: &str, is_last: bool) 
         CpiOutcome::Truncated => write!(out, "TRUNCATED ").unwrap(),
     }
     if let Some(cu) = frame.compute_units {
-        write!(out, "({} CU) ", with_commas(cu)).unwrap();
+        write!(
+            out,
+            "({} / {} CU) ",
+            with_commas(cu.consumed),
+            with_commas(cu.available_at_start)
+        )
+        .unwrap();
     }
     writeln!(out, "{}", frame.program_id).unwrap();
 
@@ -513,7 +565,13 @@ mod tests {
         let tree = cpi_tree(&logs);
         assert_eq!(tree.len(), 1);
         assert_eq!(tree[0].instruction_name.as_deref(), Some("Mint"));
-        assert_eq!(tree[0].compute_units, Some(5000));
+        assert_eq!(
+            tree[0].compute_units,
+            Some(ComputeUnits {
+                consumed: 5_000,
+                available_at_start: 200_000,
+            })
+        );
         assert_eq!(tree[0].outcome, CpiOutcome::Success);
         assert_eq!(tree[0].children.len(), 1);
         assert_eq!(
@@ -594,10 +652,10 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Mint (5,000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
-                ├── MintTo (1,500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
-                │   └── (50 CU) 11111111111111111111111111111111
-                └── (100 CU) 22222222222222222222222222222222222222222222
+            └── Mint (5,000 / 200,000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+                ├── MintTo (1,500 / 200,000 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+                │   └── (50 / 200,000 CU) 11111111111111111111111111111111
+                └── (100 / 200,000 CU) 22222222222222222222222222222222222222222222
             ",
         );
     }
@@ -616,7 +674,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Withdraw FAILED: custom program error: 0x7d1 (3,100 CU) \
+            └── Withdraw FAILED: custom program error: 0x7d1 (3,100 / 200,000 CU) \
              GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
             ",
         );
@@ -649,7 +707,7 @@ mod tests {
             "
             CPI Tree:
             ├── 11111111111111111111111111111111
-            ├── Foo (200 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+            ├── Foo (200 / 200,000 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
             └── GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
             ",
         );
@@ -673,7 +731,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── EmitTwo (1,500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
+            └── EmitTwo (1,500 / 200,000 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
                   >> data: BqfPDIBaUMVcAAAA
                   >> data: AnotherBase64String
             ",
@@ -701,9 +759,9 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Mint (5,000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
+            └── Mint (5,000 / 200,000 CU) GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2
                 │ >> data: ParentDataPayload
-                └── MintTo (1,500 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+                └── MintTo (1,500 / 200,000 CU) TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
             ",
         );
     }
@@ -721,7 +779,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── (100 CU) 11111111111111111111111111111111
+            └── (100 / 200,000 CU) 11111111111111111111111111111111
             ",
         );
     }
@@ -776,7 +834,7 @@ mod tests {
             &out,
             "
             CPI Tree:
-            └── Mix (1,500 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
+            └── Mix (1,500 / 200,000 CU) 6Ng7PojJBe6XjbsR65ftKKBpHUe2erD7E5dgGdMUjcgg
                   >> log:  step 1
                   >> data: FirstData
                   >> log:  step 2
@@ -807,6 +865,30 @@ mod tests {
                 Data("BqfPDIBaUMVcAAAA".to_string()),
                 Data("AnotherBase64String".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn parser_captures_consumed_and_available() {
+        // The flat log line carries both X (consumed) and Y (available at
+        // frame start). We must capture both so the renderer can surface
+        // them; dropping Y would silently lose information the runtime
+        // emitted.
+        let logs = vec![
+            invoke(&PROG_A, 1),
+            // 1,500 CU consumed of 198,000 available at frame start.
+            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 consumed 1500 of 198000 compute \
+             units"
+                .to_string(),
+            success(&PROG_A),
+        ];
+        let tree = cpi_tree(&logs);
+        assert_eq!(
+            tree[0].compute_units,
+            Some(ComputeUnits {
+                consumed: 1_500,
+                available_at_start: 198_000,
+            })
         );
     }
 
@@ -854,6 +936,27 @@ mod tests {
     }
 
     #[test]
+    fn transaction_compute_budget_reads_first_available() {
+        // The transaction budget is the `available_at_start` of the *first*
+        // top-level frame that reported CU. Frames that came before it
+        // without CU data (e.g. native ComputeBudget instructions) are
+        // skipped over by `find_map`.
+        let logs = vec![
+            // No-CU native instruction first.
+            invoke(&SYSTEM_PROG, 1),
+            success(&SYSTEM_PROG),
+            // Then a BPF program reporting `consumed 4817 of 1000000`.
+            invoke(&PROG_A, 1),
+            "Program GtdambwDgHWrDJdVPBkEHGhCwokqgAoch162teUjJse2 consumed 4817 of 1000000 \
+             compute units"
+                .to_string(),
+            success(&PROG_A),
+        ];
+        let tree = cpi_tree(&logs);
+        assert_eq!(transaction_compute_budget(&tree), Some(1_000_000));
+    }
+
+    #[test]
     fn transaction_total_cu_does_not_double_count_children() {
         // Per-frame `consumed` is cumulative in Solana: the parent's value
         // already includes any CPI children's consumption (verified against
@@ -868,11 +971,14 @@ mod tests {
             success(&PROG_A),
         ];
         let tree = cpi_tree(&logs);
-        // Sanity: parent has Some(1_500), child has Some(500). The 500 is
-        // *included* in the 1_500, so the transaction total is 1_500, not
-        // 2_000.
-        assert_eq!(tree[0].compute_units, Some(1_500));
-        assert_eq!(tree[0].children[0].compute_units, Some(500));
+        // Sanity: parent's consumed is 1_500, child's is 500. The 500 is
+        // *included* in the 1_500 (per-frame consumed is cumulative), so
+        // the transaction total is 1_500, not 2_000.
+        assert_eq!(tree[0].compute_units.map(|cu| cu.consumed), Some(1_500));
+        assert_eq!(
+            tree[0].children[0].compute_units.map(|cu| cu.consumed),
+            Some(500)
+        );
         assert_eq!(transaction_total_cu(&tree), Some(1_500));
     }
 }
