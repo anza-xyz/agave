@@ -572,19 +572,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// Replaces the slot list entry at `old_slot` with `(slot, account_info)`.
+    /// Replaces the slot list entry at `old_slot` with `new_item`.
     ///
     /// Panics if `old_slot` is not present in the slot list, or if more than one entry at
     /// `old_slot` is found (which would indicate prior corruption).
-    pub fn replace(
-        &self,
-        pubkey: &Pubkey,
-        new_value: PreAllocatedAccountMapEntry<T>,
-        old_slot: Slot,
-    ) {
-        let (slot, account_info) = new_value.into();
+    pub fn replace(&self, pubkey: &Pubkey, new_item: SlotListItem<T>, old_slot: Slot) {
         debug_assert!(
-            !account_info.is_cached(),
+            !new_item.1.is_cached(),
             "Replace should only be used for uncached accounts"
         );
         let mut should_write_through = false;
@@ -599,7 +593,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         "duplicate entry at slot {old_slot} in slot_list"
                     );
                     found_slot = true;
-                    *cur_item = (slot, account_info);
+                    *cur_item = new_item;
                 }
                 true
             });
@@ -613,6 +607,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 self.should_write_through && slot_list_length == 1 && entry.ref_count() == 1;
         });
         if should_write_through {
+            let (slot, account_info) = new_item;
             self.write_through(pubkey, slot, account_info);
         }
     }

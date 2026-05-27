@@ -957,16 +957,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ///
     /// Panics if `old_slot` is not present in the slot list.
     pub fn replace(&self, new_slot: Slot, old_slot: Slot, pubkey: &Pubkey, account_info: T) {
-        // Updates must be to an item already in accounts index, so store as raw to avoid unnecessary allocations
-        let store_raw = true;
-        let new_item = PreAllocatedAccountMapEntry::new(
-            new_slot,
-            account_info,
-            &self.storage.storage,
-            store_raw,
-        );
         let map = self.get_bin(pubkey);
-        map.replace(pubkey, new_item, old_slot);
+        map.replace(pubkey, (new_slot, account_info), old_slot);
     }
 
     pub fn ref_count_from_storage(&self, pubkey: &Pubkey) -> RefCount {
@@ -2280,13 +2272,15 @@ mod tests {
         );
         assert_eq!(index.ref_count_from_storage(&key), 1);
 
-        index.replace(slot, slot, &key, 200);
+        let account_info = 200;
+
+        index.replace(slot, slot, &key, account_info);
 
         // Slot list now holds the new account_info at the same slot.
         let slot_list = index.get_and_then(&key, |entry| {
             (false, entry.unwrap().slot_list_read_lock().clone_list())
         });
-        assert_eq!(slot_list, SlotList::from([(slot, 200)]));
+        assert_eq!(slot_list, SlotList::from([(slot, account_info)]));
         // Replace doesn't change refcounts.
         assert_eq!(index.ref_count_from_storage(&key), 1);
     }
@@ -2300,6 +2294,7 @@ mod tests {
 
         let old_slot = 5;
         let new_slot = 10;
+        let account_info = 200;
         index.upsert(
             old_slot,
             old_slot,
@@ -2310,12 +2305,12 @@ mod tests {
         );
         assert_eq!(index.ref_count_from_storage(&key), 1);
 
-        index.replace(new_slot, old_slot, &key, 200);
+        index.replace(new_slot, old_slot, &key, account_info);
 
         let slot_list = index.get_and_then(&key, |entry| {
             (false, entry.unwrap().slot_list_read_lock().clone_list())
         });
-        assert_eq!(slot_list, SlotList::from([(new_slot, 200)]));
+        assert_eq!(slot_list, SlotList::from([(new_slot, account_info)]));
         // Moving an entry between slots must not change the ref count.
         assert_eq!(index.ref_count_from_storage(&key), 1);
     }

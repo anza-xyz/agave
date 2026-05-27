@@ -3721,7 +3721,7 @@ impl AccountsDb {
         //          |                           |
         //          V                           |
         // S3 store_accounts_for_shrink()/      | index
-        //        update_index_shrunk_accounts()| (replaces existing store_id, offset in stores)
+        //        update_index_for_shrink()     | (replaces existing store_id, offset in stores)
         //          |                           |
         //          V                           |
         // S4 do_shrink_slot_store()/           | map of stores (removes old entry)
@@ -5142,7 +5142,7 @@ impl AccountsDb {
     /// Unlike `update_index_stored_accounts` this does not collect reclaims — the caller is
     /// responsible for the source storage's alive-bytes accounting. Secondary indexes are also
     /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
-    fn update_index_shrunk_accounts<'a>(
+    fn update_index_for_shrink<'a>(
         &self,
         infos: Vec<AccountInfo>,
         accounts: &impl StorableAccounts<'a>,
@@ -5606,7 +5606,7 @@ impl AccountsDb {
         let write_accounts_us = write_accounts_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
-        self.update_index_shrunk_accounts(
+        self.update_index_for_shrink(
             infos,
             &accounts,
             update_index_thread_selection,
