@@ -1504,6 +1504,7 @@ pub fn process_logs(
     loop {
         match receiver.recv() {
             Ok(logs) => {
+                writeln_stdout(format_args!(""))?; // keep em separated
                 writeln_stdout(format_args!(
                     "Transaction executed in slot {}:",
                     logs.context.slot
@@ -1517,11 +1518,10 @@ pub fn process_logs(
                         .unwrap_or_else(|| "Ok".to_string())
                 ))?;
                 if tree {
-                    writeln_stdout(format_args!("  CPI Tree:"))?;
                     let frames = crate::log_tree::cpi_tree(&logs.value.logs);
-                    let rendered = crate::log_tree::format_cpi_tree(&frames);
+                    let rendered = crate::log_tree::format_cpi_tree("CPI Tree:", &frames);
                     for line in rendered.lines() {
-                        writeln_stdout(format_args!("    {line}"))?;
+                        writeln_stdout(format_args!("  {line}"))?;
                     }
                 } else {
                     writeln_stdout(format_args!("  Log Messages:"))?;
