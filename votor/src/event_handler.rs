@@ -600,8 +600,8 @@ impl EventHandler {
         if *my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
             let my_old_pubkey = vctx.vote_history.node_pubkey;
             *my_pubkey = new_pubkey;
-            // The vote history file for the new identity must exist for set-identity to succeed
-            vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)?;
+            vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)
+                .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
             vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }

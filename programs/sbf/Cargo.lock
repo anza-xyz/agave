@@ -7981,6 +7981,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-votor-messages",
  "base64 0.22.1",
  "bs58",
  "crossbeam-channel",

@@ -34,6 +34,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         max_genesis_archive_unpacked_size: config.max_genesis_archive_unpacked_size,
         run_verification: config.run_verification,
         require_tower: config.require_tower,
+        require_vote_history: config.require_vote_history,
         tower_storage: config.tower_storage.clone(),
         vote_history_storage: config.vote_history_storage.clone(),
         debug_keys: config.debug_keys.clone(),

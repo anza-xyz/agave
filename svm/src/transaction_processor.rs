@@ -46,7 +46,7 @@ use {
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
             ProgramToLoad,
         },
-        program_cache_entry::ProgramCacheEntry,
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
@@ -321,6 +321,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .iter()
             .map(|program_id| ProgramToLoad {
                 program_id,
+                loader: ProgramCacheEntryOwner::NativeLoader,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             })
@@ -1703,6 +1704,7 @@ mod tests {
             &account_loader,
             vec![ProgramToLoad {
                 program_id: &key,
+                loader: ProgramCacheEntryOwner::LoaderV3,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             }],
@@ -1741,6 +1743,7 @@ mod tests {
                 &account_loader,
                 vec![ProgramToLoad {
                     program_id: &key,
+                    loader: ProgramCacheEntryOwner::LoaderV2,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
@@ -1963,6 +1966,7 @@ mod tests {
             .extract(
                 &mut vec![ProgramToLoad {
                     program_id: &key,
+                    loader: ProgramCacheEntryOwner::NativeLoader,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],

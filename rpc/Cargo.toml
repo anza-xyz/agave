@@ -18,11 +18,16 @@ name = "solana_rpc"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-ledger/dev-context-only-utils", "solana-rpc/dev-context-only-utils"]
+dev-context-only-utils = [
+    "agave-votor-messages/dev-context-only-utils",
+    "solana-ledger/dev-context-only-utils",
+    "solana-rpc/dev-context-only-utils",
+]
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-votor-messages = { workspace = true }
 base64 = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }

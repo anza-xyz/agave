@@ -1203,6 +1203,9 @@ pub struct ConfirmationTiming {
 
     /// `batch_execute()` measurements.
     pub batch_execute: BatchExecutionTiming,
+
+    /// Number of times this slot was switched from an alternate location.
+    pub num_bank_switches: u64,
 }
 
 impl Default for ConfirmationTiming {
@@ -1216,6 +1219,7 @@ impl Default for ConfirmationTiming {
             fetch_elapsed: 0,
             fetch_fail_elapsed: 0,
             batch_execute: BatchExecutionTiming::default(),
+            num_bank_switches: 0,
         }
     }
 }
@@ -1378,6 +1382,7 @@ impl ReplaySlotStats {
                 (confirmation_elapsed, self.confirmation_elapsed as i64, i64),
                 (replay_elapsed, self.replay_elapsed as i64, i64),
                 ("execute_batches_us", execute_batches_us, Option<i64>),
+                ("num_bank_switches", self.num_bank_switches as i64, i64),
                 (
                     "replay_total_elapsed",
                     self.started.elapsed().as_micros() as i64,

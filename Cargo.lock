@@ -9693,6 +9693,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-votor-messages",
  "base64 0.22.1",
  "bs58",
  "crossbeam-channel",

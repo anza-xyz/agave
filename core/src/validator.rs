@@ -147,7 +147,7 @@ use {
     solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
-    solana_vote_program::vote_state::VoteStateV4,
+    solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
     std::{
         borrow::Cow,
         cmp,
@@ -349,6 +349,7 @@ pub struct ValidatorConfig {
     /// processing.
     pub run_verification: bool,
     pub require_tower: bool,
+    pub require_vote_history: bool,
     pub tower_storage: Arc<dyn TowerStorage>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -429,6 +430,7 @@ impl ValidatorConfig {
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             run_verification: true,
             require_tower: false,
+            require_vote_history: false,
             tower_storage: Arc::new(NullTowerStorage::default()),
             vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
             debug_keys: None,
@@ -1556,8 +1558,7 @@ impl Validator {
         };
         // Future upstream PR will handle reconciliation of VoteHistory against hard forks
         let vote_history =
-            VoteHistory::restore(config.vote_history_storage.as_ref(), &cluster_info.id())
-                .unwrap_or(VoteHistory::new(cluster_info.id(), 0));
+            restore_vote_history(config, &bank_forks, &cluster_info.id(), vote_account);
         migration_status.log_phase();
 
         let outstanding_repair_requests =
@@ -2004,6 +2005,65 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
         }
     }
     false
+}
+
+pub fn active_vote_account_exists_in_bank_alpenglow(bank: &Bank, vote_account: &Pubkey) -> bool {
+    let Some(genesis_certificate) = bank.get_alpenglow_genesis_certificate() else {
+        return false;
+    };
+    let Some(Ok(vote_state)) = bank
+        .get_account(vote_account)
+        .map(|acct| acct.deserialize_data())
+    else {
+        return false;
+    };
+    let Ok(vote_state_handler) = VoteStateHandler::try_new_from_vote_state_versions(vote_state)
+    else {
+        return false;
+    };
+
+    let Some(last_voted_slot) = vote_state_handler.last_voted_slot() else {
+        return false;
+    };
+    let genesis_slot = genesis_certificate.cert_type.slot();
+
+    last_voted_slot > genesis_slot
+}
+
+fn restore_vote_history(
+    config: &ValidatorConfig,
+    bank_forks: &Arc<RwLock<BankForks>>,
+    identity: &Pubkey,
+    vote_account: &Pubkey,
+) -> VoteHistory {
+    match VoteHistory::restore(config.vote_history_storage.as_ref(), identity) {
+        Ok(vote_history) => vote_history,
+        Err(err) => {
+            let voting_has_been_active = {
+                let bank_forks = bank_forks.read().unwrap();
+                active_vote_account_exists_in_bank_alpenglow(
+                    &bank_forks.working_bank(),
+                    vote_account,
+                )
+            };
+            if config.require_vote_history && voting_has_been_active {
+                panic!(
+                    "Unable to retrieve vote history for identity {identity}. The vote account \
+                     {vote_account} has prior Alpenglow votes. If this is intentional, use \
+                     --do-not-require-vote-history: {err:?}"
+                );
+            }
+            if err.is_file_missing() && !voting_has_been_active {
+                info!(
+                    "Ignoring expected failed vote history restore because this vote account has \
+                     not voted before"
+                );
+            } else {
+                warn!("Unable to retrieve vote history: {err:?} creating default vote history...");
+            }
+            VoteHistory::new(*identity, 0)
+        }
+    }
 }
 
 fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), ValidatorError> {
@@ -2956,8 +3016,88 @@ mod tests {
         },
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
+        solana_vote_program::vote_state::{LandedVote, Lockout, VoteStateVersions},
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
+
+    #[test]
+    fn active_vote_account_exists_in_bank_alpenglow_checks_genesis_certificate_and_votes() {
+        use {
+            agave_votor_messages::consensus_message::{Certificate, CertificateType},
+            solana_account::{AccountSharedData, state_traits::StateMut},
+            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        };
+
+        let genesis_config = create_genesis_config(1_000_000).0;
+        let bank = Bank::new_for_tests(&genesis_config);
+        let vote_account_pubkey = Pubkey::new_unique();
+
+        assert!(!active_vote_account_exists_in_bank(
+            &bank,
+            &vote_account_pubkey
+        ));
+        assert!(!active_vote_account_exists_in_bank_alpenglow(
+            &bank,
+            &vote_account_pubkey
+        ));
+
+        let mut vote_state = VoteStateV4::default();
+        let mut vote_account =
+            AccountSharedData::new(1, VoteStateV4::size_of(), &solana_vote_program::id());
+        vote_account
+            .set_state(&VoteStateVersions::new_v4(vote_state.clone()))
+            .unwrap();
+        bank.store_account(&vote_account_pubkey, &vote_account);
+        assert!(!active_vote_account_exists_in_bank(
+            &bank,
+            &vote_account_pubkey
+        ));
+        assert!(!active_vote_account_exists_in_bank_alpenglow(
+            &bank,
+            &vote_account_pubkey
+        ));
+
+        vote_state.votes.push_back(LandedVote {
+            latency: 0,
+            lockout: Lockout::new(7),
+        });
+        vote_account
+            .set_state(&VoteStateVersions::new_v4(vote_state.clone()))
+            .unwrap();
+        bank.store_account(&vote_account_pubkey, &vote_account);
+        assert!(active_vote_account_exists_in_bank(
+            &bank,
+            &vote_account_pubkey
+        ));
+        assert!(!active_vote_account_exists_in_bank_alpenglow(
+            &bank,
+            &vote_account_pubkey
+        ));
+
+        bank.set_alpenglow_genesis_certificate(&Certificate {
+            cert_type: CertificateType::Genesis(40, Hash::new_unique()),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        });
+        assert!(!active_vote_account_exists_in_bank_alpenglow(
+            &bank,
+            &vote_account_pubkey
+        ));
+
+        vote_state.votes.push_back(LandedVote {
+            latency: 0,
+            lockout: Lockout::new(43),
+        });
+        vote_state.root_slot = Some(42);
+        vote_account
+            .set_state(&VoteStateVersions::new_v4(vote_state))
+            .unwrap();
+        bank.store_account(&vote_account_pubkey, &vote_account);
+        assert!(active_vote_account_exists_in_bank_alpenglow(
+            &bank,
+            &vote_account_pubkey
+        ));
+    }
 
     #[test]
     fn validator_exit() {

@@ -1,7 +1,6 @@
 #![cfg(feature = "sbf_rust")]
 
 use {
-    agave_validator::test_validator::*,
     solana_instruction::{AccountMeta, Instruction},
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -15,6 +14,7 @@ use {
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
     solana_sysvar::{clock, slot_history},
+    solana_test_validator::TestValidatorGenesis,
     solana_transaction::Transaction,
     std::{thread::sleep, time::Duration},
 };
