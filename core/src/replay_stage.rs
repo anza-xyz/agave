@@ -1025,6 +1025,15 @@ impl ReplayStage {
                 }
 
                 if migration_status.is_alpenglow_enabled() {
+                    if my_pubkey != cluster_info.id() {
+                        identity_keypair = cluster_info.keypair();
+                        let my_old_pubkey = my_pubkey;
+                        my_pubkey = identity_keypair.pubkey();
+                        migration_status.set_pubkey(my_pubkey);
+
+                        warn!("Identity changed from {my_old_pubkey} to {my_pubkey}");
+                    }
+
                     process_soft_dead_slots(
                         &my_pubkey,
                         &blockstore,
