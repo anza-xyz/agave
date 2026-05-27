@@ -14,7 +14,7 @@ agave-unstable-api = []
 dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
 
 [dependencies]
-agave-feature-set = { workspace = true, features = ["agave-unstable-api"] }
+agave-feature-set = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
