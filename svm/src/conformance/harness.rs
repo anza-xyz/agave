@@ -24,14 +24,12 @@ use {
 };
 #[cfg(feature = "conformance")]
 use {
-    super::{
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        sysvar::fill_sysvar_cache_from_accounts,
-    },
+    super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
     agave_feature_set::FeatureSet,
     agave_precompiles::{get_precompile, is_precompile},
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+    solana_account::ReadableAccount,
     solana_precompile_error::PrecompileError,
     std::ffi::c_int,
 };
@@ -223,7 +221,13 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     // When testing with protobuf, we fill the sysvar cache from input accounts.
     let sysvar_cache = {
         let mut cache = SysvarCache::default();
-        fill_sysvar_cache_from_accounts(&mut cache, &instr_context.accounts);
+        cache.fill_missing_entries(|pubkey, callbackback| {
+            if let Some(account) = instr_context.accounts.iter().find(|(key, _)| key == pubkey)
+                && account.1.lamports() > 0
+            {
+                callbackback(account.1.data());
+            }
+        });
         cache
     };
 
@@ -289,23 +293,19 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 mod tests {
     use {
         super::{
-            super::{
-                programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-                sysvar::fill_sysvar_cache_from_accounts,
-            },
+            super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
             *,
         },
         solana_account::Account,
         solana_instruction::{AccountMeta, Instruction},
+        solana_rent::Rent,
         solana_svm_feature_set::SVMFeatureSet,
-        solana_sysvar_id::SysvarId,
     };
 
     #[test]
     fn test_system_program_exec() {
         let system_program_id = solana_sdk_ids::system_program::id();
         let native_loader_id = solana_sdk_ids::native_loader::id();
-        let sysvar_id = solana_sysvar_id::id();
 
         let from_pubkey = Pubkey::new_from_array([1u8; 32]);
         let to_pubkey = Pubkey::new_from_array([2u8; 32]);
@@ -313,17 +313,6 @@ mod tests {
         let cu_avail = 10000u64;
         let slot = 10;
         let feature_set = SVMFeatureSet::default();
-
-        // Create Clock sysvar.
-        let clock = solana_clock::Clock {
-            slot,
-            ..Default::default()
-        };
-        let clock_data = bincode::serialize(&clock).unwrap();
-
-        // Create Rent sysvar.
-        let rent = solana_rent::Rent::default();
-        let rent_data = bincode::serialize(&rent).unwrap();
 
         // Build the instruction context.
         let context = InstrContext {
@@ -359,26 +348,6 @@ mod tests {
                         rent_epoch: u64::MAX,
                     },
                 ),
-                (
-                    solana_clock::Clock::id(),
-                    Account {
-                        lamports: 1,
-                        data: clock_data,
-                        owner: sysvar_id,
-                        executable: false,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
-                (
-                    solana_rent::Rent::id(),
-                    Account {
-                        lamports: 1,
-                        data: rent_data,
-                        owner: sysvar_id,
-                        executable: false,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
             ],
             instruction: Instruction {
                 program_id: system_program_id,
@@ -411,7 +380,13 @@ mod tests {
 
         // Create Sysvar Cache.
         let mut sysvar_cache = SysvarCache::default();
-        fill_sysvar_cache_from_accounts(&mut sysvar_cache, &context.accounts);
+        sysvar_cache.fill_missing_entries(|pubkey, callback| {
+            if pubkey == &solana_sdk_ids::sysvar::rent::id() {
+                let rent = Rent::default();
+                let rent_data = bincode::serialize(&rent).unwrap();
+                callback(&rent_data);
+            }
+        });
 
         // Create Program Cache
         let mut program_cache = new_program_cache_with_builtins(slot);
