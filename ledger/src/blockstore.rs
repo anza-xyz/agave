@@ -4231,17 +4231,25 @@ impl Blockstore {
         slot_transaction_iterator: impl Iterator<Item = VersionedTransaction>,
     ) -> Result<VersionedConfirmedBlock> {
         let previous_blockhash = slot_meta.parent_slot.and_then(|parent_slot| {
-            self.get_slot_entries_with_shred_info(
+            self.get_slot_components_with_shred_info(
                 parent_slot,
                 /*shred_start_index:*/ 0,
                 allow_dead_slots,
             )
             .ok()
-            .and_then(|(entries, _, is_full)| {
+            .and_then(|(components, _, is_full)| {
                 // The blockhash is specifically the final entry hash in a
                 // block so ensure the block is full
                 if is_full {
-                    entries.last().map(|entry| entry.hash)
+                    components
+                        .iter()
+                        .rev()
+                        .find_map(|component| match component {
+                            BlockComponent::EntryBatch(entries) => {
+                                entries.last().map(|entry| entry.hash)
+                            }
+                            BlockComponent::BlockMarker(_) => None,
+                        })
                 } else {
                     None
                 }
