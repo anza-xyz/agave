@@ -800,15 +800,17 @@ impl EventHandler {
         Ok(())
     }
 
-    /// Checks if we can set root on a new block
-    /// The block must be:
-    /// - Present in bank forks
-    /// - Newer than the current root
-    /// - We must have already voted on bank.slot()
-    /// - Bank is frozen and finished shredding
-    /// - Block has a finalization certificate
+    /// Checks if we can set root on a new block.
     ///
-    /// If so set root on the highest block that fits these conditions
+    /// For each cert-finalized block in `finalized_blocks`, the bank we hold at
+    /// that slot must match the cert's `block_id` (this pins the parent chain to
+    /// the finalized fork). Starting from that bank we walk parents and pick the
+    /// highest frozen ancestor as the candidate:
+    /// - The cert-finalized slot itself is rootable iff frozen AND we voted on it.
+    /// - Ancestors are rootable iff frozen — they're transitively finalized by
+    ///   the descendant's certificate, so no per-slot vote is required.
+    ///
+    /// Sets root on the maximum candidate across all cert-finalized blocks.
     fn check_rootable_blocks(
         my_pubkey: &Pubkey,
         ctx: &SharedContext,
@@ -823,13 +825,32 @@ impl EventHandler {
         let old_root = bank_forks_r.root().max(vctx.vote_history.root());
         let Some(new_root) = finalized_blocks
             .iter()
-            .filter_map(|&(slot, block_id)| {
-                let bank = bank_forks_r.get(slot)?;
-                (slot > old_root
-                    && vctx.vote_history.voted(slot)
-                    && bank.is_frozen()
-                    && bank.block_id().is_some_and(|bid| bid == block_id))
-                .then_some(slot)
+            .filter_map(|&(cert_slot, cert_block_id)| {
+                if cert_slot <= old_root {
+                    return None;
+                }
+                let cert_bank = bank_forks_r.get(cert_slot)?;
+                // Confirm we hold the cert's fork at `cert_slot`. block_id is set
+                // from shreds before freezing, so this can succeed pre-replay.
+                if cert_bank.block_id() != Some(cert_block_id) {
+                    return None;
+                }
+                let mut cur = Some(cert_bank);
+                let mut is_cert_slot = true;
+                while let Some(bank) = cur {
+                    let slot = bank.slot();
+                    if slot <= old_root {
+                        return None;
+                    }
+                    let rootable =
+                        bank.is_frozen() && (!is_cert_slot || vctx.vote_history.voted(slot));
+                    if rootable {
+                        return Some(slot);
+                    }
+                    is_cert_slot = false;
+                    cur = bank.parent();
+                }
+                None
             })
             .max()
         else {

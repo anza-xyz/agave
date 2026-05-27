@@ -42,9 +42,14 @@ pub(crate) fn set_root(
 ) {
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
-    *pending_blocks = pending_blocks.split_off(&new_root);
-    *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
-    *received_shred = received_shred.split_off(&new_root);
+    // Drop bookkeeping at and below `new_root`. The rooted slot itself is no
+    // longer a voting/finalization target, and stale entries (e.g. pending
+    // blocks whose parent now sits below the root) would otherwise trip
+    // assertions in `vote_history` queries.
+    let above_root = new_root.saturating_add(1);
+    *pending_blocks = pending_blocks.split_off(&above_root);
+    *finalized_blocks = finalized_blocks.split_off(&(above_root, Hash::default()));
+    *received_shred = received_shred.split_off(&above_root);
 
     rctx.bank_forks_controller
         .enqueue_set_root(new_root, new_root, Some(new_root));
