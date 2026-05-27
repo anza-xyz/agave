@@ -22,6 +22,7 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) standstill: bool,
     pub(super) prune_old_state_called: Saturating<usize>,
     pub(crate) pending_safe_to_notar_repair_sent: Saturating<usize>,
+    pub(crate) pending_safe_to_notar_repair_redispatched: Saturating<usize>,
     pub(crate) pending_safe_to_notar_resolved: Saturating<usize>,
     last_request_time: Instant,
 }
@@ -41,6 +42,7 @@ impl ConsensusPoolServiceStats {
             standstill: false,
             prune_old_state_called: Saturating(0),
             pending_safe_to_notar_repair_sent: Saturating(0),
+            pending_safe_to_notar_repair_redispatched: Saturating(0),
             pending_safe_to_notar_resolved: Saturating(0),
             last_request_time: Instant::now(),
         }
@@ -60,6 +62,8 @@ impl ConsensusPoolServiceStats {
             standstill,
             prune_old_state_called: Saturating(prune_old_state_called),
             pending_safe_to_notar_repair_sent: Saturating(pending_safe_to_notar_repair_sent),
+            pending_safe_to_notar_repair_redispatched:
+                Saturating(pending_safe_to_notar_repair_redispatched),
             pending_safe_to_notar_resolved: Saturating(pending_safe_to_notar_resolved),
             last_request_time: _,
         } = self;
@@ -91,6 +95,11 @@ impl ConsensusPoolServiceStats {
             (
                 "pending_safe_to_notar_repair_sent",
                 pending_safe_to_notar_repair_sent,
+                i64
+            ),
+            (
+                "pending_safe_to_notar_repair_redispatched",
+                pending_safe_to_notar_repair_redispatched,
                 i64
             ),
             (
