@@ -1326,7 +1326,7 @@ fn spawn_streaming_snapshot_dir_files(
 /// the storages list file).
 fn migrate_legacy_hardlinks(
     bank_snapshot_dir: &Path,
-    account_paths: &[PathBuf],
+    account_run_paths: &[PathBuf],
 ) -> Result<StoragesList> {
     let accounts_hardlinks_dir = bank_snapshot_dir.join("accounts_hardlinks");
     let mut items: Vec<StorageListItem> = Vec::new();
@@ -1360,14 +1360,14 @@ fn migrate_legacy_hardlinks(
         // those have changed (e.g. the operator reconfigured `account_paths` while upgrading
         // Agave), the run dir we just derived isn't one we're loading into — bail rather than
         // silently writing files into a location nobody's reading from.
-        if !account_paths.contains(&run_dir) {
+        if !account_run_paths.contains(&run_dir) {
             return Err(IoError::other(format!(
                 "legacy hardlink target '{}' points to run dir '{}' which is not in the current \
                  account paths ({:?}); the account paths configuration has changed since this \
                  snapshot was taken — load from a snapshot archive instead",
                 snapshot_slot_dir.display(),
                 run_dir.display(),
-                account_paths,
+                account_run_paths,
             ))
             .into());
         }
@@ -1407,7 +1407,7 @@ fn migrate_legacy_hardlinks(
             accounts_hardlinks_dir.display(),
         ))
     })?;
-    wipe_account_snapshot_dirs(account_paths);
+    wipe_account_snapshot_dirs(account_run_paths);
 
     Ok(StoragesList::from_items(items))
 }
@@ -1718,7 +1718,7 @@ pub enum VerifyBank {
 /// For each account run dir, wipes the sibling `snapshot/` dir.
 ///
 /// Validator account paths are laid out as a parent containing two siblings: `run/` (the live
-/// storage files) and `snapshot/` (legacy per-slot hardlink dirs, pre-3.0). `account_paths`
+/// storage files) and `snapshot/` (legacy per-slot hardlink dirs, pre-3.0). `account_run_paths`
 /// here holds the `run/` paths, so for each entry we walk up to the parent and wipe the
 /// `snapshot/` sibling. Nothing new is written under `snapshot/` anymore, so any content is
 /// either legacy hardlink dirs (written by pre-3.0 validators during fastboot) or orphans

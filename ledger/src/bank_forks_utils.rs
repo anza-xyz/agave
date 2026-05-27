@@ -68,12 +68,12 @@ pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>
 ///
 /// Call from any load path that commits to NOT fastbooting (archive load, genesis boot) —
 /// i.e. anywhere the existing storages must not be loaded.
-pub fn discard_previous_run_state(bank_snapshots_dir: &Path, account_paths: &[PathBuf]) {
+pub fn discard_previous_run_state(bank_snapshots_dir: &Path, account_run_paths: &[PathBuf]) {
     snapshot_utils::purge_all_bank_snapshots(bank_snapshots_dir);
-    for account_path in account_paths {
-        move_and_async_delete_path_contents(account_path);
+    for account_run_path in account_run_paths {
+        move_and_async_delete_path_contents(account_run_path);
     }
-    snapshot_utils::wipe_account_snapshot_dirs(account_paths);
+    snapshot_utils::wipe_account_snapshot_dirs(account_run_paths);
 }
 
 /// Load the banks via genesis
