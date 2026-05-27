@@ -202,6 +202,7 @@ impl Timers {
         delta_first_slice: Duration,
         delta_block: Duration,
     ) {
+        assert!(delta_first_slice <= delta_block);
         assert_eq!(self.heap.len(), self.timers.len());
         let timeout_config = TimeoutConfig {
             delta_timeout: self.delta_timeout,
