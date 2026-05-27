@@ -226,6 +226,7 @@ impl EventHandler {
         if should_set_timeouts {
             let root_bank = vctx.sharable_banks.root();
             let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
+            // Conservatively give a leader the full slot time to send their first slice.
             let delta_first_slice = delta_block;
             timer_manager.write().set_timeouts(
                 slot,

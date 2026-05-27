@@ -53,7 +53,7 @@ impl TimeoutConfig {
 /// Encodes a basic state machine of the different stages involved in handling
 /// timeouts for a window of slots.
 enum TimerState {
-    /// Waiting for initial DELTA_TIMEOUT + delta_first_slice stage.
+    /// Waiting for initial `delta_timeout + delta_first_slice` stage.
     WaitForFirstSlice {
         /// The slots in the window.  Must not be empty.
         window: VecDeque<Slot>,
@@ -203,6 +203,7 @@ impl Timers {
         delta_block: Duration,
     ) {
         assert_eq!(self.heap.len(), self.timers.len());
+        assert!(delta_first_slice <= delta_block);
         let timeout_config = TimeoutConfig {
             delta_timeout: self.delta_timeout,
             delta_first_slice,
@@ -329,8 +330,8 @@ mod tests {
         let mut timers = Timers::new(one_micro, sender);
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
-        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
+        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
         timers.set_timeouts(0, now, None, delta_block, delta_block);
         while timers.progress(now).is_some() {
             now = now.checked_add(one_micro).unwrap();
