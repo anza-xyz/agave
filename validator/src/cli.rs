@@ -354,14 +354,15 @@ pub fn port_validator(port: String) -> Result<(), String> {
 
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
-        // `MINIMUM_VALIDATOR_PORT_RANGE_WIDTH` counts ports inclusively, while
-        // `end - start` measures the half-open width of the range, so the
-        // valid threshold is `MINIMUM_VALIDATOR_PORT_RANGE_WIDTH - 1`.
-        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH - 1 {
+        // Port ranges throughout `solana-net-utils` are half-open `[start, end)`
+        // (see e.g. `bind_in_range_with_config` which iterates `start..end`),
+        // so `end - start` is the inclusive number of ports the range covers
+        // and is directly comparable to `MINIMUM_VALIDATOR_PORT_RANGE_WIDTH`.
+        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
                 start,
-                start + (MINIMUM_VALIDATOR_PORT_RANGE_WIDTH - 1)
+                start + MINIMUM_VALIDATOR_PORT_RANGE_WIDTH
             ))
         } else {
             Ok(())
@@ -946,22 +947,22 @@ mod test {
 
     #[test]
     fn port_range_validator_accepts_minimum_width() {
-        // `MINIMUM_VALIDATOR_PORT_RANGE_WIDTH` is interpreted as an inclusive
-        // count of ports (e.g. 26 means ports `start..=start + 25`).
+        // Port ranges are half-open `[start, end)`, so a range of exactly
+        // `MINIMUM_VALIDATOR_PORT_RANGE_WIDTH` ports is `start..start+MIN`.
         let min = MINIMUM_VALIDATOR_PORT_RANGE_WIDTH;
-        let exact = format!("8000-{}", 8000 + (min - 1));
+        let exact = format!("8000-{}", 8000 + min);
         assert_eq!(port_range_validator(exact), Ok(()));
 
-        let larger = format!("8000-{}", 8000 + min);
+        let larger = format!("8000-{}", 8000 + min + 1);
         assert_eq!(port_range_validator(larger), Ok(()));
     }
 
     #[test]
     fn port_range_validator_rejects_too_small_range() {
         let min = MINIMUM_VALIDATOR_PORT_RANGE_WIDTH;
-        let too_small_end = 8000 + (min - 2);
+        let too_small_end = 8000 + (min - 1);
         let too_small = format!("8000-{too_small_end}");
-        let suggested_end = 8000 + (min - 1);
+        let suggested_end = 8000 + min;
         let expected =
             format!("Port range is too small.  Try --dynamic-port-range 8000-{suggested_end}");
         assert_eq!(port_range_validator(too_small), Err(expected));
