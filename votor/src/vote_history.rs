@@ -164,8 +164,7 @@ impl VoteHistory {
     /// Add a new vote to the voting history
     pub fn add_vote(&mut self, vote: Vote) {
         assert!(vote.slot() >= self.root);
-        // TODO: these assert!s are for my debugging, can consider removing
-        // in final version
+        // Asserts here guard against vote equivocation.
         match vote {
             Vote::Notarize(vote) => {
                 assert!(self.voted.insert(vote.slot));
