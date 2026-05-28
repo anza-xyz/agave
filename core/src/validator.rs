@@ -8,7 +8,10 @@ use {
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{self, BankingTracer, TraceError},
-        block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
+        block_creation_loop::{
+            BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen,
+            reward_certs_handler::RewardCertsHandler,
+        },
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -1491,10 +1494,8 @@ impl Validator {
         // small (but highly overprovisioned) number for performance and easier
         // debug if things go off the rails.
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
-        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
-        let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
-        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
-        let (reward_certs_sender, reward_certs_receiver) = bounded(1);
+
+        let (reward_certs_handler, build_reward_certs_receiver) = RewardCertsHandler::new();
 
         let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
 
@@ -1515,8 +1516,7 @@ impl Validator {
             record_receiver_receiver,
             optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+            reward_certs_handler,
             banking_stage_sender: banking_stage_sender_for_bcl,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
@@ -1672,7 +1672,6 @@ impl Validator {
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
                 build_reward_certs_receiver,
-                reward_certs_sender,
             },
         )
         .map_err(ValidatorError::Other)?;

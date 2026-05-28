@@ -8,10 +8,12 @@ use {
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
     },
-    agave_votor::{consensus_metrics::ConsensusMetricsEvent, consensus_rewards},
+    agave_votor::{
+        consensus_metrics::ConsensusMetricsEvent,
+        consensus_rewards::{self, AddVoteMessage},
+    },
     agave_votor_messages::{
         consensus_message::{ConsensusMessage, VoteMessage},
-        reward_certificate::AddVoteMessage,
         vote::Vote,
     },
     rayon::{

@@ -2,16 +2,17 @@ use {
     agave_votor_messages::{
         consensus_message::VoteMessage,
         reward_certificate::{
-            AddVoteMessage, BuildRewardCertsRequest, BuildRewardCertsRespError,
-            BuildRewardCertsRespSucc, BuildRewardCertsResponse, NUM_SLOTS_FOR_REWARD,
+            BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD, NotarRewardCertificate,
+            SkipRewardCertificate,
         },
         vote::Vote,
     },
-    crossbeam_channel::{Receiver, Sender, select_biased},
+    crossbeam_channel::{Receiver, RecvError, Sender, select_biased},
     entry::Entry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
         collections::BTreeMap,
@@ -70,8 +71,6 @@ struct ConsensusRewards {
     exit: Arc<AtomicBool>,
     /// Channel to receive messages to build reward certificates.
     build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
-    /// Channel send the built reward certificates.
-    reward_certs_sender: Sender<BuildRewardCertsResponse>,
     /// Channel to receive verified votes.
     votes_receiver: Receiver<AddVoteMessage>,
 }
@@ -84,7 +83,6 @@ impl ConsensusRewards {
         sharable_banks: SharableBanks,
         exit: Arc<AtomicBool>,
         build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
-        reward_certs_sender: Sender<BuildRewardCertsResponse>,
         votes_receiver: Receiver<AddVoteMessage>,
     ) -> Self {
         Self {
@@ -94,8 +92,34 @@ impl ConsensusRewards {
             sharable_banks,
             exit,
             build_reward_certs_receiver,
-            reward_certs_sender,
             votes_receiver,
+        }
+    }
+
+    fn handle_request(
+        &mut self,
+        msg: Result<BuildRewardCertsRequest, RecvError>,
+    ) -> Result<(), ()> {
+        let my_pubkey = self.cluster_info.id();
+        match msg {
+            Ok(BuildRewardCertsRequest {
+                bank_slot,
+                reply_sender,
+            }) => {
+                let resp = BuildRewardCertsResponse {
+                    result: self.build_certs(bank_slot),
+                };
+                let _ = reply_sender.send(resp).inspect_err(|_| {
+                    info!(
+                        "{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected"
+                    );
+                });
+                Ok(())
+            }
+            Err(_) => {
+                error!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
+                Err(())
+            }
         }
     }
 
@@ -106,21 +130,8 @@ impl ConsensusRewards {
             // bias messages to build certificates as that is on the critical path
             select_biased! {
                 recv(self.build_reward_certs_receiver) -> msg => {
-                    match msg {
-                        Ok(msg) => {
-                            let resp = BuildRewardCertsResponse {
-                                bank_slot: msg.bank_slot,
-                                result: self.build_certs(msg.bank_slot),
-                            };
-                            if self.reward_certs_sender.send(resp).is_err() {
-                                error!("{my_pubkey}: cert sender channel is disconnected; exiting.");
-                                break;
-                            }
-                        }
-                        Err(_) => {
-                            error!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
-                            break;
-                        }
+                    if let Err(()) = self.handle_request(msg) {
+                        break;
                     }
                 }
                 recv(self.votes_receiver) -> msg => {
@@ -221,7 +232,6 @@ impl ConsensusRewardsService {
         exit: Arc<AtomicBool>,
         votes_receiver: Receiver<AddVoteMessage>,
         build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
-        reward_certs_sender: Sender<BuildRewardCertsResponse>,
     ) -> Self {
         let handle = Builder::new()
             .name("solConsRew".to_string())
@@ -232,7 +242,6 @@ impl ConsensusRewardsService {
                     sharable_banks,
                     exit,
                     build_reward_certs_receiver,
-                    reward_certs_sender,
                     votes_receiver,
                 )
                 .run();
@@ -244,4 +253,36 @@ impl ConsensusRewardsService {
     pub fn join(self) -> thread::Result<()> {
         self.handle.join()
     }
+}
+
+/// Request to build reward certificates.
+pub struct BuildRewardCertsRequest {
+    /// The bank slot which will include the built reward certs.
+    pub bank_slot: Slot,
+    /// The channel on which to send the reply.
+    pub reply_sender: Sender<BuildRewardCertsResponse>,
+}
+
+/// Response when the reward certs are built successfully.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct BuildRewardCertsRespSucc {
+    /// Skip reward certificate.  None if no skip votes were registered.
+    pub skip: Option<SkipRewardCertificate>,
+    /// Notar reward certificate.  None if no notar votes were registered.
+    pub notar: Option<NotarRewardCertificate>,
+    /// If at least one of the certs above is present, then this contains the slot for which the reward certs were built and the list of validators in the certs.
+    pub validators: Vec<Pubkey>,
+}
+
+/// Response to a [`BuildRewardCertsRequest`].
+pub struct BuildRewardCertsResponse {
+    /// The result of building reward certs for `bank_slot`.
+    pub result: Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>,
+}
+
+/// Message to add votes to the rewards container.
+#[derive(Debug)]
+pub struct AddVoteMessage {
+    /// List of [`VoteMessage`]s.
+    pub votes: Vec<VoteMessage>,
 }
