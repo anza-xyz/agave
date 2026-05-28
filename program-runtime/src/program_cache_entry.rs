@@ -173,6 +173,7 @@ impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
         self.effective_slot == other.effective_slot
             && self.deployment_slot == other.deployment_slot
+            && self.account_owner == other.account_owner
             && self.is_tombstone() == other.is_tombstone()
     }
 }
