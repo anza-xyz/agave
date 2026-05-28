@@ -1478,6 +1478,10 @@ pub fn parse_logs(
     }))
 }
 
+fn is_default_signature(sig: &str) -> bool {
+    sig.parse::<Signature>().ok() == Some(Signature::default())
+}
+
 /// Map an RPC URL to the query string a Solana Explorer link should carry.
 /// Canonical Solana RPCs (mainnet-beta, testnet, devnet) round-trip to
 /// their named clusters; anything else (`localhost`, third-party RPCs, a
@@ -1560,7 +1564,16 @@ pub fn process_logs(
                 // inferred from --url. The two extra spaces after
                 // "Explorer:" align the URL with the value column under
                 // "Signature:".
-                if tree {
+                //
+                // The validator occasionally ships `Signature::default()`
+                // (all-zero bytes; base58 = sixty-four `1`s) for real
+                // transactions whose signature wasn't available at the
+                // log-emission point. Any Explorer link built from that
+                // sig is dead on arrival, so suppress it; the user still
+                // sees the bogus signature and the (real) CPI tree below.
+                // See `is_default_signature` for the rationale on parse
+                // failures.
+                if tree && !is_default_signature(&logs.value.signature) {
                     println!(
                         "  Explorer:  https://explorer.solana.com/tx/{}?{}",
                         logs.value.signature,
@@ -2293,6 +2306,44 @@ mod tests {
             explorer_query_for_rpc("https://api.devnet.solana.com/"),
             "cluster=devnet"
         );
+    }
+
+    #[test]
+    fn is_default_signature_recognizes_canonical_encoding() {
+        // The validator forwards whatever signature the transaction
+        // object reports, unconditionally:
+        //
+        //   https://github.com/anza-xyz/agave/blob/b54f7de2d3aeac1a56dbfbb72a17ec36fc1986e9/runtime/src/bank.rs#L4006
+        //
+        // So `Signature::default()` (sixty-four zero bytes) is a
+        // reachable wire value whenever some upstream path leaves the
+        // transaction's signature unset. The literal below is its base58
+        // encoding, hard-coded so the test pins the actual value the
+        // suppression has to recognize instead of asserting that the
+        // encoder and decoder agree with themselves.
+        let canonical_default =
+            "1111111111111111111111111111111111111111111111111111111111111111";
+        assert!(is_default_signature(canonical_default));
+    }
+
+    #[test]
+    fn is_default_signature_rejects_real_signature() {
+        // A real mainnet-beta signature lifted from the PR examples.
+        // Must NOT be suppressed: this is what a normal transaction looks
+        // like and the Explorer link is valid for it.
+        let real = "3AD5AKheyKxzenyABdmyN61TT9EgmYszgdCMkDduAeh6S8NDNJF8Bpj1woWp5qC9sHxPumLW7ZmyJvU2uMiqnzLL";
+        assert!(!is_default_signature(real));
+    }
+
+    #[test]
+    fn is_default_signature_rejects_unparseable_input() {
+        // Garbage in -> `false`, not `true`. The suppression only fires
+        // for the known default-signature case; we don't want to silently
+        // swallow Explorer links for any unrelated parse bug upstream.
+        assert!(!is_default_signature("not-a-signature"));
+        assert!(!is_default_signature(""));
+        // Right length, wrong alphabet (base58 excludes `0`, `O`, `I`, `l`).
+        assert!(!is_default_signature(&"0".repeat(64)));
     }
 
     #[test]
