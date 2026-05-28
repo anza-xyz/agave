@@ -1,4 +1,5 @@
 use {
+    agave_votor_messages::migration::MigrationStatus,
     crate::{
         duplicate_shred::{self, DuplicateShred, Error},
         duplicate_shred_listener::DuplicateShredHandlerTrait,
@@ -39,12 +40,23 @@ pub struct DuplicateShredHandler {
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
     shred_version: u16,
+    // Once Alpenglow is enabled on this node, replay_stage stops draining
+    // `duplicate_slots_sender` and the TBFT duplicate-consensus state machine
+    // is no longer needed. The handler becomes a no-op rather than leaking
+    // sends into an undrained channel.
+    migration_status: Arc<MigrationStatus>,
 }
 
 impl DuplicateShredHandlerTrait for DuplicateShredHandler {
     // Here we are sending data one by one rather than in a batch because in the future
     // we may send different type of CrdsData to different senders.
     fn handle(&mut self, shred_data: DuplicateShred) {
+        if self.migration_status.is_alpenglow_enabled() {
+            // Ingress is also filtered in `ClusterInfo` once Alpenglow is
+            // enabled; this is a defensive no-op for proofs that may still
+            // exist in CRDS from before migration.
+            return;
+        }
         self.cache_root_info();
         self.maybe_prune_buffer();
         let slot = shred_data.slot;
@@ -72,6 +84,7 @@ impl DuplicateShredHandler {
         epoch_specs: Box<dyn EpochSpecs>,
         duplicate_slots_sender: Sender<Slot>,
         shred_version: u16,
+        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             buffer: HashMap::<(Slot, Pubkey), BufferEntry>::default(),
@@ -83,6 +96,7 @@ impl DuplicateShredHandler {
             epoch_specs,
             duplicate_slots_sender,
             shred_version,
+            migration_status,
         }
     }
 
@@ -308,12 +322,14 @@ mod tests {
         let (sender, receiver) = unbounded();
         let start_slot: Slot = 10;
 
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
             sender,
             shred_version,
+            migration_status,
         );
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
@@ -410,12 +426,14 @@ mod tests {
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
         let (sender, receiver) = unbounded();
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
             sender,
             shred_version,
+            migration_status,
         );
         let start_slot: Slot = 10;
 
@@ -474,5 +492,70 @@ mod tests {
         }
         assert!(blockstore.has_duplicate_shreds_in_slot(start_slot));
         assert_eq!(receiver.try_iter().collect_vec(), vec![start_slot]);
+    }
+
+    /// Once Alpenglow is enabled, `handle` is a no-op: nothing reaches the
+    /// blockstore and nothing is sent to the (now-undrained) state-machine
+    /// channel. Mirrors the gate that `replay_stage::process_duplicate_slots`
+    /// already applies on the consumer side.
+    #[test]
+    fn test_no_op_post_alpenglow() {
+        agave_logger::setup();
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let my_keypair = Arc::new(Keypair::new());
+        let my_pubkey = my_keypair.pubkey();
+        let shred_version = 0;
+        let genesis_config_info = create_genesis_config_with_leader(10_000, &my_pubkey, 10_000);
+        let GenesisConfigInfo { genesis_config, .. } = genesis_config_info;
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks_arc = BankForks::new_rw_arc(bank);
+        {
+            let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
+            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let mut bank_forks = bank_forks_arc.write().unwrap();
+            bank_forks.insert(bank9);
+            bank_forks.set_root(9, None, None);
+        }
+        let slots_in_epoch = bank_forks_arc
+            .read()
+            .unwrap()
+            .working_bank()
+            .get_slots_in_epoch(0);
+        let epoch_specs = TestEpochSpecs {
+            staked_nodes: Arc::new(HashMap::new()),
+            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
+            slots_in_epoch,
+        };
+        blockstore.set_roots([0, 9].iter()).unwrap();
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks_arc.read().unwrap().working_bank(),
+        ));
+        let (sender, receiver) = unbounded();
+        let migration_status = Arc::new(MigrationStatus::post_migration_status());
+        let mut duplicate_shred_handler = DuplicateShredHandler::new(
+            blockstore.clone(),
+            leader_schedule_cache,
+            epoch_specs.clone_box(),
+            sender,
+            shred_version,
+            migration_status,
+        );
+        let start_slot: Slot = 10;
+        let chunks = create_duplicate_proof(
+            my_keypair,
+            None,
+            start_slot,
+            None,
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            shred_version,
+        )
+        .unwrap();
+        for chunk in chunks {
+            duplicate_shred_handler.handle(chunk);
+        }
+        assert!(!blockstore.has_duplicate_shreds_in_slot(start_slot));
+        assert!(receiver.is_empty());
     }
 }

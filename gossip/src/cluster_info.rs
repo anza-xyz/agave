@@ -14,6 +14,7 @@
 //! Bank needs to provide an interface for us to query the stake weight
 
 use {
+    agave_votor_messages::migration::MigrationStatus,
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
@@ -170,6 +171,12 @@ pub struct ClusterInfo {
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
+    /// Set once during startup. When this returns `is_alpenglow_enabled()`,
+    /// the duplicate-shred gossip path is disabled: outgoing pushes are
+    /// dropped and incoming `DuplicateShred` values are filtered out before
+    /// they reach the CRDS table. Mirrors the boundary that replay_stage uses
+    /// to stop draining `duplicate_slots_receiver`.
+    migration_status: OnceLock<Arc<MigrationStatus>>,
 }
 
 impl ClusterInfo {
@@ -198,9 +205,26 @@ impl ClusterInfo {
             contact_save_interval: 0, // disabled
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
+            migration_status: OnceLock::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
+    }
+
+    /// One-shot wiring of the cluster-wide Alpenglow `MigrationStatus`. Must be
+    /// called before Alpenglow could transition (i.e. during validator
+    /// startup). Subsequent calls are silently ignored.
+    pub fn set_migration_status(&self, migration_status: Arc<MigrationStatus>) {
+        let _ = self.migration_status.set(migration_status);
+    }
+
+    /// Returns `true` iff the migration status has been wired AND the cluster
+    /// has transitioned into Alpenglow on this node. Used to gate the
+    /// duplicate-shred gossip path.
+    fn is_alpenglow_enabled(&self) -> bool {
+        self.migration_status
+            .get()
+            .is_some_and(|m| m.is_alpenglow_enabled())
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
@@ -990,6 +1014,12 @@ impl ClusterInfo {
         shred: &Shred,
         other_payload: &[u8],
     ) -> Result<(), GossipError> {
+        if self.is_alpenglow_enabled() {
+            // Alpenglow does not consume duplicate-shred proofs through
+            // gossip; the local blockstore record (for slashing) is written
+            // by the producer (`window_service::run_check_duplicate`).
+            return Ok(());
+        }
         self.gossip.push_duplicate_shred(
             &self.keypair(),
             shred,
@@ -1758,9 +1788,22 @@ impl ClusterInfo {
     // Returns (failed, timeout, success)
     fn handle_pull_response(
         &self,
-        crds_values: Vec<CrdsValue>,
+        mut crds_values: Vec<CrdsValue>,
         timeouts: &CrdsTimeouts,
     ) -> (usize, usize, usize) {
+        if self.is_alpenglow_enabled() {
+            // Drop incoming duplicate-shred proofs before they enter CRDS.
+            // Replay stage no longer drains `duplicate_slots_receiver`
+            // post-migration, so storing these would only waste memory.
+            let before = crds_values.len();
+            crds_values.retain(|v| !matches!(v.data(), CrdsData::DuplicateShred(_, _)));
+            let dropped = before - crds_values.len();
+            if dropped > 0 {
+                self.stats
+                    .pull_response_duplicate_shred_dropped
+                    .add_relaxed(dropped as u64);
+            }
+        }
         let len = crds_values.len();
         let mut pull_stats = ProcessPullStats::default();
         let (filtered_pulls, filtered_pulls_expired_timeout, failed_inserts) = {
@@ -1831,7 +1874,7 @@ impl ClusterInfo {
 
     fn handle_batch_push_messages(
         &self,
-        messages: Vec<(Pubkey, Vec<CrdsValue>)>,
+        mut messages: Vec<(Pubkey, Vec<CrdsValue>)>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
@@ -1840,6 +1883,25 @@ impl ClusterInfo {
         let _st = ScopedTimer::from(&self.stats.handle_batch_push_messages_time);
         if messages.is_empty() {
             return;
+        }
+        if self.is_alpenglow_enabled() {
+            // See `handle_pull_response`: drop duplicate-shred proofs entirely
+            // once Alpenglow is enabled on this node.
+            let mut dropped: u64 = 0;
+            for (_, values) in messages.iter_mut() {
+                let before = values.len();
+                values.retain(|v| !matches!(v.data(), CrdsData::DuplicateShred(_, _)));
+                dropped = dropped.saturating_add((before - values.len()) as u64);
+            }
+            if dropped > 0 {
+                self.stats
+                    .push_message_duplicate_shred_dropped
+                    .add_relaxed(dropped);
+            }
+            messages.retain(|(_, values)| !values.is_empty());
+            if messages.is_empty() {
+                return;
+            }
         }
         // Origins' pubkeys of upserted crds values.
         let origins: HashSet<_> = {
@@ -3597,6 +3659,104 @@ mod tests {
             assert_eq!(shred_data.slot, 53084025);
             assert_eq!(shred_data.chunk_index() as usize, i);
         }
+    }
+
+    /// Once Alpenglow is enabled, `push_duplicate_shred` does not insert
+    /// anything into CRDS. Egress companion to the ingress filter exercised
+    /// by `test_handle_*_push_message_duplicate_shred_dropped` /
+    /// `test_handle_pull_response_duplicate_shred_dropped`.
+    #[test]
+    fn test_push_duplicate_shred_no_op_post_alpenglow() {
+        let host1_key = Arc::new(Keypair::new());
+        let node = Node::new_localhost_with_pubkey(&host1_key.pubkey());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            node.info,
+            host1_key,
+            SocketAddrSpace::Unspecified,
+        ));
+        cluster_info.set_migration_status(Arc::new(MigrationStatus::post_migration_status()));
+        let mut cursor = Cursor::default();
+        assert!(cluster_info.get_duplicate_shreds(&mut cursor).is_empty());
+
+        let mut rng = rand::rng();
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = 353;
+        let leader = Arc::new(Keypair::new());
+        let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+        let shred2 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+        // The call still returns Ok, but nothing should land in CRDS.
+        assert!(
+            cluster_info
+                .push_duplicate_shred(&shred1, shred2.payload())
+                .is_ok()
+        );
+        cluster_info.flush_push_queue();
+        assert!(cluster_info.get_duplicate_shreds(&mut cursor).is_empty());
+    }
+
+    /// `handle_batch_push_messages` must strip `DuplicateShred` values from
+    /// incoming push messages once Alpenglow is enabled, leaving the CRDS
+    /// table untouched.
+    #[test]
+    fn test_handle_batch_push_messages_duplicate_shred_dropped_post_alpenglow() {
+        // First node: TBFT phase, used only to materialise a valid set of
+        // signed `CrdsValue::DuplicateShred` chunks for a peer to "send" us.
+        let peer_key = Arc::new(Keypair::new());
+        let peer_node = Node::new_localhost_with_pubkey(&peer_key.pubkey());
+        let peer_cluster = Arc::new(ClusterInfo::new(
+            peer_node.info,
+            peer_key.clone(),
+            SocketAddrSpace::Unspecified,
+        ));
+        let mut rng = rand::rng();
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let leader = Arc::new(Keypair::new());
+        let shred1 = new_rand_shred(&mut rng, 353, &shredder, &leader);
+        let shred2 = new_rand_shred(&mut rng, 353, &shredder, &leader);
+        peer_cluster
+            .push_duplicate_shred(&shred1, shred2.payload())
+            .unwrap();
+        peer_cluster.flush_push_queue();
+        // Drain the signed CRDS values directly out of the peer's table.
+        let chunks: Vec<CrdsValue> = {
+            let peer_crds = peer_cluster.gossip.crds.read().unwrap();
+            peer_crds
+                .get_records(&peer_key.pubkey())
+                .filter(|v| matches!(v.value.data(), CrdsData::DuplicateShred(_, _)))
+                .map(|v| v.value.clone())
+                .collect()
+        };
+        assert!(!chunks.is_empty());
+
+        // Second node: alpenglow active. Feeding peer's push message must
+        // not leave any `DuplicateShred` entries in this node's CRDS.
+        let me_key = Arc::new(Keypair::new());
+        let me_node = Node::new_localhost_with_pubkey(&me_key.pubkey());
+        let me_cluster = Arc::new(ClusterInfo::new(
+            me_node.info,
+            me_key,
+            SocketAddrSpace::Unspecified,
+        ));
+        me_cluster.set_migration_status(Arc::new(MigrationStatus::post_migration_status()));
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("thread pool");
+        let recycler = PacketBatchRecycler::default();
+        let (response_sender, _response_receiver) =
+            ::crossbeam_channel::unbounded::<PacketBatch>();
+        let stakes = HashMap::<Pubkey, u64>::new();
+        me_cluster.handle_batch_push_messages(
+            vec![(peer_key.pubkey(), chunks)],
+            &thread_pool,
+            &recycler,
+            &stakes,
+            &response_sender,
+        );
+        let mut cursor = Cursor::default();
+        assert!(me_cluster.get_duplicate_shreds(&mut cursor).is_empty());
     }
 
     #[test]
