@@ -277,7 +277,7 @@ impl VoteStateHandler {
         }
     }
 
-    pub(crate) fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
+    pub fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         match &mut self.target_state {
             TargetVoteState::V4(v4) => &mut v4.epoch_credits,
         }

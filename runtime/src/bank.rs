@@ -41,6 +41,7 @@ pub use {
 use {
     crate::{
         account_saver::collect_accounts_to_store,
+        alpenglow_epoch_type::AlpenglowEpochType,
         bank::{
             entry_bytes_budget::EntryBytesBudget,
             metrics::*,
@@ -196,6 +197,7 @@ use {
     },
     solana_vote_interface::state::VoteStateV4,
     std::{
+        cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt,
         ops::AddAssign,
@@ -6398,6 +6400,46 @@ impl Bank {
         let block_id =
             solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
         bank.set_block_id(Some(block_id));
+    }
+
+    pub(crate) fn get_alpenglow_migration_slot(&self) -> Option<Slot> {
+        let genesis_cert = self.get_alpenglow_genesis_certificate()?;
+        debug_assert!(
+            genesis_cert.cert_type.is_genesis(),
+            "cert_type={:?}",
+            genesis_cert.cert_type
+        );
+        Some(genesis_cert.cert_type.slot())
+    }
+
+    /// Returns `AlpenglowEpochType` for the given `epoch`.
+    ///
+    /// Calling this function with an epoch >= `Bank::epoch` can return false information as it is
+    /// possible that we have not observed the genesis cert yet but will in the upcoming slots.
+    pub(crate) fn get_alpenglow_epoch_type(&self, epoch: Epoch) -> AlpenglowEpochType {
+        debug_assert!(epoch < self.epoch);
+        let Some(migration_slot) = self.get_alpenglow_migration_slot() else {
+            return AlpenglowEpochType::Tower;
+        };
+        let migration_epoch = self.epoch_schedule.get_epoch(migration_slot);
+        match migration_epoch.cmp(&epoch) {
+            Ordering::Less => AlpenglowEpochType::Alpenglow { migration_epoch },
+            Ordering::Greater => AlpenglowEpochType::Tower,
+            Ordering::Equal => {
+                let first_slot_in_epoch =
+                    self.epoch_schedule.get_first_slot_in_epoch(migration_epoch);
+                // + 1 because the migration_slot is still tower.
+                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
+                let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(migration_epoch);
+                let num_ag_slots = slots_in_epoch - num_tower_slots;
+                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
+                AlpenglowEpochType::MigrationEpoch {
+                    num_tower_slots,
+                    num_ag_slots,
+                    migration_epoch,
+                }
+            }
+        }
     }
 }
 
