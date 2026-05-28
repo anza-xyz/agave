@@ -71,7 +71,7 @@ jobs:
       - name: Install dep-audit skill
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
-          repository: nbelenkov/claude-skills
+          repository: anza-xyz/claude-skills
           ref: 0ec828e9f44bb9d49b0814b6f4a40a48e4aedca6  # v1.1.0
           path: .dep-audit-skill
           persist-credentials: false
