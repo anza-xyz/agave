@@ -6,7 +6,7 @@ use {
         fd_hash::fd_hash,
         instr::context::InstrContext,
         setup::{
-            InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
             program_runtime_environments, sysvar_cache_from_accounts,
         },
     },
@@ -41,12 +41,7 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
 
     let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
     let program_id = instr_context.instruction.program_id;
-    let loader_key = instr_context
-        .accounts
-        .iter()
-        .find(|(key, _)| *key == program_id)
-        .map(|(_, account)| account.owner)
-        .expect("program not found in accounts");
+    let loader_key = program_loader_key(&instr_context.accounts, &program_id);
 
     let program_runtime_environments = program_runtime_environments(&feature_set, &compute_budget);
 
