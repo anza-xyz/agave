@@ -2828,8 +2828,8 @@ fn test_update_parent_restart() {
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
 
     // Slot 4: 5 shreds, replay_fec_set_index=32; 5 < 32 so cleared.
-    // Slot 5: 40 shreds, replay_fec_set_index=32; 40 >= 32 so skipped.
-    for (slot, shreds) in [(4, 5), (5, 40)] {
+    // Slot 8: 40 shreds, replay_fec_set_index=32; 40 >= 32 so skipped.
+    for (slot, shreds) in [(4, 5), (8, 40)] {
         let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
         bank_forks.write().unwrap().insert(bank);
         let p = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
@@ -2838,7 +2838,7 @@ fn test_update_parent_restart() {
     }
 
     let (tx, rx) = crossbeam_channel::unbounded();
-    for slot in [4, 5] {
+    for slot in [4, 8] {
         let parent_block_id = Hash::new_unique();
         insert_update_parent_slot(
             &blockstore,
@@ -2866,7 +2866,7 @@ fn test_update_parent_restart() {
     );
 
     assert!(progress.get(&4).is_none()); // cleared: 5 < 32
-    assert!(progress.get(&5).is_some()); // skipped: 40 >= 32
+    assert!(progress.get(&8).is_some()); // skipped: 40 >= 32
     assert_eq!(
         replay_vote_receiver.try_recv(),
         Ok(ReplayVoteMessage::InvalidBank {
@@ -2891,7 +2891,7 @@ fn test_headerless_update_parent() {
         ..
     } = vote_simulator;
     let my_pubkey = Pubkey::new_unique();
-    let slot = 1;
+    let slot = 4;
     let migration_status = post_migration_status_for_tests();
 
     let footer_marker = || {
@@ -2994,6 +2994,50 @@ fn test_update_parent_tower_gated() {
         &rx,
         &replay_vote_sender,
         &MigrationStatus::default(),
+    );
+
+    assert!(progress.get(&slot).is_some());
+    assert!(bank_forks.read().unwrap().get(slot).is_some());
+}
+
+#[test]
+fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0) / tr(1)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    let slot = 1;
+    let mut meta = blockstore.meta(slot).unwrap().unwrap();
+    meta.parent_slot = Some(0);
+    meta.parent_block_id = Hash::new_unique();
+    meta.replay_fec_set_index = 10;
+    blockstore.put_meta(slot, &meta).unwrap();
+
+    let p = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
+    p.replay_progress.write().unwrap().num_shreds = 5;
+    progress.insert(slot, p);
+
+    let (tx, rx) = crossbeam_channel::unbounded();
+    tx.send(UpdateParentSignal { slot }).unwrap();
+
+    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let mut async_verification_freelist = Vec::new();
+    handle_update_parent_interrupts(
+        &Pubkey::new_unique(),
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut async_verification_freelist,
+        &rx,
+        &replay_vote_sender,
+        &post_migration_status_for_tests(),
     );
 
     assert!(progress.get(&slot).is_some());
@@ -3172,7 +3216,7 @@ fn test_before_update_soft_dead() {
         ..
     } = vote_simulator;
 
-    let slot = 1;
+    let slot = 4;
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
     let bank = bank_forks.write().unwrap().insert(bank);
@@ -3403,7 +3447,7 @@ fn test_skip_own_update_full() {
     let my_pubkey = *validator_keypairs.keys().next().unwrap();
     let root_bank = bank_forks.read().unwrap().root_bank();
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&root_bank));
-    let slot = 2;
+    let slot = 4;
     let replay_fec_set_index = 32;
 
     insert_update_parent_slot(
