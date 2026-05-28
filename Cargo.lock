@@ -7091,8 +7091,8 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
- "crossbeam-channel",
  "futures 0.3.32",
+ "log",
  "solana-account 4.3.0",
  "solana-banks-interface",
  "solana-clock",
@@ -10236,7 +10236,6 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
  "async-trait",
- "crossbeam-channel",
  "itertools 0.14.0",
  "log",
  "solana-account 4.3.0",

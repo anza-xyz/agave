@@ -9,7 +9,7 @@ use {
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
     base64::{Engine, prelude::BASE64_STANDARD},
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::unbounded,
     jsonrpc_core::{
         BoxFuture, Error, Metadata, Result,
         futures::future::{self, FutureExt, OptionFuture},
@@ -112,7 +112,7 @@ use {
         },
         time::Duration,
     },
-    tokio::runtime::Runtime,
+    tokio::{runtime::Runtime, sync::mpsc},
 };
 #[cfg(test)]
 use {
@@ -137,6 +137,7 @@ type RpcCustomResult<T> = std::result::Result<T, RpcCustomError>;
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
+const TRANSACTION_CHANNEL_SIZE: usize = 10_000;
 
 fn new_response<T>(bank: &Bank, value: T) -> RpcResponse<T> {
     RpcResponse {
@@ -245,7 +246,7 @@ pub struct JsonRpcRequestProcessor {
     health: Arc<RpcHealth>,
     cluster_info: Arc<ClusterInfo>,
     genesis_hash: Hash,
-    transaction_sender: Sender<TransactionInfo>,
+    transaction_sender: mpsc::Sender<TransactionInfo>,
     bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
@@ -418,8 +419,8 @@ impl JsonRpcRequestProcessor {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
-    ) -> (Self, Receiver<TransactionInfo>) {
-        let (transaction_sender, transaction_receiver) = unbounded();
+    ) -> (Self, mpsc::Receiver<TransactionInfo>) {
+        let (transaction_sender, transaction_receiver) = mpsc::channel(TRANSACTION_CHANNEL_SIZE);
         (
             Self {
                 config,
@@ -467,7 +468,7 @@ impl JsonRpcRequestProcessor {
         });
 
         let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
-        let (transaction_sender, transaction_receiver) = unbounded();
+        let (transaction_sender, transaction_receiver) = mpsc::channel(TRANSACTION_CHANNEL_SIZE);
 
         let config = JsonRpcConfig::default();
         let JsonRpcConfig {
@@ -479,6 +480,7 @@ impl JsonRpcRequestProcessor {
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
+        let _guard = runtime.enter();
         SendTransactionService::new(
             &bank_forks,
             transaction_receiver,
@@ -2738,7 +2740,7 @@ fn _send_transaction(
         None,
     );
     meta.transaction_sender
-        .send(transaction_info)
+        .try_send(transaction_info)
         .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {err}"));
 
     Ok(signature.to_string())
@@ -6920,6 +6922,7 @@ pub mod tests {
         );
 
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let _guard = runtime.enter();
         SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -7212,6 +7215,7 @@ pub mod tests {
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let _guard = runtime.enter();
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
