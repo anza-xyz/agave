@@ -150,8 +150,10 @@ pub struct GossipStats {
     pub(crate) pull_request_ping_pong_check_failed_count: Counter,
     pub(crate) purge: Counter,
     pub(crate) purge_count: Counter,
+    pub(crate) pull_response_duplicate_shred_dropped: Counter,
     pub(crate) push_fanout_num_entries: Counter,
     pub(crate) push_fanout_num_nodes: Counter,
+    pub(crate) push_message_duplicate_shred_dropped: Counter,
     pub(crate) push_message_value_count: Counter,
     pub(crate) push_vote_read: Counter,
     pub(crate) repair_peers: Counter,
@@ -331,6 +333,16 @@ pub(crate) fn submit_gossip_stats(
         (
             "pull_response_success",
             stats.process_pull_response_success.clear(),
+            i64
+        ),
+        (
+            "pull_response_duplicate_shred_dropped",
+            stats.pull_response_duplicate_shred_dropped.clear(),
+            i64
+        ),
+        (
+            "push_message_duplicate_shred_dropped",
+            stats.push_message_duplicate_shred_dropped.clear(),
             i64
         ),
         (
