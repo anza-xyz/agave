@@ -3505,6 +3505,9 @@ mod tests {
         );
         let pre_balance = bank.get_balance(&collector_into_vote_address);
         assert_ne!(pre_balance, 0);
+        // Fund the converted vote account enough to pass VAT filtering.
+        let pre_balance =
+            pre_balance.max(bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of()));
 
         // Transform the collector into a vote account, see that all rewards
         // are burned for this epoch
