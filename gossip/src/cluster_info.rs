@@ -2740,7 +2740,7 @@ mod tests {
             .collect();
         let recycler = PacketBatchRecycler::default();
         let packets = {
-            let (sender, receiver) = crossbeam_channel::unbounded();
+            let (sender, receiver) = crossbeam_channel::bounded(1024);
             cluster_info.handle_batch_ping_messages(
                 remote_nodes.iter().map(|(_, socket)| socket).zip(pings),
                 &recycler,
