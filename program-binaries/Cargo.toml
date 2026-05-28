@@ -19,3 +19,6 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 spl-generic-token = { workspace = true }
+
+[lints]
+workspace = true

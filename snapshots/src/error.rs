@@ -21,6 +21,9 @@ pub enum SnapshotError {
     #[error("serialization error: {0}")]
     Serialize(#[from] bincode::Error),
 
+    #[error("deserialization error: {0}")]
+    DeserializeWincode(#[from] wincode::ReadError),
+
     #[error("crossbeam send error: {0}")]
     CrossbeamSend(#[from] crossbeam_channel::SendError<PathBuf>),
 
@@ -268,6 +271,9 @@ pub enum ArchiveSnapshotPackageError {
 
     #[error("failed to create account storage reader '{1}': {0}")]
     AccountStorageReaderError(#[source] io::Error, PathBuf),
+
+    #[error("failed to initialize file buffered reader: {0}")]
+    StorageFileBufReaderError(#[source] io::Error),
 }
 
 /// Errors that can happen in `hard_link_storages_to_snapshot()`

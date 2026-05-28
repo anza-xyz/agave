@@ -22,7 +22,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
             PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
         },
-        bank::{Bank, BankTestConfig},
+        bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         runtime_config::RuntimeConfig,
@@ -81,9 +81,9 @@ impl SnapshotTestConfig {
         );
         let bank0 = Bank::new_with_paths_for_tests(
             &genesis_config_info.genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            BankTestConfig::default(),
+            None,
             vec![accounts_dir.clone()],
+            None,
         );
         bank0.freeze();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
@@ -132,9 +132,9 @@ fn restore_from_snapshot(
 
     let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
-        &snapshot_config.bank_snapshots_dir,
         &full_snapshot_archive_info,
         None,
+        snapshot_config,
         old_genesis_config,
         &RuntimeConfig::default(),
         None,
@@ -211,15 +211,7 @@ where
     // Generate a snapshot package for last bank
     let snapshot_config = snapshot_controller.snapshot_config();
     let last_bank = bank_forks.read().unwrap().get(last_slot).unwrap();
-    snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
-        &last_bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
-    )
-    .unwrap();
+    snapshot_bank_utils::bank_to_full_snapshot_archive(snapshot_config, &last_bank).unwrap();
 
     // Restore bank from snapshot
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
@@ -510,14 +502,7 @@ fn make_full_snapshot_archive(
     );
     // The bank must have a block id set to take a snapshot.
     Bank::calculate_and_set_block_id_for_dcou(bank);
-    snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
-        bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
-    )?;
+    snapshot_bank_utils::bank_to_full_snapshot_archive(snapshot_config, bank)?;
     Ok(())
 }
 
@@ -534,13 +519,9 @@ fn make_incremental_snapshot_archive(
     // The bank must have a block id set to take a snapshot.
     Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
+        snapshot_config,
         bank,
         incremental_snapshot_base_slot,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
     )?;
     Ok(())
 }
@@ -552,10 +533,8 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     genesis_config: &GenesisConfig,
 ) -> agave_snapshots::Result<()> {
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         &[accounts_dir],
+        snapshot_config,
         genesis_config,
         &RuntimeConfig::default(),
         None,
@@ -743,10 +722,8 @@ fn test_snapshots_with_background_services() {
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
     let snapshot_config = snapshot_controller.snapshot_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         &[temporary_accounts_dir],
+        snapshot_config,
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
         None,

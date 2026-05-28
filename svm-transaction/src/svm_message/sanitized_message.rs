@@ -7,9 +7,18 @@ use {
     solana_hash::Hash,
     solana_message::{AccountKeys, SanitizedMessage},
     solana_pubkey::Pubkey,
+    solana_transaction::versioned::TransactionVersion,
 };
 
 impl SVMStaticMessage for SanitizedMessage {
+    fn version(&self) -> TransactionVersion {
+        match self {
+            SanitizedMessage::Legacy(_) => TransactionVersion::LEGACY,
+            SanitizedMessage::V0(_) => TransactionVersion::Number(0),
+            SanitizedMessage::V1(_) => TransactionVersion::Number(1),
+        }
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         u64::from(self.header().num_required_signatures)
     }

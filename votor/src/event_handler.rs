@@ -5,7 +5,10 @@ use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
         consensus_metrics::ConsensusMetricsEvent,
-        event::{CompletedBlock, VotorEvent, VotorEventReceiver},
+        event::{
+            CompletedBlock, LatestSwitchRequest, RepairEvent, RepairEventSender, SwitchBankEvent,
+            VotorEvent, VotorEventReceiver,
+        },
         event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
@@ -15,7 +18,7 @@ use {
         votor::SharedContext,
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
-    crossbeam_channel::{RecvError, SendError, select},
+    crossbeam_channel::{RecvError, SendError, TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -85,9 +88,9 @@ struct LocalContext {
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
     pub(crate) stats: EventHandlerStats,
-    /// When in standstill, tracks the highest parent ready slot at the time standstill was detected.
+    /// When in standstill, tracks the highest finalized slot at the time standstill was detected.
     /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
-    /// Reset to None when a finalization event is received.
+    /// Reset to `None` when a new finalization event is received.
     pub(crate) standstill_slot: Option<Slot>,
 }
 
@@ -165,7 +168,7 @@ impl EventHandler {
                 .saturating_add(receive_event_time.as_us() as u32);
 
             let root_bank = vctx.sharable_banks.root();
-            if event.should_ignore(root_bank.slot()) {
+            if event.should_ignore(root_bank.slot().max(vctx.vote_history.root())) {
                 local_context.stats.ignored = local_context.stats.ignored.saturating_add(1);
                 continue;
             }
@@ -203,7 +206,7 @@ impl EventHandler {
 
     fn handle_parent_ready_event(
         slot: Slot,
-        parent_block: Block,
+        parent_block @ (parent_slot, _): Block,
         vctx: &mut VotingContext,
         ctx: &SharedContext,
         local_context: &mut LocalContext,
@@ -212,12 +215,24 @@ impl EventHandler {
     ) -> Result<(), EventLoopError> {
         let my_pubkey = &local_context.my_pubkey;
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
+
+        // We need to ensure that we've replayed the parent bank.
+        if parent_slot > vctx.sharable_banks.root().slot() {
+            request_switch(&ctx.latest_switch_request, *my_pubkey, parent_block);
+        }
+
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
-            timer_manager
-                .write()
-                .set_timeouts(slot, local_context.standstill_slot);
+            let root_bank = vctx.sharable_banks.root();
+            let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
+            let delta_first_slice = delta_block;
+            timer_manager.write().set_timeouts(
+                slot,
+                local_context.standstill_slot,
+                delta_first_slice,
+                delta_block,
+            );
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -282,7 +297,7 @@ impl EventHandler {
                         .or_default()
                         .push((block, parent_block));
                 }
-                Self::check_rootable_blocks(
+                Self::check_rootable_blocks_and_bank_hash_mismatches(
                     my_pubkey,
                     ctx,
                     vctx,
@@ -312,6 +327,12 @@ impl EventHandler {
                 info!("{my_pubkey}: Block Notarized {block:?}");
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+            }
+
+            VotorEvent::BlockNotarFallback(block) => {
+                info!("{my_pubkey}: Block notar-fallback {block:?}");
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
             }
 
             VotorEvent::FirstShred(slot) => {
@@ -410,7 +431,9 @@ impl EventHandler {
             VotorEvent::Finalized(block, is_fast_finalization) => {
                 info!("{my_pubkey}: Finalized {block:?} fast: {is_fast_finalization}");
                 finalized_blocks.insert(block);
-                Self::check_rootable_blocks(
+                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+
+                Self::check_rootable_blocks_and_bank_hash_mismatches(
                     my_pubkey,
                     ctx,
                     vctx,
@@ -421,12 +444,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = standstill_slot.take() {
-                    info!(
-                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
-                         slot={}. Ending timeout extension",
-                        block.0
-                    );
+                if let Some(slot) = *standstill_slot {
+                    if block.0 > slot {
+                        *standstill_slot = None;
+                        info!(
+                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
+                             at slot={}. Ending timeout extension",
+                            block.0
+                        );
+                    }
                 }
 
                 if let Some(parent_block) =
@@ -453,15 +479,26 @@ impl EventHandler {
             // We have not observed a finalization certificate in a while, refresh our votes
             VotorEvent::Standstill(highest_finalized_slot) => {
                 info!("{my_pubkey}: Standstill {highest_finalized_slot}");
-                // Record the highest parent ready slot for dynamic timeout extension.
-                if standstill_slot.is_none() {
-                    let (highest_parent_ready, _) = *ctx.highest_parent_ready.read().unwrap();
-                    *standstill_slot = Some(highest_parent_ready);
-                    info!(
-                        "{my_pubkey}: Extending timeouts starting at slot {highest_parent_ready}"
-                    );
+                // Record the highest finalized slot for dynamic timeout extension.
+                match *standstill_slot {
+                    Some(old_slot) => {
+                        debug_assert_eq!(highest_finalized_slot, old_slot);
+                        if highest_finalized_slot != old_slot {
+                            warn!(
+                                "{my_pubkey}: Standstill for slot {highest_finalized_slot}
+                                 issued while standstill for slot {old_slot} active."
+                            );
+                        }
+                    }
+                    None => {
+                        *standstill_slot = Some(highest_finalized_slot);
+                        info!(
+                            "{my_pubkey}: Extending timeouts starting at slot \
+                             {highest_finalized_slot}"
+                        );
+                    }
                 }
-                // certs refresh happens in CertificatePoolService
+                // certs refresh happens in ConsensusPoolService
                 Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
             }
 
@@ -563,8 +600,8 @@ impl EventHandler {
         if *my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
             let my_old_pubkey = vctx.vote_history.node_pubkey;
             *my_pubkey = new_pubkey;
-            // The vote history file for the new identity must exist for set-identity to succeed
-            vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)?;
+            vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)
+                .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
             vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
@@ -722,10 +759,13 @@ impl EventHandler {
         // In case we set root in the middle of a leader window,
         // it's not necessary to vote skip prior to it and we won't
         // be able to check vote history if we've already voted on it
-        let root_bank = voting_context.sharable_banks.root();
+        let root_slot = voting_context
+            .vote_history
+            .root()
+            .max(voting_context.sharable_banks.root().slot());
         // No matter what happens, we should not vote skip for slot 0
         let start = first_of_consecutive_leader_slots(slot)
-            .max(root_bank.slot())
+            .max(root_slot)
             .max(1);
         for s in start..=last_of_consecutive_leader_slots(slot) {
             if voting_context.vote_history.voted(s) {
@@ -769,7 +809,10 @@ impl EventHandler {
     /// - Block has a finalization certificate
     ///
     /// If so set root on the highest block that fits these conditions
-    fn check_rootable_blocks(
+    ///
+    /// Additionally check if any of the finalized blocks is frozen with a bank hash mismatch.
+    /// If so panic as it is unrecoverable.
+    fn check_rootable_blocks_and_bank_hash_mismatches(
         my_pubkey: &Pubkey,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
@@ -780,11 +823,29 @@ impl EventHandler {
         stats: &mut EventHandlerStats,
     ) {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
-        let old_root = bank_forks_r.root();
+        let old_root = bank_forks_r.root().max(vctx.vote_history.root());
         let Some(new_root) = finalized_blocks
             .iter()
             .filter_map(|&(slot, block_id)| {
                 let bank = bank_forks_r.get(slot)?;
+
+                // Check for bank hash mismatch
+                if bank.is_frozen()
+                    && bank.block_id() == Some(block_id)
+                    && let Some(expected_hash) = bank.expected_bank_hash()
+                    && expected_hash != bank.hash()
+                {
+                    panic!(
+                        "{my_pubkey}: Slot {slot} block_id {block_id} has been finalized, however \
+                         we have a bank hash mismatch. The cluster bank hash is {expected_hash} \
+                         however we computed {}. At this point we will be unable to recover. \
+                         Please save a copy of your ledger to share on discord and restart from a \
+                         snapshot > {slot}.",
+                        bank.hash(),
+                    );
+                }
+
+                // Check if this block is rootable
                 (slot > old_root
                     && vctx.vote_history.voted(slot)
                     && bank.is_frozen()
@@ -815,6 +876,42 @@ impl EventHandler {
     }
 }
 
+/// Sends a repair event to the block ID repair service.
+fn request_repair(
+    sender: &RepairEventSender,
+    my_pubkey: Pubkey,
+    block: Block,
+) -> Result<(), EventLoopError> {
+    let (slot, block_id) = block;
+    let event = RepairEvent::FetchBlock { slot, block_id };
+    match sender.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(event)) => {
+            error!(
+                "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
+                 send event for slot {slot}"
+            );
+            sender
+                .send(event)
+                .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            Err(EventLoopError::SenderDisconnected(SendError(())))
+        }
+    }
+}
+
+/// Updates the latest switch-bank request for replay to consume.
+fn request_switch(latest: &LatestSwitchRequest, my_pubkey: Pubkey, block: Block) {
+    let (slot, block_id) = block;
+    let event = SwitchBankEvent::Switch { slot, block_id };
+    if let Some(prev) = latest.try_advance(event) {
+        trace!(
+            "{my_pubkey}: Overwriting previous switch request {prev:?} with ({slot}, {block_id})"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -822,7 +919,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             consensus_metrics::ConsensusMetricsEventReceiver,
-            event::LeaderWindowInfo,
+            event::{LeaderWindowInfo, RepairEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
                 VoteHistoryStorage,
@@ -833,7 +930,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::{Receiver, TryRecvError, unbounded},
+        crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -848,6 +945,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
+            bank_forks_controller::{BankForksController, BankForksControllerError},
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
@@ -874,11 +972,59 @@ mod tests {
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
+        #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
+        repair_event_receiver: RepairEventReceiver,
         shared_context: SharedContext,
         voting_context: VotingContext,
         root_context: RootContext,
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
+    }
+
+    struct DirectBankForksController {
+        my_pubkey: Pubkey,
+        bank_forks: Arc<RwLock<BankForks>>,
+        blockstore: Arc<Blockstore>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    }
+
+    impl BankForksController for DirectBankForksController {
+        fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError> {
+            Ok(self.bank_forks.write().unwrap().insert(bank))
+        }
+
+        fn enqueue_set_root(
+            &self,
+            parent_slot: Slot,
+            new_root: Slot,
+            highest_super_majority_root: Option<Slot>,
+        ) {
+            root_utils::check_and_handle_new_root(
+                parent_slot,
+                new_root,
+                None,
+                highest_super_majority_root,
+                &None,
+                &self.drop_bank_sender,
+                &self.blockstore,
+                &self.leader_schedule_cache,
+                &self.bank_forks,
+                None,
+                &self.my_pubkey,
+                |_| {},
+            );
+        }
+
+        fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
+            let bank_to_clear = self.bank_forks.read().unwrap().get_with_scheduler(slot);
+            if let Some(bank) = bank_to_clear {
+                let _ = bank.wait_for_completed_scheduler();
+            }
+
+            self.bank_forks.write().unwrap().clear_bank(slot, false);
+            Ok(())
+        }
     }
 
     fn setup() -> EventHandlerTestContext {
@@ -890,6 +1036,8 @@ mod tests {
         let (event_sender, _event_receiver) = unbounded();
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (repair_event_sender, repair_event_receiver) = unbounded();
+        let latest_switch_request = LatestSwitchRequest::default();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender,
             exit,
@@ -929,6 +1077,16 @@ mod tests {
             )
             .unwrap(),
         );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks.read().unwrap().root_bank(),
+        ));
+        let bank_forks_controller = Arc::new(DirectBankForksController {
+            my_pubkey: my_node_keypair.pubkey(),
+            bank_forks: bank_forks.clone(),
+            blockstore: blockstore.clone(),
+            leader_schedule_cache,
+            drop_bank_sender: drop_bank_sender.clone(),
+        });
         let highest_parent_ready = Arc::new(RwLock::default());
 
         let shared_context = SharedContext {
@@ -936,9 +1094,10 @@ mod tests {
             bank_forks: bank_forks.clone(),
             vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
             leader_window_info_sender,
-            blockstore,
-            rpc_subscriptions: None,
+            blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
+            repair_event_sender,
+            latest_switch_request,
         };
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
@@ -952,18 +1111,13 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             consensus_metrics_sender,
         };
 
         let root_context = RootContext {
-            leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(
-                &bank_forks.read().unwrap().root_bank(),
-            )),
-            snapshot_controller: None,
             bank_notification_sender: None,
-            drop_bank_sender,
+            bank_forks_controller,
         };
 
         let local_context = LocalContext {
@@ -986,6 +1140,7 @@ mod tests {
             drop_bank_receiver,
             cluster_info,
             consensus_metrics_receiver,
+            repair_event_receiver,
             highest_parent_ready,
             shared_context,
             voting_context,
@@ -1111,7 +1266,7 @@ mod tests {
                     start_slot,
                     end_slot,
                     parent_block,
-                    skip_timer: Instant::now(),
+                    block_timer: Instant::now(),
                 }),
                 &self.timer_manager,
                 &self.shared_context,
@@ -1183,7 +1338,7 @@ mod tests {
 
         fn check_for_votes(&mut self, expected_votes: &[Vote]) {
             for v in expected_votes {
-                let expected_vote_serialized = bincode::serialize(v).unwrap();
+                let expected_vote_serialized = wincode::serialize(v).unwrap();
                 let signature: BLSSignature =
                     self.my_bls_keypair.sign(&expected_vote_serialized).into();
                 let expected_message = ConsensusMessage::Vote(VoteMessage {
@@ -1203,7 +1358,7 @@ mod tests {
         }
 
         fn check_for_vote(&mut self, expected_vote: &Vote) {
-            let expected_vote_serialized = bincode::serialize(expected_vote).unwrap();
+            let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
             let signature: BLSSignature =
                 self.my_bls_keypair.sign(&expected_vote_serialized).into();
             let expected_message = ConsensusMessage::Vote(VoteMessage {
@@ -1560,6 +1715,41 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "we have a bank hash mismatch")]
+    fn test_finalized_block_with_bank_hash_mismatch_panics() {
+        let mut test_context = setup();
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank = test_context.create_block_only(1, root_bank);
+        let block_id = bank.block_id().unwrap();
+        let expected_hash = Hash::new_unique();
+        bank.set_expected_bank_hash(expected_hash);
+
+        test_context.send_finalized_event((1, block_id), true);
+    }
+
+    #[test]
+    fn test_finalized_different_block_id_with_bank_hash_mismatch_does_not_panic() {
+        let mut test_context = setup();
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank = test_context.create_block_only(1, root_bank);
+        let expected_hash = Hash::new_unique();
+        bank.set_expected_bank_hash(expected_hash);
+        let finalized_block_id = Hash::new_unique();
+
+        test_context.send_finalized_event((1, finalized_block_id), true);
+    }
+
+    #[test]
     fn test_parent_ready_in_middle_of_window() {
         let mut test_context = setup();
 
@@ -1614,7 +1804,7 @@ mod tests {
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
 
-        // Send a standstill event with highest parent ready at 0, we should refresh all the votes
+        // Send a standstill event with highest finalized at 0, we should refresh all the votes
         test_context.send_standstill_event(0);
 
         test_context.check_for_votes(&[
@@ -1623,7 +1813,11 @@ mod tests {
             Vote::new_skip_vote(3),
         ]);
 
-        // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
+        // Finalize block 1, should deactivate standstill
+        test_context.send_finalized_event((1, block_id_1), true);
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Send another standstill event with highest finalized at 1, we should refresh votes for 2 and 3 only
         test_context.send_standstill_event(1);
 
         test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
@@ -1696,15 +1890,15 @@ mod tests {
         // Send standstill event - should record the standstill slot
         test_context.send_standstill_event(0);
 
-        // The standstill_slot should now be set to the highest parent ready
+        // The standstill_slot should now be set to the highest finalized
         assert!(test_context.local_context.standstill_slot.is_some());
         let standstill_slot = test_context.local_context.standstill_slot.unwrap();
-        // The highest parent ready should be 1 since we sent parent_ready for slot 1
-        assert_eq!(standstill_slot, 1);
+        // The highest finalized should be 0 since we haven't finalized a slot after genesis
+        assert_eq!(standstill_slot, 0);
 
-        // Send another standstill event - should not overwrite the existing standstill_slot
+        // Send another standstill event - should not change the existing standstill_slot
         test_context.send_standstill_event(0);
-        assert_eq!(test_context.local_context.standstill_slot, Some(1));
+        assert_eq!(test_context.local_context.standstill_slot, Some(0));
 
         // Send a finalized event - should reset standstill_slot
         test_context.send_finalized_event((1, block_id_1), false);

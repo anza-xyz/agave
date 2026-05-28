@@ -7,7 +7,7 @@ description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
@@ -28,10 +28,12 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
+solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
+solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
@@ -43,6 +45,7 @@ solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
@@ -54,10 +57,12 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }
+agave-votor-messages = { path = "../votor-messages", features = ["dev-context-only-utils"] }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }
+solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
@@ -72,3 +77,6 @@ harness = false
 [[bench]]
 name = "cluster_nodes"
 harness = false
+
+[lints]
+workspace = true

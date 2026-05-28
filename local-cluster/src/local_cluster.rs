@@ -5,7 +5,7 @@ use {
         integration_tests::{DEFAULT_NODE_STAKE, ValidatorKeys},
         validator_configs::*,
     },
-    agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account, vote_state_v4},
+    agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
     itertools::izip,
     log::*,
@@ -28,7 +28,7 @@ use {
         node::Node,
     },
     solana_keypair::Keypair,
-    solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
+    solana_ledger::{create_new_tmp_ledger, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -371,10 +371,7 @@ impl LocalCluster {
         genesis_config.poh_config = config.poh_config.clone();
 
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
-        let (leader_ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
-            &genesis_config,
-            leader_config.max_genesis_archive_unpacked_size,
-        );
+        let (leader_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
         leader_config.rpc_addrs = Some((
             leader_node.info.rpc().unwrap(),
@@ -457,7 +454,6 @@ impl LocalCluster {
                 Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
                 vec![],
                 &leader_config,
-                true, // should_check_duplicate_instance
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
@@ -527,7 +523,7 @@ impl LocalCluster {
 
         discover_peers(
             None,
-            &vec![cluster.entry_point_info.gossip().unwrap()],
+            &[cluster.entry_point_info.gossip().unwrap()],
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,
@@ -623,10 +619,7 @@ impl LocalCluster {
         let validator_pubkey = validator_keypair.pubkey();
         let validator_node = Node::new_localhost_with_pubkey(&validator_pubkey);
         let contact_info = validator_node.info.clone();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
-            &self.genesis_config,
-            validator_config.max_genesis_archive_unpacked_size,
-        );
+        let (ledger_path, _blockhash) = create_new_tmp_ledger!(&self.genesis_config);
 
         // Give the validator some lamports to setup vote accounts
         if is_listener {
@@ -668,7 +661,6 @@ impl LocalCluster {
             Arc::new(RwLock::new(vec![voting_keypair.clone()])),
             vec![self.entry_point_info.clone()],
             &config,
-            true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
@@ -734,7 +726,6 @@ impl LocalCluster {
                 Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
                 vec![],
                 &leader_config,
-                true, // should_check_duplicate_instance
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
@@ -778,10 +769,7 @@ impl LocalCluster {
 
                 let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
                 let contact_info = validator_node.info.clone();
-                let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
-                    &genesis_config,
-                    validator_config.max_genesis_archive_unpacked_size,
-                );
+                let (ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
                 let mut config = validator_config;
                 config.rpc_addrs = Some((
@@ -798,7 +786,6 @@ impl LocalCluster {
                     Arc::new(RwLock::new(vec![voting_keypair.clone()])),
                     entry_points,
                     &config,
-                    true, // should_check_duplicate_instance
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     socket_addr_space,
@@ -1086,7 +1073,6 @@ impl LocalCluster {
 
     fn is_bls_pubkey_feature_enabled(rpc_client: &RpcClient) -> bool {
         Self::is_feature_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
-            && Self::is_feature_active(rpc_client, &vote_state_v4::id())
     }
 
     fn setup_vote_and_stake_accounts(
@@ -1430,7 +1416,6 @@ impl Cluster for LocalCluster {
             Arc::new(RwLock::new(vec![validator_info.voting_keypair.clone()])),
             entry_point_infos,
             &safe_clone_config(&cluster_validator_info.config),
-            true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,

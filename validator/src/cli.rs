@@ -18,6 +18,7 @@ use {
         hidden_unless_forced,
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_url_or_moniker,
+            validate_cpu_ranges,
         },
     },
     solana_clock::Slot,
@@ -136,6 +137,18 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(true)
             .multiple(true)
             .help("Path to accounts shrink path which can hold a compacted account set."),
+        usage_warning: "Shrink paths are no longer used.",
+    );
+    add_arg!(
+        // deprecated in v4.2.0; the `mmap` value was deprecated in v4.0.0, and now mmap mode has
+        // been removed entirely. The only remaining mode (`file`) is the default and only
+        // behavior, so this flag is now a no-op.
+        Arg::with_name("accounts_db_access_storages_method")
+            .long("accounts-db-access-storages-method")
+            .value_name("METHOD")
+            .takes_value(true)
+            .possible_values(&["mmap", "file"])
+            .help("No-op; account storages are always accessed via file I/O"),
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -144,6 +157,42 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Enables the disk-based accounts index")
             .conflicts_with("accounts_index_limit"),
         replaced_by: "accounts-index-limit",
+    );
+    add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("experimental_retransmit_xdp_cpu_cores")
+            .long("experimental-retransmit-xdp-cpu-cores")
+            .takes_value(true)
+            .value_name("CPU_LIST")
+            .conflicts_with("xdp_cpu_cores")
+            .validator(|value| {
+                validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
+            })
+            .help(
+                "Enable XDP retransmit on the specified CPU cores. Use --xdp-cpu-cores instead",
+            ),
+        replaced_by: "xdp-cpu-cores",
+    );
+    add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("experimental_retransmit_xdp_interface")
+            .long("experimental-retransmit-xdp-interface")
+            .takes_value(true)
+            .value_name("INTERFACE")
+            .conflicts_with("xdp_interface")
+            .requires("experimental_retransmit_xdp_cpu_cores")
+            .help("Network interface to use for XDP retransmit. Use --xdp-interface instead"),
+        replaced_by: "xdp-interface",
+    );
+    add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("experimental_retransmit_xdp_zero_copy")
+            .long("experimental-retransmit-xdp-zero-copy")
+            .takes_value(false)
+            .conflicts_with("xdp_zero_copy")
+            .requires("experimental_retransmit_xdp_cpu_cores")
+            .help("Enable XDP zero copy. Use --xdp-zero-copy instead"),
+        replaced_by: "xdp-zero-copy",
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -305,6 +354,7 @@ pub fn port_validator(port: String) -> Result<(), String> {
 
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
+        // The port range is half-open: [start, end)
         if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
@@ -606,8 +656,12 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .long("dynamic-port-range")
                 .value_name("MIN_PORT-MAX_PORT")
                 .takes_value(true)
+                .default_value(&default_args.dynamic_port_range)
                 .validator(port_range_validator)
-                .help("Range to use for dynamically assigned ports [default: 1024-65535]"),
+                .help(
+                    "Range to use for dynamically assigned ports. MIN_PORT-MAX_PORT yields the \
+                     range [MIN_PORT, MAX_PORT)",
+                ),
         )
         .arg(
             Arg::with_name("bind_address")
@@ -829,6 +883,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
 pub struct DefaultTestArgs {
     pub rpc_port: String,
     pub faucet_port: String,
+    pub dynamic_port_range: String,
     pub limit_ledger_size: String,
     pub faucet_sol: String,
     pub faucet_time_slice_secs: String,
@@ -839,6 +894,7 @@ impl DefaultTestArgs {
         DefaultTestArgs {
             rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
+            dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the
              * 40MB-150MB range when running `solana-test-validator`

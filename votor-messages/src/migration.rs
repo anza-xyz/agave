@@ -61,7 +61,10 @@ use {
     },
 };
 #[cfg(feature = "dev-context-only-utils")]
-use {solana_bls_signatures::Signature as BLSSignature, solana_hash::Hash};
+use {
+    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+    solana_hash::Hash,
+};
 
 /// The slot offset post feature flag activation to begin the migration.
 /// Epoch boundaries induce heavy computation often resulting in forks. It's best to decouple the migration period
@@ -277,6 +280,11 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
+    /// Should this block use the double merkle root as the block id (instead of chained merkle root)?
+    fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool {
+        self.is_alpenglow_block(slot)
+    }
+
     /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
     fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
@@ -292,6 +300,9 @@ pub struct MigrationStatus {
     /// Communication with PohService
     /// Flag indicating whether we should shutdown Poh
     pub shutdown_poh: AtomicBool,
+
+    /// Flag indicating whether PohService has been started.
+    poh_service_started: AtomicBool,
 
     /// The current phase of the migration we are in
     phase: RwLock<MigrationPhase>,
@@ -325,6 +336,7 @@ impl MigrationStatus {
         Self {
             my_pubkey: RwLock::default(),
             shutdown_poh: AtomicBool::new(is_alpenglow_enabled),
+            poh_service_started: AtomicBool::new(false),
             phase: RwLock::new(phase),
             migration_wait: (Mutex::new(is_alpenglow_enabled), Condvar::new()),
         }
@@ -335,12 +347,26 @@ impl MigrationStatus {
     pub fn post_migration_status() -> Self {
         let genesis_certificate = Certificate {
             cert_type: CertificateType::Genesis(0, Hash::default()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
         Self::new(MigrationPhase::AlpenglowEnabled {
             genesis_cert: Arc::new(genesis_certificate),
         })
+    }
+
+    /// Enable alpenglow for testing code
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn enable_alpenglow_for_tests(&self) {
+        let genesis_block = (0, Hash::new_unique());
+        self.record_feature_activation(0);
+        self.set_genesis_block(genesis_block);
+        self.set_genesis_certificate(Arc::new(Certificate {
+            cert_type: CertificateType::Genesis(genesis_block.0, genesis_block.1),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        }));
+        assert_eq!(self.enable_alpenglow_during_startup(), genesis_block.0);
     }
 
     /// Initialize migration status based on feature flag activation and genesis certificate
@@ -403,6 +429,11 @@ impl MigrationStatus {
         warn!("{my_pubkey}: Alpenglow migration phase {phase:?}");
     }
 
+    /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
+    pub fn set_poh_service_started(&self) {
+        self.poh_service_started.store(true, Ordering::Release);
+    }
+
     dispatch!(pub fn is_pre_feature_activation(&self) -> bool);
     dispatch!(pub fn is_in_migration(&self) -> bool);
     dispatch!(pub fn is_ready_to_enable(&self) -> bool);
@@ -419,6 +450,7 @@ impl MigrationStatus {
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
     /// This should only be called using the feature account of a *rooted* slot,
@@ -632,7 +664,7 @@ impl MigrationStatus {
         condvar.notify_all();
     }
 
-    /// Enables alpenglow in the startup pathway. This is pre `PohService` so we can do this from a single thread.
+    /// Enables alpenglow in the startup pathway.
     /// Returns the genesis slot
     ///
     /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
@@ -648,6 +680,15 @@ impl MigrationStatus {
         };
 
         let genesis_slot = genesis_cert.cert_type.slot();
+        if self.poh_service_started.load(Ordering::Acquire) {
+            // If `PohService` is started, use the full enable pathway
+            // We do not respect the exit flag during startup replay
+            let exit = AtomicBool::new(false);
+            self.enable_alpenglow(&exit);
+            return genesis_slot;
+        }
+
+        // If `PohService` has not yet started, enable in this single thread
         self.shutdown_poh.store(true, Ordering::Release);
         *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
         let (is_alpenglow_enabled, _condvar) = &self.migration_wait;

@@ -60,13 +60,13 @@ impl EpochInflationState {
 #[derive(Debug, PartialEq, Eq, SchemaWrite, SchemaRead, Serialize, Deserialize)]
 pub struct EpochInflationAccountState {
     /// [`EpochInflationState`] for the current epoch.
-    pub(super) current: EpochInflationState,
+    current: EpochInflationState,
     /// [`EpochInflationState`] for the previous epoch.  This is needed for scenarios when the
     /// reward slot is in a previous epoch relative to the current slot.
     ///
     /// Stored in an `Option` because in the first epoch when Alpenglow is enabled, we will not
     /// have any state for the previous epoch.
-    pub(super) prev: Option<EpochInflationState>,
+    prev: Option<EpochInflationState>,
 }
 
 impl EpochInflationAccountState {
@@ -80,7 +80,7 @@ impl EpochInflationAccountState {
     }
 
     /// Serializes and updates [`Self`] into the accounts in the [`Bank`].
-    pub(super) fn set_state(&self, bank: &Bank) {
+    fn set_state(&self, bank: &Bank) {
         let data = wincode::serialize(&self).unwrap();
         let lamports = bank.get_minimum_balance_for_rent_exemption(data.len());
         let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);

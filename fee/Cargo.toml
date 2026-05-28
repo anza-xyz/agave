@@ -7,7 +7,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
@@ -16,3 +16,6 @@ agave-unstable-api = []
 agave-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-svm-transaction = { workspace = true }
+
+[lints]
+workspace = true

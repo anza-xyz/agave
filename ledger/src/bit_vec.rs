@@ -1,11 +1,12 @@
 use {
-    serde::{Deserialize, Serialize},
     std::{
         iter::Enumerate,
+        mem::MaybeUninit,
         ops::{Bound, RangeBounds},
         slice::Iter,
     },
     thiserror::Error,
+    wincode::{ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
 
 type Word = u8;
@@ -24,10 +25,8 @@ const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
 /// assert_eq!(bit_vec.range(..2).iter_ones().collect::<Vec<_>>(), [0, 1]);
 /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaWrite)]
 pub struct BitVec<const NUM_BITS: usize> {
-    #[serde(with = "serde_bytes")]
     words: Box<[Word]>,
 }
 
@@ -39,28 +38,24 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
     }
 }
 
-// Note: serde_bytes' default `Deserialize` would construct a variable-length buffer,
+// Note: bincode/wincode would construct a variable-length buffer,
 // which violates `BitVec`'s invariant that its backing vector length (in words)
 // is exactly `NUM_WORDS`. Bounds checks and performance rely on this fixed size.
 //
 // `BitVec` is normally constructed via `Default`, which initializes with
-// `vec![0; Self::NUM_WORDS]`. This custom `Deserialize` preserves the invariant by
-// allocating exactly `NUM_WORDS` and populating from the serialized data, zero-filling
-// any missing words. This is required for the `SlotMetaV1` -> `SlotMetaV2` migration,
-// where `completed_data_indexes` was encoded as a variable-length `BTreeSet<u32>`.
-impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let bytes = <&serde_bytes::Bytes as Deserialize>::deserialize(deserializer)?;
-        let mut words = Vec::with_capacity(Self::NUM_WORDS);
-        words.extend_from_slice(bytes);
-        words.resize(Self::NUM_WORDS, 0);
+// `vec![0; Self::NUM_WORDS]`. This custom `SchemaRead` preserves the invariant by
+// forcing returned instance to have exactly `NUM_WORDS` - populating from the serialized data
+// and zero-filling any missing words or truncating any excess words.
+unsafe impl<'de, const NUM_BITS: usize, C: Config> SchemaRead<'de, C> for BitVec<NUM_BITS> {
+    type Dst = Self;
 
-        Ok(Self {
-            words: words.into_boxed_slice(),
-        })
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let mut vec = <Vec<u8> as SchemaRead<C>>::get(reader.by_ref())?;
+        vec.resize(Self::NUM_WORDS, 0);
+        dst.write(Self {
+            words: vec.into_boxed_slice(),
+        });
+        Ok(())
     }
 }
 
@@ -601,16 +596,14 @@ mod tests {
             let mut expected = BitVec::<NUM_BITS>::default();
             expected.words[..data.len()].copy_from_slice(&data);
 
-            #[derive(Serialize)]
-            #[serde(transparent)]
+            #[derive(SchemaWrite)]
             struct Source {
-                #[serde(with = "serde_bytes")]
                 data: Vec<u8>,
             }
-            let serialized = bincode::serialize(&Source { data }).unwrap();
+            let serialized = wincode::serialize(&Source { data }).unwrap();
             // Deserializing should always result in a BitVec with exactly NUM_WORDS words,
             // adding zeroed bits that are not present in the serialized data.
-            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            let deserialized: BitVec<NUM_BITS> = wincode::deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, expected);
         }
 
@@ -618,8 +611,8 @@ mod tests {
         fn serialize_roundtrip(range in rand_range(0..1024_usize)) {
             const NUM_BITS: usize = 1024;
             let bit_vec = range.into_iter().collect::<BitVec<NUM_BITS>>();
-            let serialized = bincode::serialize(&bit_vec).unwrap();
-            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            let serialized = wincode::serialize(&bit_vec).unwrap();
+            let deserialized: BitVec<NUM_BITS> = wincode::deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, bit_vec);
         }
     }

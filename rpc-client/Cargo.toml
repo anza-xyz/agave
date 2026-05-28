@@ -60,9 +60,13 @@ futures = { workspace = true }
 jsonrpc-core = { workspace = true }
 jsonrpc-http-server = { workspace = true }
 solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

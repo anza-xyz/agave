@@ -32,7 +32,6 @@ frozen-abi = [
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
-bincode = { workspace = true }
 bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
@@ -58,6 +57,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
+solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }

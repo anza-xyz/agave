@@ -57,6 +57,7 @@ pub struct RunArgs {
     pub json_rpc_config: JsonRpcConfig,
     pub pub_sub_config: PubSubConfig,
     pub send_transaction_service_config: SendTransactionServiceConfig,
+    pub filter_keys: HashSet<Pubkey>,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -130,6 +131,13 @@ impl FromClapArgMatches for RunArgs {
             send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
                 matches,
             )?,
+            filter_keys: if matches.is_present("filter_keys") {
+                values_t!(matches, "filter_keys", Pubkey)?
+                    .into_iter()
+                    .collect()
+            } else {
+                HashSet::new()
+            },
         })
     }
 }
@@ -360,7 +368,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.dynamic_port_range)
             .validator(port_range_validator)
-            .help("Range to use for dynamically assigned ports"),
+            .help(
+                "Range to use for dynamically assigned ports. MIN_PORT-MAX_PORT yields the range \
+                 [MIN_PORT, MAX_PORT)",
+            ),
     )
     .arg(
         Arg::with_name("maximum_local_snapshot_age")
@@ -537,6 +548,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("require-tower")
             .takes_value(false)
             .help("Refuse to start if saved tower state is not found"),
+    )
+    .arg(
+        clap::Arg::with_name("do_not_require_vote_history")
+            .long("do-not-require-vote-history")
+            .takes_value(false)
+            .help("Do not require saved vote history state for startup"),
     )
     .arg(
         Arg::with_name("expected_genesis_hash")
@@ -941,14 +958,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_access_storages_method")
-            .long("accounts-db-access-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["mmap", "file"])
-            .help("Access account storages using this method"),
-    )
-    .arg(
         Arg::with_name("accounts_db_ancient_append_vecs")
             .long("accounts-db-ancient-append-vecs")
             .value_name("SLOT-OFFSET")
@@ -1182,6 +1191,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("filter_keys")
+            .long("filter-keys")
+            .value_name("PUBKEY")
+            .takes_value(true)
+            .min_values(1)
+            .validator(is_pubkey)
+            .help(
+                "Drop internally processed leader-side transactions that touch any listed account \
+                 pubkey. Values are space-separated. Using too many keys will negatively impact \
+                 performance. External schedulers must implement this filtering themselves",
+            ),
+    )
+    .arg(
         Arg::with_name("enable_scheduler_bindings")
             .long("enable-scheduler-bindings")
             .takes_value(false)
@@ -1196,32 +1218,27 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
-        Arg::with_name("retransmit_xdp_interface")
-            .hidden(hidden_unless_forced())
-            .long("experimental-retransmit-xdp-interface")
+        Arg::with_name("xdp_interface")
+            .long("xdp-interface")
             .takes_value(true)
             .value_name("INTERFACE")
-            .requires("retransmit_xdp_cpu_cores")
-            .help("EXPERIMENTAL: The network interface to use for XDP retransmit"),
+            .requires("xdp_cpu_cores")
+            .help("Network interface to use for XDP"),
     )
     .arg(
-        Arg::with_name("retransmit_xdp_cpu_cores")
-            .hidden(hidden_unless_forced())
-            .long("experimental-retransmit-xdp-cpu-cores")
+        Arg::with_name("xdp_cpu_cores")
+            .long("xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
-            .validator(|value| {
-                validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
-            })
-            .help("EXPERIMENTAL: Enable XDP retransmit on the specified CPU cores"),
+            .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
+            .help("Use the specified CPU cores for XDP"),
     )
     .arg(
-        Arg::with_name("retransmit_xdp_zero_copy")
-            .hidden(hidden_unless_forced())
-            .long("experimental-retransmit-xdp-zero-copy")
+        Arg::with_name("xdp_zero_copy")
+            .long("xdp-zero-copy")
             .takes_value(false)
-            .requires("retransmit_xdp_cpu_cores")
-            .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
+            .requires("xdp_cpu_cores")
+            .help("Enable XDP zero copy. Requires hardware support"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
@@ -1296,9 +1313,12 @@ mod tests {
                     notification_threads: None,
                     queue_capacity_items:
                         solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
+                    queue_capacity_bytes:
+                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_BYTES,
                     ..PubSubConfig::default_for_tests()
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
+                filter_keys: HashSet::new(),
             }
         }
     }
@@ -1317,6 +1337,7 @@ mod tests {
                 json_rpc_config: self.json_rpc_config.clone(),
                 pub_sub_config: self.pub_sub_config.clone(),
                 send_transaction_service_config: self.send_transaction_service_config.clone(),
+                filter_keys: self.filter_keys.clone(),
             }
         }
     }
@@ -1498,6 +1519,37 @@ mod tests {
             );
             assert!(fs::exists(&ledger_path).unwrap());
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_filter_keys() {
+        let default_run_args = RunArgs::default();
+        let filter_key = Pubkey::new_unique();
+        let other_filter_key = Pubkey::new_unique();
+
+        let expected_args = RunArgs {
+            filter_keys: HashSet::from([filter_key, other_filter_key]),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--filter-keys",
+                &filter_key.to_string(),
+                &other_filter_key.to_string(),
+            ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_invalid_filter_keys() {
+        let default_run_args = RunArgs::default();
+
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            default_run_args,
+            vec!["--filter-keys", "not-a-pubkey"],
+        );
     }
 
     #[test]

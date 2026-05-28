@@ -10,7 +10,9 @@ use {
     },
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
+    solana_pubkey::Pubkey,
     std::{
+        collections::HashSet,
         num::Saturating,
         sync::{Arc, atomic::Ordering},
         time::{Duration, Instant},
@@ -19,12 +21,17 @@ use {
 
 pub struct VotePacketReceiver {
     banking_packet_receiver: BankingPacketReceiver,
+    filter_keys: Arc<HashSet<Pubkey>>,
 }
 
 impl VotePacketReceiver {
-    pub fn new(banking_packet_receiver: BankingPacketReceiver) -> Self {
+    pub fn new(
+        banking_packet_receiver: BankingPacketReceiver,
+        filter_keys: Arc<HashSet<Pubkey>>,
+    ) -> Self {
         Self {
             banking_packet_receiver,
+            filter_keys,
         }
     }
 
@@ -111,7 +118,14 @@ impl VotePacketReceiver {
                     // referencing more than 255 accounts, so it is safe to set this to true.
                     true,
                 ) {
-                    Ok(pkt) => Some(pkt),
+                    Ok(pkt) => {
+                        if self.should_filter_packet(&pkt) {
+                            packet_stats.filtered_account_key_count += 1;
+                            None
+                        } else {
+                            Some(pkt)
+                        }
+                    }
                     Err(err) => {
                         errors += 1;
                         match err {
@@ -128,12 +142,27 @@ impl VotePacketReceiver {
             })
             .collect();
         let Saturating(errors) = errors;
-        packet_stats.passed_sigverify_count += errors.saturating_add(parsed_packets.len()) as u64;
-        packet_stats.failed_sigverify_count += num_packets_received
+        let filtered_account_key_count = packet_stats.filtered_account_key_count.0 as usize;
+        let passed_sigverify_count = errors
+            .saturating_add(parsed_packets.len())
+            .saturating_add(filtered_account_key_count);
+        packet_stats.passed_sigverify_count += passed_sigverify_count as u64;
+        let failed_sigverify_count = num_packets_received
             .saturating_sub(parsed_packets.len())
-            .saturating_sub(errors) as u64;
+            .saturating_sub(errors)
+            .saturating_sub(filtered_account_key_count);
+        packet_stats.failed_sigverify_count += failed_sigverify_count as u64;
 
         Ok((parsed_packets, packet_stats))
+    }
+
+    fn should_filter_packet(&self, packet: &SanitizedTransactionView<SharedBytes>) -> bool {
+        // Vote transactions do not use address lookup tables, so static keys cover this path.
+        !self.filter_keys.is_empty()
+            && packet
+                .static_account_keys()
+                .iter()
+                .any(|key| self.filter_keys.contains(key))
     }
 
     fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
@@ -160,6 +189,7 @@ impl VotePacketReceiver {
     ) {
         let packet_count = deserialized_packets.len();
 
+        let filtered_account_key_count = packet_stats.filtered_account_key_count.0 as usize;
         slot_metrics_tracker.increment_received_packet_counts(packet_stats);
 
         let mut dropped_packets_count = Saturating(0);
@@ -184,9 +214,10 @@ impl VotePacketReceiver {
             .fetch_add(packet_count, Ordering::Relaxed);
         {
             let Saturating(dropped_packets_count) = dropped_packets_count;
-            vote_source_counts
-                .dropped_packets_count
-                .fetch_add(dropped_packets_count, Ordering::Relaxed);
+            vote_source_counts.dropped_packets_count.fetch_add(
+                dropped_packets_count.saturating_add(filtered_account_key_count),
+                Ordering::Relaxed,
+            );
         }
         vote_source_counts
             .newly_buffered_packets_count
@@ -235,4 +266,78 @@ pub struct PacketReceiverStats {
     pub failed_prioritization_count: Saturating<u64>,
     /// Number of vote packets dropped
     pub invalid_vote_count: Saturating<u64>,
+    /// Number of vote packets dropped due to account key filtering.
+    pub filtered_account_key_count: Saturating<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::banking_stage::{
+            BankingStageStats,
+            latest_validator_vote_packet::VoteSource,
+            leader_slot_metrics::LeaderSlotMetricsTracker,
+            vote_storage::{VoteStorage, tests::packet_from_slots},
+        },
+        crossbeam_channel::unbounded,
+        solana_perf::packet::PacketBatch,
+        solana_runtime::{
+            bank::Bank,
+            genesis_utils::{self, ValidatorVoteKeypairs},
+        },
+        solana_signer::Signer,
+    };
+
+    fn receive_vote_with_filter_keys(
+        keypairs: &ValidatorVoteKeypairs,
+        filter_keys: Arc<HashSet<Pubkey>>,
+    ) -> VoteStorage {
+        let vote_packet = packet_from_slots(vec![(1, 1)], keypairs, None);
+        let (sender, receiver) = unbounded();
+        sender
+            .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
+            .unwrap();
+
+        let mut receiver = VotePacketReceiver::new(receiver, filter_keys);
+        let genesis_config =
+            genesis_utils::create_genesis_config_with_vote_accounts(100, &[keypairs], vec![200])
+                .genesis_config;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut vote_storage = VoteStorage::new(&bank);
+        let mut banking_stage_stats = BankingStageStats::new();
+        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::default();
+
+        receiver
+            .receive_and_buffer_packets(
+                &mut vote_storage,
+                &mut banking_stage_stats,
+                &mut slot_metrics_tracker,
+                VoteSource::Tpu,
+            )
+            .unwrap();
+
+        vote_storage
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_vote_account_key() {
+        let keypairs = ValidatorVoteKeypairs::new_rand();
+        let vote_pubkey = keypairs.vote_keypair.pubkey();
+        let vote_storage =
+            receive_vote_with_filter_keys(&keypairs, Arc::new(HashSet::from([vote_pubkey])));
+
+        assert_eq!(vote_storage.len(), 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_does_not_filter_unmatched_vote_account_key() {
+        let keypairs = ValidatorVoteKeypairs::new_rand();
+        let vote_storage = receive_vote_with_filter_keys(
+            &keypairs,
+            Arc::new(HashSet::from([Pubkey::new_unique()])),
+        );
+
+        assert_eq!(vote_storage.len(), 1);
+    }
 }

@@ -11,8 +11,8 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
-        snapshot_controller::SnapshotController,
+        bank_forks::BankForks, bank_forks_controller::BankForksController,
+        installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
     },
     solana_time_utils::timestamp,
     std::{
@@ -24,10 +24,8 @@ use {
 /// Structures that are not used in the event loop, but need to be updated
 /// or notified when setting root
 pub(crate) struct RootContext {
-    pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
-    pub(crate) snapshot_controller: Option<Arc<SnapshotController>>,
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
-    pub(crate) drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    pub(crate) bank_forks_controller: Arc<dyn BankForksController>,
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -48,20 +46,8 @@ pub(crate) fn set_root(
     *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
     *received_shred = received_shred.split_off(&new_root);
 
-    check_and_handle_new_root(
-        new_root,
-        new_root,
-        rctx.snapshot_controller.as_deref(),
-        Some(new_root),
-        &rctx.bank_notification_sender,
-        &rctx.drop_bank_sender,
-        &ctx.blockstore,
-        &rctx.leader_schedule_cache,
-        &ctx.bank_forks,
-        ctx.rpc_subscriptions.as_deref(),
-        my_pubkey,
-        |_| {},
-    );
+    rctx.bank_forks_controller
+        .enqueue_set_root(new_root, new_root, Some(new_root));
 
     // Distinguish between duplicate versions of same slot
     let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
@@ -197,6 +183,17 @@ pub fn set_bank_forks_root<CB>(
 ) where
     CB: FnOnce(&BankForks),
 {
+    let banks_to_remove: Vec<_> = {
+        let bank_forks = bank_forks.read().unwrap();
+        bank_forks
+            .get_non_rooted(new_root, highest_super_majority_root)
+            .filter_map(|slot| bank_forks.get_with_scheduler(slot))
+            .collect()
+    };
+    for bank in banks_to_remove {
+        let _ = bank.wait_for_completed_scheduler();
+    }
+
     bank_forks.read().unwrap().prune_program_cache(new_root);
     let removed_banks = bank_forks.write().unwrap().set_root(
         new_root,

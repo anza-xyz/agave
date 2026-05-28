@@ -10,9 +10,8 @@ use {
     solana_pubkey::Pubkey,
     std::collections::{HashMap, HashSet, hash_map::Entry},
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
-
-pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum VoteHistoryVersions {
@@ -35,7 +34,7 @@ impl VoteHistoryVersions {
     derive(AbiExample),
     frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
 )]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
     pub node_pubkey: Pubkey,
@@ -165,8 +164,7 @@ impl VoteHistory {
     /// Add a new vote to the voting history
     pub fn add_vote(&mut self, vote: Vote) {
         assert!(vote.slot() >= self.root);
-        // TODO: these assert!s are for my debugging, can consider removing
-        // in final version
+        // Asserts here guard against vote equivocation.
         match vote {
             Vote::Notarize(vote) => {
                 assert!(self.voted.insert(vote.slot));
@@ -276,7 +274,10 @@ pub enum VoteHistoryError {
     IoError(#[from] std::io::Error),
 
     #[error("Serialization Error: {0}")]
-    SerializeError(#[from] bincode::Error),
+    SerializeError(#[from] wincode::WriteError),
+
+    #[error("Deserialization Error: {0}")]
+    DeserializeError(#[from] wincode::ReadError),
 
     #[error("The signature on the saved vote history is invalid")]
     InvalidSignature,

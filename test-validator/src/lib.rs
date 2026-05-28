@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
@@ -107,9 +108,21 @@ pub struct TestValidatorNodeConfig {
 impl Default for TestValidatorNodeConfig {
     fn default() -> Self {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        #[cfg(not(debug_assertions))]
         let port_range = solana_net_utils::VALIDATOR_PORT_RANGE;
-        #[cfg(debug_assertions)]
+        Self {
+            gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
+            port_range,
+            bind_ip_addr,
+        }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl TestValidatorNodeConfig {
+    /// Defaults suitable for unit tests; a disjoint port range will be used to
+    /// avoid "port already in use" errors for tests running in parallel
+    pub fn default_for_tests() -> Self {
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
             gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
@@ -160,7 +173,7 @@ impl Default for TestValidatorGenesis {
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
             rent: Rent::default(),
             rpc_config: JsonRpcConfig::default_for_test(),
-            pubsub_config: PubSubConfig::default(),
+            pubsub_config: PubSubConfig::default_for_tests(),
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
             accounts: HashMap::<Pubkey, AccountSharedData>::default(),
@@ -184,6 +197,18 @@ impl Default for TestValidatorGenesis {
             geyser_plugin_manager: Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager::default()))),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
+        }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl TestValidatorGenesis {
+    /// Defaults suitable for unit tests; a disjoint port range will be used to
+    /// avoid "port already in use" errors for tests running in parallel
+    pub fn default_for_tests() -> Self {
+        Self {
+            node_config: TestValidatorNodeConfig::default_for_tests(),
+            ..Self::default()
         }
     }
 }
@@ -807,29 +832,30 @@ pub struct TestValidator {
 impl TestValidator {
     /// Create a configured genesis and start validator
     /// Sync only; calling from a tokio runtime will panic due to nested runtimes.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn start_with_config(
         mint_address: Pubkey,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        let test_validator = TestValidatorGenesis::default()
+        TestValidatorGenesis::default_for_tests()
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
-            .expect("validator start failed");
-        test_validator
+            .expect("validator start failed")
     }
 
     /// Create a configured genesis and start validator (async version)
+    #[cfg(feature = "dev-context-only-utils")]
     pub async fn async_start_with_config(
         mint_keypair: &Keypair,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        TestValidatorGenesis::default()
+        TestValidatorGenesis::default_for_tests()
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
@@ -1088,8 +1114,6 @@ impl TestValidator {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             scan_filter_for_shrinking: ScanFilter::All,
-            use_registered_io_uring_buffers: false,
-            snapshots_use_direct_io: false,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
@@ -1136,6 +1160,8 @@ impl TestValidator {
                 bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+                use_registered_io_uring_buffers: false,
+                use_direct_io: false,
                 ..SnapshotConfig::default()
             },
             warp_slot: config.warp_slot,
@@ -1160,7 +1186,6 @@ impl TestValidator {
             config.authorized_voter_keypairs.clone(),
             vec![],
             &validator_config,
-            true, // should_check_duplicate_instance
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
@@ -1366,14 +1391,16 @@ mod test {
 
     #[test]
     fn get_health() {
-        let (test_validator, _payer) = TestValidatorGenesis::default().start();
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests().start();
         let rpc_client = test_validator.get_rpc_client();
         rpc_client.get_health().expect("health");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn nonblocking_get_health() {
-        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
+            .start_async()
+            .await;
         let rpc_client = test_validator.get_async_rpc_client();
         rpc_client.get_health().await.expect("health");
     }
@@ -1381,7 +1408,7 @@ mod test {
     #[test]
     fn test_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
-        let (test_validator, payer) = TestValidatorGenesis::default()
+        let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
             .add_program("../programs/bpf-loader-tests/noop", program_id)
             .start();
         let rpc_client = test_validator.get_rpc_client();
@@ -1408,7 +1435,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_nonblocking_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
-        let (test_validator, payer) = TestValidatorGenesis::default()
+        let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
             .add_program("../programs/bpf-loader-tests/noop", program_id)
             .start_async()
             .await;
@@ -1438,7 +1465,7 @@ mod test {
     #[should_panic]
     async fn document_tokio_panic() {
         // `start()` blows up when run within tokio
-        let (_test_validator, _payer) = TestValidatorGenesis::default().start();
+        let (_test_validator, _payer) = TestValidatorGenesis::default_for_tests().start();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1462,7 +1489,7 @@ mod test {
         // Convert to `Vec` so we can get a slice.
         let control: Vec<Pubkey> = control.into_iter().collect();
 
-        let (test_validator, _payer) = TestValidatorGenesis::default()
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
             .deactivate_features(&deactivate_features)
             .start_async()
             .await;
@@ -1497,7 +1524,7 @@ mod test {
         let owner = Pubkey::new_unique();
         let account = || AccountSharedData::new(100_000, 0, &owner);
 
-        let (test_validator, _payer) = TestValidatorGenesis::default()
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
             .deactivate_features(&[with_deactivate_flag]) // Just deactivate one feature.
             .add_accounts([
                 (with_deactivate_flag, account()), // But add both accounts.
@@ -1529,7 +1556,9 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_core_bpf_programs() {
-        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
+            .start_async()
+            .await;
 
         let rpc_client = test_validator.get_async_rpc_client();
 
@@ -1567,7 +1596,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_wait_for_program_with_unfunded_payer() {
         let program_id = Pubkey::new_unique();
-        let (test_validator, _mint_keypair) = TestValidatorGenesis::default()
+        let (test_validator, _mint_keypair) = TestValidatorGenesis::default_for_tests()
             .add_program("../programs/bpf-loader-tests/noop", program_id)
             .start_async()
             .await;

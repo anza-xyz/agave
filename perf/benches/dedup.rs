@@ -26,7 +26,7 @@ fn test_packet_with_size(size: usize, rng: &mut ThreadRng) -> Vec<u8> {
 fn do_bench_dedup_packets(b: &mut Bencher, mut batches: Vec<PacketBatch>) {
     // verify packets
     let mut rng = rand::rng();
-    let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
+    let deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
     b.iter(|| {
         let _ans = deduper::dedup_packets_and_count_discards(&deduper, &mut batches);
         deduper.maybe_reset(
@@ -106,7 +106,7 @@ fn bench_dedup_baseline(b: &mut Bencher) {
 
 fn bench_dedup_reset(b: &mut Bencher) {
     let mut rng = rand::rng();
-    let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
+    let deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
     b.iter(|| {
         deduper.maybe_reset(
             &mut rng,

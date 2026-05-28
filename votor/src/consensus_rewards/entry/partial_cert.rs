@@ -64,7 +64,10 @@ impl PartialCert {
                 if *ind {
                     return Err(AddVoteError::Duplicate);
                 }
-                let pubkey = rank_map.get_pubkey_stake_entry(rank.into()).unwrap().pubkey;
+                let pubkey = rank_map
+                    .get_pubkey_stake_entry(rank.into())
+                    .unwrap()
+                    .vote_account_pubkey;
                 self.validators.push(pubkey);
                 self.signature.aggregate_with(std::iter::once(signature))?;
                 *ind = true;
@@ -109,7 +112,7 @@ mod tests {
     };
 
     fn new_invalid_vote(vote: Vote, rank: usize) -> VoteMessage {
-        let serialized = bincode::serialize(&vote).unwrap();
+        let serialized = wincode::serialize(&vote).unwrap();
         let keypair = BlsKeypair::new();
         let signature = keypair.sign(&serialized).into();
         VoteMessage {

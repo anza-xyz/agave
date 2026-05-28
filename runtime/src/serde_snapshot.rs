@@ -25,7 +25,7 @@ use {
         accounts_db::{
             AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
         },
-        accounts_file::{AccountsFile, StorageAccess},
+        accounts_file::AccountsFile,
         accounts_hash::AccountsLtHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         blockhash_queue::BlockhashQueue,
@@ -57,6 +57,10 @@ use {
     },
     storage::SerializableStorage,
     types::{SerdeAccountsLtHash, UnusedRentCollector},
+    wincode::{
+        SchemaReadOwned, SchemaWrite,
+        io::{Reader, std_write::WriteAdapter},
+    },
 };
 
 mod obsolete_accounts;
@@ -67,12 +71,13 @@ mod types;
 mod utils;
 
 pub(crate) use {
-    obsolete_accounts::SerdeObsoleteAccountsMap,
+    obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
-const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
+const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
+type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Deserialize)]
@@ -373,15 +378,20 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> wincode::WriteResult<()>
 where
     W: Write,
-    T: Serialize,
+    T: SchemaWrite<MaxStreamSizeConfig, Src = T>,
 {
-    bincode::options()
-        .with_fixint_encoding()
-        .with_limit(MAX_STREAM_SIZE)
-        .serialize_into(writer, value)
+    wincode::config::serialize_into(WriteAdapter::new(writer), value, MaxStreamSizeConfig::new())
+}
+
+pub(crate) fn deserialize_wincode_from<'a, R, T>(reader: R) -> wincode::ReadResult<T>
+where
+    R: Reader<'a>,
+    T: SchemaReadOwned<MaxStreamSizeConfig, Dst = T>,
+{
+    wincode::config::deserialize_from(reader, MaxStreamSizeConfig::new())
 }
 
 pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
@@ -390,7 +400,7 @@ where
     T: DeserializeOwned,
 {
     bincode::options()
-        .with_limit(MAX_STREAM_SIZE)
+        .with_limit(MAX_STREAM_SIZE as u64)
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from::<R, T>(reader)
@@ -857,7 +867,6 @@ pub(crate) fn reconstruct_single_storage(
     append_vec_file_info: FileInfo,
     current_len: usize,
     id: AccountsFileId,
-    storage_access: StorageAccess,
     obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     // When restoring from an archive, obsolete accounts will always be `None`
@@ -877,8 +886,7 @@ pub(crate) fn reconstruct_single_storage(
         (current_len, ObsoleteAccounts::default())
     };
 
-    let accounts_file =
-        AccountsFile::new_for_startup(append_vec_file_info, current_len, storage_access)?;
+    let accounts_file = AccountsFile::new_for_startup(append_vec_file_info, current_len)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         id,
@@ -976,7 +984,6 @@ pub(crate) fn remap_and_reconstruct_single_storage(
     append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
-    storage_access: StorageAccess,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
         slot,
@@ -990,7 +997,6 @@ pub(crate) fn remap_and_reconstruct_single_storage(
         remapped_append_vec_file_info,
         current_len,
         remapped_append_vec_id,
-        storage_access,
         None,
     )?;
     Ok(storage)

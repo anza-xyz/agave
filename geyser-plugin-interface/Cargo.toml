@@ -24,3 +24,6 @@ solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

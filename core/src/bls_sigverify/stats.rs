@@ -6,7 +6,7 @@ use {
     std::time::{Duration, Instant},
 };
 
-/// Max number of root slots to wait before triggering reporting of stats.  At 400ms slot times, this is 4s.
+/// Max number of root slots to wait before triggering reporting of stats.
 const SLOTS_INTERVAL: Slot = 10;
 /// Max amount of seconds to wait before triggering reporting of stats.
 const DURATION_INTERVAL: Duration = Duration::from_secs(5);
@@ -30,7 +30,7 @@ impl Reporting {
 
     /// Returns `true` if reporting should be done else `false`.
     fn should_report(&self, root_slot: Slot) -> bool {
-        self.slot + SLOTS_INTERVAL >= root_slot || self.time.elapsed() > DURATION_INTERVAL
+        root_slot >= self.slot + SLOTS_INTERVAL || self.time.elapsed() > DURATION_INTERVAL
     }
 }
 
@@ -193,9 +193,11 @@ pub(super) struct SigVerifyCertStats {
     /// Number of times the cert was too far in the future and discarded.
     pub(super) too_far_in_future: u64,
 
+    /// How many messages are outstanding on the channel.
+    pub(super) pool_outstanding_msgs: u64,
     /// Number of votes sent successfully over the channel to consensus pool.
     pub(super) pool_sent: u64,
-    /// Number of times the channel to consensus pool was full.
+    /// Number of times the channel to consensus pool was full and we resorted to blocking send.
     pub(super) pool_channel_full: u64,
 
     /// Stats for [`verify_and_send_certificates`].
@@ -212,6 +214,7 @@ impl SigVerifyCertStats {
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
+            pool_outstanding_msgs,
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_certs_stats,
@@ -223,6 +226,7 @@ impl SigVerifyCertStats {
         self.stake_verification_failed += stake_verification_failed;
         self.signature_verification_failed += signature_verification_failed;
         self.too_far_in_future += too_far_in_future;
+        self.pool_outstanding_msgs += pool_outstanding_msgs;
         self.pool_sent += pool_sent;
         self.pool_channel_full += pool_channel_full;
         self.fn_verify_and_send_certs_stats
@@ -238,10 +242,12 @@ impl SigVerifyCertStats {
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
+            pool_outstanding_msgs,
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_certs_stats,
         } = self;
+
         datapoint_info!(
             "bls_cert_sigverify_stats",
             ("certs_to_sig_verify", *certs_to_sig_verify, i64),
@@ -259,6 +265,7 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("too_far_in_future", *too_far_in_future, i64),
+            ("pool_outstanding_msgs", *pool_outstanding_msgs, i64),
             ("pool_sent", *pool_sent, i64),
             ("pool_channel_full", *pool_channel_full, i64),
             (

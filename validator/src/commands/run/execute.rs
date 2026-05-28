@@ -19,7 +19,6 @@ use {
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_file::StorageAccess,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -45,7 +44,8 @@ use {
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
             BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
-            ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig, is_snapshot_config_valid,
+            ValidatorConfig, ValidatorLogConfig, ValidatorStartProgress, ValidatorTpuConfig,
+            is_snapshot_config_valid,
         },
     },
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -58,6 +58,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
+        shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
@@ -126,11 +127,20 @@ pub fn execute(
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
     let logfile = run_args.logfile;
-    if let Some(logfile) = logfile.as_ref() {
+    let log_config = if let Some(ref logfile) = logfile {
         println!("log file: {}", logfile.display());
-    }
-    let use_progress_bar = logfile.is_none();
-    agave_logger::initialize_logging(logfile.clone());
+        let logrotate_flag = Validator::register_logrotate_signal_handler()?;
+
+        Some(ValidatorLogConfig {
+            logfile: logfile.clone(),
+            logrotate_flag,
+        })
+    } else {
+        None
+    };
+    let use_progress_bar = log_config.is_none();
+    agave_logger::initialize_logging(logfile);
+
     cli::warn_for_deprecated_arguments(matches);
 
     info!("{} {}", crate_name!(), solana_version);
@@ -138,7 +148,6 @@ pub fn execute(
 
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
 
     let bind_addresses = {
         let parsed = matches
@@ -156,15 +165,26 @@ pub fn execute(
         }
     }
 
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
+    let xdp_interface = matches
+        .value_of("xdp_interface")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let retransmit_xdp = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
+        .map(|cpus| {
+            XdpConfig::new(
+                xdp_interface,
+                parse_cpu_ranges(cpus).unwrap(),
+                xdp_zero_copy,
+            )
+        });
+    if bind_addresses.len() > 1 && retransmit_xdp.is_some() {
+        Err(String::from(
+            "--xdp-cpu-cores cannot be used in a multihoming context",
+        ))?;
+    }
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -635,26 +655,6 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let account_shrink_paths: Option<Vec<PathBuf>> =
-        values_t!(matches, "account_shrink_path", String)
-            .map(|shrink_paths| shrink_paths.into_iter().map(PathBuf::from).collect())
-            .ok();
-    let account_shrink_paths = account_shrink_paths
-        .as_ref()
-        .map(|paths| {
-            create_and_canonicalize_directories(paths)
-                .map_err(|err| format!("unable to access account shrink path: {err}"))
-        })
-        .transpose()?;
-
-    let (account_shrink_run_paths, account_shrink_snapshot_paths) = account_shrink_paths
-        .map(|paths| {
-            create_all_accounts_run_and_snapshot_dirs(&paths)
-                .map_err(|err| format!("unable to create account subdirectories: {err}"))
-        })
-        .transpose()?
-        .unzip();
-
     let read_cache_limit_bytes =
         values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
             match limits.len() {
@@ -665,22 +665,6 @@ pub fn execute(
                 }
             }
         });
-
-    let storage_access = matches
-        .value_of("accounts_db_access_storages_method")
-        .map(|method| match method {
-            "mmap" => {
-                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
-                #[allow(deprecated)]
-                StorageAccess::Mmap
-            }
-            "file" => StorageAccess::File,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-access-storages-method")
-            }
-        })
-        .unwrap_or_default();
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -699,10 +683,10 @@ pub fn execute(
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
         bank_hash_details_dir: ledger_path.clone(),
-        shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
         read_cache_evict_sample_size: None,
+        read_cache_num_shards: None,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),
@@ -717,14 +701,9 @@ pub fn execute(
         skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
-        storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
-        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
-            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
-        ),
-        snapshots_use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -758,17 +737,6 @@ pub fn execute(
         create_all_accounts_run_and_snapshot_dirs(&account_paths)
             .map_err(|err| format!("unable to create account directories: {err}"))?;
 
-    // These snapshot paths are only used for initial clean up, add in shrink paths if they exist.
-    let account_snapshot_paths =
-        if let Some(account_shrink_snapshot_paths) = account_shrink_snapshot_paths {
-            account_snapshot_paths
-                .into_iter()
-                .chain(account_shrink_snapshot_paths)
-                .collect()
-        } else {
-            account_snapshot_paths
-        };
-
     let snapshot_config = new_snapshot_config(
         matches,
         &ledger_path,
@@ -783,8 +751,9 @@ pub fn execute(
     );
 
     let mut validator_config = ValidatorConfig {
-        logfile,
+        log_config,
         require_tower: matches.is_present("require_tower"),
+        require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
         vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -814,6 +783,7 @@ pub fn execute(
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
         repair_validators,
+        should_check_duplicate_instance: true,
         repair_whitelist,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
@@ -821,6 +791,7 @@ pub fn execute(
         blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
+        filter_keys: Arc::new(run_args.filter_keys),
         warp_slot: None,
         generator_config: None,
         contact_debug_interval,
@@ -861,7 +832,7 @@ pub fn execute(
         tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        turbine_disabled: Arc::<AtomicBool>::default(),
+        turbine_mode: TurbineMode::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
@@ -903,6 +874,9 @@ pub fn execute(
             i8
         ),
     };
+    validator_config
+        .block_production_method
+        .warn_if_deprecated_value();
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {
@@ -959,6 +933,7 @@ pub fn execute(
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
             tower_storage: validator_config.tower_storage.clone(),
+            vote_history_storage: validator_config.vote_history_storage.clone(),
             staked_nodes_overrides,
             rpc_to_plugin_manager_sender,
         },
@@ -1035,7 +1010,6 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
-    let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1049,7 +1023,6 @@ pub fn execute(
             do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,
-            should_check_duplicate_instance,
             &start_progress,
             minimal_snapshot_download_speed,
             maximum_snapshot_download_abort,
@@ -1074,6 +1047,8 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_receive_threads,
+            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..Default::default()
         },
         qos_config: SwQosConfig {
@@ -1093,6 +1068,8 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_forward_receive_threads,
+            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..Default::default()
         },
         qos_config: SwQosConfig {
@@ -1128,7 +1105,6 @@ pub fn execute(
         authorized_voter_keypairs,
         cluster_entrypoints,
         &validator_config,
-        should_check_duplicate_instance,
         rpc_to_plugin_manager_receiver,
         start_progress,
         run_args.socket_addr_space,
@@ -1152,7 +1128,7 @@ pub fn execute(
     info!("Validator initialized");
     validator.listen_for_signals()?;
     validator.join();
-    info!("Validator exiting..");
+    info!("Validator exiting...");
 
     Ok(())
 }
@@ -1383,6 +1359,10 @@ fn new_snapshot_config(
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
+        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        ),
+        use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
     };
 
     if !is_snapshot_config_valid(&snapshot_config) {

@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::invoke_context::SerializedAccountMetadata,
+    crate::memory_context::SerializedAccountMetadata,
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
@@ -41,9 +41,9 @@ pub fn create_memory_region_of_account(
 ) -> Result<MemoryRegion, InstructionError> {
     let can_data_be_changed = account.can_data_be_changed().is_ok();
     let mut memory_region = if can_data_be_changed && !account.is_shared() {
-        MemoryRegion::new_writable(account.get_data_mut()?, vaddr)
+        MemoryRegion::new(&raw mut account.get_data_mut()?[..], vaddr)
     } else {
-        MemoryRegion::new_readonly(account.get_data(), vaddr)
+        MemoryRegion::new(&raw const account.get_data()[..], vaddr)
     };
     if can_data_be_changed {
         memory_region.access_violation_handler_payload = Some(account.get_index_in_transaction());
@@ -191,10 +191,9 @@ impl Serializer {
 
     fn push_region(&mut self) {
         let range = self.region_start..self.buffer.len();
-        self.regions.push(MemoryRegion::new_writable(
-            self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-            self.vaddr,
-        ));
+        let region_slice = self.buffer.as_slice_mut().get_mut(range.clone()).unwrap();
+        self.regions
+            .push(MemoryRegion::new(&raw mut region_slice[..], self.vaddr));
         self.region_start = range.end;
         self.vaddr += range.len() as u64;
     }
@@ -373,7 +372,7 @@ fn serialize_parameters_for_abiv0(
                 s.write(position as u8);
             }
             SerializeAccount::Account(_, mut account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                let vm_addr = s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(account.is_signer() as u8);
                 s.write::<u8>(account.is_writable() as u8);
                 let vm_key_addr = s.write_all(account.get_key().as_ref());
@@ -386,6 +385,7 @@ fn serialize_parameters_for_abiv0(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: account.get_data().len(),
                     vm_key_addr,
                     vm_lamports_addr,
@@ -539,7 +539,7 @@ fn serialize_parameters_for_abiv1(
     for account in accounts {
         match account {
             SerializeAccount::Account(_, mut borrowed_account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                let vm_addr = s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
                 #[expect(deprecated)]
@@ -553,6 +553,7 @@ fn serialize_parameters_for_abiv1(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: borrowed_account.get_data().len(),
                     vm_key_addr,
                     vm_owner_addr,
@@ -577,7 +578,7 @@ fn serialize_parameters_for_abiv1(
         s.fill_write(offset, 0)
             .map_err(|_| InstructionError::InvalidArgument)?;
         for entry in accounts_metadata.iter() {
-            s.write::<u64>(entry.vm_data_addr.to_le());
+            s.write::<u64>(entry.vm_addr.to_le());
         }
     }
 
@@ -1520,13 +1521,15 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let mut memory_mapping = MemoryMapping::new_with_access_violation_handler(
-            regions,
-            &config,
-            SBPFVersion::V3,
-            transaction_context.access_violation_handler(true, true),
-        )
-        .unwrap();
+        let mut memory_mapping = unsafe {
+            MemoryMapping::new_with_access_violation_handler(
+                regions,
+                &config,
+                SBPFVersion::V3,
+                transaction_context.access_violation_handler(true, true),
+            )
+            .unwrap()
+        };
 
         // Reading readonly account is allowed
         memory_mapping

@@ -26,3 +26,6 @@ curve25519-dalek = { workspace = true }
 [[bench]]
 name = "verify_proofs"
 harness = false
+
+[lints]
+workspace = true

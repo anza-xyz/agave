@@ -5,8 +5,6 @@ use {
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
     },
-    arrayvec::ArrayVec,
-    bincode::serialize,
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
     solana_hash::Hash,
@@ -16,16 +14,21 @@ use {
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
     solana_signer::Signer,
-    std::borrow::{Borrow, Cow},
+    std::{
+        borrow::{Borrow, Cow},
+        mem::MaybeUninit,
+    },
+    wincode::{ReadError, ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
 
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub struct CrdsValue {
     signature: Signature,
     data: CrdsData,
     #[serde(skip_serializing)]
+    #[wincode(skip)]
     hash: Hash, // Sha256 hash of [signature, data].
 }
 
@@ -42,7 +45,7 @@ impl Signable for CrdsValue {
     }
 
     fn signable_data(&self) -> Cow<'static, [u8]> {
-        Cow::Owned(serialize(&self.data).expect("failed to serialize CrdsData"))
+        Cow::Owned(wincode::serialize(&self.data).expect("failed to serialize CrdsData"))
     }
 
     fn get_signature(&self) -> Signature {
@@ -63,15 +66,9 @@ impl Signable for CrdsValue {
 /// These are labels for values in a record that is associated with `Pubkey`
 #[derive(PartialEq, Hash, Eq, Clone, Debug)]
 pub enum CrdsValueLabel {
-    LegacyContactInfo(Pubkey),
     Vote(VoteIndex, Pubkey),
     LowestSlot(Pubkey),
-    LegacySnapshotHashes(Pubkey),
     EpochSlots(EpochSlotsIndex, Pubkey),
-    AccountsHashes(Pubkey),
-    LegacyVersion(Pubkey),
-    Version(Pubkey),
-    NodeInstance(Pubkey),
     DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
@@ -82,15 +79,9 @@ pub enum CrdsValueLabel {
 impl CrdsValueLabel {
     pub fn pubkey(&self) -> Pubkey {
         match self {
-            CrdsValueLabel::LegacyContactInfo(p) => *p,
             CrdsValueLabel::Vote(_, p) => *p,
             CrdsValueLabel::LowestSlot(p) => *p,
-            CrdsValueLabel::LegacySnapshotHashes(p) => *p,
             CrdsValueLabel::EpochSlots(_, p) => *p,
-            CrdsValueLabel::AccountsHashes(p) => *p,
-            CrdsValueLabel::LegacyVersion(p) => *p,
-            CrdsValueLabel::Version(p) => *p,
-            CrdsValueLabel::NodeInstance(p) => *p,
             CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
@@ -102,9 +93,9 @@ impl CrdsValueLabel {
 
 impl CrdsValue {
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
-        let bincode_serialized_data = bincode::serialize(&data).unwrap();
-        let signature = keypair.sign_message(&bincode_serialized_data);
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let serialized_data = wincode::serialize(&data).unwrap();
+        let signature = keypair.sign_message(&serialized_data);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &serialized_data]);
         Self {
             signature,
             data,
@@ -114,9 +105,9 @@ impl CrdsValue {
 
     #[cfg(test)]
     pub(crate) fn new_unsigned(data: CrdsData) -> Self {
-        let bincode_serialized_data = bincode::serialize(&data).unwrap();
+        let serialized_data = wincode::serialize(&data).unwrap();
         let signature = Signature::default();
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &serialized_data]);
         Self {
             signature,
             data,
@@ -168,15 +159,9 @@ impl CrdsValue {
     pub fn label(&self) -> CrdsValueLabel {
         let pubkey = self.data.pubkey();
         match self.data {
-            CrdsData::LegacyContactInfo(_) => CrdsValueLabel::LegacyContactInfo(pubkey),
             CrdsData::Vote(ix, _) => CrdsValueLabel::Vote(ix, pubkey),
             CrdsData::LowestSlot(_, _) => CrdsValueLabel::LowestSlot(pubkey),
-            CrdsData::LegacySnapshotHashes(_) => CrdsValueLabel::LegacySnapshotHashes(pubkey),
-            CrdsData::AccountsHashes(_) => CrdsValueLabel::AccountsHashes(pubkey),
             CrdsData::EpochSlots(ix, _) => CrdsValueLabel::EpochSlots(ix, pubkey),
-            CrdsData::LegacyVersion(_) => CrdsValueLabel::LegacyVersion(pubkey),
-            CrdsData::Version(_) => CrdsValueLabel::Version(pubkey),
-            CrdsData::NodeInstance(_) => CrdsValueLabel::NodeInstance(pubkey),
             CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
@@ -184,6 +169,13 @@ impl CrdsValue {
                 CrdsValueLabel::RestartLastVotedForkSlots(pubkey)
             }
             CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
+            // Deprecated: sanitize() rejects these before any caller reaches here.
+            CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::AccountsHashes(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::Version(_)
+            | CrdsData::NodeInstance(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
 
@@ -201,12 +193,47 @@ impl CrdsValue {
         Some(epoch_slots)
     }
 
-    /// Returns the bincode serialized size (in bytes) of the CrdsValue.
-    pub fn bincode_serialized_size(&self) -> usize {
-        bincode::serialized_size(&self)
+    /// Returns the serialized size (in bytes) of the CrdsValue.
+    pub fn serialized_size(&self) -> usize {
+        wincode::serialized_size(&self)
             .map(usize::try_from)
             .unwrap()
             .unwrap()
+    }
+}
+
+// Computes sha256(signature || serialize(data)) using a stack buffer.
+// PACKET_DATA_SIZE is always enough since the value originated in a packet.
+fn compute_crds_value_hash(signature: &Signature, data: &CrdsData) -> wincode::WriteResult<Hash> {
+    let mut buffer = [MaybeUninit::<u8>::uninit(); PACKET_DATA_SIZE];
+    let mut writer: &mut [MaybeUninit<u8>] = &mut buffer;
+    wincode::serialize_into(&mut writer, data)?;
+    let written = PACKET_DATA_SIZE - writer.len();
+    // SAFETY: wincode's "Writer for &mut [MaybeUninit<u8>]" initializes every
+    // consumed slot before advancing the cursor, so the first "written" bytes are init.
+    let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), written) };
+    Ok(solana_sha256_hasher::hashv(&[signature.as_ref(), bytes]))
+}
+
+// Manual implementation of SchemaRead for CrdsValue in order to populate
+// CrdsValue.hash which is skipped in serialization.
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for CrdsValue {
+    type Dst = Self;
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self>) -> ReadResult<()> {
+        #[derive(SchemaRead)]
+        struct CrdsValueLite {
+            signature: Signature,
+            data: CrdsData,
+        }
+        let CrdsValueLite { signature, data } = <CrdsValueLite as SchemaRead<'de, C>>::get(reader)?;
+        let hash = compute_crds_value_hash(&signature, &data)
+            .map_err(|_| ReadError::Custom("failed to serialize CrdsData"))?;
+        dst.write(Self {
+            signature,
+            data,
+            hash,
+        });
+        Ok(())
     }
 }
 
@@ -223,12 +250,7 @@ impl<'de> Deserialize<'de> for CrdsValue {
             data: CrdsData,
         }
         let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
-        // To compute the hash of the received CrdsData we need to re-serialize it
-        // PACKET_DATA_SIZE is always enough since we have just received the value in a packet
-        // ArrayVec allows us to write serialized data into stack memory without initializing it
-        let mut buffer = ArrayVec::<u8, PACKET_DATA_SIZE>::new();
-        bincode::serialize_into(&mut buffer, &data).map_err(serde::de::Error::custom)?;
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &buffer]);
+        let hash = compute_crds_value_hash(&signature, &data).map_err(serde::de::Error::custom)?;
         Ok(Self {
             signature,
             data,
@@ -242,7 +264,6 @@ mod test {
     use {
         super::*,
         crate::crds_data::{LowestSlot, Vote},
-        bincode::deserialize,
         rand::SeedableRng as _,
         rand_chacha::ChaChaRng,
         solana_keypair::Keypair,
@@ -309,8 +330,13 @@ mod test {
         value.sign(keypair);
         let original_signature = value.get_signature();
         for _ in 0..num_tries {
-            let serialized_value = serialize(value).unwrap();
-            let deserialized_value: CrdsValue = deserialize(&serialized_value).unwrap();
+            let serialized_value = wincode::serialize(value).unwrap();
+            assert_eq!(serialized_value, bincode::serialize(value).unwrap());
+            let deserialized_value: CrdsValue = wincode::deserialize(&serialized_value).unwrap();
+            assert_eq!(
+                deserialized_value,
+                bincode::deserialize::<CrdsValue>(&serialized_value).unwrap()
+            );
 
             // Signatures shouldn't change
             let deserialized_signature = deserialized_value.get_signature();
@@ -406,16 +432,49 @@ mod test {
                 CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
             },
         ];
-        let bytes = bincode::serialize(&values).unwrap();
+        let bytes = wincode::serialize(&values).unwrap();
+        assert_eq!(bytes, bincode::serialize(&values).unwrap());
         // Serialized bytes are fixed and should never change.
         assert_eq!(
             solana_sha256_hasher::hash(&bytes),
             Hash::from_str("BTg284TRo5S5PpbA9YZaab5rKeoLNAj7arwadvG6XVLT").unwrap()
         );
         // serialize -> deserialize should round trip.
+        let wincode_values = wincode::deserialize::<Vec<CrdsValue>>(&bytes).unwrap();
         assert_eq!(
-            bincode::deserialize::<Vec<CrdsValue>>(&bytes).unwrap(),
-            values
+            wincode_values,
+            bincode::deserialize::<Vec<CrdsValue>>(&bytes).unwrap()
         );
+        assert_eq!(wincode_values, values);
+    }
+
+    #[test]
+    fn test_wincode_compatibility_crds_value() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let value = CrdsValue::new_rand(&mut rng, None);
+            let bincode_bytes = bincode::serialize(&value).unwrap();
+            let wincode_bytes = wincode::serialize(&value).unwrap();
+            assert_eq!(
+                bincode_bytes,
+                wincode_bytes,
+                "bytes differ for {:?}",
+                value.label()
+            );
+            // Deprecated types and Vote with test-only invalid transactions intentionally
+            // fail serde deserialization; skip those.
+            let Ok(bincode_decoded) = bincode::deserialize::<CrdsValue>(&bincode_bytes) else {
+                continue;
+            };
+            let wincode_decoded: CrdsValue = wincode::deserialize(&bincode_bytes)
+                .unwrap_or_else(|e| panic!("wincode deser failed for {:?}: {e}", value.label()));
+            assert_eq!(
+                bincode_decoded,
+                wincode_decoded,
+                "deser mismatch for {:?}",
+                value.label()
+            );
+            assert_eq!(value, bincode_decoded);
+        }
     }
 }

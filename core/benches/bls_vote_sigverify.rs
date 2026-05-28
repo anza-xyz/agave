@@ -7,9 +7,7 @@ use {
     agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_bls_signatures::{
-        Keypair as BLSKeypair, PreparedHashedMessage, Pubkey as BLSPubkey, VerifiablePubkey,
-    },
+    solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
     solana_core::bls_sigverify::{
         bls_vote_sigverify::{
             VotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
@@ -97,7 +95,7 @@ fn bench_verify_single_signature(c: &mut Criterion) {
     let keypair = BLSKeypair::new();
     let msg = b"benchmark_message_payload";
     let sig = keypair.sign(msg);
-    let pubkey: BLSPubkey = keypair.public.into();
+    let pubkey = keypair.public;
 
     group.bench_function("1_item", |b| {
         b.iter(|| {
@@ -116,7 +114,7 @@ fn bench_verify_single_signature_with_prepared_message(c: &mut Criterion) {
     let keypair = BLSKeypair::new();
     let msg = b"benchmark_message_payload";
     let sig = keypair.sign(msg);
-    let pubkey: BLSPubkey = keypair.public.into();
+    let pubkey = keypair.public;
     let prepared_msg = PreparedHashedMessage::new(msg);
 
     group.bench_function("1_item", |b| {

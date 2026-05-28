@@ -43,6 +43,8 @@ pub struct StoredAccountMeta<'append_vec> {
     pub account_meta: &'append_vec AccountMeta,
     pub(crate) data: &'append_vec [u8],
     pub(crate) offset: usize,
+    /// Only read via `stored_size()` under `dev-context-only-utils` (tests, store-tool).
+    #[allow(dead_code)]
     pub(crate) stored_size: usize,
 }
 
@@ -51,6 +53,7 @@ impl<'append_vec> StoredAccountMeta<'append_vec> {
         &self.meta.pubkey
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn stored_size(&self) -> usize {
         self.stored_size
     }

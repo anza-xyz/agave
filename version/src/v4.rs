@@ -4,7 +4,13 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::Error as _},
     solana_sanitize::Sanitize,
     solana_serde_varint as serde_varint,
-    std::{convert::TryInto, fmt, str::FromStr},
+    solana_wincode_varint::Leb128Int,
+    std::{convert::TryInto, fmt, mem::MaybeUninit, str::FromStr},
+    wincode::{
+        ReadError, ReadResult, SchemaRead, SchemaWrite, WriteError, WriteResult,
+        config::Config,
+        io::{Reader, Writer},
+    },
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -80,9 +86,13 @@ impl FromStr for Prerelease {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 #[serde(transparent)]
-struct PackedMinor(#[serde(with = "serde_varint")] u16);
+struct PackedMinor(
+    #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
+    u16,
+);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PackedMinorPackError {
@@ -271,18 +281,81 @@ impl fmt::Display for Version {
 }
 
 impl Sanitize for Version {}
+
+unsafe impl<C: Config> SchemaWrite<C> for Version {
+    type Src = Version;
+
+    fn size_of(src: &Version) -> WriteResult<usize> {
+        let serialized = Self::to_serialized(src)?;
+        <SerializedVersion as SchemaWrite<C>>::size_of(&serialized)
+    }
+
+    fn write(writer: impl Writer, src: &Version) -> WriteResult<()> {
+        let serialized = Self::to_serialized(src)?;
+        <SerializedVersion as SchemaWrite<C>>::write(writer, &serialized)
+    }
+}
+
+impl Version {
+    fn to_serialized(src: &Version) -> WriteResult<SerializedVersion> {
+        let (packed_minor, patch) = PackedMinor::try_pack(src.minor, src.patch, &src.prerelease)
+            .map_err(|_| WriteError::Custom("Version: invalid minor/patch/prerelease"))?;
+        let client = u16::try_from(src.client.clone())
+            .map_err(|_| WriteError::Custom("Version: invalid client ID"))?;
+        Ok(SerializedVersion {
+            major: src.major,
+            packed_minor,
+            patch,
+            commit: src.commit,
+            feature_set: src.feature_set,
+            client,
+        })
+    }
+}
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for Version {
+    type Dst = Version;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let SerializedVersion {
+            major,
+            packed_minor,
+            patch,
+            commit,
+            feature_set,
+            client,
+        } = <SerializedVersion as SchemaRead<'de, C>>::get(reader)?;
+        let (minor, patch, prerelease) = packed_minor
+            .try_unpack(patch)
+            .map_err(|_| ReadError::Custom("Version: invalid packed minor"))?;
+        dst.write(Version {
+            major,
+            minor,
+            patch,
+            commit,
+            feature_set,
+            client: ClientId::from(client),
+            prerelease,
+        });
+        Ok(())
+    }
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct SerializedVersion {
     #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
     major: u16,
     #[serde(rename = "minor")]
     packed_minor: PackedMinor,
     #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
     patch: u16,
     commit: u32,
     feature_set: u32,
     #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
     client: u16,
 }
 
@@ -351,7 +424,46 @@ impl<'de> Deserialize<'de> for Version {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::v3};
+    use {super::*, crate::v3, rand::Rng};
+
+    fn random_version(rng: &mut impl Rng) -> Version {
+        let minor = rng.random::<u16>() & PackedMinor::PRERELEASE_MINOR_MAX;
+        let (prerelease, patch) = match rng.random::<u8>() % 4 {
+            0 => (Prerelease::Stable, rng.random::<u16>()),
+            1 => (Prerelease::ReleaseCandidate(rng.random()), 0),
+            2 => (Prerelease::Beta(rng.random()), 0),
+            _ => (Prerelease::Alpha(rng.random()), 0),
+        };
+        Version::new_from_parts(
+            rng.random(),
+            minor,
+            patch,
+            rng.random(),
+            rng.random(),
+            ClientId::from(rng.random::<u16>()),
+            prerelease,
+        )
+    }
+
+    #[test]
+    fn test_wincode_compatibility() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let version = random_version(&mut rng);
+
+            // Serialize with bincode, deserialize with wincode, check results agree.
+            let bincode_bytes = bincode::serialize(&version).unwrap();
+            let wincode_decoded: Version = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(version, wincode_decoded);
+
+            // Serialize with wincode, deserialize with bincode, check results agree.
+            let wincode_bytes = wincode::serialize(&version).unwrap();
+            let bincode_decoded: Version = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(version, bincode_decoded);
+
+            assert_eq!(bincode_bytes, wincode_bytes);
+        }
+    }
 
     #[test]
     fn test_prerelease_patch_is_valid() {

@@ -79,8 +79,6 @@ local|tar|skip)
   PATH="$HOME"/.cargo/bin:"$PATH"
   export USE_INSTALL=1
 
-  ./fetch-perf-libs.sh
-
 cat >> ~/solana/on-reboot <<EOF
   PATH="$HOME"/.cargo/bin:"$PATH"
   export USE_INSTALL=1

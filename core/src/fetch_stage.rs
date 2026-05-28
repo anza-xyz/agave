@@ -7,12 +7,13 @@ use {
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_packet::PacketFlags,
     solana_perf::{
-        packet::{PacketBatchRecycler, PacketRefMut},
+        packet::{PacketBatch, PacketBatchRecycler, PacketRefMut},
         recycler::Recycler,
     },
     solana_poh::poh_recorder::PohRecorder,
-    solana_streamer::streamer::{
-        self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        streamer::{self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats},
     },
     std::{
         net::UdpSocket,
@@ -37,7 +38,8 @@ impl FetchStage {
         coalesce: Option<Duration>,
     ) -> (Self, PacketBatchReceiver, PacketBatchReceiver) {
         let (sender, receiver) = unbounded();
-        let (vote_sender, vote_receiver) = unbounded();
+        let (vote_sender, vote_receiver) =
+            EvictingSender::new_bounded(crate::tpu::TPU_VOTE_CHANNEL_SIZE);
         let (_forward_sender, forward_receiver) = unbounded();
         (
             Self::new_with_sender(
@@ -58,7 +60,7 @@ impl FetchStage {
         tpu_vote_sockets: Vec<UdpSocket>,
         exit: Arc<AtomicBool>,
         sender: &PacketBatchSender,
-        vote_sender: &PacketBatchSender,
+        vote_sender: &EvictingSender<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
@@ -132,12 +134,12 @@ impl FetchStage {
         tpu_vote_sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: &PacketBatchSender,
-        vote_sender: &PacketBatchSender,
+        vote_sender: &EvictingSender<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
+        let recycler: PacketBatchRecycler = Recycler::new();
 
         let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets

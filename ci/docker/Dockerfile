@@ -6,7 +6,8 @@ ARG \
   RUST_NIGHTLY_VERSION= \
   NODE_MAJOR= \
   SCCACHE_VERSION= \
-  GRCOV_VERSION=
+  GRCOV_VERSION= \
+  CODECOV_VERSION=
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -26,6 +27,7 @@ RUN \
   if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
   if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$CODECOV_VERSION" ]; then echo "ERROR: The CODECOV_VERSION argument is required!" && exit 1; fi && \
   apt-get update && \
   apt-get install --no-install-recommends -y \
   # basic
@@ -121,8 +123,11 @@ RUN \
   mv ./grcov $CARGO_HOME/bin && \
   rm grcov-x86_64-unknown-linux-musl.tar.bz2 && \
   # codecov
-  curl -Os https://uploader.codecov.io/latest/linux/codecov && \
+  curl -Os "https://uploader.codecov.io/${CODECOV_VERSION}/linux/codecov" && \
+  curl -Os "https://uploader.codecov.io/${CODECOV_VERSION}/linux/codecov.SHA256SUM" && \
+  sha256sum -c codecov.SHA256SUM && \
   chmod +x codecov && \
   mv codecov /usr/bin && \
+  rm codecov.SHA256SUM && \
   # clean lists
   rm -rf /var/lib/apt/lists/*

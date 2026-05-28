@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    crate::ecn_codepoint::EcnCodepoint,
     libc::{ETH_P_IP, IPPROTO_UDP},
     std::net::Ipv4Addr,
 };
@@ -55,6 +56,7 @@ pub fn write_ip_header_for_udp(
     packet: &mut [u8],
     src_ip: &Ipv4Addr,
     dst_ip: &Ipv4Addr,
+    ecn: Option<EcnCodepoint>,
     payload_len: u16,
 ) {
     write_ip_header(
@@ -63,9 +65,11 @@ pub fn write_ip_header_for_udp(
         dst_ip,
         payload_len,
         IPPROTO_UDP as u8,
-        false,
+        true,
         None,
-        None,
+        // tos is composed of DSCP (high 6 bits) and ECN (low 2 bits). We don't set DSCP bits, so
+        // just set the ECN bits.
+        ecn.map(|ecn| ecn as u8),
     );
 }
 

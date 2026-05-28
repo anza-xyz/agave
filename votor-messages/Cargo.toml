@@ -36,14 +36,15 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode"] }
+solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode", "atomic"] }
 solana-pubkey = { workspace = true }
+solana-short-vec = { workspace = true, features = ["wincode"] }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor-messages = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 
 [lints]

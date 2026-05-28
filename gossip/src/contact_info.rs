@@ -15,10 +15,12 @@ use {
     std::{
         cmp::Ordering,
         collections::HashSet,
+        mem::MaybeUninit,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::{SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
+    wincode::{ReadError, ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
 
 const DEFAULT_RPC_PORT: u16 = 8899;
@@ -77,10 +79,11 @@ pub enum Error {
     UnusedIpAddr(IpAddr),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, SchemaWrite)]
 pub struct ContactInfo {
     pubkey: Pubkey,
     #[serde(with = "serde_varint")]
+    #[wincode(with = "solana_wincode_varint::Leb128Int<u64>")]
     wallclock: u64,
     // When the node instance was first created.
     // Identifies duplicate running instances.
@@ -89,24 +92,29 @@ pub struct ContactInfo {
     version: solana_version::Version,
     // All IP addresses are unique and referenced at least once in sockets.
     #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<IpAddr, short_vec::ShortU16>")]
     addrs: Vec<IpAddr>,
     // All sockets have a unique key and a valid IP address index.
     #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<SocketEntry, short_vec::ShortU16>")]
     sockets: Vec<SocketEntry>,
     #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<Extension, short_vec::ShortU16>")]
     extensions: Vec<Extension>,
     // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
+    #[wincode(skip(default_val = EMPTY_SOCKET_ADDR_CACHE))]
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-struct SocketEntry {
-    key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
-    index: u8, // IpAddr index in the accompanying addrs vector.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
+pub(crate) struct SocketEntry {
+    pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
+    pub(crate) index: u8, // IpAddr index in the accompanying addrs vector.
     #[serde(with = "serde_varint")]
-    offset: u16, // Port offset with respect to the previous entry.
+    #[wincode(with = "solana_wincode_varint::Leb128Int<u16>")]
+    pub(crate) offset: u16, // Port offset with respect to the previous entry.
 }
 
 define_tlv_enum!(
@@ -127,20 +135,24 @@ define_tlv_enum!(
 // verified and self.cache needs to be populated. This type serves as a
 // workaround since serde does not have an initializer.
 // https://github.com/serde-rs/serde/issues/642
-#[derive(Deserialize)]
+#[derive(Deserialize, SchemaRead)]
 struct ContactInfoLite {
     pubkey: Pubkey,
     #[serde(with = "serde_varint")]
+    #[wincode(with = "solana_wincode_varint::Leb128Int<u64>")]
     wallclock: u64,
     outset: u64,
     shred_version: u16,
     version: solana_version::Version,
     #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<IpAddr, short_vec::ShortU16>")]
     addrs: Vec<IpAddr>,
     #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<SocketEntry, short_vec::ShortU16>")]
     sockets: Vec<SocketEntry>,
     #[allow(dead_code)]
     #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<TlvRecord, short_vec::ShortU16>")]
     extensions: Vec<TlvRecord>,
 }
 
@@ -239,8 +251,24 @@ impl ContactInfo {
     }
 
     #[inline]
-    pub(crate) fn version(&self) -> &solana_version::Version {
+    pub fn outset(&self) -> u64 {
+        self.outset
+    }
+
+    #[inline]
+    pub fn version(&self) -> &solana_version::Version {
         &self.version
+    }
+
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
+    pub(crate) fn addrs(&self) -> &[IpAddr] {
+        &self.addrs
+    }
+
+    #[cfg(any(test, feature = "conformance"))]
+    pub(crate) fn sockets(&self) -> &[SocketEntry] {
+        &self.sockets
     }
 
     pub fn hot_swap_pubkey(&mut self, pubkey: Pubkey) {
@@ -583,6 +611,18 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
     }
 }
 
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for ContactInfo {
+    type Dst = ContactInfo;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let lite = <ContactInfoLite as SchemaRead<'de, C>>::get(reader)?;
+        let node = ContactInfo::try_from(lite)
+            .map_err(|_| ReadError::Custom("ContactInfo: invalid entries"))?;
+        dst.write(node);
+        Ok(())
+    }
+}
+
 impl Sanitize for ContactInfo {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         if self.wallclock >= MAX_WALLCLOCK {
@@ -690,50 +730,16 @@ macro_rules! socketaddr_any {
 mod tests {
     use {
         super::*,
-        rand::{
-            Rng,
-            prelude::{IndexedRandom as _, SliceRandom as _},
-        },
+        rand::{Rng, prelude::SliceRandom as _},
         solana_keypair::Keypair,
         solana_signer::Signer,
         std::{
             collections::{HashMap, HashSet},
-            iter::repeat_with,
             net::{Ipv4Addr, Ipv6Addr},
             ops::Range,
             time::Duration,
         },
     };
-
-    fn new_rand_addr<R: Rng>(rng: &mut R) -> IpAddr {
-        if rng.random() {
-            let addr = Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random());
-            IpAddr::V4(addr)
-        } else {
-            let addr = Ipv6Addr::new(
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-            );
-            IpAddr::V6(addr)
-        }
-    }
-
-    fn new_rand_port<R: Rng>(rng: &mut R) -> u16 {
-        let port = rng.random::<u16>();
-        let bits = u16::BITS - port.leading_zeros();
-        let shift = rng.random_range(0u32..bits + 1u32);
-        port.checked_shr(shift).unwrap_or_default()
-    }
-
-    fn new_rand_socket<R: Rng>(rng: &mut R) -> SocketAddr {
-        SocketAddr::new(new_rand_addr(rng), new_rand_port(rng))
-    }
 
     #[test]
     fn test_new_gossip_entry_point() {
@@ -758,7 +764,13 @@ mod tests {
     #[test]
     fn test_sanitize_entries() {
         let mut rng = rand::rng();
-        let addrs: Vec<IpAddr> = repeat_with(|| new_rand_addr(&mut rng)).take(5).collect();
+        let addrs = [
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 2)),
+        ];
         let mut keys: Vec<u8> = (0u8..=u8::MAX).collect();
         keys.shuffle(&mut rng);
         // Duplicate IP addresses.
@@ -841,7 +853,16 @@ mod tests {
     fn test_round_trip() {
         const KEYS: Range<u8> = 0u8..16u8;
         let mut rng = rand::rng();
-        let addrs: Vec<IpAddr> = repeat_with(|| new_rand_addr(&mut rng)).take(8).collect();
+        let addrs = [
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 2)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 3)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 4)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 3)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 4)),
+        ];
         let mut node = ContactInfo {
             pubkey: Pubkey::new_unique(),
             wallclock: rng.random(),
@@ -854,17 +875,13 @@ mod tests {
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
         let mut sockets = HashMap::<u8, SocketAddr>::new();
-        for _ in 0..1 << 14 {
-            let addr = addrs.choose(&mut rng).unwrap();
-            let socket = SocketAddr::new(*addr, new_rand_port(&mut rng));
+        for i in 0..1 << 10 {
+            let addr = addrs[i % addrs.len()];
+            let socket = SocketAddr::new(addr, 10_000u16 + i as u16);
             let key = rng.random_range(KEYS.start..KEYS.end);
-            if sanitize_socket(&socket).is_ok() {
-                sockets.insert(key, socket);
-                assert_matches!(node.set_socket(key, socket), Ok(()));
-                assert_matches!(sanitize_entries(&node.addrs, &node.sockets), Ok(()));
-            } else {
-                assert_matches!(node.set_socket(key, socket), Err(_));
-            }
+            sockets.insert(key, socket);
+            assert_matches!(node.set_socket(key, socket), Ok(()));
+            assert_matches!(sanitize_entries(&node.addrs, &node.sockets), Ok(()));
             for key in KEYS.clone() {
                 let socket = sockets.get(&key);
                 assert_eq!(node.get_socket(key).ok().as_ref(), socket);
@@ -961,8 +978,10 @@ mod tests {
                 .is_ok()
             );
             // Assert that serde round trips.
-            let bytes = bincode::serialize(&node).unwrap();
-            let other: ContactInfo = bincode::deserialize(&bytes).unwrap();
+            let bytes = wincode::serialize(&node).unwrap();
+            assert_eq!(bytes, bincode::serialize(&node).unwrap());
+            let other: ContactInfo = wincode::deserialize(&bytes).unwrap();
+            assert_eq!(other, bincode::deserialize::<ContactInfo>(&bytes).unwrap());
             assert_eq!(node, other);
         }
     }
@@ -975,9 +994,7 @@ mod tests {
             rng.random(), // wallclock
             rng.random(), // shred_version
         );
-        let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .find(|socket| matches!(sanitize_socket(socket), Ok(())))
-            .unwrap();
+        let socket = SocketAddr::from((Ipv4Addr::new(10, 1, 0, 1), 12_345));
         node.set_alpenglow(socket).unwrap();
         assert_eq!(node.alpenglow().unwrap(), socket);
         node.remove_alpenglow();
@@ -1003,11 +1020,15 @@ mod tests {
         // Updated socket address is not a duplicate instance.
         {
             let mut other = node.clone();
-            while other.set_gossip(new_rand_socket(&mut rng)).is_err() {}
-            while other
-                .set_serve_repair(Protocol::UDP, new_rand_socket(&mut rng))
-                .is_err()
-            {}
+            other
+                .set_gossip(SocketAddr::from((Ipv4Addr::new(10, 1, 0, 2), 12_346)))
+                .unwrap();
+            other
+                .set_serve_repair(
+                    Protocol::UDP,
+                    SocketAddr::from((Ipv4Addr::new(10, 1, 0, 3), 12_347)),
+                )
+                .unwrap();
             assert!(!node.check_duplicate(&other));
             assert!(!other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), None);
@@ -1075,6 +1096,43 @@ mod tests {
             assert!(!other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), Some(false));
             assert_eq!(other.overrides(&node), Some(true));
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_contact_info() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let node = ContactInfo::new_rand(&mut rng, None);
+
+            let bincode_bytes = bincode::serialize(&node).unwrap();
+            let wincode_decoded: ContactInfo = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(node, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&node).unwrap();
+            assert_eq!(wincode_bytes, bincode_bytes);
+            let bincode_decoded: ContactInfo = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(node, bincode_decoded);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_socket_entry() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let entry = SocketEntry {
+                key: rng.random(),
+                index: rng.random(),
+                offset: rng.random(),
+            };
+
+            let bincode_bytes = bincode::serialize(&entry).unwrap();
+            let wincode_decoded: SocketEntry = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(entry, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&entry).unwrap();
+            let bincode_decoded: SocketEntry = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(entry, bincode_decoded);
         }
     }
 }

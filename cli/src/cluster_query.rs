@@ -41,7 +41,7 @@ use {
     solana_sdk_ids::sysvar::{self, stake_history},
     solana_signature::Signature,
     solana_slot_history::{self as slot_history, SlotHistory},
-    solana_stake_interface::{self as stake, state::StakeStateV2},
+    solana_stake_interface::{self as stake, stake_history::StakeHistory, state::StakeStateV2},
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
@@ -1654,9 +1654,10 @@ pub async fn process_show_stakes(
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
     })?;
-    let stake_history = from_account(&stake_history_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-    })?;
+    let stake_history: StakeHistory =
+        bincode::deserialize(&stake_history_account.data).map_err(|_| {
+            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+        })?;
     let new_rate_activation_epoch = get_feature_activation_epoch(
         rpc_client,
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
@@ -1671,6 +1672,10 @@ pub async fn process_show_stakes(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(stake_state) = stake_account.state() {
+            let rent_exempt_balance = rpc_client
+                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
+                .await?;
+
             match stake_state {
                 StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
                     stake_accounts.push(CliKeyedStakeState {
@@ -1682,6 +1687,7 @@ pub async fn process_show_stakes(
                             &stake_history,
                             &clock,
                             new_rate_activation_epoch,
+                            rent_exempt_balance,
                             false,
                         ),
                     });
@@ -1699,6 +1705,7 @@ pub async fn process_show_stakes(
                             &stake_history,
                             &clock,
                             new_rate_activation_epoch,
+                            rent_exempt_balance,
                             false,
                         ),
                     });

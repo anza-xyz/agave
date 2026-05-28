@@ -6,9 +6,10 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
+    solana_short_vec::ShortU16,
     solana_signer_store::EncodeError,
     thiserror::Error,
-    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::ShortU16, pod_wrapper},
+    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, pod_wrapper},
 };
 
 // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
@@ -151,5 +152,10 @@ pub enum BuildRewardCertsRespError {
     Encode(EncodeError),
 }
 
-/// A type alias to minimise making changes if the above types change.
-pub type BuildRewardCertsResponse = Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>;
+/// Response to a [`BuildRewardCertsRequest`].
+pub struct BuildRewardCertsResponse {
+    /// The bank slot from the corresponding request.
+    pub bank_slot: Slot,
+    /// The result of building reward certs for `bank_slot`.
+    pub result: Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>,
+}

@@ -560,7 +560,6 @@ pub fn rpc_bootstrap(
     do_port_check: bool,
     use_progress_bar: bool,
     maximum_local_snapshot_age: Slot,
-    should_check_duplicate_instance: bool,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
     minimal_snapshot_download_speed: f32,
     maximum_snapshot_download_abort: u64,
@@ -610,7 +609,7 @@ pub fn rpc_bootstrap(
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),
                 validator_config.gossip_validators.clone(),
-                should_check_duplicate_instance,
+                validator_config.should_check_duplicate_instance,
                 socket_addr_space,
             ));
         }
@@ -1130,13 +1129,12 @@ fn download_snapshots(
     }
 
     // Check and see if we've already got the full snapshot; if not, download it
-    if snapshot_paths::get_full_snapshot_archives(full_snapshot_archives_dir)
-        .into_iter()
-        .any(|snapshot_archive| {
+    if snapshot_paths::full_snapshot_archives_iter(full_snapshot_archives_dir).any(
+        |snapshot_archive| {
             snapshot_archive.slot() == full_snapshot_hash.0
                 && snapshot_archive.hash().0 == full_snapshot_hash.1
-        })
-    {
+        },
+    ) {
         info!(
             "Full snapshot archive already exists locally. Skipping download. slot: {}, hash: {}",
             full_snapshot_hash.0, full_snapshot_hash.1
@@ -1159,8 +1157,7 @@ fn download_snapshots(
     if bootstrap_config.incremental_snapshot_fetch {
         // Check and see if we've already got the incremental snapshot; if not, download it
         if let Some(incremental_snapshot_hash) = incremental_snapshot_hash {
-            if snapshot_paths::get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
-                .into_iter()
+            if snapshot_paths::incremental_snapshot_archives_iter(incremental_snapshot_archives_dir)
                 .any(|snapshot_archive| {
                     snapshot_archive.slot() == incremental_snapshot_hash.0
                         && snapshot_archive.hash().0 == incremental_snapshot_hash.1
