@@ -248,6 +248,15 @@ pub enum ConfirmedBlockComponent {
     BlockMarker(VersionedBlockMarker),
 }
 
+impl ConfirmedBlockComponent {
+    fn into_entry_batch(self) -> Option<Vec<EntrySummary>> {
+        match self {
+            ConfirmedBlockComponent::EntryBatch(entries) => Some(entries),
+            ConfirmedBlockComponent::BlockMarker(_) => None,
+        }
+    }
+}
+
 pub struct VersionedConfirmedBlockWithComponents {
     pub block: VersionedConfirmedBlock,
     pub components: Vec<ConfirmedBlockComponent>,
@@ -4103,10 +4112,8 @@ impl Blockstore {
             )?;
         let entries = components
             .into_iter()
-            .flat_map(|component| match component {
-                ConfirmedBlockComponent::EntryBatch(items) => items,
-                ConfirmedBlockComponent::BlockMarker(_) => Vec::new(),
-            })
+            .filter_map(ConfirmedBlockComponent::into_entry_batch)
+            .flatten()
             .collect();
 
         Ok(VersionedConfirmedBlockWithEntries { block, entries })
