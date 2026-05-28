@@ -2,7 +2,7 @@
 
 use {
     super::{context::InstrContext, effects::InstrEffects},
-    crate::message_processor::process_message,
+    crate::{conformance::callback::DefaultCallback, message_processor::process_message},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
@@ -24,46 +24,15 @@ use {
 };
 #[cfg(feature = "conformance")]
 use {
-    crate::conformance::programs::{
-        fill_program_cache_from_accounts, new_program_cache_with_builtins,
+    crate::conformance::{
+        callback::ConformanceCallback,
+        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
     },
-    agave_feature_set::FeatureSet,
-    agave_precompiles::{get_precompile, is_precompile},
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     solana_account::ReadableAccount,
-    solana_precompile_error::PrecompileError,
     std::ffi::c_int,
 };
-
-/// Default callback. No precompile support.
-struct DefaultCallback;
-
-impl InvokeContextCallback for DefaultCallback {}
-
-/// Conformance callback. Full precompile support across all features.
-#[cfg(feature = "conformance")]
-struct ConformanceCallback;
-
-#[cfg(feature = "conformance")]
-impl InvokeContextCallback for ConformanceCallback {
-    fn is_precompile(&self, program_id: &Pubkey) -> bool {
-        is_precompile(program_id, |_| true)
-    }
-
-    fn process_precompile(
-        &self,
-        program_id: &Pubkey,
-        data: &[u8],
-        instruction_datas: Vec<&[u8]>,
-    ) -> Result<(), PrecompileError> {
-        if let Some(precompile) = get_precompile(program_id, |_| true) {
-            precompile.verify(data, &instruction_datas, &FeatureSet::all_enabled())
-        } else {
-            Err(PrecompileError::InvalidPublicKey)
-        }
-    }
-}
 
 /// Execute a single instruction against the Solana VM with the default
 /// (no-precompile) callback.
