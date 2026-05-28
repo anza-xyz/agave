@@ -9717,6 +9717,7 @@ checksum = "0ced92c60aa76ec4780a9d93f3bd64dfa916e1b998eacc6f1c110f3f444f02c9"
 name = "solana-tls-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "quinn",
  "rustls",
  "solana-keypair",
  "solana-pubkey 4.2.0",
