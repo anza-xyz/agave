@@ -118,6 +118,10 @@ test-case = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
+name = "accounts_index"
+harness = false
+
+[[bench]]
 name = "bench_accounts_file"
 harness = false
 
