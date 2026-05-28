@@ -6681,7 +6681,7 @@ impl Bank {
         self.rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_for_tests(&self.ancestors)
+            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors)
     }
 
     pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
