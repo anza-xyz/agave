@@ -1598,8 +1598,6 @@ impl AccountsDb {
 
         timings.delta_key_count = Self::count_pubkeys(&candidates);
 
-        // Ensure that zero_lamport_accounts_to_purge_after_full_snapshot is empty if snapshots
-        // are enabled
         debug_assert!(
             self.latest_full_snapshot_slot().is_some()
                 || self
