@@ -1333,7 +1333,8 @@ fn spawn_streaming_snapshot_dir_files(
 /// `accounts_hardlinks/` symlink dir and the whole `<account_path>/snapshot/` tree) on success
 /// so subsequent restarts go through the normal new-format path.
 fn migrate_legacy_hardlinks(bank_snapshot_dir: &Path, account_run_paths: &[PathBuf]) -> Result<()> {
-    let accounts_hardlinks_dir = bank_snapshot_dir.join("accounts_hardlinks");
+    let accounts_hardlinks_dir =
+        bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
     let mut items: Vec<StorageListItem> = Vec::new();
 
     for entry in fs::read_dir(&accounts_hardlinks_dir).map_err(|err| {
@@ -1808,7 +1809,9 @@ pub fn purge_bank_snapshot(bank_snapshot_dir: impl AsRef<Path>) -> Result<()> {
     // subdir of symlinks pointing at hardlink dirs under `<account_path>/snapshot/<slot>/`.
     // Follow them so the hardlink dirs don't outlive the owning bank snapshot when we purge at
     // runtime (startup-time cleanup catches any leftovers).
-    let accounts_hardlinks_dir = bank_snapshot_dir.as_ref().join("accounts_hardlinks");
+    let accounts_hardlinks_dir = bank_snapshot_dir
+        .as_ref()
+        .join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
     if accounts_hardlinks_dir.is_dir() {
         let read_dir = fs::read_dir(&accounts_hardlinks_dir).map_err(|err| {
             IoError::other(format!(
