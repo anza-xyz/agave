@@ -241,7 +241,7 @@ impl SigVerifier {
                     }
                 }
                 ConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() <= root_slot {
+                    if cert.cert_type.slot() < root_slot {
                         self.stats.num_old_certs_received += 1;
                         continue;
                     }

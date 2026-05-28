@@ -296,7 +296,9 @@ impl ConsensusPoolService {
                 // Genesis cert though.
                 if kick_off_parent_ready {
                     events.push(VotorEvent::Standstill(
-                        consensus_pool.highest_finalized_slot().unwrap_or(0),
+                        consensus_pool
+                            .highest_finalized_slot()
+                            .unwrap_or(ctx.sharable_banks.root().slot()),
                     ));
                 }
                 stats.standstill = true;
