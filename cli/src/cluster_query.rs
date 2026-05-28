@@ -264,10 +264,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .help("Include vote transactions when monitoring all transactions"),
                 )
                 .arg(Arg::with_name("tree").long("tree").takes_value(false).help(
-                    "Render each transaction's logs as a nested CPI invocation tree instead of a \
-                     flat line stream. Each transaction also gets a Solana Explorer URL inferred \
-                     from --url (canonical RPCs map to named clusters; localhost or third-party \
-                     RPCs use Explorer's cluster=custom&customUrl=... form).",
+                    "Render each transaction as a nested CPI invocation tree",
                 )),
         )
         .subcommand(
