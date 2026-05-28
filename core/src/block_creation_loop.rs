@@ -1246,6 +1246,13 @@ fn create_and_insert_leader_bank(
         &parent_bank.hash(),
     );
 
+    // If this is the first alpenglow block, set PoH to low power mode.
+    // This is persisted in the recorder when we set bank.
+    // Replayers will update hashes_per_tick when they process the genesis certificate block marker.
+    if should_include_genesis_certificate(parent_slot, &ctx.genesis_cert) {
+        tpu_bank.set_hashes_per_tick(None);
+    }
+
     // Insert the bank
     let tpu_bank = ctx.bank_forks_controller.insert_bank(tpu_bank)?;
 
@@ -1279,7 +1286,7 @@ fn maybe_include_genesis_certificate(
     parent_slot: Slot,
     ctx: &LeaderContext,
 ) -> Result<(), PohRecorderError> {
-    if parent_slot != ctx.genesis_cert.slot || parent_slot == 0 {
+    if !should_include_genesis_certificate(parent_slot, &ctx.genesis_cert) {
         return Ok(());
     }
 
@@ -1299,6 +1306,13 @@ fn maybe_include_genesis_certificate(
         )
         .expect("Recording genesis certificate should not fail");
     Ok(())
+}
+
+fn should_include_genesis_certificate(
+    parent_slot: Slot,
+    genesis_cert: &GenesisCertificate,
+) -> bool {
+    parent_slot == genesis_cert.slot && parent_slot != 0
 }
 
 #[cfg(test)]

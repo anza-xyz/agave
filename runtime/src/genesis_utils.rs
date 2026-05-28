@@ -322,6 +322,9 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<true>(genesis_config);
 
+    // PoH is in low power mode
+    genesis_config.poh_config.hashes_per_tick = None;
+
     // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
     // so we add a fake genesis certificate.
     let cert = Certificate {

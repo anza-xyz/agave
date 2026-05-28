@@ -245,6 +245,7 @@ impl BlockComponentProcessor {
         let genesis_cert = Certificate::from(genesis_cert);
         Self::verify_genesis_certificate(&bank, &genesis_cert)?;
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
+        bank.set_hashes_per_tick(None);
 
         if migration_status.is_alpenglow_enabled() {
             // We participated in the migration, nothing to do

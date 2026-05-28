@@ -729,7 +729,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick: *bank.hashes_per_tick(),
+            hashes_per_tick: bank.hashes_per_tick(),
             target_tick_duration,
             target_tick_count: None,
         };

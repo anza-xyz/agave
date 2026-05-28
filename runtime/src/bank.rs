@@ -671,7 +671,7 @@ impl PartialEq for Bank {
             && signature_count.load(Relaxed) == other.signature_count.load(Relaxed)
             && capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && max_tick_height == &other.max_tick_height
-            && hashes_per_tick == &other.hashes_per_tick
+            && *hashes_per_tick.read().unwrap() == *other.hashes_per_tick.read().unwrap()
             && ticks_per_slot == &other.ticks_per_slot
             && ns_per_slot == &other.ns_per_slot
             && genesis_creation_time == &other.genesis_creation_time
@@ -866,7 +866,7 @@ pub struct Bank {
     max_tick_height: u64,
 
     /// The number of hashes in each tick. None value means hashing is disabled.
-    hashes_per_tick: Option<u64>,
+    hashes_per_tick: RwLock<Option<u64>>,
 
     /// The number of ticks in each slot.
     ticks_per_slot: u64,
@@ -1180,7 +1180,7 @@ impl Bank {
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
             max_tick_height: u64::default(),
-            hashes_per_tick: Option::<u64>::default(),
+            hashes_per_tick: RwLock::default(),
             ticks_per_slot: u64::default(),
             ns_per_slot: u128::default(),
             genesis_creation_time: UnixTimestamp::default(),
@@ -1411,7 +1411,7 @@ impl Bank {
             partitioned_rewards_stake_account_stores_per_block: parent
                 .partitioned_rewards_stake_account_stores_per_block,
             // TODO: clean this up, so much special-case copying...
-            hashes_per_tick: parent.hashes_per_tick,
+            hashes_per_tick: RwLock::new(parent.hashes_per_tick()),
             ticks_per_slot: parent.ticks_per_slot,
             ns_per_slot: parent.ns_per_slot,
             genesis_creation_time: parent.genesis_creation_time,
@@ -2112,7 +2112,7 @@ impl Bank {
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
             max_tick_height: fields.max_tick_height,
-            hashes_per_tick: fields.hashes_per_tick,
+            hashes_per_tick: RwLock::new(fields.hashes_per_tick),
             ticks_per_slot: fields.ticks_per_slot,
             ns_per_slot: fields.ns_per_slot,
             genesis_creation_time: fields.genesis_creation_time,
@@ -2255,7 +2255,7 @@ impl Bank {
             signature_count: self.signature_count.load(Relaxed),
             capitalization: self.capitalization.load(Relaxed),
             max_tick_height: self.max_tick_height,
-            hashes_per_tick: self.hashes_per_tick,
+            hashes_per_tick: *self.hashes_per_tick.read().unwrap(),
             ticks_per_slot: self.ticks_per_slot,
             ns_per_slot: self.ns_per_slot,
             genesis_creation_time: self.genesis_creation_time,
@@ -3091,7 +3091,7 @@ impl Bank {
             genesis_config.fee_rate_governor.lamports_per_signature,
         );
 
-        self.hashes_per_tick = genesis_config.hashes_per_tick();
+        self.hashes_per_tick = RwLock::new(genesis_config.hashes_per_tick());
         self.ticks_per_slot = genesis_config.ticks_per_slot();
         self.ns_per_slot = genesis_config.ns_per_slot();
         self.genesis_creation_time = genesis_config.creation_time;
@@ -3166,8 +3166,8 @@ impl Bank {
         self.rent_collector.rent.burn_percent = burn_percent;
     }
 
-    pub fn set_hashes_per_tick(&mut self, hashes_per_tick: Option<u64>) {
-        self.hashes_per_tick = hashes_per_tick;
+    pub fn set_hashes_per_tick(&self, hashes_per_tick: Option<u64>) {
+        *self.hashes_per_tick.write().unwrap() = hashes_per_tick;
     }
 
     /// Return the last block hash registered.
@@ -5472,8 +5472,8 @@ impl Bank {
     }
 
     /// Return the number of hashes per tick
-    pub fn hashes_per_tick(&self) -> &Option<u64> {
-        &self.hashes_per_tick
+    pub fn hashes_per_tick(&self) -> Option<u64> {
+        *self.hashes_per_tick.read().unwrap()
     }
 
     /// Return the number of ticks per slot
@@ -6575,7 +6575,7 @@ impl Bank {
         bank.signature_count = AtomicU64::new(fields.signature_count);
         bank.capitalization = AtomicU64::new(fields.capitalization);
         bank.max_tick_height = fields.max_tick_height;
-        bank.hashes_per_tick = fields.hashes_per_tick;
+        bank.hashes_per_tick = RwLock::new(fields.hashes_per_tick);
         bank.ticks_per_slot = fields.ticks_per_slot;
         bank.ns_per_slot = fields.ns_per_slot;
         bank.genesis_creation_time = fields.genesis_creation_time;
@@ -6606,7 +6606,7 @@ impl Bank {
         bank.refresh_slot_params_with_baseline(SlotParams::genesis_baseline(
             bank.ns_per_slot,
             bank.slots_per_year,
-            bank.hashes_per_tick,
+            bank.hashes_per_tick(),
             bank.partitioned_rewards_stake_account_stores_per_block,
         ));
 

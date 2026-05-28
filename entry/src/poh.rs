@@ -52,6 +52,10 @@ impl Poh {
         self.hashes_per_tick
     }
 
+    pub fn hashes_per_tick_config(&self) -> Option<u64> {
+        (self.hashes_per_tick != LOW_POWER_MODE).then_some(self.hashes_per_tick)
+    }
+
     pub fn target_poh_time(&self, target_ns_per_tick: u64) -> Instant {
         assert!(self.hashes_per_tick > 0);
         let offset_tick_ns = target_ns_per_tick * self.tick_number;

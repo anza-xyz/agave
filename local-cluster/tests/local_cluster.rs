@@ -16,9 +16,7 @@ use {
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
-    solana_clock::{
-        self as clock, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot,
-    },
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
@@ -5858,7 +5856,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
             target_tick_duration: PohConfig::default().target_tick_duration,
-            hashes_per_tick: Some(clock::DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick: None,
             target_tick_count: None,
         },
         ..ClusterConfig::default()
