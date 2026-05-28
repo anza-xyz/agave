@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{FEATURE_NAMES, vote_state_v4},
+    agave_feature_set::FEATURE_NAMES,
     base64::{Engine, prelude::BASE64_STANDARD},
     clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t, value_t_or_exit},
     itertools::Itertools,
@@ -14,8 +14,8 @@ use {
             unix_timestamp_from_rfc3339_datetime,
         },
         input_validators::{
-            is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_url_or_moniker,
-            is_valid_percentage, normalize_to_url_if_moniker,
+            is_non_zero, is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot,
+            is_url_or_moniker, is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
     solana_clock as clock,
@@ -49,14 +49,13 @@ use {
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{
-        self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4,
-    },
+    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     std::{
         collections::HashMap,
         error,
         fs::File,
         io::{self, Read},
+        num::NonZeroU64,
         path::PathBuf,
         process,
         slice::Iter,
@@ -138,7 +137,6 @@ pub fn load_validator_accounts(
     commission: u8,
     rent: &Rent,
     genesis_config: &mut GenesisConfig,
-    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
@@ -187,7 +185,6 @@ pub fn load_validator_accounts(
             commission,
             rent,
             None,
-            vote_state_v4_enabled,
         )?;
     }
 
@@ -267,7 +264,6 @@ fn add_validator_accounts(
     commission: u8,
     rent: &Rent,
     authorized_pubkey: Option<&Pubkey>,
-    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     rent_exempt_check(
         stake_lamports,
@@ -287,30 +283,20 @@ fn add_validator_accounts(
             .next()
             .map(|bls_pubkey| bls_pubkey.0)
             .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
-        let vote_account = if vote_state_v4_enabled {
-            // Vote account needs enough lamports for rent exemption plus VAT
-            let vote_account_lamports =
-                rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
-            vote_state::create_v4_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                bls_pubkey_compressed_bytes,
-                identity_pubkey,
-                u16::from(commission) * 100,
-                identity_pubkey,
-                0,
-                identity_pubkey,
-                vote_account_lamports,
-            )
-        } else {
-            vote_state::create_v3_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                commission,
-                rent.minimum_balance(VoteStateV3::size_of()).max(1),
-            )
-        };
+        // Vote account needs enough lamports for rent exemption plus VAT
+        let vote_account_lamports =
+            rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            identity_pubkey,
+            identity_pubkey,
+            bls_pubkey_compressed_bytes,
+            identity_pubkey,
+            u16::from(commission) * 100,
+            vote_pubkey,
+            0,
+            identity_pubkey,
+            vote_account_lamports,
+        );
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -428,6 +414,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("faucet-lamports")
                 .value_name("LAMPORTS")
                 .takes_value(true)
+                .requires("faucet_pubkey")
+                .validator(is_non_zero)
                 .help("Number of lamports to assign to the faucet"),
         )
         .arg(
@@ -748,7 +736,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_stake_authorized_pubkey =
         pubkey_of(&matches, "bootstrap_stake_authorized_pubkey");
-    let faucet_lamports = value_t!(matches, "faucet_lamports", u64).unwrap_or(0);
     let faucet_pubkey = pubkey_of(&matches, "faucet_pubkey");
 
     let ticks_per_slot = value_t_or_exit!(matches, "ticks_per_slot", u64);
@@ -841,12 +828,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         genesis_config.creation_time = creation_time;
     }
 
-    if let Some(faucet_pubkey) = faucet_pubkey {
-        genesis_config.add_account(
-            faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
-        );
-    }
+    let faucet_account_lamports = faucet_pubkey
+        .map(|faucet_pubkey| {
+            let faucet_lamports =
+                u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
+            genesis_config.add_account(
+                faucet_pubkey,
+                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            );
+            faucet_lamports
+        })
+        .unwrap_or(0);
 
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
@@ -870,22 +862,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    // After primordial accounts are read in, check to see if vote state v4
-    // was manually deactivated by providing an inactive Feature account.
-    let vote_state_v4_enabled = {
-        use solana_feature_gate_interface::from_account;
-
-        let is_primordial_inactive_feature = genesis_config
-            .accounts
-            .iter()
-            .find(|(key, _)| key.eq(&&vote_state_v4::id()))
-            .is_some_and(|(_, acct)| from_account(acct).is_none());
-
-        let is_explicitly_deactivated = features_to_deactivate.contains(&vote_state_v4::id());
-
-        !is_primordial_inactive_feature && !is_explicitly_deactivated
-    };
-
     add_validator_accounts(
         &mut genesis_config,
         &mut bootstrap_validator_pubkeys.iter(),
@@ -895,18 +871,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         commission,
         &rent,
         bootstrap_stake_authorized_pubkey.as_ref(),
-        vote_state_v4_enabled,
     )?;
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {
-            load_validator_accounts(
-                file,
-                commission,
-                &rent,
-                &mut genesis_config,
-                vote_state_v4_enabled,
-            )?;
+            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
         }
     }
 
@@ -919,7 +888,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_stake_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    add_genesis_stake_accounts(
+        &mut genesis_config,
+        issued_lamports - faucet_account_lamports,
+    );
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {
@@ -1399,7 +1371,6 @@ mod tests {
                 100,
                 &Rent::default(),
                 &mut GenesisConfig::default(),
-                true, // vote_state_v4_enabled
             )
             .is_err()
         );
@@ -1408,7 +1379,7 @@ mod tests {
 
         let generate_bls_pubkey = || {
             if add_bls_pubkey {
-                let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into();
+                let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into_inner().into();
                 if use_compressed_pubkey {
                     let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
                     Some(bls_pubkey_compressed.to_string())
@@ -1463,14 +1434,8 @@ mod tests {
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(
-            &filename,
-            100,
-            &Rent::default(),
-            &mut genesis_config,
-            true, // vote_state_v4_enabled
-        )
-        .expect("Failed to load validator accounts");
+        load_validator_accounts(&filename, 100, &Rent::default(), &mut genesis_config)
+            .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
 

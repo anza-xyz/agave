@@ -25,3 +25,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

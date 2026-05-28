@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
+conf-stack-frame-size = ["solana-program-runtime/conf-stack-frame-size"]
 dev-context-only-utils = []
 
 [dependencies]

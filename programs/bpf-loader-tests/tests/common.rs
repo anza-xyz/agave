@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use {
+    agave_feature_set::loader_v3_minimum_extend_program_size,
     solana_account::{AccountSharedData, state_traits::StateMut},
     solana_instruction::{Instruction, error::InstructionError},
     solana_keypair::Keypair,
@@ -13,12 +14,25 @@ use {
     solana_transaction_error::TransactionError,
 };
 
-pub async fn setup_test_context() -> ProgramTestContext {
-    let program_test = ProgramTest::new(
+pub struct LoaderV3Features {
+    /// SIMD-0431
+    pub minimum_extend_program_size: bool,
+}
+
+pub async fn setup_test_context(features: LoaderV3Features) -> ProgramTestContext {
+    let mut program_test = ProgramTest::new(
         "",
         id(),
         Some(solana_bpf_loader_program::Entrypoint::register),
     );
+
+    let LoaderV3Features {
+        minimum_extend_program_size,
+    } = features;
+    if !minimum_extend_program_size {
+        program_test.deactivate_feature(loader_v3_minimum_extend_program_size::id());
+    }
+
     program_test.start_with_context().await
 }
 

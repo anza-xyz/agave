@@ -86,6 +86,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let slot_deltas = self.slot_deltas.remove(&slot);
         if let Some(slot_deltas) = slot_deltas {
             let slot_deltas = slot_deltas.lock().unwrap();
+            let mut warned = false;
             for (blockhash, (_, key_list)) in slot_deltas.iter() {
                 // Any blockhash that exists in self.slot_deltas must also exist
                 // in self.cache, because in self.purge_roots(), when an entry
@@ -101,11 +102,32 @@ impl<T: Serialize + Clone> StatusCache<T> {
                             if key_list.is_empty() {
                                 o_key_list.remove_entry();
                             }
-                        } else {
-                            panic!(
-                                "Map for key must exist if key exists in self.slot_deltas, slot: \
-                                 {slot}"
-                            )
+                        } else if !warned {
+                            // On invalid blocks, we can have:
+                            //
+                            // slot_deltas[slot_1][blockhash] => [
+                            //     (signature, tx1_result), // dup
+                            //     (signature, tx2_result), // dup
+                            // ];
+                            // cache[blockhash][signature] => [
+                            //     (slot_1, tx1_result), // dup
+                            //     (slot_1, tx2_result), // dup
+                            // ];
+                            //
+                            // this can happen because tx execution and signature verification run
+                            // in parallel, so tx1 and tx2 can finish executing and get inserted
+                            // into the cache before their signatures are verified.
+                            //
+                            // This is an invalid condition that we eventually detect and mark the
+                            // slot as dead. If clear_slot_entries() is called on such a slot,
+                            // iterating on the first element of slot_deltas[slot_1][blockhash] will
+                            // (correctly) remove the whole cache[blockhash][signature] entry, and
+                            // then on the 2nd element we get here.
+                            warn!(
+                                "signature found more than once in the same slot, this means \
+                                 we're clearing a dead slot: {slot}"
+                            );
+                            warned = true;
                         }
                     }
 
@@ -647,6 +669,19 @@ mod tests {
                 .is_none()
         );
         assert!(status_cache.cache.is_empty());
+    }
+
+    #[test]
+    fn test_clear_invalid_slot_signatures() {
+        let mut status_cache = BankStatusCache::default();
+        let blockhash = hash(Hash::default().as_ref());
+        let sig = Signature::default();
+        status_cache.insert(&blockhash, sig, 0, ());
+        // Insert the same signature for the same blockhash and slot twice to
+        // model dead slots with duplicate signatures
+        status_cache.insert(&blockhash, sig, 0, ());
+        // ensure that clear_slot_entries() doesn't panic
+        status_cache.clear_slot_entries(0);
     }
 
     // Status cache uses a random key offset for each blockhash. Ensure that shorter

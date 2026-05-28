@@ -8,7 +8,8 @@ use {
     bitvec::vec::BitVec,
     criterion::{BenchmarkId, Criterion, criterion_group, criterion_main},
     solana_bls_signatures::{
-        keypair::Keypair as BlsKeypair, pubkey::PubkeyAffine as BlsPubkeyAffine,
+        keypair::Keypair as BlsKeypair,
+        pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
         signature::Signature as BlsSignature,
     },
     solana_hash::Hash,
@@ -107,7 +108,8 @@ fn bench_verify_cert(c: &mut Criterion) {
         let keypairs = create_bls_keypairs(size);
 
         // Pre-calculate public keys to simulate efficient Bank lookup
-        let pubkeys: Vec<BlsPubkeyAffine> = keypairs.iter().map(|kp| kp.public).collect();
+        let pubkeys: Vec<PopVerified<BlsPubkeyAffine>> =
+            keypairs.iter().map(|kp| kp.public).collect();
         let pubkeys_ref = &pubkeys;
 
         // Base2 Setup

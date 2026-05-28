@@ -141,7 +141,7 @@ mod tests {
     }
 
     pub(crate) fn new_vote(vote: Vote, rank: usize, keypairs: &[BlsKeypair]) -> VoteMessage {
-        let serialized = bincode::serialize(&vote).unwrap();
+        let serialized = wincode::serialize(&vote).unwrap();
         let signature = keypairs[rank].sign(&serialized).into();
         VoteMessage {
             vote,
@@ -161,7 +161,7 @@ mod tests {
             .iter()
             .map(|k| {
                 (
-                    BlsPubkeyCompressed::from(k.bls_keypair.public),
+                    BlsPubkeyCompressed::from(k.bls_keypair.public.into_inner()),
                     k.bls_keypair.clone(),
                 )
             })
@@ -186,7 +186,7 @@ mod tests {
             .map(|index| {
                 let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
-                    .get(&BlsPubkeyCompressed::from(pubkey_affine))
+                    .get(&BlsPubkeyCompressed::from(*pubkey_affine))
                     .unwrap()
                     .clone()
             })

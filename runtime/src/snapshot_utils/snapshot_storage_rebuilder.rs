@@ -3,10 +3,12 @@
 use {
     super::{SnapshotError, SnapshotFrom},
     crate::serde_snapshot::{
-        SerdeObsoleteAccountsMap, reconstruct_single_storage, remap_and_reconstruct_single_storage,
+        SerdeObsoleteAccounts, SerdeObsoleteAccountsMap, reconstruct_single_storage,
+        remap_and_reconstruct_single_storage,
     },
     agave_fs::FileInfo,
     crossbeam_channel::{Receiver, Sender, select, unbounded},
+    dashmap::DashMap,
     log::*,
     rayon::{
         ThreadPool, ThreadPoolBuilder,
@@ -15,7 +17,6 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
-        accounts_file::StorageAccess,
     },
     solana_clock::Slot,
     std::{
@@ -49,10 +50,8 @@ pub(crate) struct SnapshotStorageRebuilder {
     num_collisions: AtomicUsize,
     /// Rebuild from the snapshot files or archives
     snapshot_from: SnapshotFrom,
-    /// specify how storages are accessed
-    storage_access: StorageAccess,
     /// obsolete accounts for all storages
-    obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
+    obsolete_accounts: DashMap<Slot, SerdeObsoleteAccounts>,
 }
 
 impl SnapshotStorageRebuilder {
@@ -64,7 +63,6 @@ impl SnapshotStorageRebuilder {
         next_append_vec_id: Arc<AtomicAccountsFileId>,
         snapshot_storage_lengths: HashMap<Slot, usize>,
         snapshot_from: SnapshotFrom,
-        storage_access: StorageAccess,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
     ) -> Self {
         let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
@@ -77,8 +75,9 @@ impl SnapshotStorageRebuilder {
             processed_slot_count: AtomicUsize::new(0),
             num_collisions: AtomicUsize::new(0),
             snapshot_from,
-            storage_access,
-            obsolete_accounts,
+            obsolete_accounts: obsolete_accounts
+                .map(|map| map.into_dashmap())
+                .unwrap_or_default(),
         }
     }
 
@@ -92,7 +91,6 @@ impl SnapshotStorageRebuilder {
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
         snapshot_from: SnapshotFrom,
-        storage_access: StorageAccess,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
     ) -> Result<AccountStorageMap, SnapshotError> {
         let rebuilder = Arc::new(SnapshotStorageRebuilder::new(
@@ -101,7 +99,6 @@ impl SnapshotStorageRebuilder {
             next_append_vec_id,
             snapshot_storage_lengths,
             snapshot_from,
-            storage_access,
             obsolete_accounts,
         ));
 
@@ -193,17 +190,15 @@ impl SnapshotStorageRebuilder {
                 file_info,
                 &self.next_append_vec_id,
                 &self.num_collisions,
-                self.storage_access,
             )?,
             SnapshotFrom::Dir => reconstruct_single_storage(
                 &slot,
                 file_info,
                 current_len,
                 old_append_vec_id as AccountsFileId,
-                self.storage_access,
                 self.obsolete_accounts
-                    .as_ref()
-                    .and_then(|accounts| accounts.remove(&slot)),
+                    .remove(&slot)
+                    .map(|(_, accounts)| accounts.into_tuple()),
             )?,
         };
 

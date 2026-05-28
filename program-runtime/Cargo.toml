@@ -7,7 +7,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,6 +18,7 @@ name = "solana_program_runtime"
 
 [features]
 agave-unstable-api = []
+conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
 dev-context-only-utils = ["dep:solana-message"]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
@@ -80,7 +81,7 @@ solana-account-info = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true }
-solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
+solana-program-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }

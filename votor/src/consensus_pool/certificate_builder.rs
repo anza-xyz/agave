@@ -275,8 +275,9 @@ mod tests {
             vote::Vote,
         },
         solana_bls_signatures::{
-            Keypair as BLSKeypair, PreparedHashedMessage, PubkeyProjective as BLSPubkeyProjective,
-            Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
+            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, PreparedHashedMessage,
+            PubkeyProjective as BLSPubkeyProjective, Signature as BLSSignature,
+            SignatureProjective, VerifySignature,
         },
         solana_hash::Hash,
         solana_signer_store::{Decoded, decode},
@@ -413,7 +414,7 @@ mod tests {
         // Test bls error
         let message_with_invalid_signature = VoteMessage {
             vote,
-            signature: BLSSignature::default(), // Invalid signature
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]), // Invalid signature
             rank: 1,
         };
         assert_eq!(
@@ -459,7 +460,7 @@ mod tests {
         let mut keypairs = Vec::new();
         let mut vote_messages = Vec::new();
         let vote = Vote::new_notarization_vote(slot, hash);
-        let serialized_vote = bincode::serialize(&vote).unwrap();
+        let serialized_vote = wincode::serialize(&vote).unwrap();
 
         for i in 0..num_validators {
             let keypair = BLSKeypair::new();
@@ -501,7 +502,7 @@ mod tests {
         let mut all_pubkeys = Vec::new();
         // Group 1: Signs a Notarize vote.
         let notarize_vote = Vote::new_notarization_vote(slot, hash);
-        let serialized_notarize_vote = bincode::serialize(&notarize_vote).unwrap();
+        let serialized_notarize_vote = wincode::serialize(&notarize_vote).unwrap();
         for i in 0..3 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_notarize_vote);
@@ -515,7 +516,7 @@ mod tests {
 
         // Group 2: Signs a NotarizeFallback vote.
         let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, hash);
-        let serialized_fallback_vote = bincode::serialize(&notarize_fallback_vote).unwrap();
+        let serialized_fallback_vote = wincode::serialize(&notarize_fallback_vote).unwrap();
         for i in 3..6 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_fallback_vote);

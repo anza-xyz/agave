@@ -1,8 +1,6 @@
-#[cfg(feature = "dev-context-only-utils")]
-use solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
     crate::block_cost_limits, solana_pubkey::Pubkey,
-    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
@@ -26,7 +24,7 @@ pub enum TransactionCost<'a, Tx> {
     Transaction(UsageCostDetails<'a, Tx>),
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
         match self {
@@ -110,7 +108,7 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     }
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
         match self {
             Self::SimpleVote { .. } => 1,
@@ -193,6 +191,10 @@ impl WritableKeysTransaction {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        unimplemented!("WritableKeysTransaction::version")
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_transaction_signatures")
     }
@@ -280,7 +282,7 @@ impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTra
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTransaction {
+impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableKeysTransaction {
     fn message_hash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::message_hash")
     }
@@ -295,8 +297,14 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
         &DUMMY
     }
 
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        unimplemented!("WritableKeysTransaction::compute_budget_instruction_details")
+    fn transaction_configuration(
+        &self,
+        _feature_set: &agave_feature_set::FeatureSet,
+    ) -> Result<
+        solana_runtime_transaction::transaction_meta::TransactionConfiguration,
+        solana_transaction::TransactionError,
+    > {
+        unimplemented!("WritableKeysTransaction::transaction_configuration")
     }
 
     fn instruction_data_len(&self) -> u16 {
@@ -317,6 +325,10 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
 
     fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
         unimplemented!("WritableKeysTransaction::to_versioned_transaction")
+    }
+
+    fn serialized_size(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::serialized_size")
     }
 }
 
@@ -419,7 +431,7 @@ mod tests {
             // and it has default loaded_account_data_size
             let loaded_accounts_data_size_cost =
                 CostModel::calculate_loaded_accounts_data_size_cost(
-                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into(),
+                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
                     &feature_set,
                 );
             let vote_program_usage_details = UsageCostDetails {

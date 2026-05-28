@@ -307,7 +307,7 @@ mod test {
             let slot_broadcast_stats = Arc::new(Mutex::new(SlotBroadcastStats::default()));
             let num_threads = 5;
             let slot = 0;
-            let (sender, receiver) = unbounded();
+            let (sender, receiver) = bounded(1024);
             let thread_handles: Vec<_> = (0..num_threads)
                 .map(|i| {
                     let slot_broadcast_stats = slot_broadcast_stats.clone();

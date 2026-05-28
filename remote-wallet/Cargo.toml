@@ -42,3 +42,6 @@ uriparse = { workspace = true }
 assert_matches = { workspace = true }
 serial_test = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+
+[lints]
+workspace = true

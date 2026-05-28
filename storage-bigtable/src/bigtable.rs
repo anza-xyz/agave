@@ -4,7 +4,7 @@ use {
     crate::{
         CredentialType,
         access_token::{AccessToken, Scope},
-        compression::{compress_best, decompress},
+        compression::{compress_zstd_or_none, decompress},
         root_ca_certificate,
     },
     hyper_util::client::legacy::connect::{HttpConnector, proxy::Tunnel},
@@ -880,7 +880,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let mut bytes_written = 0;
         let mut new_row_data = vec![];
         for (row_key, data) in cells {
-            let data = compress_best(&bincode::serialize(&data).unwrap())?;
+            let data = compress_zstd_or_none(&bincode::serialize(&data).unwrap())?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("bin".to_string(), data)]));
         }
@@ -902,7 +902,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         for (row_key, data) in cells {
             let mut buf = Vec::with_capacity(data.encoded_len());
             data.encode(&mut buf).unwrap();
-            let data = compress_best(&buf)?;
+            let data = compress_zstd_or_none(&buf)?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("proto".to_string(), data)]));
         }
@@ -1080,7 +1080,7 @@ mod tests {
             block_time: Some(1_234_567_890),
             block_height: Some(1),
         };
-        let bincode_block = compress_best(
+        let bincode_block = compress_zstd_or_none(
             &bincode::serialize::<StoredConfirmedBlock>(&expected_block.clone().into()).unwrap(),
         )
         .unwrap();
@@ -1088,7 +1088,7 @@ mod tests {
         let protobuf_block = confirmed_block_into_protobuf(expected_block.clone());
         let mut buf = Vec::with_capacity(protobuf_block.encoded_len());
         protobuf_block.encode(&mut buf).unwrap();
-        let protobuf_block = compress_best(&buf).unwrap();
+        let protobuf_block = compress_zstd_or_none(&buf).unwrap();
 
         let deserialized = deserialize_protobuf_or_bincode_cell_data::<
             StoredConfirmedBlock,

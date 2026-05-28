@@ -122,6 +122,8 @@ async fn main() -> anyhow::Result<()> {
         sender,
         staked_nodes,
         QuicStreamerConfig {
+            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..QuicStreamerConfig::default()
         },
         SwQosConfig {

@@ -47,3 +47,6 @@ solana-version = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

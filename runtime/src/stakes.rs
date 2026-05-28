@@ -1,10 +1,8 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
-#[cfg(feature = "dev-context-only-utils")]
-use solana_stake_interface::state::Stake;
 use {
     crate::{stake_account, stake_history::StakeHistory},
-    im::HashMap as ImHashMap,
+    imbl::HashMap as ImblHashMap,
     log::error,
     num_derive::ToPrimitive,
     rayon::{ThreadPool, prelude::*},
@@ -18,7 +16,7 @@ use {
         program as stake_program,
         state::{Delegation, StakeActivationStatus},
     },
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
@@ -27,11 +25,18 @@ use {
     },
     thiserror::Error,
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    qualifier_attr::{field_qualifiers, qualifiers},
+    solana_stake_interface::state::Stake,
+};
 
 mod serde_stakes;
-pub(crate) use serde_stakes::{
-    DeserializableStakes, SerdeStakesToStakeFormat, serialize_stake_accounts_to_delegation_format,
-};
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) use serde_stakes::DeserializableStakes;
+pub use serde_stakes::SerdeStakesToStakeFormat;
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -164,12 +169,22 @@ impl StakesCache {
 /// stake-delegations.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Clone, PartialEq, Debug, Serialize)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(
+        vote_accounts(pub),
+        stake_delegations(pub),
+        unused(pub),
+        epoch(pub),
+        stake_history(pub),
+    )
+)]
 pub struct Stakes<T: Clone> {
     /// vote accounts
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
-    stake_delegations: ImHashMap<Pubkey, T>,
+    stake_delegations: ImblHashMap<Pubkey, T>,
 
     /// unused
     unused: u64,
@@ -182,21 +197,26 @@ pub struct Stakes<T: Clone> {
 }
 
 impl<T: Clone> Stakes<T> {
+    pub fn new(vote_accounts: VoteAccounts, epoch: Epoch) -> Stakes<T> {
+        Stakes {
+            vote_accounts,
+            epoch,
+            stake_delegations: ImblHashMap::new(),
+            unused: 0,
+            stake_history: StakeHistory::default(),
+        }
+    }
+
     pub fn clone_and_filter_for_vat(
         &self,
         max_vote_accounts: usize,
         minimum_vote_account_balance: u64,
     ) -> Stakes<T> {
-        Stakes {
-            vote_accounts: self
-                .vote_accounts
+        Self::new(
+            self.vote_accounts
                 .clone_and_filter_for_vat(max_vote_accounts, minimum_vote_account_balance),
-            epoch: self.epoch,
-            // Do not need anything else for EpochStakes
-            stake_delegations: ImHashMap::new(),
-            unused: 0,
-            stake_history: StakeHistory::default(),
-        }
+            self.epoch,
+        )
     }
 
     pub fn vote_accounts(&self) -> &VoteAccounts {
@@ -206,26 +226,76 @@ impl<T: Clone> Stakes<T> {
     pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
         self.vote_accounts.staked_nodes()
     }
-}
 
-impl<T: Clone> Stakes<T> {
-    /// Convert deserialized stakes into runtime stakes representation
-    pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations: ImHashMap::from_iter(stakes.stake_delegations),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
-        }
+    /// Destructure self and return the fields needed by EpochStakes
+    pub(crate) fn into_epoch_stakes_fields(self) -> (Epoch, VoteAccounts, StakeHistory) {
+        let Self {
+            vote_accounts,
+            stake_delegations: _,
+            unused: _,
+            epoch,
+            stake_history,
+        } = self;
+        (epoch, vote_accounts, stake_history)
     }
 }
 
 impl Stakes<StakeAccount> {
+    pub(crate) fn new_from_accounts_for_genesis<'a, T: ReadableAccount + 'a>(
+        new_rate_activation_epoch: Option<Epoch>,
+        accounts: impl IntoIterator<Item = (&'a Pubkey, &'a T)>,
+    ) -> Self {
+        let stake_history = StakeHistory::default();
+        let mut vote_accounts = VoteAccountsHashMap::default();
+        let mut delegated_stakes: HashMap<Pubkey, u64> = HashMap::default();
+        let mut stake_delegations = ImblHashMap::new();
+        let epoch = 0;
+
+        for (pubkey, account) in accounts {
+            if account.lamports() == 0 {
+                continue;
+            }
+
+            if solana_vote_program::check_id(account.owner()) {
+                if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
+                    if let Ok(vote_account) =
+                        VoteAccount::try_from(create_account_shared_data(account))
+                    {
+                        vote_accounts.insert(*pubkey, (0, vote_account));
+                    }
+                }
+            } else if stake_program::check_id(account.owner()) {
+                if let Ok(stake_account) =
+                    StakeAccount::try_from(create_account_shared_data(account))
+                {
+                    let delegation = stake_account.delegation();
+                    #[allow(deprecated)]
+                    let stake = delegation.stake(epoch, &stake_history, new_rate_activation_epoch);
+                    *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                    stake_delegations.insert(*pubkey, stake_account);
+                }
+            }
+        }
+
+        let mut vote_accounts = VoteAccounts::from(Arc::new(vote_accounts));
+        for (vote_pubkey, stake) in delegated_stakes {
+            vote_accounts.add_stake(&vote_pubkey, stake);
+        }
+
+        Self {
+            vote_accounts,
+            stake_delegations,
+            unused: 0,
+            epoch,
+            stake_history,
+        }
+    }
+
     /// Creates a Stake<StakeAccount> from DeserializableStakes<Delegation> by loading the
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
     /// cached.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load_from_deserialized_delegations<F>(
         stakes: DeserializableStakes<Delegation>,
         get_account: F,
@@ -237,9 +307,9 @@ impl Stakes<StakeAccount> {
             .stake_delegations
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
-            // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
+            // collect()/collect_vec_list() and then imbl::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
-            .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
+            .try_fold(ImblHashMap::new, |mut map, (pubkey, delegation)| {
                 let Some(stake_account) = get_account(&pubkey) else {
                     return Err(Error::StakeAccountNotFound(pubkey));
                 };
@@ -268,7 +338,7 @@ impl Stakes<StakeAccount> {
                     Err(Error::InvalidDelegation(pubkey))
                 }
             })
-            .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;
+            .try_reduce(ImblHashMap::new, |a, b| Ok(a.union(b)))?;
 
         // Assert that cached vote accounts are consistent with accounts-db.
         //
@@ -298,7 +368,7 @@ impl Stakes<StakeAccount> {
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
-        stake_delegations: ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: ImblHashMap<Pubkey, StakeAccount>,
     ) -> Self {
         Self {
             vote_accounts,
@@ -329,11 +399,13 @@ impl Stakes<StakeAccount> {
                     StakeActivationStatus::default,
                     |acc, (_stake_pubkey, stake_account)| {
                         let delegation = stake_account.delegation();
-                        acc + delegation.stake_activating_and_deactivating(
+                        #[allow(deprecated)]
+                        let activation_status = delegation.stake_activating_and_deactivating(
                             self.epoch,
                             &self.stake_history,
                             new_rate_activation_epoch,
-                        )
+                        );
+                        acc + activation_status
                     },
                 )
                 .reduce(StakeActivationStatus::default, Add::add)
@@ -365,8 +437,9 @@ impl Stakes<StakeAccount> {
     }
 
     /// Sum the stakes that point to the given voter_pubkey
+    #[allow(deprecated)]
     fn calculate_stake(
-        stake_delegations: &ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
         voter_pubkey: &Pubkey,
         epoch: Epoch,
         stake_history: &StakeHistory,
@@ -391,6 +464,7 @@ impl Stakes<StakeAccount> {
     ) {
         if let Some(stake_account) = self.stake_delegations.remove(stake_pubkey) {
             let removed_delegation = stake_account.delegation();
+            #[allow(deprecated)]
             let removed_stake = removed_delegation.stake(
                 self.epoch,
                 &self.stake_history,
@@ -430,12 +504,14 @@ impl Stakes<StakeAccount> {
         debug_assert_ne!(stake_account.lamports(), 0u64);
         let delegation = stake_account.delegation();
         let voter_pubkey = delegation.voter_pubkey;
+        #[allow(deprecated)]
         let stake = delegation.stake(self.epoch, &self.stake_history, new_rate_activation_epoch);
         match self.stake_delegations.insert(stake_pubkey, stake_account) {
             None => self.vote_accounts.add_stake(&voter_pubkey, stake),
             Some(old_stake_account) => {
                 let old_delegation = old_stake_account.delegation();
                 let old_voter_pubkey = old_delegation.voter_pubkey;
+                #[allow(deprecated)]
                 let old_stake = old_delegation.stake(
                     self.epoch,
                     &self.stake_history,
@@ -453,14 +529,14 @@ impl Stakes<StakeAccount> {
     ///
     /// # Performance
     ///
-    /// `[im::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
+    /// `[imbl::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
     /// that inserts, deletions and lookups are average-case O(1) and
     /// worst-case O(log n). However, the performance of iterations is poor due
     /// to depth-first traversal and jumps. Currently it's also impossible to
     /// iterate over it with [`rayon`].
     ///
     /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
+    pub(crate) fn stake_delegations(&self) -> &ImblHashMap<Pubkey, StakeAccount> {
         &self.stake_delegations
     }
 
@@ -470,7 +546,7 @@ impl Stakes<StakeAccount> {
     /// # Performance
     ///
     /// The execution of this method takes ~200ms and it collects elements of
-    /// the [`im::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
+    /// the [`imbl::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
     /// so that operation involves a depth-first traversal with jumps. However,
     /// it's still a reasonable tradeoff if the caller iterates over these
     /// elements.
@@ -575,7 +651,9 @@ fn refresh_vote_accounts(
                 |mut delegated_stakes, (_stake_pubkey, stake_account)| {
                     let delegation = stake_account.delegation();
                     let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
-                    *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    #[allow(deprecated)]
+                    let stake = delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    *entry += stake;
                     delegated_stakes
                 },
             )
@@ -607,6 +685,19 @@ pub(crate) mod tests {
         solana_vote_program::vote_state,
     };
 
+    impl<T: Clone> Stakes<T> {
+        /// Convert deserialized stakes into runtime stakes representation
+        pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
+            Self {
+                vote_accounts: stakes.vote_accounts,
+                stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),
+                unused: stakes.unused,
+                epoch: stakes.epoch,
+                stake_history: stakes.stake_history,
+            }
+        }
+    }
+
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
     pub(crate) fn create_staked_node_accounts(
         stake: u64,
@@ -622,7 +713,7 @@ pub(crate) mod tests {
             0,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             1,
         );
         let stake_pubkey = solana_pubkey::new_rand();
@@ -655,7 +746,7 @@ pub(crate) mod tests {
                 0,
                 vote_pubkey,
                 0,
-                vote_pubkey,
+                &node_pubkey,
                 1,
             ),
             rent,
@@ -686,9 +777,11 @@ pub(crate) mod tests {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
                 assert!(vote_accounts.get(&vote_pubkey).is_some());
+                #[allow(deprecated)]
+                let expected_stake = stake.stake(i, &StakeHistory::default(), None);
                 assert_eq!(
                     vote_accounts.get_delegated_stake(&vote_pubkey),
-                    stake.stake(i, &StakeHistory::default(), None)
+                    expected_stake
                 );
             }
 
@@ -698,9 +791,11 @@ pub(crate) mod tests {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
                 assert!(vote_accounts.get(&vote_pubkey).is_some());
+                #[allow(deprecated)]
+                let expected_stake = stake.stake(i, &StakeHistory::default(), None);
                 assert_eq!(
                     vote_accounts.get_delegated_stake(&vote_pubkey),
-                    stake.stake(i, &StakeHistory::default(), None)
+                    expected_stake
                 ); // stays old stake, because only 10 is activated
             }
 
@@ -717,9 +812,11 @@ pub(crate) mod tests {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
                 assert!(vote_accounts.get(&vote_pubkey).is_some());
+                #[allow(deprecated)]
+                let expected_stake = stake.stake(i, &StakeHistory::default(), None);
                 assert_eq!(
                     vote_accounts.get_delegated_stake(&vote_pubkey),
-                    stake.stake(i, &StakeHistory::default(), None)
+                    expected_stake
                 ); // now stake of 42 is activated
             }
 
@@ -874,9 +971,11 @@ pub(crate) mod tests {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
             assert!(vote_accounts.get(&vote_pubkey).is_some());
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
             assert!(vote_accounts.get(&vote_pubkey2).is_some());
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey2), 0);
@@ -891,9 +990,11 @@ pub(crate) mod tests {
             assert!(vote_accounts.get(&vote_pubkey).is_some());
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 0);
             assert!(vote_accounts.get(&vote_pubkey2).is_some());
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey2),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
         }
     }
@@ -944,9 +1045,11 @@ pub(crate) mod tests {
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -960,9 +1063,11 @@ pub(crate) mod tests {
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
+            #[allow(deprecated)]
+            let expected_stake = stake.stake(stakes.epoch, &stakes.stake_history, None);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                stake.stake(stakes.epoch, &stakes.stake_history, None)
+                expected_stake
             );
         }
     }

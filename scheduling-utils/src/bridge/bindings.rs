@@ -75,11 +75,13 @@ where
 
             progress: ProgressMessage {
                 leader_state: 0,
+                current_slot_progress: 0,
+                epoch: 0,
                 current_slot: 0,
                 next_leader_slot: u64::MAX,
                 leader_range_end: u64::MAX,
                 remaining_cost_units: 0,
-                current_slot_progress: 0,
+                latest_blockhash: [0; 32],
             },
             runtime: RuntimeState {
                 feature_set: FeatureSet::all_enabled(),

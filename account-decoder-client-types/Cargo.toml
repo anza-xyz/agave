@@ -26,3 +26,6 @@ serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-pubkey = { workspace = true }
 zstd = { workspace = true, optional = true }
+
+[lints]
+workspace = true

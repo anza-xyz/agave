@@ -2,7 +2,7 @@
 use {
     crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
     serde::Serialize,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::AccountSharedData,
     solana_client_traits::{Client, SyncClient},
     solana_clock::Clock,
     solana_instruction::{AccountMeta, Instruction},
@@ -10,7 +10,12 @@ use {
     solana_leader_schedule::SlotLeader,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
+    solana_program_binaries::{
+        bpf_loader_program_account, bpf_loader_upgradeable_program_accounts,
+    },
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
     std::{
         env,
@@ -51,14 +56,20 @@ pub fn load_program_from_file(name: &str) -> Vec<u8> {
 pub fn create_program(bank: &Bank, loader_id: &Pubkey, name: &str) -> Pubkey {
     let program_id = Pubkey::new_unique();
     let elf = load_program_from_file(name);
-    let mut program_account = AccountSharedData::new(1, elf.len(), loader_id);
-    program_account
-        .data_as_mut_slice()
-        .get_mut(..)
-        .unwrap()
-        .copy_from_slice(&elf);
-    program_account.set_executable(true);
-    bank.store_account(&program_id, &program_account);
+    let rent = Rent::default();
+    if bpf_loader_upgradeable::check_id(loader_id) {
+        let [(_, program_account), (programdata_id, programdata_account)] =
+            bpf_loader_upgradeable_program_accounts(&program_id, &elf, &rent);
+        bank.store_account(&program_id, &AccountSharedData::from(program_account));
+        bank.store_account(
+            &programdata_id,
+            &AccountSharedData::from(programdata_account),
+        );
+    } else {
+        let (_, mut program_account) = bpf_loader_program_account(&program_id, &elf, &rent);
+        program_account.owner = *loader_id;
+        bank.store_account(&program_id, &AccountSharedData::from(program_account));
+    }
     program_id
 }
 

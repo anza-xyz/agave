@@ -13,8 +13,9 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         create_vm,
-        invoke_context::InvokeContext,
+        invoke_context::{BpfAllocator, InvokeContext},
         loaded_programs::ProgramRuntimeEnvironment,
+        memory_context::MemoryContext,
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
@@ -25,8 +26,13 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_sbpf::{
-        assembler::assemble, ebpf::MM_INPUT_START, elf::Executable, static_analysis::Analysis,
-        verifier::RequisiteVerifier, vm::ExecutionMode,
+        assembler::assemble,
+        ebpf::MM_INPUT_START,
+        elf::Executable,
+        memory_region::{MemoryMapping, MemoryRegion},
+        static_analysis::Analysis,
+        verifier::RequisiteVerifier,
+        vm::{CallFrame, ExecutionMode},
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_syscalls::create_program_runtime_environment,
@@ -89,8 +95,8 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
         process_options,
         None,
     );
-    let bank = bank_forks.read().unwrap().working_bank();
-    bank
+
+    bank_forks.read().unwrap().working_bank()
 }
 
 pub trait ProgramSubCommand {
@@ -509,16 +515,43 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
 
+    let regions = vec![MemoryRegion::default(); 3]
+        .into_iter()
+        .chain(regions)
+        .collect();
     let program = matches.value_of("PROGRAM").unwrap();
     let verified_executable = load_program(Path::new(program), program_id, &invoke_context);
-    create_vm!(
-        vm,
-        &verified_executable,
-        regions,
-        account_lengths,
-        &mut invoke_context,
-    );
-    let (mut vm, _, _) = vm.unwrap();
+
+    let heap_size = invoke_context.get_compute_budget().heap_size;
+    let virtual_address_space_adjustments = invoke_context
+        .get_feature_set()
+        .virtual_address_space_adjustments;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
+    let memory_mapping = unsafe {
+        MemoryMapping::new_uninitialized(
+            regions,
+            verified_executable.get_config(),
+            verified_executable.get_sbpf_version(),
+            invoke_context.transaction_context.access_violation_handler(
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            ),
+        )
+    };
+
+    invoke_context
+        .memory_contexts
+        .set_memory_context_abi_v1(MemoryContext::new(
+            BpfAllocator::new(heap_size as u64),
+            account_lengths,
+            memory_mapping,
+        ))
+        .unwrap();
+
+    let (mut vm, _stack, _heap) = unsafe {
+        create_vm!(vm, &verified_executable, &mut invoke_context,);
+        vm.unwrap()
+    };
     let start_time = Instant::now();
 
     let mode = matches.value_of("mode").unwrap();
@@ -530,16 +563,23 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     } else {
         ExecutionMode::Interpreted
     };
+    let mut call_frames = match execution_mode {
+        ExecutionMode::Jit => vec![],
+        ExecutionMode::Interpreted | ExecutionMode::PreferJit => {
+            vec![CallFrame::default(); verified_executable.get_config().max_call_depth]
+        }
+    };
     vm.registers[1] = MM_INPUT_START;
     vm.registers[2] = instruction_data_offset as u64;
 
-    let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
+    let (instruction_count, result) =
+        vm.execute_program(&verified_executable, &mut execution_mode, &mut call_frames);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
-        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
-        let invoke_context_ref = unsafe { vm.context_object_pointer.as_mut() };
-        invoke_context_ref.iterate_vm_traces(
-            &|instruction_context: InstructionContext, executable, register_trace| {
+        vm.context()
+            .iterate_vm_traces(&|instruction_context: InstructionContext,
+                                 executable,
+                                 register_trace| {
                 let mut analysis = LazyAnalysis::new(executable);
                 if trace_option == "stdout" {
                     writeln!(
@@ -572,8 +612,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         .disassemble_register_trace(&mut fd, register_trace)
                         .unwrap();
                 }
-            },
-        );
+            });
     }
     drop(vm);
 

@@ -33,10 +33,10 @@ agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-bitflags = { workspace = true, features = ["serde"] }
+bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
-chrono = { workspace = true, features = ["default", "serde"] }
+chrono = { workspace = true, features = ["default"] }
 chrono-humanize = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
@@ -58,7 +58,6 @@ rayon = { workspace = true }
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -88,7 +87,7 @@ solana-nohash-hasher = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["wincode"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }

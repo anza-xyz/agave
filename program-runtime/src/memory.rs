@@ -3,15 +3,15 @@
 use {
     solana_sbpf::memory_region::{AccessType, MemoryMapping},
     solana_transaction_context::vm_slice::VmSlice,
-    std::{mem::align_of, slice::from_raw_parts_mut},
+    std::mem::align_of,
 };
 
 /// Error types for memory translation operations.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
 pub enum MemoryTranslationError {
     #[error("Unaligned pointer")]
     UnalignedPointer,
-    #[error("Invalid length")]
+    #[error("InvalidLength")]
     InvalidLength,
 }
 
@@ -60,18 +60,36 @@ macro_rules! translate_type_inner {
 macro_rules! translate_slice_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         if $len == 0 {
-            return Ok(&mut []);
+            Ok(std::ptr::slice_from_raw_parts_mut(
+                std::ptr::dangling_mut::<$T>(),
+                0,
+            ))
+        } else {
+            let total_size = $len.saturating_mul(size_of::<$T>() as u64);
+            if isize::try_from(total_size).is_err() {
+                Err($crate::memory::MemoryTranslationError::InvalidLength.into())
+            } else {
+                match $crate::translate_inner!(
+                    $memory_mapping,
+                    map,
+                    $access_type,
+                    $vm_addr,
+                    total_size
+                ) {
+                    Err(e) => Err(e),
+                    Ok(host_addr)
+                        if $check_aligned
+                            && !$crate::memory::address_is_aligned::<$T>(host_addr) =>
+                    {
+                        Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
+                    }
+                    Ok(host_addr) => Ok(std::ptr::slice_from_raw_parts_mut(
+                        host_addr as *mut $T,
+                        $len as usize,
+                    )),
+                }
+            }
         }
-        let total_size = $len.saturating_mul(size_of::<$T>() as u64);
-        if isize::try_from(total_size).is_err() {
-            return Err($crate::memory::MemoryTranslationError::InvalidLength.into());
-        }
-        let host_addr =
-            $crate::translate_inner!($memory_mapping, map, $access_type, $vm_addr, total_size)?;
-        if $check_aligned && !$crate::memory::address_is_aligned::<$T>(host_addr) {
-            return Err($crate::memory::MemoryTranslationError::UnalignedPointer.into());
-        }
-        Ok(unsafe { from_raw_parts_mut(host_addr as *mut $T, $len as usize) })
     }};
 }
 
@@ -98,7 +116,12 @@ pub fn translate_slice<T>(
         T,
         check_aligned,
     )
-    .map(|value| &*value)
+    .map(|value| unsafe {
+        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+        // This is producing a shared/read-only slice to the memory, so the uniqueness invariants
+        // aren't relevant.
+        &*value
+    })
 }
 
 /// CPI-specific version with intentionally different lifetime signature.
@@ -113,7 +136,14 @@ pub fn translate_type_mut_for_cpi<'a, T>(
 
 /// CPI-specific version with intentionally different lifetime signature.
 /// This version is missing lifetime 'a of the return type in the parameter &MemoryMapping.
-pub fn translate_slice_mut_for_cpi<'a, T>(
+///
+/// # Safety
+///
+/// * The caller must ensure that this function does not violate mutable reference uniqueness
+///   constraints;
+/// * The caller must ensure that the lifetime of the returned slice does not outlive the backing
+///   data.
+pub unsafe fn translate_slice_mut_for_cpi<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -127,6 +157,10 @@ pub fn translate_slice_mut_for_cpi<'a, T>(
         T,
         check_aligned,
     )
+    .map(|p| unsafe {
+        // SAFETY: the invariants for producing mutable references delegated to the callers.
+        &mut *p
+    })
 }
 
 pub fn translate_vm_slice<'a, T>(

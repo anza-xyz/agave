@@ -42,7 +42,7 @@ usage: $0 [+<cargo version>] [options] <install directory>
     --no-build-end-user-bins    Do not build end user binaries.
     --no-build-platform-tools   Do not build solana-platform-tools.
     --no-build-validator-bins   Do not build validator binaries.
-    --no-perf-libs              Do not fetch and install perf-libs. (Note: Not using this flag may require internet at build time)
+    --no-perf-libs              Deprecated no-op. perf-libs are no longer applicable to agave.
     --no-spl-token              Do not fetch and install SPL-Token. (Note: Not using this flag requires internet at build time)
     --help                      Show this help information and exit.
 EOF
@@ -64,7 +64,6 @@ noBuildDevBins=
 noBuildEndUserBins=
 noBuildPlatformTools=
 noBuildValidatorBins=
-noPerfLibs=
 noSPLToken=
 
 while [[ -n $1 ]]; do
@@ -100,7 +99,7 @@ while [[ -n $1 ]]; do
       noBuildValidatorBins=true
       shift
     elif [[ $1 = --no-perf-libs ]]; then
-      noPerfLibs=true
+      echo "WARNING: --no-perf-libs has been deprecated and is now a no-op. perf-libs are no longer applicable to agave." >&2
       shift
     elif [[ $1 = --no-spl-token ]]; then
       noSPLToken=true
@@ -237,14 +236,6 @@ for bin in "${DCOU_BINS[@]}"; do
   cp -fv "dev-bins/target/$buildProfile/$bin" "$installDir"/bin
 done
 
-if [[ -z "$noPerfLibs" && $OSTYPE != msys ]]; then
-  ./fetch-perf-libs.sh
-
-  if [[ -d target/perf-libs ]]; then
-    cp -a target/perf-libs "$installDir"/bin/perf-libs
-  fi
-fi
-
 if [[ -z "$noBuildPlatformTools" ]]; then
   # shellcheck disable=SC2086 # Don't want to double quote $rust_version
   "$cargo" $maybeRustVersion build --manifest-path syscalls/gen-syscall-list/Cargo.toml
@@ -253,9 +244,8 @@ if [[ -z "$noBuildPlatformTools" ]]; then
   source "$SOLANA_ROOT"/scripts/cargo-build-sbf-version.sh
 
   # shellcheck disable=SC2086
+  # starting from cargo-build-sbf v4.1.0, `cargo install cargo-build-sbf` installs both `cargo-build-sbf` and `cargo-test-sbf`
   "$cargo" $maybeRustVersion install --locked cargo-build-sbf --root "$installDir" $maybeCargoBuildSbfVersionArg
-  # shellcheck disable=SC2086
-  "$cargo" $maybeRustVersion install --locked cargo-test-sbf --root "$installDir" $maybeCargoTestSbfVersionArg
 fi
 
 (

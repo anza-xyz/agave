@@ -14,6 +14,7 @@ use {
         ops::Deref,
         sync::atomic::{AtomicU64, Ordering},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Generate a stable hash of `self` for each `hash_index`
@@ -23,7 +24,7 @@ pub trait BloomHashIndex {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct Bloom<T: BloomHashIndex> {
     pub keys: Vec<u64>,
     pub bits: BitVec<u64>,
@@ -67,6 +68,11 @@ impl<T: BloomHashIndex> Sanitize for Bloom<T> {
 }
 
 impl<T: BloomHashIndex> Bloom<T> {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn num_bits_set(&self) -> u64 {
+        self.num_bits_set
+    }
+
     pub fn new(num_bits: usize, keys: Vec<u64>) -> Self {
         let bits = BitVec::new_fill(false, num_bits as u64);
         Bloom {
@@ -473,5 +479,28 @@ mod test {
             bloom.add(hash_value);
         }
         assert_eq!(bits, bloom.bits);
+    }
+
+    #[test]
+    fn test_wincode_compatibility_bloom() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let num_keys = rng.random_range(1..8usize);
+            let keys: Vec<u64> = (0..num_keys).map(|_| rng.random()).collect();
+            let num_bits = rng.random_range(1..1024usize);
+            let mut bloom = Bloom::<Hash>::new(num_bits, keys);
+            let num_inserts = rng.random_range(0..32usize);
+            for _ in 0..num_inserts {
+                bloom.add(&generate_random_hash());
+            }
+
+            let bincode_bytes = bincode::serialize(&bloom).unwrap();
+            let wincode_bytes = wincode::serialize(&bloom).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+            let wincode_decoded: Bloom<Hash> = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(bloom, wincode_decoded);
+            let bincode_decoded: Bloom<Hash> = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(bloom, bincode_decoded);
+        }
     }
 }

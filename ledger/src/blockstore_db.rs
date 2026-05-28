@@ -16,7 +16,6 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::deserialize,
     log::*,
     prost::Message,
     rocksdb::{
@@ -27,7 +26,6 @@ use {
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties,
     },
-    serde::de::DeserializeOwned,
     solana_clock::Slot,
     std::{
         collections::HashSet,
@@ -41,6 +39,7 @@ use {
             atomic::{AtomicU64, Ordering},
         },
     },
+    wincode::{SchemaReadOwned, deserialize},
 };
 
 const BLOCKSTORE_METRICS_ERROR: i64 = -1;
@@ -889,15 +888,19 @@ impl<C> LedgerColumn<C>
 where
     C: ProtobufColumn + ColumnName,
 {
-    pub fn get_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
+    pub fn get_protobuf_or_wincode<
+        T: SchemaReadOwned<wincode::config::DefaultConfig, Dst = T> + Into<C::Type>,
+    >(
         &self,
         index: C::Index,
     ) -> Result<Option<C::Type>> {
         let key = <C as Column>::key(&index);
-        self.get_raw_protobuf_or_bincode::<T>(key)
+        self.get_raw_protobuf_or_wincode::<T>(key)
     }
 
-    pub(crate) fn get_raw_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
+    pub(crate) fn get_raw_protobuf_or_wincode<
+        T: SchemaReadOwned<wincode::config::DefaultConfig, Dst = T> + Into<C::Type>,
+    >(
         &self,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<C::Type>> {

@@ -60,6 +60,30 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn test_quic_connection_cache_update_key_from_tokio_runtime() {
+        use {
+            solana_connection_cache::connection_cache::{ConnectionCache, NewConnectionConfig},
+            solana_quic_client::{QuicConfig, QuicConnectionManager},
+        };
+
+        let keypair = Keypair::new();
+        let mut config = QuicConfig::new().unwrap();
+        config.update_client_certificate(&keypair, IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let connection_manager = QuicConnectionManager::new_with_connection_config(config);
+        let connection_cache = ConnectionCache::new(
+            "quic_connection_cache_update_key_test",
+            connection_manager,
+            1,
+        )
+        .unwrap();
+
+        let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 12345);
+        let _connection = connection_cache.get_nonblocking_connection(&server_addr);
+
+        connection_cache.update_key(&Keypair::new()).unwrap();
+    }
+
     #[test]
     fn test_quic_client_multiple_writes() {
         use {

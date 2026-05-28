@@ -54,8 +54,8 @@ use {
 
 async fn upload(
     blockstore: Blockstore,
-    starting_slot: Option<Slot>,
-    ending_slot: Option<Slot>,
+    mut starting_slot: Slot,
+    ending_slot: Slot,
     force_reupload: bool,
     config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -68,17 +68,6 @@ async fn upload(
         ..ConfirmedBlockUploadConfig::default()
     };
     let blockstore = Arc::new(blockstore);
-
-    let mut starting_slot = match starting_slot {
-        Some(slot) => slot,
-        // It is possible that the slot returned below could get purged by
-        // LedgerCleanupService before upload_confirmed_blocks() receives the
-        // value. This is ok because upload_confirmed_blocks() doesn't need
-        // the exact slot to be in ledger, the slot is only used as a bound.
-        None => blockstore.get_first_available_block()?,
-    };
-
-    let ending_slot = ending_slot.unwrap_or_else(|| blockstore.max_root());
 
     while starting_slot <= ending_slot {
         let current_ending_slot = min(
@@ -925,9 +914,8 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .value_name("START_SLOT")
                                 .takes_value(true)
                                 .index(1)
-                                .help(
-                                    "Start uploading at this slot [default: first available slot]",
-                                ),
+                                .required(true)
+                                .help("Start uploading at this slot"),
                         )
                         .arg(
                             Arg::with_name("ending_slot")
@@ -936,7 +924,8 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .value_name("END_SLOT")
                                 .takes_value(true)
                                 .index(2)
-                                .help("Stop uploading at this slot [default: last available slot]"),
+                                .required(true)
+                                .help("Stop uploading at this slot"),
                         )
                         .arg(
                             Arg::with_name("force_reupload")
@@ -1370,8 +1359,8 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     let future = match (subcommand, sub_matches) {
         ("upload", Some(arg_matches)) => {
-            let starting_slot = value_t!(arg_matches, "starting_slot", Slot).ok();
-            let ending_slot = value_t!(arg_matches, "ending_slot", Slot).ok();
+            let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
+            let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
             let force_reupload = arg_matches.is_present("force_reupload");
             let blockstore = crate::open_blockstore(
                 &canonicalize_ledger_path(ledger_path),

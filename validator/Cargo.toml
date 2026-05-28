@@ -57,11 +57,12 @@ solana-epoch-schedule = { workspace = true }
 solana-faucet = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
-solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
+solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-inflation = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -102,6 +103,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 scopeguard = { workspace = true }
@@ -113,3 +115,6 @@ solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-c
 solana-time-utils = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true
