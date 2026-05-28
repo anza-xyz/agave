@@ -733,7 +733,7 @@ fn record_and_complete_block(
         "optimistic_parent should be None after receiving ParentReady"
     );
 
-    // Alpentick and clear bank
+    // Alpentick, produce the footer, and clear bank
     let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     let bank = w_poh_recorder
         .bank()
@@ -761,6 +761,10 @@ fn record_and_complete_block(
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
+
+        // BankingStage may still be executing batches that were already recorded.
+        // Footer processing mutates vote accounts directly, so wait for execution to complete first.
+        bank.wait_for_inflight_commits();
 
         BlockComponentProcessor::update_bank_with_footer_fields(
             &bank,
