@@ -995,6 +995,7 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
+        cluster_info.set_migration_status(migration_status.clone());
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
 

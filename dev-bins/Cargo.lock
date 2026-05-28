@@ -6901,6 +6901,7 @@ version = "4.3.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-random",
+ "agave-votor-messages",
  "arc-swap",
  "assert_matches",
  "bv",

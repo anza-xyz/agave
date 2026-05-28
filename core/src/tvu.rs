@@ -626,6 +626,7 @@ impl Tvu {
             exit.clone(),
         );
 
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
             Box::new(EpochSpecs::from(bank_forks));
 
@@ -638,6 +639,7 @@ impl Tvu {
                 epoch_specs,
                 duplicate_slots_sender,
                 tvu_config.shred_version,
+                migration_status,
             ),
         );
 
