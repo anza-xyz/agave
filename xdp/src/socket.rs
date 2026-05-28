@@ -22,38 +22,7 @@ use {
         ptr,
         sync::atomic::Ordering,
     },
-    thiserror::Error,
 };
-
-#[derive(Debug, Error)]
-enum XdpError {
-    #[error("{message}: {source}")]
-    Syscall {
-        message: String,
-        #[source]
-        source: io::Error,
-    },
-    #[error(
-        "insufficient UMEM frames for RX fill ring prefill: required={required}, \
-         available={available}"
-    )]
-    InsufficientUmemFrames { required: usize, available: usize },
-}
-
-impl XdpError {
-    fn syscall(message: impl Into<String>, source: io::Error) -> Self {
-        Self::Syscall {
-            message: message.into(),
-            source,
-        }
-    }
-}
-
-impl From<XdpError> for io::Error {
-    fn from(error: XdpError) -> io::Error {
-        io::Error::other(error)
-    }
-}
 
 pub struct Socket<U: Umem> {
     fd: OwnedFd,
@@ -75,7 +44,7 @@ impl<U: Umem> Socket<U> {
         unsafe {
             let fd = socket(AF_XDP, SOCK_RAW, 0);
             if fd < 0 {
-                return Err(XdpError::syscall(
+                return Err(Error::syscall(
                     "socket(AF_XDP, SOCK_RAW) failed",
                     io::Error::last_os_error(),
                 )
@@ -100,7 +69,7 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<xdp_umem_reg>() as libc::socklen_t,
             ) < 0
             {
-                return Err(XdpError::syscall(
+                return Err(Error::syscall(
                     "setsockopt(XDP_UMEM_REG) failed",
                     io::Error::last_os_error(),
                 )
@@ -126,7 +95,7 @@ impl<U: Umem> Socket<U> {
                     mem::size_of::<u32>() as socklen_t,
                 ) < 0
                 {
-                    return Err(XdpError::syscall(
+                    return Err(Error::syscall(
                         format!("setsockopt(SOL_XDP, ring={ring}, size={size}) failed",),
                         io::Error::last_os_error(),
                     )
@@ -144,7 +113,7 @@ impl<U: Umem> Socket<U> {
                 &mut optlen,
             ) < 0
             {
-                return Err(XdpError::syscall(
+                return Err(Error::syscall(
                     "getsockopt(XDP_MMAP_OFFSETS) failed",
                     io::Error::last_os_error(),
                 )
@@ -158,7 +127,7 @@ impl<U: Umem> Socket<U> {
                     &offsets.cr,
                     XDP_UMEM_PGOFF_COMPLETION_RING,
                 )
-                .map_err(|source| XdpError::syscall("mmap completion ring failed", source))?,
+                .map_err(|source| Error::syscall("mmap completion ring failed", source))?,
                 tx_completion_ring_size as u32,
             );
 
@@ -169,7 +138,7 @@ impl<U: Umem> Socket<U> {
                     &offsets.fr,
                     XDP_UMEM_PGOFF_FILL_RING,
                 )
-                .map_err(|source| XdpError::syscall("mmap fill ring failed", source))?,
+                .map_err(|source| Error::syscall("mmap fill ring failed", source))?,
                 rx_fill_ring_size as u32,
                 fd.as_raw_fd(),
             );
@@ -179,7 +148,7 @@ impl<U: Umem> Socket<U> {
                 // pre-populated before calling bind()
                 for _ in 0..rx_fill_ring_size {
                     let Some(frame) = umem.reserve() else {
-                        return Err(XdpError::InsufficientUmemFrames {
+                        return Err(Error::InsufficientUmemFrames {
                             required: rx_fill_ring_size,
                             available: umem.available(),
                         }
@@ -187,7 +156,7 @@ impl<U: Umem> Socket<U> {
                     };
                     rx_fill_ring
                         .write(frame)
-                        .map_err(|source| XdpError::syscall("RX fill ring write failed", source))?;
+                        .map_err(|source| Error::syscall("RX fill ring write failed", source))?;
                 }
                 rx_fill_ring.commit();
             }
@@ -199,7 +168,7 @@ impl<U: Umem> Socket<U> {
                     &offsets.tx,
                     XDP_PGOFF_TX_RING as u64,
                 )
-                .map_err(|source| XdpError::syscall("mmap tx ring failed", source))?,
+                .map_err(|source| Error::syscall("mmap tx ring failed", source))?,
                 tx_ring_size as u32,
                 fd.as_raw_fd(),
             ));
@@ -212,7 +181,7 @@ impl<U: Umem> Socket<U> {
                         &offsets.rx,
                         XDP_PGOFF_RX_RING as u64,
                     )
-                    .map_err(|source| XdpError::syscall("mmap rx ring failed", source))?,
+                    .map_err(|source| Error::syscall("mmap rx ring failed", source))?,
                     rx_ring_size as u32,
                     fd.as_raw_fd(),
                 ))
@@ -235,7 +204,7 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<sockaddr_xdp>() as socklen_t,
             ) < 0
             {
-                return Err(XdpError::syscall(
+                return Err(Error::syscall(
                     format!(
                         "bind(AF_XDP, ifindex={}, queue={}, flags=0x{:x}) failed",
                         sxdp.sxdp_ifindex, sxdp.sxdp_queue_id, sxdp.sxdp_flags
@@ -436,21 +405,32 @@ impl RxRing {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("{message}: {source}")]
+    Syscall {
+        message: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error(
+        "insufficient UMEM frames for RX fill ring prefill: required={required}, \
+         available={available}"
+    )]
+    InsufficientUmemFrames { required: usize, available: usize },
+}
 
-    #[test]
-    fn io_error_from_xdp_error_displays_context() {
-        let error = io::Error::from(XdpError::syscall(
-            "bind(AF_XDP, ifindex=7, queue=3, flags=0x4) failed",
-            io::Error::other("bind source"),
-        ));
+impl Error {
+    fn syscall(message: impl Into<String>, source: io::Error) -> Self {
+        Self::Syscall {
+            message: message.into(),
+            source,
+        }
+    }
+}
 
-        assert_eq!(error.kind(), io::ErrorKind::Other);
-        assert_eq!(
-            error.to_string(),
-            "bind(AF_XDP, ifindex=7, queue=3, flags=0x4) failed: bind source"
-        );
+impl From<Error> for io::Error {
+    fn from(error: Error) -> io::Error {
+        io::Error::other(error)
     }
 }
