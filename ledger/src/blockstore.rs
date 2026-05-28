@@ -1880,10 +1880,15 @@ impl Blockstore {
                     .map_err(|_| shred::Error::InvalidMerkleRoot)
                     .and_then(|mr| mr.ok_or(shred::Error::InvalidMerkleRoot))
             })
-            // Add parent info as the last leaf
+            // Add parent info as the last leaf. The `fec_set_count` is bound
+            // into this leaf so that an adversary cannot convince a verifier
+            // that the count is off-by-one when the number of FEC sets is
+            // even (which makes the total leaf count odd and causes the last
+            // leaf to be hashed with itself during tree construction).
             .chain(std::iter::once(Ok(hashv(&[
                 &parent_slot.to_le_bytes(),
                 parent_block_id.as_ref(),
+                &fec_set_count.to_le_bytes(),
             ]))));
 
         MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count as usize + 1)

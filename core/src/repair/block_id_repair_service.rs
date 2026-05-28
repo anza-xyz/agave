@@ -1404,7 +1404,11 @@ mod tests {
 
         // Create valid merkle tree for the response
         let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
-        let parent_info_leaf = hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+        let parent_info_leaf = hashv(&[
+            &parent_slot.to_le_bytes(),
+            parent_block_id.as_ref(),
+            &fec_set_count.to_le_bytes(),
+        ]);
         let mut leaves = fec_set_roots.clone();
         leaves.push(parent_info_leaf);
         let (block_id, proofs) = build_merkle_tree(&leaves);

@@ -6655,7 +6655,12 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         }
     }
 
-    let parent_info_hash = hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+    let fec_set_count = u32::try_from(fec_set_roots.len()).unwrap();
+    let parent_info_hash = hashv(&[
+        &parent_slot.to_le_bytes(),
+        parent_block_id.as_ref(),
+        &fec_set_count.to_le_bytes(),
+    ]);
     let merkle_tree_leaves: Vec<_> = fec_set_roots
         .iter()
         .copied()
