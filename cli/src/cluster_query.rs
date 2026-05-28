@@ -1603,8 +1603,11 @@ pub async fn process_show_stakes(
                 .collect();
 
             if !pubkeys.is_empty() {
+                let mut pubkeys: Vec<String> = pubkeys.into_iter().collect();
+                pubkeys.sort();
                 return Err(CliError::RpcRequestError(format!(
-                    "Failed to retrieve matching vote account for {pubkeys:?}."
+                    "Failed to retrieve matching vote account for {}.",
+                    pubkeys.join(", ")
                 ))
                 .into());
             }
