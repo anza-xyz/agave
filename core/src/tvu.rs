@@ -410,7 +410,9 @@ impl Tvu {
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
-        let (duplicate_slots_sender, duplicate_slots_receiver) = unbounded();
+        // This channel is used by both gossip and window service. Gossip will not fill this
+        // beyond 50%, while window_service will perform a blocking send.
+        let (duplicate_slots_sender, duplicate_slots_receiver) = bounded(2048);
         let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
             unbounded();
         let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
