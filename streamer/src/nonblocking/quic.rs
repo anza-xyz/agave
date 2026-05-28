@@ -329,6 +329,16 @@ where
         }
 
         if let Ok(Some(incoming)) = timeout_connection {
+            // our connection/handshake abuse mitigation policy is one of shed
+            // fast and bound resource consumption. attempting to be "smarter"
+            // before a peer has asserted control over their ip address by
+            // completing the retry challenge creates a scenario whereby peers
+            // can attack one another via ip spoofing. employ the following
+            // * limit duration of in-flight connection attempts with a timeout
+            // * protect against connection attempt bursts with a global rate-limiter
+            // * rate-limit abusive peers by (control-asserted) ip
+            // * cap total connections per-peer/ip
+
             stats
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
