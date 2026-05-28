@@ -11,4 +11,6 @@ pub mod fd_hash;
 pub mod feature_set;
 pub mod instr;
 pub mod programs;
+#[cfg(feature = "conformance")]
+pub mod serialization;
 mod setup;
