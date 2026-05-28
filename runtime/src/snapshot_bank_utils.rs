@@ -847,7 +847,10 @@ mod tests {
             SnapshotVersion, error::VerifySlotDeltasError, paths::get_bank_snapshot_dir,
         },
         semver::Version,
-        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsFileId},
+        solana_accounts_db::{
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsFileId},
+            accounts_file::AccountsFile,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -2149,7 +2152,6 @@ mod tests {
     /// storage files in place and producing a working bank.
     #[test]
     fn test_bank_from_snapshot_dir_prunes_stale_storage() {
-        use solana_accounts_db::accounts_file::AccountsFile;
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::new_unique(),
