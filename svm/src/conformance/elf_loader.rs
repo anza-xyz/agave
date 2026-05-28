@@ -1,7 +1,10 @@
 //! ELF loader conformance harness.
 
 use {
-    crate::conformance::feature_set::feature_set_from_proto,
+    crate::conformance::{
+        fd_hash::{fd_hash_u64_without_seed, fd_hash_without_seed},
+        feature_set::feature_set_from_proto,
+    },
     prost::Message,
     protosol::protos::{
         ElfLoaderCtx as ProtoElfLoaderCtx, ElfLoaderEffects as ProtoElfLoaderEffects,
@@ -13,7 +16,6 @@ use {
     },
     solana_syscalls::create_program_runtime_environment,
     std::{collections::BTreeSet, ffi::c_int},
-    xxhash_rust::xxh64::xxh64,
 };
 
 pub fn execute_elf_loader(input: &ProtoElfLoaderCtx) -> ProtoElfLoaderEffects {
@@ -90,23 +92,6 @@ fn elf_err_to_num(error: &ElfError) -> u8 {
         ElfError::UnsupportedSBPFVersion => 22,
         ElfError::InvalidProgramHeader => 23,
     }
-}
-
-fn fd_hash_without_seed(buf: &[u8]) -> u64 {
-    fd_hash(0, buf)
-}
-
-fn fd_hash_u64_without_seed(buf: &[u64]) -> u64 {
-    let bytes = unsafe {
-        std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), std::mem::size_of_val(buf))
-    };
-    fd_hash(0, bytes)
-}
-
-/// Hashing used to summarize binary blobs (e.g. ELF sections) for conformance
-/// comparisons. Firedancer's `fd_hash` is XXH64.
-fn fd_hash(seed: u64, buf: &[u8]) -> u64 {
-    xxh64(buf, seed)
 }
 
 /// # Safety
@@ -187,16 +172,5 @@ mod tests {
             features: vec![u64::from_le_bytes(v3.to_bytes()[..8].try_into().unwrap())],
         };
         assert_loads_ok(SBPFV3_RETURN_OK, false, Some(features));
-    }
-
-    #[test]
-    fn test_fd_hash_matches_xxh64() {
-        // Reference values from Firedancer's `fd_hash` (XXH64). The empty-input,
-        // seed-0 case is the canonical XXH64 test vector.
-        let long: Vec<u8> = (0u8..100).collect();
-        assert_eq!(fd_hash(0, &[]), 0xef46db3751d8e999);
-        assert_eq!(fd_hash(0, b"hello world"), 0x45ab6734b21e6968);
-        assert_eq!(fd_hash(42, b"hello world"), 0x69c2b68f9d9352a1);
-        assert_eq!(fd_hash(0, &long), 0x6ac1e58032166597);
     }
 }
