@@ -2,7 +2,9 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
     chrono::{DateTime, Local},
-    crossbeam_channel::{Receiver, SendError, TryRecvError, TrySendError, bounded},
+    crossbeam_channel::{
+        Receiver, SendError, Sender, TryRecvError, TrySendError, bounded, unbounded,
+    },
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -64,12 +66,13 @@ pub const DISABLED_BAKING_TRACE_DIR: DirByteLimit = 0;
 pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit =
     TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD * TRACE_FILE_ROTATE_COUNT;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ActiveTracer {
-    trace_sender: EvictingSender<TimedTracedEvent>,
+    trace_sender: Sender<TimedTracedEvent>,
     exit: Arc<AtomicBool>,
 }
 
+#[derive(Debug)]
 pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
@@ -227,9 +230,7 @@ impl BankingTracer {
                     ));
                 }
 
-                const TRACING_CHANNEL_CAPACITY: usize = 50_000;
-                let (trace_sender, trace_receiver) =
-                    EvictingSender::new_bounded(TRACING_CHANNEL_CAPACITY);
+                let (trace_sender, trace_receiver) = unbounded();
 
                 let file_appender = Self::create_file_appender(path, rotate_threshold_size)?;
 
@@ -427,11 +428,15 @@ impl TracedSender {
     pub fn send(&self, batch: BankingPacketBatch) -> Result<(), SendError<BankingPacketBatch>> {
         if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
             if !exit.load(Ordering::Relaxed) {
-                // Ignore errors in sending to tracer - it is a non-critical component.
-                let _ = trace_sender.try_send(TimedTracedEvent(
-                    SystemTime::now(),
-                    TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
-                ));
+                trace_sender
+                    .send(TimedTracedEvent(
+                        SystemTime::now(),
+                        TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
+                    ))
+                    .map_err(|err| {
+                        error!("unexpected error when tracing a banking event...: {err:?}");
+                        SendError(BankingPacketBatch::clone(&batch))
+                    })?;
             }
         }
         let (result, sent) = match self.sender.try_send(batch) {
