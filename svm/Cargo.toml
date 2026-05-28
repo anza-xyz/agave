@@ -27,6 +27,7 @@ conformance = [
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dep:solana-poseidon",
     "dep:solana-vote-program",
     "dep:solana-zk-elgamal-proof-program",
     "dep:xxhash-rust",
@@ -94,6 +95,7 @@ solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
+solana-poseidon = { workspace = true, optional = true }
 solana-precompile-error = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
