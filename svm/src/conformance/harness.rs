@@ -282,136 +282,152 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 mod tests {
     use {
         super::{
-            super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+            super::programs::{add_program_to_program_cache, new_program_cache_with_builtins},
             *,
         },
+        crate::conformance::programs::keyed_account_for_system_program,
         solana_account::Account,
-        solana_instruction::{AccountMeta, Instruction},
+        solana_instruction::Instruction,
         solana_rent::Rent,
         solana_svm_feature_set::SVMFeatureSet,
+        solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_TRANSFER_CUS,
+        std::cell::RefCell,
+        test_case::test_case,
     };
 
-    #[test]
-    fn test_system_program_exec() {
-        let system_program_id = solana_sdk_ids::system_program::id();
-        let native_loader_id = solana_sdk_ids::native_loader::id();
+    const NOOP_ELF: &[u8] =
+        include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
 
-        let from_pubkey = Pubkey::new_from_array([1u8; 32]);
-        let to_pubkey = Pubkey::new_from_array([2u8; 32]);
+    const FROM_BASE_LAMPORTS: u64 = 5_000;
+    const TO_BASE_LAMPORTS: u64 = 1_000;
 
-        let cu_avail = 10000u64;
-        let slot = 10;
-        let feature_set = SVMFeatureSet::default();
+    #[derive(Default)]
+    struct CountingCallback {
+        // Just a simple little mock so we can test our callback is being used.
+        precompile_checks: RefCell<u32>,
+    }
 
-        // Build the instruction context.
-        let context = InstrContext {
-            feature_set,
-            accounts: vec![
-                (
-                    from_pubkey,
-                    Account {
-                        lamports: 1000,
-                        data: vec![],
-                        owner: system_program_id,
-                        executable: false,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
-                (
-                    to_pubkey,
-                    Account {
-                        lamports: 0,
-                        data: vec![],
-                        owner: system_program_id,
-                        executable: false,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
-                (
-                    system_program_id,
-                    Account {
-                        lamports: 10000000,
-                        data: b"Solana Program".to_vec(),
-                        owner: native_loader_id,
-                        executable: true,
-                        rent_epoch: u64::MAX,
-                    },
-                ),
-            ],
-            instruction: Instruction {
-                program_id: system_program_id,
-                accounts: vec![
-                    AccountMeta {
-                        pubkey: from_pubkey,
-                        is_signer: true,
-                        is_writable: true,
-                    },
-                    AccountMeta {
-                        pubkey: to_pubkey,
-                        is_signer: false,
-                        is_writable: true,
-                    },
-                ],
-                data: vec![
-                    // Transfer
-                    0x02, 0x00, 0x00, 0x00, // Lamports
-                    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                ],
-            },
-            cu_avail,
-        };
+    impl InvokeContextCallback for CountingCallback {
+        fn is_precompile(&self, _program_id: &Pubkey) -> bool {
+            *self.precompile_checks.borrow_mut() += 1;
+            false
+        }
+    }
 
-        // Create Sysvar Cache.
+    fn system_account_with_lamports(lamports: u64) -> Account {
+        Account {
+            lamports,
+            data: vec![],
+            owner: solana_sdk_ids::system_program::id(),
+            executable: false,
+            rent_epoch: u64::MAX,
+        }
+    }
+
+    fn sysvar_cache_with_rent() -> SysvarCache {
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
             if pubkey == &solana_sdk_ids::sysvar::rent::id() {
-                let rent = Rent::default();
-                let rent_data = bincode::serialize(&rent).unwrap();
+                let rent_data = bincode::serialize(&Rent::default()).unwrap();
                 callback(&rent_data);
             }
         });
+        sysvar_cache
+    }
 
-        // Create Program Cache
-        let mut program_cache = new_program_cache_with_builtins(slot);
+    fn build_system_transfer_context(from: &Pubkey, to: &Pubkey, amount: u64) -> InstrContext {
+        let feature_set = SVMFeatureSet::default();
+        let accounts = vec![
+            (
+                *from,
+                system_account_with_lamports(FROM_BASE_LAMPORTS + amount),
+            ),
+            (*to, system_account_with_lamports(TO_BASE_LAMPORTS)),
+            keyed_account_for_system_program(),
+        ];
+        let instruction = solana_system_interface::instruction::transfer(from, to, amount);
+        InstrContext {
+            feature_set,
+            accounts,
+            instruction,
+            cu_avail: SYSTEM_TRANSFER_CUS,
+        }
+    }
 
-        let environments = create_program_runtime_environment(
-            &context.feature_set,
-            &ComputeBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8).to_budget(),
-            false, /* deployment */
-            false, /* debugging_features */
-        )
-        .unwrap();
-
-        fill_program_cache_from_accounts(
-            &mut program_cache,
-            &environments,
-            &context.accounts,
-            slot,
-        )
-        .unwrap();
-
-        // Execute the instruction.
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
-
-        // Verify the results.
+    fn assert_system_transfer_effects(
+        effects: &InstrEffects,
+        from: &Pubkey,
+        to: &Pubkey,
+        amount: u64,
+    ) {
+        // Success
         assert_eq!(effects.result, None);
         assert_eq!(effects.custom_err, None);
-        assert_eq!(effects.cu_avail, 9850u64);
-        assert_eq!(effects.return_data, Vec::<u8>::new(),);
+        // CUs exhausted
+        assert_eq!(effects.cu_avail, 0);
+        // Lamports transferred
+        assert_eq!(
+            effects.get_account(from).unwrap().lamports,
+            FROM_BASE_LAMPORTS
+        );
+        assert_eq!(
+            effects.get_account(to).unwrap().lamports,
+            TO_BASE_LAMPORTS + amount
+        );
+    }
 
-        // Verify account changes.
-        let from_account = effects
-            .resulting_accounts
-            .iter()
-            .find(|(k, _)| k == &from_pubkey)
-            .unwrap();
-        assert_eq!(from_account.1.lamports, 999);
+    #[test]
+    fn test_system_program_exec() {
+        let from = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let amount = 1_000;
+        let context = build_system_transfer_context(&from, &to, amount);
+        let sysvar_cache = sysvar_cache_with_rent();
+        let mut program_cache = new_program_cache_with_builtins(0);
 
-        let to_account = effects
-            .resulting_accounts
-            .iter()
-            .find(|(k, _)| k == &to_pubkey)
-            .unwrap();
-        assert_eq!(to_account.1.lamports, 1);
+        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        assert_system_transfer_effects(&effects, &from, &to, amount);
+    }
+
+    #[test]
+    fn test_system_program_exec_with_callback() {
+        let from = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let amount = 1_000;
+        let context = build_system_transfer_context(&from, &to, amount);
+        let sysvar_cache = sysvar_cache_with_rent();
+        let mut program_cache = new_program_cache_with_builtins(0);
+
+        let callback = CountingCallback::default();
+
+        let effects =
+            execute_instr_with_callback(&context, &callback, &mut program_cache, &sysvar_cache);
+        assert_system_transfer_effects(&effects, &from, &to, amount);
+    }
+
+    #[test_case(solana_sdk_ids::bpf_loader_deprecated::id(); "loader_v1")]
+    #[test_case(solana_sdk_ids::bpf_loader::id(); "loader_v2")]
+    #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(); "loader_v3")]
+    fn test_bpf_noop_program_exec(loader_key: Pubkey) {
+        let program_id = Pubkey::new_unique();
+        let context = InstrContext::new_with_default_budget(
+            SVMFeatureSet::default(),
+            vec![],
+            Instruction::new_with_bytes(program_id, &[], vec![]),
+        );
+        let sysvar_cache = sysvar_cache_with_rent();
+
+        let mut program_cache = new_program_cache_with_builtins(0);
+        add_program_to_program_cache(
+            &mut program_cache,
+            &program_id,
+            &loader_key,
+            NOOP_ELF,
+            &context.feature_set,
+        );
+
+        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        assert_eq!(effects.result, None);
+        assert_eq!(effects.custom_err, None);
     }
 }
