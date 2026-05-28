@@ -779,6 +779,76 @@ mod test {
         assert!(shred.verify(&keypair.pubkey()));
     }
 
+    #[test]
+    fn test_slot_interrupt_missing_parent_block_id() {
+        // Unit-level reproducer for the local-cluster race in
+        // https://github.com/anza-xyz/agave/issues/12799. A simple
+        // local-cluster health check with short slots is not enough to fail
+        // reliably; it needs the real BAM Geyser plugin and state-tracking
+        // workload to make broadcast lose this race. This test forces the same
+        // ordering directly:
+        //
+        // 1. Process slot 1 with one tick missing, so broadcast starts the
+        //    parent slot but does not set bank1.block_id().
+        // 2. Process slot 2 as a child of bank1 before bank1 has a block id.
+        // 3. Reinitializing broadcast state for bank2 reads
+        //    bank2.parent_block_id(), finds bank1.block_id() == None, and hits
+        //    the parent_block_id expect.
+        let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
+        let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
+            setup(num_shreds_per_slot);
+        let bank1 = new_child_bank(&bank0, 1);
+
+        let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks0),
+            bank: bank1.clone(),
+            last_tick_height: bank1.tick_height() + genesis_config.ticks_per_slot - 1,
+        };
+
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank0),
+        );
+        standard_broadcast_run
+            .test_process_receive_results(
+                &leader_keypair,
+                &cluster_info,
+                &socket,
+                &blockstore,
+                receive_results,
+                &bank_forks,
+            )
+            .unwrap();
+        assert!(bank1.block_id().is_none());
+
+        let bank2 = Arc::new(Bank::new_from_parent(
+            bank1.clone(),
+            *bank1.leader(),
+            bank1.slot() + 1,
+        ));
+        let ticks1 = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks1),
+            bank: bank2.clone(),
+            last_tick_height: bank2.tick_height() + 1,
+        };
+
+        standard_broadcast_run
+            .test_process_receive_results(
+                &leader_keypair,
+                &cluster_info,
+                &socket,
+                &blockstore,
+                receive_results,
+                &bank_forks,
+            )
+            .unwrap();
+    }
+
     #[test_case(MigrationStatus::default(), 1 ; "pre_migration")]
     #[test_case(MigrationStatus::post_migration_status(), 2 ; "alpenglow_enabled")]
     fn test_slot_interrupt(migration_status: MigrationStatus, shred_multiplier: u64) {
