@@ -1,97 +1,90 @@
-//! We have a transaction's logs as a flat `Vec<String>` and we want a nested
-//! invocation tree. This module does that fold.
+//! Solana transaction logs arrive as a flat `Vec<String>`. We want a tree so
+//! the natural CPI nesting surfaces instead of staying buried in line-by-line
+//! text.
 //!
-//! The runtime emits four kinds of structural lines that we destructure to
-//! build the tree:
+//! The logs nest cleanly: `invoke` opens a frame, `success|failed:` closes
+//! it. That's the Dyck language D-1 of balanced brackets, which a pushdown
+//! automaton recognizes by construction. See
+//! <https://en.wikipedia.org/wiki/Dyck_language>.
+//!
+//! So the parser is two layers: a per-line lexer (finite-state automaton,
+//! FSA) feeds a single-state pushdown automaton (PDA). The FSA has no
+//! memory across lines; the PDA's stack carries the nesting.
+//!
+//! # Layer 1: per-line classifier (FSA)
+//!
+//! `classify` plus the `strip_prefix` cascade maps one line to one token.
+//! No memory across lines; pure regular language.
 //!
 //! ```text
-//! Program <id> invoke [n]
-//! Program <id> consumed N of M compute units
-//! Program <id> success
-//! Program <id> failed: <message>
+//!              ┌─ "Program log: Instruction: <n>" -> Instruction(n)
+//!              ├─ "Program log: <t>"              -> Msg(t)
+//!              ├─ "Program data: <d>"             -> Data(d)
+//!              ├─ "Program <p> invoke [k]"        -> Invoke(p)
+//! [line] ──────┼─ "Program <p> success"           -> Status::Success
+//!              ├─ "Program <p> failed: <m>"       -> Status::Failed(m)
+//!              ├─ "Program <p> consumed N of M …" -> Consumed(N, M)
+//!              └─ <anything else>                 -> Other(line)
 //! ```
 //!
-//! Everything else a program (or the runtime) emits while a frame is open
-//! lands in `frame.logs`, a `Vec<FrameLog>` that preserves arrival order
-//! across two variants:
-//!   - `FrameLog::Msg(String)` for `Program log: <text>` (`msg!` /
-//!     `sol_log`), plus any unprefixed runtime diagnostic emitted in an
-//!     error-condition path (a line without our structural `Program `
-//!     prefix).
-//!   - `FrameLog::Data(String)` for `Program data: <base64>`
-//!     (`sol_log_data`, which Anchor's `emit!` macro uses).
+//! # Layer 2: stream parser (PDA)
 //!
-//! Both kinds are preserved regardless of outcome, and crucially the
-//! interleaving order between Msg and Data is preserved.
+//! One control state; the stack does all the work. Transitions read
+//! `input, stack-top -> new-stack`:
 //!
-//! When a program executes a CPI, the child's `invoke` / `success` lines
-//! interleave with the parent's own logging, and the bracket in `invoke [n]`
-//! reflects the call depth. (We don't actually use the bracket value to drive
-//! the parse; it's only there to validate that the line is shaped like an
-//! invoke. The depth falls out of how the stack pushes and pops naturally.)
+//! ```text
+//!      ┌─────────────────┐
+//!      │     running     │ ─┐   single state;
+//!      │  stack: γ       │  │   self-loop on every input
+//!      └─────────────────┘  │
+//!              ^            │
+//!              └────────────┘
 //!
-//! All that follows rests on one runtime invariant: a callee cannot outlive its
-//! caller. SBF physically can't return control to a parent CPI until every
-//! child it kicked off has finished. So the sequence of `invoke` and `success`
-//! / `failed:` lines is **well-nested**: every "open" is matched by a "close"
-//! that arrives before any earlier "open" closes. (Same property that makes
-//! `({[]})` a legal arithmetic expression and `({)[]}` a nonsensical one.)
+//!   Invoke(p),       γ          ->  Frame{p, Truncated} · γ     (PUSH)
+//!   Status::S,       Frame · γ  ->  γ; attach to parent/roots   (POP)
+//!   Status::F(m),    Frame · γ  ->  γ; attach to parent/roots   (POP)
+//!   Consumed(cu),    Frame · γ  ->  Frame{…cu=cu} · γ           (MUTATE top)
+//!   Msg/Data/Other,  Frame · γ  ->  Frame{…logs+=…} · γ         (MUTATE top)
+//!   Instruction(n),  Frame · γ  ->  Frame{…name=n} · γ          (MUTATE top)
+//!   EOF                         ->  drain stack as Truncated
+//! ```
 //!
-//! Equivalently: closes happen in reverse order of opens. Which is the access
-//! pattern of a stack, so the algorithm essentially writes itself:
+//! Payload-only tokens (`Msg`/`Data`/`Other`) cannot alter stack shape, so a
+//! stray runtime diagnostic mid-CPI can't corrupt the tree. Conversely,
+//! anything that affects the stack must match the exact tokenized shape: an
+//! invoke-shaped line with a malformed `[k]` bracket falls back to `Other`
+//! rather than pushing a half-known frame.
 //!
-//!   - `invoke` -> push a new frame
-//!   - `success` or `failed:` -> pop (it'll always be the right one to close,
-//!     by the invariant above)
-//!   - everything in between -> annotate whatever is on top
-//!
-//! The only way the brackets fail to balance is truncation: the log stream cuts
-//! off mid-transaction. (The process died, the RPC dropped frames, the buffer
-//! filled up; take your pick.) For that case, every frame is initialized with
-//! `outcome: Truncated` on push, so anything left on the stack at end-of-stream
-//! bubbles up with a useful, distinguishable outcome rather than being silently
-//! dropped or quietly misattributed as `Failed`. (It didn't technically fail;
-//! we just don't know what happened to it. "Absence of evidence" and "evidence
-//! of absence" are not the same thing, and the consumer of this tree may care
-//! about that distinction.)
+//! Truncation falls out of the EOF transition: pre-seeding `outcome:
+//! Truncated` on PUSH means the drain just pops unmodified frames; no special
+//! case for "stream ended mid-frame".
 
 use {
     solana_pubkey::Pubkey,
     std::{fmt::Write, str::FromStr},
 };
 
-// Connectors are written on the same line as a child's content. Spines are
-// continuation prefixes written under a frame on lines that follow its
-// header (other children, or the frame's own log entries).
-//
-// `CONN_BRANCH`/`CONN_LAST` are the standard `cargo tree` glyphs. Each is
-// 4 columns wide so that nested frames align consistently.
+// `cargo tree` glyphs. Connectors go on a child's line; spines continue
+// under a frame on lines that follow. 4 cols wide so nested frames align.
 const CONN_BRANCH: &str = "├── ";
 const CONN_LAST: &str = "└── ";
 const SPINE_CONTINUE: &str = "│   ";
 const SPINE_END: &str = "    ";
 
-// Log-block spines (used for the `>> log:` / `>> data:` rows). 2 columns
-// each so they slot just under the frame header without trying to align
-// with sibling connectors.
+// Narrower spines (2 cols) for `>> log:` / `>> data:` rows so they slot
+// under the header without aligning with sibling connectors.
 const LOG_SPINE_CONTINUE: &str = "│ ";
 const LOG_SPINE_END: &str = "  ";
 
-/// The two CU values the runtime reports together on a
-/// `Program X consumed N of M compute units` line. Paired in a single
-/// struct because either both are emitted (BPF programs) or neither is
-/// (native programs that don't run in the SBPF VM).
+/// Both values from a `Consumed(N, M)` token. Either both are emitted
+/// (BPF programs) or neither (native programs outside the SBPF VM).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComputeUnits {
-    /// What this frame consumed. Cumulative: includes the program's CPI
-    /// children's consumption, so summing top-level frames gives the
-    /// transaction total (matches `TransactionStatusMeta::compute_units_consumed`).
+    /// CU consumed by this frame. Cumulative over CPI children, so summing
+    /// top-level frames matches `TransactionStatusMeta::compute_units_consumed`.
     pub consumed: u64,
-    /// Compute units remaining in the transaction's budget at the moment
-    /// this frame started executing. For the first top-level instruction
-    /// this equals the transaction's total CU budget; for subsequent
-    /// frames it's the running remainder after earlier frames consumed
-    /// from the same budget.
+    /// CU remaining in the transaction's budget when this frame started.
+    /// First top-level frame: full budget. Later frames: running remainder.
     pub available_at_start: u64,
 }
 
@@ -101,29 +94,21 @@ pub struct CpiFrame {
     pub outcome: CpiOutcome,
     pub compute_units: Option<ComputeUnits>,
     pub instruction_name: Option<String>,
-    /// Order preserving record of `msg!` strings, `emit!` payloads, and
-    /// unprefixed runtime diagnostics emitted while this frame was on the
-    /// stack. Both `Msg` and `Data` variants share the same Vec so the
-    /// interleaving the runtime produced survives the parse; a consumer can
-    /// reconstruct the flat-log content for this frame from `logs` alone.
-    /// Survives every outcome (unlike a diagnostics buffer that gets discarded
-    /// on success).
+    /// `Msg` / `Data` / `Other` tokens accumulated while this frame was on
+    /// the stack, in arrival order. Survives every outcome.
     pub logs: Vec<FrameLog>,
     pub children: Vec<CpiFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameLog {
-    /// `Program log: <text>` from `msg!` / `sol_log` (excluding the special
-    /// `Program log: Instruction: <name>` form, which populates
-    /// `CpiFrame::instruction_name`). The parser also routes any unprefixed
-    /// runtime diagnostic into this variant (e.g. error-condition messages
-    /// without the structural `Program ` prefix): they don't have a
-    /// destructured shape, and `Msg` keeps the renderer logic uniform.
+    /// `Msg(t)` and `Other(line)` tokens (see module-level FSA). `Other`
+    /// lands here too: no destructured shape, and the renderer treats text
+    /// payloads uniformly.
     Msg(String),
-    /// `Program data: <base64>` from `sol_log_data`. Anchor's `emit!` macro
-    /// boils down to this syscall. We use the literal log term "data" rather
-    /// than "events"; event semantics layer above us via per-program IDLs.
+    /// `Data(d)` token: `sol_log_data` payload (Anchor's `emit!`). We keep
+    /// the log term "data"; "event" semantics layer above via per-program
+    /// IDLs.
     Data(String),
 }
 
@@ -133,42 +118,26 @@ pub enum CpiOutcome {
     Failed {
         message: Option<String>,
     },
-    /// Frame whose closing line never arrived: the stream ended with this
-    /// frame still open. Distinct from `Failed` because we don't actually
-    /// know what happened to it; we just lost sight of it.
+    /// Frame still open at EOF. Distinct from `Failed`: we lost sight of
+    /// it rather than observed it die.
     Truncated,
 }
 
-/// Walk the log stream once with a stack of in-progress frames. The mapping
-/// is the obvious one: `invoke` pushes a frame, `success` / `failed:` pops
-/// it, `consumed` annotates the top frame's compute count, and
-/// `Program log:` / `Program data:` / unprefixed runtime chatter all append
-/// to the top frame's `logs` (in arrival order, preserving the interleaving
-/// the runtime emitted).
+/// Drive the PDA from the module doc: one pass over `logs`, dispatch each
+/// token against the current stack top.
 pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
     let mut roots: Vec<CpiFrame> = Vec::new();
     let mut stack: Vec<CpiFrame> = Vec::new();
 
     for log in logs {
         if let Some(name) = log.strip_prefix("Program log: Instruction: ") {
-            // The `Instruction:` line is what programs that follow the
-            // convention (Anchor's dispatch macro, SPL Token) emit right
-            // before the handler body runs. Anything `Msg` we've already
-            // buffered is pre-handler chatter and isn't what the user wants
-            // to see in this frame's logs; clear those. Any `Data` entries
-            // we keep, since `emit!` before the dispatcher's `Instruction:`
-            // line is an unusual but legitimate emission worth preserving.
-            //
-            // Start Condition
+            // `Instruction(n)`: dispatcher convention (Anchor, SPL Token).
+            // Drop any pre-handler `Msg` chatter; keep `Data` . First name
+            // wins.
             if let Some(frame) = stack.last_mut() {
                 frame
                     .logs
                     .retain(|entry| !matches!(entry, FrameLog::Msg(_)));
-                // First `Instruction:` line wins. In practice the programs
-                // I've looked at (Anchor's dispatch, SPL Token) emit exactly
-                // one per handler; this check is belt-and-braces in case a
-                // program ever emits a second one mid-handler (the first
-                // would still be the canonical dispatcher name).
                 if frame.instruction_name.is_none() {
                     frame.instruction_name = Some(name.to_string());
                 }
@@ -193,10 +162,8 @@ pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
                 let Ok(program_id) = Pubkey::from_str(&program) else {
                     continue;
                 };
-                // Initialize `outcome: Truncated`. If the frame never sees a
-                // status line (because the stream got cut off), this is the
-                // outcome it'll bubble up with, no special case in the
-                // happy path needed.
+                // PUSH with `outcome: Truncated` pre-seeded; the EOF drain
+                // below leaves it untouched if no status line arrives.
                 stack.push(CpiFrame {
                     program_id,
                     outcome: CpiOutcome::Truncated,
@@ -222,17 +189,8 @@ pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
                 push_into_parent_or_roots(frame, &mut stack, &mut roots);
             }
             LogLine::Other => {
-                // The catch-all: lines that aren't `invoke` / `consumed` /
-                // status and don't start with `Program log:` or `Program
-                // data:`. Covers any unprefixed runtime diagnostic that
-                // happens to land in the log stream (an error-condition
-                // line, for example). Bucketed as `Msg` because there's no
-                // structural shape to destructure and the renderer treats
-                // it the same as any other text payload on a frame.
-                //
-                // No current frame -> nowhere to attach -> drop it. (Doesn't
-                // happen today, but it's defined behavior rather than a
-                // panic so future runtime changes can't blow us up here.)
+                // `Other` bucketed as `Msg` per the PDA's payload-only row.
+                // No frame open: drop it (defined behavior, not a panic).
                 if let Some(frame) = stack.last_mut() {
                     frame.logs.push(FrameLog::Msg(log.clone()));
                 }
@@ -240,11 +198,7 @@ pub fn cpi_tree(logs: &[String]) -> Vec<CpiFrame> {
         }
     }
 
-    // Drain whatever's still on the stack with its pre-seeded `Truncated`
-    // outcome. Innermost-first pop order is what preserves the parent/child
-    // hierarchy in the truncated tail; the resulting tree shape matches
-    // what we'd have got from a complete stream, just with `Truncated`
-    // outcomes wherever we lost sight.
+    // EOF transition: drain remaining frames; pre-seeded `Truncated` carries.
     while let Some(frame) = stack.pop() {
         push_into_parent_or_roots(frame, &mut stack, &mut roots);
     }
@@ -264,17 +218,12 @@ fn push_into_parent_or_roots(
     }
 }
 
-/// Format an integer with US-style thousands separators (`53402` →
-/// `"53,402"`). Used for CU values in the renderer and on the
-/// transaction-total header so numbers stay scannable at the kind of
-/// magnitudes Solana transactions tend to land at (1.4M CU budget).
+/// Thousand-separated integer (`53402` -> `"53,402"`). Used wherever CU
+/// values land in user-facing output.
 pub fn with_commas(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, b) in s.bytes().enumerate() {
-        // Insert a separator before every group of three digits, counting
-        // back from the end. The `i > 0` guard skips a leading comma when
-        // the digit count is a clean multiple of three.
         if i > 0 && (s.len() - i) % 3 == 0 {
             out.push(',');
         }
@@ -283,16 +232,12 @@ pub fn with_commas(n: u64) -> String {
     out
 }
 
-/// Sum of the top-level frames' `compute_units`, or `None` if no frame
-/// contributes a value. Returning `None` distinguishes "no CU data in the
-/// logs" (e.g. a transaction whose only instruction is a native program
-/// like the BPF Loader or a top-level System Program transfer, neither of
-/// which emits `consumed N of M compute units` lines) from the impossible
-/// case of "every BPF program consumed exactly zero".
+/// Sum of top-level frames' `consumed`, or `None` if no frame reported CU
+/// (e.g. an all-native-program transaction). `None` distinguishes "no
+/// data" from the impossible "every program consumed zero".
 ///
-/// Children are intentionally not summed: Solana's per-frame `consumed`
-/// already includes any CPI children's consumption (verified against
-/// `TransactionStatusMeta::compute_units_consumed` / Explorer), so
+/// Children are skipped: per-frame `consumed` is already cumulative over
+/// CPIs (matches `TransactionStatusMeta::compute_units_consumed`), so
 /// descending would double-count.
 pub fn transaction_total_cu(frames: &[CpiFrame]) -> Option<u64> {
     frames
@@ -301,11 +246,8 @@ pub fn transaction_total_cu(frames: &[CpiFrame]) -> Option<u64> {
         .fold(None, |acc, cu| Some(acc.unwrap_or(0) + cu))
 }
 
-/// Transaction-wide CU budget: the `available_at_start` value of the first
-/// top-level frame that had any CU data. For Solana transactions this
-/// equals the per-instruction default (200,000) × instruction count, capped
-/// at 1,400,000, *unless* the tx used `ComputeBudgetInstruction::set_compute_unit_limit`
-/// to override. Returns `None` when no frame reported CU at all.
+/// Transaction CU budget: `available_at_start` of the first top-level
+/// frame with CU data. `None` if no frame reported CU.
 pub fn transaction_compute_budget(frames: &[CpiFrame]) -> Option<u64> {
     frames
         .iter()
@@ -324,11 +266,9 @@ enum Status {
     Failed { message: Option<String> },
 }
 
-/// Decide what kind of line we're looking at. Tokenize on single spaces and
-/// pattern-match the slice shape, anchoring on the keyword positions
-/// (`invoke`/`success`/`failed:`/`consumed` etc. at known indices) rather
-/// than scanning for keywords anywhere in the line. The program id at
-/// token[1] is opaque to us; we never compare against it.
+/// Layer-1 FSA: tokenize on spaces and match the slice shape at known
+/// indices. Malformed structural shapes degrade to `Other` rather than
+/// constructing partial tokens.
 fn classify(log: &str) -> LogLine {
     let tokens: Vec<&str> = log.split(' ').collect();
     match tokens.as_slice() {
@@ -337,11 +277,8 @@ fn classify(log: &str) -> LogLine {
         }
         ["Program", _, "success"] => LogLine::Status(Status::Success),
         ["Program", _, "failed:", ..] => {
-            // `splitn(4, ' ')` peels off the three structural tokens
-            // ("Program", program id, "failed:") and hands back the rest as
-            // a slice of the original log. We extract just enough to
-            // disambiguate the line shape; the message body comes through
-            // unmodified, whatever whitespace the runtime used.
+            // Pass the message body through unmodified, whatever whitespace
+            // the runtime used.
             let raw = log.splitn(4, ' ').nth(3).unwrap_or("").trim();
             let message = (!raw.is_empty()).then(|| raw.to_string());
             LogLine::Status(Status::Failed { message })
@@ -355,34 +292,20 @@ fn classify(log: &str) -> LogLine {
             available,
             "compute",
             "units",
-        ] => {
-            // Both values must parse; if either is malformed we fall back to
-            // `Other` rather than constructing a half-known `ComputeUnits`.
-            match (consumed.parse::<u64>(), available.parse::<u64>()) {
-                (Ok(consumed), Ok(available_at_start)) => LogLine::Consumed(ComputeUnits {
-                    consumed,
-                    available_at_start,
-                }),
-                _ => LogLine::Other,
-            }
-        }
+        ] => match (consumed.parse::<u64>(), available.parse::<u64>()) {
+            (Ok(consumed), Ok(available_at_start)) => LogLine::Consumed(ComputeUnits {
+                consumed,
+                available_at_start,
+            }),
+            _ => LogLine::Other,
+        },
         _ => LogLine::Other,
     }
 }
 
-/// Render `frames` as `cargo tree`-style box-art under a synthetic header.
-/// The header acts as a visible parent so the multiple top-level frames a
-/// transaction can contain (one per instruction) hang together as siblings
-/// rather than reading as flush-left strangers.
-///
-/// Rules:
-///   - First line is `header`, verbatim.
-///   - Each frame becomes a child of the header: non-last gets
-///     `CONN_BRANCH` (`├── `), the last gets `CONN_LAST` (`└── `).
-///   - Continuation under a non-last branch uses `SPINE_CONTINUE` (`│   `)
-///     to keep the vertical spine visible. Continuation under a last
-///     branch is `SPINE_END` (`    `); no spine, because nothing further
-///     down branches off it.
+/// `cargo tree`-style box-art under a synthetic header. The header acts as
+/// a visible parent so a transaction's multiple top-level frames read as
+/// siblings rather than flush-left strangers.
 pub fn format_cpi_tree(header: &str, frames: &[CpiFrame]) -> String {
     let mut out = String::new();
     writeln!(out, "{header}").unwrap();
@@ -422,9 +345,8 @@ fn write_frame(out: &mut String, frame: &CpiFrame, prefix: &str, is_last: bool) 
     } else {
         format!("{prefix}{SPINE_CONTINUE}")
     };
-    // Log entries sit between the frame header and any children, in arrival
-    // order. The spine continues to the children when any follow, terminates
-    // otherwise; keeps a stray `│` from dangling under a leaf frame.
+    // `LOG_SPINE_CONTINUE` (`│ `) when children follow; `LOG_SPINE_END`
+    // (`  `) otherwise, to avoid a dangling `│` under a leaf frame.
     let log_spine = if frame.children.is_empty() {
         LOG_SPINE_END
     } else {
@@ -648,6 +570,7 @@ mod tests {
         ];
         let tree = cpi_tree(&logs);
         let out = format_cpi_tree("CPI Tree:", &tree);
+        // TODO: declare tree DOM style
         assert_render_eq(
             &out,
             "
