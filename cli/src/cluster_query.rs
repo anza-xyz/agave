@@ -1589,22 +1589,25 @@ pub fn process_logs(
                 );
                 if tree {
                     let frames = crate::log_tree::cpi_tree(&logs.value.logs);
-                    // Header shows `(consumed / budget CU)` when CU data is
-                    // available. `transaction_total_cu` returns `None` when
-                    // every top-level frame is a native program (BPF Loader,
-                    // top-level System Program, etc.) that doesn't emit
-                    // `consumed N of M compute units` lines; in that case
-                    // we fall back to the explicit note rather than
-                    // misreporting "0 CU".
+                    // Header shows `(N BPF CU / M budget)`. BPF CU because
+                    // `transaction_total_cu` sums only what the SBPF VM
+                    // reports via `Program X consumed N of M` lines; native
+                    // programs (`ComputeBudget`, precompiles, `BpfLoader`)
+                    // never emit those, so their cost is invisible here and
+                    // this number will be lower than the explorer's
+                    // `compute_units_consumed` whenever the tx has any
+                    // non-BPF instructions. When every top-level frame is
+                    // native, `transaction_total_cu` returns `None` and we
+                    // print the explicit fallback rather than "0".
                     let total = crate::log_tree::transaction_total_cu(&frames);
                     let budget = crate::log_tree::transaction_compute_budget(&frames);
                     let header = match (total, budget) {
                         (Some(t), Some(b)) => format!(
-                            "CPI Tree ({} / {} CU):",
+                            "CPI Tree ({} BPF CU / {} budget):",
                             crate::log_tree::with_commas(t),
                             crate::log_tree::with_commas(b)
                         ),
-                        _ => "CPI Tree (no compute units in logs):".to_string(),
+                        _ => "CPI Tree (no BPF CU in logs):".to_string(),
                     };
                     let rendered = crate::log_tree::format_cpi_tree(&header, &frames);
                     for line in rendered.lines() {

@@ -77,11 +77,16 @@ const LOG_SPINE_CONTINUE: &str = "│ ";
 const LOG_SPINE_END: &str = "  ";
 
 /// Both values from a `Consumed(N, M)` token. Either both are emitted
-/// (BPF programs) or neither (native programs outside the SBPF VM).
+/// (BPF programs) or neither (native programs outside the SBPF VM:
+/// `ComputeBudget`, `BpfLoader`, precompiles). The native-program gap is
+/// load-bearing for the totals below; see `transaction_total_cu`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComputeUnits {
-    /// CU consumed by this frame. Cumulative over CPI children, so summing
-    /// top-level frames matches `TransactionStatusMeta::compute_units_consumed`.
+    /// CU consumed by this frame as reported by the SBPF VM. Cumulative
+    /// over CPI children of the same frame (so descending the tree would
+    /// double-count), but does NOT include native-program CU sandwiched
+    /// at the top level: `ComputeBudget` instructions, precompiles, and
+    /// the `BpfLoader` never emit `Program X consumed N of M` lines.
     pub consumed: u64,
     /// CU remaining in the transaction's budget when this frame started.
     /// First top-level frame: full budget. Later frames: running remainder.
@@ -236,9 +241,18 @@ pub fn with_commas(n: u64) -> String {
 /// (e.g. an all-native-program transaction). `None` distinguishes "no
 /// data" from the impossible "every program consumed zero".
 ///
-/// Children are skipped: per-frame `consumed` is already cumulative over
-/// CPIs (matches `TransactionStatusMeta::compute_units_consumed`), so
-/// descending would double-count.
+/// Children are skipped because per-frame `consumed` is already cumulative
+/// over CPIs; descending would double-count.
+///
+/// N.B. this is BPF-visible CU, not transaction-total CU. Native-program
+/// instructions at the top level (`ComputeBudget`, precompiles, `BpfLoader`)
+/// don't emit `Program X consumed N of M compute units` lines, so their cost
+/// is invisible here. `TransactionStatusMeta::compute_units_consumed` sums
+/// everything (native + BPF) and is generally higher than this value; the
+/// two only agree for an all-BPF transaction with no `ComputeBudget` prefix.
+/// We surface the BPF-visible number because that's all `logsSubscribe`
+/// gives us; consumers that need parity with the explorer must hit
+/// `getTransaction` for the authoritative meta.
 pub fn transaction_total_cu(frames: &[CpiFrame]) -> Option<u64> {
     frames
         .iter()
