@@ -57,8 +57,8 @@ fn bench_accounts_index(c: &mut Criterion) {
                 reclaims.clear();
             }
             index.add_root(root);
-            root += 1;
-            fork += 1;
+            root = root.checked_add(1).expect("root overflow");
+            fork = fork.checked_add(1).expect("fork overflow");
         });
     });
 }
