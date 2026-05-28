@@ -12,6 +12,7 @@ use {
 use {
     solana_account::Account,
     solana_instruction::{Instruction, error::InstructionError},
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
     solana_svm_feature_set::SVMFeatureSet,
 };
@@ -21,6 +22,24 @@ pub struct InstrContext {
     pub feature_set: SVMFeatureSet,
     pub accounts: Vec<(Pubkey, Account)>,
     pub instruction: Instruction,
+    pub cu_avail: u64,
+}
+
+impl InstrContext {
+    /// Create a new [`InstrContext`] with the default compute unit budget
+    /// (200,000 CUs).
+    pub fn new_with_default_budget(
+        feature_set: SVMFeatureSet,
+        accounts: Vec<(Pubkey, Account)>,
+        instruction: Instruction,
+    ) -> Self {
+        Self {
+            feature_set,
+            accounts,
+            instruction,
+            cu_avail: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
+        }
+    }
 }
 
 #[cfg(feature = "conformance")]
@@ -65,10 +84,13 @@ impl From<ProtoInstrContext> for InstrContext {
             program_id,
         };
 
+        let cu_avail = value.cu_avail;
+
         Self {
             feature_set,
             accounts,
             instruction,
+            cu_avail,
         }
     }
 }

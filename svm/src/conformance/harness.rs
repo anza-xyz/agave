@@ -369,6 +369,7 @@ mod tests {
                     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 ],
             },
+            cu_avail,
         };
 
         // Set up the Compute Budget.

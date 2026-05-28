@@ -317,11 +317,7 @@ fn test_program_sbf_sanity() {
         );
         let sysvar_cache = default_sysvar_cache();
 
-        let context = InstrContext {
-            feature_set,
-            accounts,
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -383,11 +379,7 @@ fn test_program_sbf_loader_deprecated() {
         let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction = Instruction::new_with_bytes(program_id, &[255], account_metas);
 
-        let context = InstrContext {
-            feature_set,
-            accounts,
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -499,11 +491,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     .pop()
     .unwrap();
 
-    let context = InstrContext {
-        feature_set,
-        accounts,
-        instruction,
-    };
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     // Expect that deployment to fail. B/C during deployment, there is an elf
     // verification step, which uses the runtime to look up relocatable symbols
@@ -564,11 +552,7 @@ fn test_program_sbf_duplicate_accounts() {
                 (pubkey, account.clone()),
             ];
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
-            let context = InstrContext {
-                feature_set,
-                accounts,
-                instruction,
-            };
+            let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
             execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
         };
 
@@ -616,11 +600,7 @@ fn test_program_sbf_duplicate_accounts() {
             (pubkey, Account::new(10, 1, &program_id)),
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
-        let context = InstrContext {
-            feature_set,
-            accounts,
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
         assert!(effects.result.is_none());
     }
@@ -667,11 +647,8 @@ fn test_program_sbf_error_handling() {
             let account_metas = vec![AccountMeta::new(pubkey1, true)];
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
 
-            let context = InstrContext {
-                feature_set,
-                accounts: accounts.clone(),
-                instruction,
-            };
+            let context =
+                InstrContext::new_with_default_budget(feature_set, accounts.clone(), instruction);
 
             execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
         };
@@ -759,11 +736,7 @@ fn test_return_data_and_log_data_syscall() {
         let instruction =
             Instruction::new_with_bytes(program_id, &[1, 2, 3, 0, 4, 5, 6], account_metas);
 
-        let context = InstrContext {
-            feature_set,
-            accounts,
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -1463,11 +1436,7 @@ fn test_program_sbf_program_id_spoofing() {
     let instruction =
         Instruction::new_with_bytes(malicious_swap_pubkey, &[], account_metas.clone());
 
-    let context = InstrContext {
-        feature_set,
-        accounts,
-        instruction,
-    };
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -1530,11 +1499,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
     ];
     let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas);
 
-    let context = InstrContext {
-        feature_set,
-        accounts,
-        instruction,
-    };
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -1575,11 +1540,8 @@ fn test_program_sbf_ro_modify() {
         let instruction =
             Instruction::new_with_bytes(program_id, &[instr_data], account_metas.clone());
 
-        let context = InstrContext {
-            feature_set,
-            accounts: accounts.clone(),
-            instruction,
-        };
+        let context =
+            InstrContext::new_with_default_budget(feature_set, accounts.clone(), instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -1612,11 +1574,7 @@ fn test_program_sbf_call_depth() {
     let mut execute = |depth: usize| {
         let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
 
-        let context = InstrContext {
-            feature_set,
-            accounts: vec![],
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, vec![], instruction);
 
         execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache)
     };
@@ -1659,6 +1617,7 @@ fn test_program_sbf_compute_budget() {
         feature_set,
         accounts,
         instruction,
+        cu_avail: compute_budget.compute_unit_limit,
     };
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
@@ -1738,11 +1697,7 @@ fn assert_instruction_count() {
         }];
         let instruction = Instruction::new_with_bytes(program_id, &[], instruction_accounts);
 
-        let context = InstrContext {
-            feature_set,
-            accounts,
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -1866,11 +1821,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
 
     let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
 
-    let context = InstrContext {
-        feature_set,
-        accounts,
-        instruction,
-    };
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -2391,11 +2342,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
         let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
         let instruction = Instruction::new_with_bytes(bpf_loader::id(), &[1], account_metas);
 
-        let context = InstrContext {
-            feature_set,
-            accounts: vec![],
-            instruction,
-        };
+        let context = InstrContext::new_with_default_budget(feature_set, vec![], instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
         assert_eq!(effects.result, Some(InstructionError::UnsupportedProgramId));
@@ -2437,11 +2384,11 @@ fn test_program_reads_from_program_account() {
     let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
     let instruction = Instruction::new_with_bytes(program_id, &program_elf[..48], account_metas);
 
-    let context = InstrContext {
+    let context = InstrContext::new_with_default_budget(
         feature_set,
-        accounts: vec![(program_id, program_account)],
+        vec![(program_id, program_account)],
         instruction,
-    };
+    );
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
     assert!(effects.result.is_none());
@@ -2479,11 +2426,11 @@ fn test_program_sbf_c_dup() {
     ];
     let instruction = Instruction::new_with_bytes(program_id, &[4, 5, 6, 7], account_metas);
 
-    let context = InstrContext {
+    let context = InstrContext::new_with_default_budget(
         feature_set,
-        accounts: vec![(account_address, account)],
+        vec![(account_address, account)],
         instruction,
-    };
+    );
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
     assert!(effects.result.is_none());
@@ -2685,11 +2632,8 @@ fn test_program_sbf_ro_account_modify() {
     for case in [0, 1, 2] {
         let instruction = Instruction::new_with_bytes(program_id, &[case], account_metas.clone());
 
-        let context = InstrContext {
-            feature_set,
-            accounts: accounts.clone(),
-            instruction,
-        };
+        let context =
+            InstrContext::new_with_default_budget(feature_set, accounts.clone(), instruction);
 
         let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
@@ -4604,6 +4548,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
         feature_set,
         accounts: vec![],
         instruction,
+        cu_avail: compute_budget.compute_unit_limit,
     };
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
@@ -5685,11 +5630,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
 
     let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
 
-    let context = InstrContext {
-        feature_set,
-        accounts,
-        instruction,
-    };
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
 
