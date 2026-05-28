@@ -67,24 +67,16 @@ impl InvokeContextCallback for ConformanceCallback {
 /// (no-precompile) callback.
 pub fn execute_instr(
     input: &InstrContext,
-    compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
 ) -> InstrEffects {
-    execute_instr_with_callback(
-        input,
-        &DefaultCallback,
-        compute_budget,
-        program_cache,
-        sysvar_cache,
-    )
+    execute_instr_with_callback(input, &DefaultCallback, program_cache, sysvar_cache)
 }
 
 /// Execute a single instruction against the Solana VM with a custom callback.
 pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     input: &InstrContext,
     callback: &C,
-    compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
 ) -> InstrEffects {
@@ -93,6 +85,10 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 
     let log_collector = LogCollector::new_ref();
     let feature_set = input.feature_set;
+    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
+
+    let mut compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+    compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
     let rent = sysvar_cache.get_rent().unwrap();
     let program_id = &input.instruction.program_id;
@@ -206,17 +202,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 
 #[cfg(feature = "conformance")]
 pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
-    let cu_avail = input.cu_avail;
     let instr_context = InstrContext::from(input);
-
-    let feature_set = &instr_context.feature_set;
-    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-
-    let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active);
-        budget.compute_unit_limit = cu_avail;
-        budget
-    };
 
     // When testing with protobuf, we fill the sysvar cache from input accounts.
     let sysvar_cache = {
@@ -234,8 +220,12 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     // When testing with protobuf, we fill the program cache from input accounts.
     let mut program_cache = {
         let slot = sysvar_cache.get_clock().unwrap().slot;
+        let feature_set = &instr_context.feature_set;
+        let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
+        let compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+
         let environment = create_program_runtime_environment(
-            &instr_context.feature_set,
+            feature_set,
             &compute_budget.to_budget(),
             false, /* deployment */
             false, /* debugging_features */
@@ -252,7 +242,6 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     execute_instr_with_callback(
         &instr_context,
         &ConformanceCallback,
-        &compute_budget,
         &mut program_cache,
         &sysvar_cache,
     )
@@ -372,13 +361,6 @@ mod tests {
             cu_avail,
         };
 
-        // Set up the Compute Budget.
-        let compute_budget = {
-            let mut budget = ComputeBudget::new_with_defaults(false);
-            budget.compute_unit_limit = cu_avail;
-            budget
-        };
-
         // Create Sysvar Cache.
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -394,7 +376,7 @@ mod tests {
 
         let environments = create_program_runtime_environment(
             &context.feature_set,
-            &compute_budget.to_budget(),
+            &ComputeBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8).to_budget(),
             false, /* deployment */
             false, /* debugging_features */
         )
@@ -409,7 +391,7 @@ mod tests {
         .unwrap();
 
         // Execute the instruction.
-        let effects = execute_instr(&context, &compute_budget, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
 
         // Verify the results.
         assert_eq!(effects.result, None);
