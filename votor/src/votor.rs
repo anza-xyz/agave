@@ -174,6 +174,7 @@ impl Votor {
 
         let migration_status = bank_forks.read().unwrap().migration_status();
         let identity_keypair = cluster_info.keypair();
+        let vote_history_highest_parent_ready = vote_history.highest_parent_ready();
 
         // Get the sharable root bank
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
@@ -235,6 +236,7 @@ impl Votor {
             blockstore,
             sharable_banks: sharable_banks.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
+            vote_history_highest_parent_ready,
             consensus_message_receiver,
             bls_sender,
             event_sender,

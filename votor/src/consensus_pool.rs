@@ -7,7 +7,7 @@ use {
             Stake, conflicting_types, vote_to_cert_types,
         },
         consensus_pool::{
-            parent_ready_tracker::ParentReadyTracker,
+            parent_ready_tracker::{ParentReady, ParentReadyTracker},
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
             vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
@@ -123,8 +123,8 @@ pub(crate) struct ConsensusPool {
     stats: ConsensusPoolStats,
     /// Slot stake counters, used to calculate safe_to_notar and safe_to_skip
     slot_stake_counters_map: BTreeMap<Slot, SlotStakeCounters>,
-    /// Stores details about the genesis vote during the migration
-    migration_status: Option<Arc<MigrationStatus>>,
+    /// Stores details about the genesis vote during the migration.
+    migration_status: Arc<MigrationStatus>,
     /// Pending safe-to-notar blocks for intrawindow slots that need parent verification.
     /// These are blocks that have reached the safe-to-notar threshold but are not the
     /// first block in their leader window. They need to be verified that their parent
@@ -135,26 +135,15 @@ pub(crate) struct ConsensusPool {
 }
 
 impl ConsensusPool {
-    pub(crate) fn new_from_root_bank_pre_migration(
+    pub(crate) fn new(
         cluster_info: Arc<ClusterInfo>,
-        bank: &Bank,
+        root: &Bank,
         generated_cert_types: Arc<GeneratedCertTypes>,
         migration_status: Arc<MigrationStatus>,
+        initial_parent_ready: ParentReady,
     ) -> Self {
-        let mut pool = Self::new_from_root_bank(cluster_info, bank, generated_cert_types);
-        pool.migration_status = Some(migration_status);
-        pool
-    }
-
-    pub fn new_from_root_bank(
-        cluster_info: Arc<ClusterInfo>,
-        bank: &Bank,
-        generated_cert_types: Arc<GeneratedCertTypes>,
-    ) -> Self {
-        // To account for genesis and snapshots we allow default block id until
-        // block id can be serialized as part of the snapshot
-        let root_block = (bank.slot(), bank.block_id().unwrap_or_default());
-        let parent_ready_tracker = ParentReadyTracker::new(cluster_info.clone(), root_block);
+        let parent_ready_tracker =
+            ParentReadyTracker::new(cluster_info.clone(), root.slot(), initial_parent_ready);
 
         Self {
             cluster_info,
@@ -164,7 +153,7 @@ impl ConsensusPool {
             parent_ready_tracker,
             stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
-            migration_status: None,
+            migration_status,
             generated_cert_types,
             pending_safe_to_notar: vec![],
             last_pruned_slot: 0,
@@ -373,9 +362,7 @@ impl ConsensusPool {
                 }
             }
             CertificateType::Genesis(slot, block_id) => {
-                if let Some(ref migration_status) = self.migration_status {
-                    migration_status.set_genesis_certificate(cert);
-                }
+                self.migration_status.set_genesis_certificate(cert);
                 // The genesis block is automatically certified
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger((slot, block_id), events);
@@ -755,12 +742,16 @@ mod tests {
             let root_bank = bank_forks.read().unwrap().root_bank();
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let cluster_info = get_cluster_info(Keypair::new());
+            let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
+            let initial_parent_ready = (root_bank.slot().checked_add(1).unwrap(), root_block);
             Self {
                 validators: validator_keypairs,
-                pool: ConsensusPool::new_from_root_bank(
+                pool: ConsensusPool::new(
                     cluster_info,
                     &root_bank,
                     generated_cert_types.clone(),
+                    Arc::new(MigrationStatus::post_migration_status()),
+                    initial_parent_ready,
                 ),
                 bank_forks,
                 generated_cert_types,

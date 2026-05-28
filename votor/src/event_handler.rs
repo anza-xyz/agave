@@ -221,18 +221,18 @@ impl EventHandler {
             request_switch(&ctx.latest_switch_request, *my_pubkey, parent_block);
         }
 
-        let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
+        vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
-        if should_set_timeouts {
-            let root_bank = vctx.sharable_banks.root();
-            let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
-            let delta_first_slice = delta_block;
-            timer_manager.write().set_timeouts(
-                slot,
-                local_context.standstill_slot,
-                delta_first_slice,
-                delta_block,
-            );
+        let root_bank = vctx.sharable_banks.root();
+        let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
+        let delta_first_slice = delta_block;
+        let timeout_inserted = timer_manager.write().set_timeouts(
+            slot,
+            local_context.standstill_slot,
+            delta_first_slice,
+            delta_block,
+        );
+        if timeout_inserted {
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -1486,6 +1486,25 @@ mod tests {
         test_context.check_parent_ready_slot((slot, (2, block_id_2)));
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_4));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
+    }
+
+    #[test]
+    fn test_restored_parent_ready_sets_timeout() {
+        let mut test_context = setup();
+        let slot = 4;
+        let parent_block = (3, Hash::new_unique());
+
+        assert!(
+            test_context
+                .voting_context
+                .vote_history
+                .add_parent_ready(slot, parent_block)
+        );
+        assert!(!test_context.timer_manager.read().is_timeout_set(slot));
+
+        test_context.send_parent_ready_event(slot, parent_block);
+        test_context.check_timeout_set(slot);
+        assert_eq!(test_context.local_context.stats.timeout_set, 1);
     }
 
     #[test]

@@ -205,7 +205,7 @@ impl Timers {
         standstill_slot: Option<Slot>,
         delta_first_slice: Duration,
         delta_block: Duration,
-    ) {
+    ) -> bool {
         assert!(delta_first_slice <= delta_block);
         assert_eq!(self.heap.len(), self.timers.len());
         let timeout_config = TimeoutConfig {
@@ -225,6 +225,7 @@ impl Timers {
         });
         self.stats
             .incr_timeout_count_with_heap_size(self.heap.len(), new_timer_inserted);
+        new_timer_inserted
     }
 
     /// Call to make progress on the timer states.  If there are still active

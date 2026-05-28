@@ -8,7 +8,8 @@ use {
         commitment::{CommitmentAggregationData, CommitmentType, update_commitment_cache},
         common::DELTA_STANDSTILL,
         consensus_pool::{
-            AddVoteError, ConsensusPool, parent_ready_tracker::BlockProductionParent,
+            AddVoteError, ConsensusPool,
+            parent_ready_tracker::{BlockProductionParent, ParentReady},
         },
         event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
         generated_cert_types::GeneratedCertTypes,
@@ -52,6 +53,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) blockstore: Arc<Blockstore>,
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub(crate) vote_history_highest_parent_ready: Option<(Slot, Block)>,
 
     pub(crate) consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
 
@@ -224,27 +226,60 @@ impl ConsensusPoolService {
         Err(())
     }
 
+    /// Finds the initial parent ready that we should use for instantiating the ConsensusPool or kicking off votor
+    /// The max of genesis block, root block, or the restored parent ready from vote history
+    fn initial_parent_ready(
+        genesis_block: Option<Block>,
+        root_block @ (root_slot, _): Block,
+        vote_history_highest_parent_ready: Option<(Slot, Block)>,
+    ) -> ParentReady {
+        let Some(genesis_block) = genesis_block else {
+            // Alpenglow is not yet enabled, start with just the root
+            return (root_slot.checked_add(1).unwrap(), root_block);
+        };
+
+        let initial_block @ (initial_slot, _) = genesis_block.max(root_block);
+        let initial_parent_ready = (initial_slot.checked_add(1).unwrap(), initial_block);
+
+        if let Some(restored @ (restored_slot, _)) = vote_history_highest_parent_ready
+            && restored_slot > initial_parent_ready.0
+        {
+            restored
+        } else {
+            initial_parent_ready
+        }
+    }
+
+    fn root_block(root_bank: &Bank) -> Block {
+        (
+            root_bank.slot(),
+            root_bank
+                .block_id()
+                // Once SIMD-0333 is active we can hard unwrap here
+                .unwrap_or_default(),
+        )
+    }
+
     // Main loop for the certificate pool service, it only exits when any channel is disconnected
     fn consensus_pool_ingest_loop(mut ctx: ConsensusPoolContext) -> Result<(), ()> {
         let mut events = vec![];
         let root_bank = ctx.sharable_banks.root();
 
-        // Unlike the other votor threads, consensus pool starts even before alpenglow is enabled
-        // As it is required to track the Genesis Vote.
-        let mut consensus_pool = if ctx.migration_status.is_alpenglow_enabled() {
-            ConsensusPool::new_from_root_bank(
-                ctx.cluster_info.clone(),
-                &root_bank,
-                ctx.generated_cert_types.clone(),
-            )
-        } else {
-            ConsensusPool::new_from_root_bank_pre_migration(
-                ctx.cluster_info.clone(),
-                &root_bank,
-                ctx.generated_cert_types.clone(),
-                ctx.migration_status.clone(),
-            )
-        };
+        let initial_parent_ready = Self::initial_parent_ready(
+            ctx.migration_status.genesis_block(),
+            Self::root_block(&root_bank),
+            ctx.vote_history_highest_parent_ready,
+        );
+
+        // Unlike the other votor threads, consensus pool starts even before Alpenglow is enabled
+        // because it must track the genesis vote.
+        let mut consensus_pool = ConsensusPool::new(
+            ctx.cluster_info.clone(),
+            &root_bank,
+            ctx.generated_cert_types.clone(),
+            ctx.migration_status.clone(),
+            initial_parent_ready,
+        );
 
         info!("{}: Certificate pool loop starting", ctx.cluster_info.id());
         let mut stats = ConsensusPoolServiceStats::new();
@@ -264,22 +299,16 @@ impl ConsensusPoolService {
             // Kick off parent ready event, this either happens:
             // - When we first migrate to alpenglow from TowerBFT - kick off with genesis block
             // - If we startup post alpenglow migration - kick off with root block
+            // - If restored vote history is farther ahead, resume from its highest parent-ready
             if !kick_off_parent_ready && ctx.migration_status.is_alpenglow_enabled() {
-                let genesis_block = ctx
-                    .migration_status
-                    .genesis_block()
-                    .expect("Alpenglow is enabled");
                 let root_bank = ctx.sharable_banks.root();
-                // can expect once we have block id in snapshots (SIMD-0333)
-                let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
-                let kick_off_block @ (kick_off_slot, _) = genesis_block.max(root_block);
-                let start_slot = kick_off_slot.checked_add(1).unwrap();
-
-                events.push(VotorEvent::ParentReady {
-                    slot: start_slot,
-                    parent_block: kick_off_block,
-                });
-                highest_parent_ready = start_slot;
+                let (slot, parent_block) = Self::initial_parent_ready(
+                    ctx.migration_status.genesis_block(),
+                    Self::root_block(&root_bank),
+                    ctx.vote_history_highest_parent_ready,
+                );
+                events.push(VotorEvent::ParentReady { slot, parent_block });
+                highest_parent_ready = slot;
                 kick_off_parent_ready = true;
             }
 
@@ -661,10 +690,14 @@ mod tests {
 
             let root_bank = sharable_banks.root();
             let cluster_info = get_cluster_info(my_keypair.insecure_clone());
-            let consensus_pool = ConsensusPool::new_from_root_bank(
+            let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
+            let initial_parent_ready = (root_bank.slot().checked_add(1).unwrap(), root_block);
+            let consensus_pool = ConsensusPool::new(
                 cluster_info.clone(),
                 &root_bank,
                 Arc::new(GeneratedCertTypes::default()),
+                Arc::new(MigrationStatus::post_migration_status()),
+                initial_parent_ready,
             );
             let my_vote_pubkey = Pubkey::new_unique();
 
@@ -892,6 +925,7 @@ mod tests {
             blockstore: ctx.blockstore.clone(),
             sharable_banks: ctx.sharable_banks.clone(),
             leader_schedule_cache: ctx.leader_schedule_cache.clone(),
+            vote_history_highest_parent_ready: None,
             consensus_message_receiver: crossbeam_channel::unbounded().1,
             bls_sender: ctx.bls_sender.clone(),
             event_sender: crossbeam_channel::unbounded().0,
@@ -925,6 +959,28 @@ mod tests {
         assert!(
             produce_event.is_some(),
             "Should have received a ProduceWindow event"
+        );
+    }
+
+    #[test]
+    fn test_kick_off_parent_ready_uses_restored_vote_history() {
+        let genesis_block = Some((10, Hash::new_unique()));
+        let root_block = (12, Hash::new_unique());
+        assert_eq!(
+            ConsensusPoolService::initial_parent_ready(genesis_block, root_block, None),
+            (13, root_block)
+        );
+
+        let restored = (16, (15, Hash::new_unique()));
+        assert_eq!(
+            ConsensusPoolService::initial_parent_ready(genesis_block, root_block, Some(restored)),
+            restored
+        );
+
+        let stale = (12, (11, Hash::new_unique()));
+        assert_eq!(
+            ConsensusPoolService::initial_parent_ready(genesis_block, root_block, Some(stale)),
+            (13, root_block)
         );
     }
 

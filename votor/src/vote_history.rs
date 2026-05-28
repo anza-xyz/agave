@@ -212,8 +212,7 @@ impl VoteHistory {
 
     /// Add a new parent ready slot
     ///
-    /// Returns true if the insertion was successful and this was the
-    /// first parent ready for this slot, indicating we should set timeouts.
+    /// Returns true if this was the first parent ready for this slot.
     pub fn add_parent_ready(&mut self, slot: Slot, parent: Block) -> bool {
         if slot < self.root {
             return false;
@@ -231,7 +230,15 @@ impl VoteHistory {
     }
 
     pub fn highest_parent_ready_slot(&self) -> Option<Slot> {
-        self.parent_ready_slots.keys().max().copied()
+        self.highest_parent_ready().map(|(slot, _)| slot)
+    }
+
+    pub fn highest_parent_ready(&self) -> Option<(Slot, Block)> {
+        let (&slot, parents) = self
+            .parent_ready_slots
+            .iter()
+            .max_by_key(|(slot, _)| *slot)?;
+        parents.iter().min().copied().map(|parent| (slot, parent))
     }
 
     /// Sets the new root slot and cleans up outdated slots < `root`
@@ -496,6 +503,14 @@ mod test {
         assert!(vote_history.is_parent_ready(2, &block_id_2_1));
         assert!(vote_history.is_parent_ready(2, &block_id_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
+        let expected_parent = [block_id_2_0, block_id_2_1, block_id_0]
+            .into_iter()
+            .min()
+            .unwrap();
+        assert_eq!(
+            vote_history.highest_parent_ready(),
+            Some((2, expected_parent))
+        );
 
         // Adding a parent ready for slot before root silently returns false
         assert!(!vote_history.add_parent_ready(1, block_id_0));
