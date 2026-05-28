@@ -990,11 +990,14 @@ impl Blockstore {
         };
 
         // Block was full above, get_block_location returned Some, but may have
-        // been purged by BlockstoreCleanupService in between.
-        let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)? else {
-            return Ok(None);
-        };
-        Ok(Some((dmm, location)))
+        // been purged by BlockstoreCleanupService in between, or swapped out.
+        if let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)?
+            && dmm.double_merkle_root == block_id
+        {
+            Ok(Some((dmm, location)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Gets the double merkle meta for the given block.
