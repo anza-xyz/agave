@@ -1404,8 +1404,10 @@ fn migrate_legacy_hardlinks(bank_snapshot_dir: &Path, account_run_paths: &[PathB
         }
     }
 
-    // Persist the derived list to disk before tearing down legacy state, so a crash mid-migration
-    // doesn't leave us with neither the hardlinks nor the new-format file.
+    // Persist the derived list now: migration is destructive (it removes the legacy hardlinks
+    // below), and writing the storages list is what actually brings the bank snapshot to
+    // fastboot version >=3 compatibility. Doing it here means the snapshot stays loadable even
+    // if the validator never performs a proper teardown (e.g. crashes).
     serialize_storages_list_to_snapshot(
         bank_snapshot_dir,
         StoragesList::from_items(items),
