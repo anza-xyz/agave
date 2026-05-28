@@ -7001,4 +7001,38 @@ impl AccountsDb {
             0
         }
     }
+
+    /// Calls calculate_accounts_lt_hash_at_startup_from_index, but also folds in account
+    /// updates from the write cache. Use this in tests when the cache may not have been
+    /// flushed; Non test paths should always flush the cache first
+    ///
+    /// This path is NOT safe with concurrent flush operations
+    pub fn calculate_accounts_lt_hash_for_tests(&self, ancestors: &Ancestors) -> AccountsLtHash {
+        let AccountsLtHash(mut lt_hash) =
+            self.calculate_accounts_lt_hash_at_startup_from_index(ancestors);
+        for pubkey in self.accounts_cache.cached_pubkeys().iter() {
+            // mix out whatever older version the index walk produced (if any)
+            self.accounts_index.get_with_and_then(
+                pubkey,
+                ancestors,
+                false,
+                |(slot, account_info)| {
+                    self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                        .get_loaded_account(|loaded_account| {
+                            lt_hash.mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
+                        });
+                },
+            );
+            // mix in the cache version
+            if let Some((account, _slot)) = self.load(
+                ancestors,
+                pubkey,
+                LoadHint::FixedMaxRoot,
+                PopulateReadCache::False,
+            ) {
+                lt_hash.mix_in(&Self::lt_hash_account(&account, pubkey).0);
+            }
+        }
+        AccountsLtHash(lt_hash)
+    }
 }
