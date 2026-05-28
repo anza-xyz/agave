@@ -16,3 +16,5 @@ pub mod programs;
 #[cfg(feature = "conformance")]
 pub mod serialization;
 mod setup;
+#[cfg(feature = "conformance")]
+pub mod syscall;

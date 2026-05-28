@@ -28,6 +28,18 @@ use {
     solana_transaction_context::transaction::TransactionContext,
 };
 
+/// The loader that owns the program account in `accounts`, used as the program
+/// account's owner when compiling the transaction. `None` if the program
+/// account isn't present.
+#[cfg(feature = "conformance")]
+pub(crate) fn program_loader_key(accounts: &[(Pubkey, Account)], program_id: &Pubkey) -> Pubkey {
+    accounts
+        .iter()
+        .find(|(key, _)| key == program_id)
+        .map(|(_, account)| account.owner)
+        .expect("program not found in accounts")
+}
+
 /// Compile `instruction` into a sanitized message and a fresh transaction
 /// context sized for a single top-level instruction.
 pub(crate) fn compile_transaction_context(

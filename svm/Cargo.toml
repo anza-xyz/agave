@@ -25,6 +25,7 @@ conformance = [
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dep:solana-poseidon",
     "dev-context-only-utils",
     "solana-instruction-error/serde",
     "solana-pubkey/default",
@@ -89,6 +90,7 @@ solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
+solana-poseidon = { workspace = true, optional = true }
 solana-precompile-error = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
