@@ -26,6 +26,7 @@ use {
     agave_votor::{
         common::DELTA,
         event::{RepairEvent, RepairEventReceiver},
+        standstill::scale_standstill_timeout,
     },
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::select,
@@ -217,10 +218,9 @@ impl RepairState {
         self.expected_ping_responses.remove(&(sender, addr));
     }
 
-    fn prune_expected_ping_responses(&mut self, now: u64) {
-        let ttl_ms = u64::try_from(2 * DELTA.as_millis()).unwrap();
+    fn prune_expected_ping_responses(&mut self, now: u64, retry_ttl_ms: u64) {
         self.expected_ping_responses
-            .retain(|_, sent_at| now.saturating_sub(*sent_at) <= ttl_ms);
+            .retain(|_, sent_at| now.saturating_sub(*sent_at) <= retry_ttl_ms);
     }
 
     fn extend_pending_repair_events(&mut self, events: impl IntoIterator<Item = RepairEvent>) {
@@ -407,9 +407,17 @@ impl BlockIdRepairService {
         let mut repair_actions = Vec::new();
         let mut first_error = None;
 
+        // Scale the retry timeout by the standstill multiplier.
+        let current_slot = sharable_banks.working().slot();
+        let standstill_slot = context.repair_info.standstill_signal.get();
+        let retry_ttl_ms = u64::try_from(
+            scale_standstill_timeout(2 * DELTA, current_slot, standstill_slot).as_millis(),
+        )
+        .unwrap_or(u64::MAX);
+
         // Clean up old request tracking
         state.requested_blocks.retain(|(slot, _)| *slot > root);
-        state.prune_expected_ping_responses(timestamp());
+        state.prune_expected_ping_responses(timestamp(), retry_ttl_ms);
 
         // Process responses, generate new requests / repair events
         Self::process_responses(
@@ -462,7 +470,12 @@ impl BlockIdRepairService {
         }
 
         // Retry requests that have timed out
-        Self::retry_timed_out_requests(context.blockstore.as_ref(), state, timestamp());
+        Self::retry_timed_out_requests(
+            context.blockstore.as_ref(),
+            state,
+            timestamp(),
+            retry_ttl_ms,
+        );
 
         // Send out new requests
         Self::send_requests(
@@ -869,9 +882,14 @@ impl BlockIdRepairService {
 
     /// Check for requests that have timed out and move them back to pending_repair_requests.
     /// For shred requests, we check if the shred has been received before retrying
-    fn retry_timed_out_requests(blockstore: &Blockstore, state: &mut RepairState, now: u64) {
+    fn retry_timed_out_requests(
+        blockstore: &Blockstore,
+        state: &mut RepairState,
+        now: u64,
+        retry_ttl_ms: u64,
+    ) {
         state.sent_requests.retain(|request, sent_time| {
-            if now.saturating_sub(*sent_time) >= u64::try_from(2 * DELTA.as_millis()).unwrap() {
+            if now.saturating_sub(*sent_time) >= retry_ttl_ms {
                 match request {
                     OutgoingMessage::Metadata(_) => {
                         // Metadata requests: always retry on timeout
@@ -1372,8 +1390,9 @@ mod tests {
         });
         state.sent_requests.insert(recent_shred.clone(), now);
 
-        // Run the retry logic
-        BlockIdRepairService::retry_timed_out_requests(&blockstore, &mut state, now);
+        // Run the retry logic with the unscaled (no-standstill) timeout.
+        let retry_ttl_ms = scale_standstill_timeout(2 * DELTA, 0, None).as_millis() as u64;
+        BlockIdRepairService::retry_timed_out_requests(&blockstore, &mut state, now, retry_ttl_ms);
 
         // Verify: only non-expired requests remain in sent_requests
         assert_eq!(state.sent_requests.len(), 2);
@@ -1388,6 +1407,48 @@ mod tests {
         assert!(pending.contains(&expired_fec_set_root));
         assert!(pending.contains(&expired_shred_not_received));
         assert!(!pending.contains(&expired_shred_already_received));
+    }
+
+    #[test]
+    fn test_retry_timed_out_requests_scales_under_standstill() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (mut state, _bank_forks) = create_test_repair_state();
+
+        let now = timestamp();
+        let unscaled_ttl_ms = (2 * DELTA.as_millis()) as u64;
+        // Request that is expired against the unscaled timeout but not against
+        // the scaled one (e.g., 2x the unscaled value).
+        let almost_expired_time = now - unscaled_ttl_ms - 50;
+
+        let req = OutgoingMessage::Metadata(BlockIdRepairType::ParentAndFecSetCount {
+            slot: 100,
+            block_id: Hash::new_unique(),
+        });
+        state.sent_requests.insert(req.clone(), almost_expired_time);
+
+        // 100 leader windows = 1.05^100 ≈ 131.5x — comfortably above the
+        // unscaled timeout, well under the 1h cap.
+        let standstill_slot = Some(0);
+        let current_slot = 4 * 100;
+        let scaled_ttl_ms =
+            scale_standstill_timeout(2 * DELTA, current_slot, standstill_slot).as_millis() as u64;
+        assert!(scaled_ttl_ms > unscaled_ttl_ms);
+
+        // With the scaled timeout, the request is NOT considered expired yet.
+        BlockIdRepairService::retry_timed_out_requests(&blockstore, &mut state, now, scaled_ttl_ms);
+        assert_eq!(state.sent_requests.len(), 1);
+        assert!(state.pending_repair_requests.is_empty());
+
+        // With the unscaled timeout, the same request IS considered expired.
+        BlockIdRepairService::retry_timed_out_requests(
+            &blockstore,
+            &mut state,
+            now,
+            unscaled_ttl_ms,
+        );
+        assert!(state.sent_requests.is_empty());
+        assert_eq!(state.pending_repair_requests.len(), 1);
     }
 
     #[test]

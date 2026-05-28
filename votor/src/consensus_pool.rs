@@ -398,7 +398,7 @@ impl ConsensusPool {
         events: &mut Vec<VotorEvent>,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let current_highest_finalized_slot = self.highest_finalized_slot();
-        let new_certficates_to_send = match message {
+        let new_certificates_to_send = match message {
             ConsensusMessage::Vote(vote_message) => {
                 self.add_vote(root_bank, my_vote_pubkey, vote_message, events)?
             }
@@ -410,7 +410,7 @@ impl ConsensusPool {
         } else {
             None
         };
-        Ok((new_finalized_slot, new_certficates_to_send))
+        Ok((new_finalized_slot, new_certificates_to_send))
     }
 
     fn add_vote(

@@ -15,6 +15,7 @@ mod event_handler;
 pub mod generated_cert_types;
 pub mod root_utils;
 mod staked_validators_cache;
+pub mod standstill;
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;
