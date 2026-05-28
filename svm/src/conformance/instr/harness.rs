@@ -1,7 +1,7 @@
 //! Conformance harness.
 
 use {
-    super::context::{InstrContext, InstrEffects},
+    super::{context::InstrContext, effects::InstrEffects},
     crate::message_processor::process_message,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
@@ -24,7 +24,9 @@ use {
 };
 #[cfg(feature = "conformance")]
 use {
-    super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+    crate::conformance::programs::{
+        fill_program_cache_from_accounts, new_program_cache_with_builtins,
+    },
     agave_feature_set::FeatureSet,
     agave_precompiles::{get_precompile, is_precompile},
     prost::Message,
@@ -281,11 +283,11 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::{
-            super::programs::{add_program_to_program_cache, new_program_cache_with_builtins},
-            *,
+        super::*,
+        crate::conformance::programs::{
+            add_program_to_program_cache, keyed_account_for_system_program,
+            new_program_cache_with_builtins,
         },
-        crate::conformance::programs::keyed_account_for_system_program,
         solana_account::Account,
         solana_instruction::Instruction,
         solana_rent::Rent,
@@ -296,7 +298,7 @@ mod tests {
     };
 
     const NOOP_ELF: &[u8] =
-        include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+        include_bytes!("../../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
 
     const FROM_BASE_LAMPORTS: u64 = 5_000;
     const TO_BASE_LAMPORTS: u64 = 1_000;
