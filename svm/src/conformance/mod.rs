@@ -11,3 +11,4 @@ pub mod fd_hash;
 pub mod feature_set;
 pub mod instr;
 pub mod programs;
+mod setup;
