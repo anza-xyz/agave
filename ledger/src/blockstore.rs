@@ -50,7 +50,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -493,6 +493,14 @@ impl ParentInfo {
     /// True when this metadata came from an `UpdateParent` marker.
     fn has_update_parent(&self) -> bool {
         self.replay_fec_set_index > 0
+    }
+
+    fn validate_update_parent_slot(&self, slot: Slot) -> Result<()> {
+        if self.has_update_parent() && leader_slot_index(slot) != 0 {
+            return Err(BlockstoreError::UpdateParentNotFirstInLeaderWindow(slot));
+        }
+
+        Ok(())
     }
 
     /// True when this metadata came from the slot's block header.
@@ -1149,6 +1157,11 @@ impl Blockstore {
         let Some(new_parent_info) = new_parent_info else {
             return Ok(());
         };
+
+        if let Err(err) = new_parent_info.validate_update_parent_slot(slot) {
+            self.mark_invalid_parent_info_dead(write_batch, new_parent_info, slot, location, &err)?;
+            return Err(err);
+        }
 
         let max_root = self.max_root();
         if let Err(err) = new_parent_info.validate_shred_parent(slot, shred_parent_slot, max_root) {

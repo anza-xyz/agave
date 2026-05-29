@@ -30,6 +30,7 @@ use {
     },
     agave_votor::{
         consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
+        consensus_rewards::BuildRewardCertsRequest,
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         generated_cert_types::GeneratedCertTypes,
         vote_history::VoteHistory,
@@ -37,7 +38,6 @@ use {
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -190,7 +190,6 @@ pub struct AlpenglowInitializationState {
     pub voting_service_test_override: Option<VotingServiceOverride>,
 
     // For rewards
-    pub reward_certs_sender: Sender<BuildRewardCertsResponse>,
     pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
@@ -275,7 +274,6 @@ impl Tvu {
             voting_service_test_override,
             highest_finalized,
             build_reward_certs_receiver,
-            reward_certs_sender,
         } = votor_init;
 
         // streamer and sigverify for A2A BLS messages
@@ -522,7 +520,6 @@ impl Tvu {
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
             own_vote_sender: consensus_message_sender.clone(),
-            reward_certs_sender,
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
@@ -832,7 +829,6 @@ pub mod tests {
                 thread::sleep(Duration::from_secs(1));
             }
         });
-        let (reward_certs_sender, _reward_certs_receiver) = bounded(1);
         let (_build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
@@ -911,7 +907,6 @@ pub mod tests {
                 bank_forks_controller,
                 bank_forks_controller_receiver,
                 build_reward_certs_receiver,
-                reward_certs_sender,
             },
         )
         .expect("assume success");

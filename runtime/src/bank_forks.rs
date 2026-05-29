@@ -1029,7 +1029,7 @@ mod tests {
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
         let genesis_cert = Certificate {
-            cert_type: CertificateType::Finalize(1),
+            cert_type: CertificateType::Genesis(1, Hash::default()),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };

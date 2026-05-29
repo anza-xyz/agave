@@ -50,7 +50,7 @@ use {
             ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
         },
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
-        consensus_rewards::ConsensusRewardsService,
+        consensus_rewards::{AddVoteMessage, BuildRewardCertsRequest, ConsensusRewardsService},
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
@@ -64,10 +64,7 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::{
-        consensus_message::ConsensusMessage,
-        reward_certificate::{AddVoteMessage, BuildRewardCertsRequest, BuildRewardCertsResponse},
-    },
+    agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -117,7 +114,6 @@ pub struct VotorConfig {
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub event_sender: VotorEventSender,
     pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
-    pub reward_certs_sender: Sender<BuildRewardCertsResponse>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
@@ -177,7 +173,6 @@ impl Votor {
             consensus_metrics_receiver,
             reward_votes_receiver,
             build_reward_certs_receiver,
-            reward_certs_sender,
             generated_cert_types,
             highest_finalized,
             bank_forks_controller,
@@ -268,7 +263,6 @@ impl Votor {
             exit,
             reward_votes_receiver,
             build_reward_certs_receiver,
-            reward_certs_sender,
         );
 
         Self {

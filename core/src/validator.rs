@@ -8,7 +8,10 @@ use {
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{self, BankingTracer, TraceError},
-        block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
+        block_creation_loop::{
+            BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen,
+            reward_certs_handler::RewardCertsHandler,
+        },
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -39,14 +42,14 @@ use {
         voting_service::VotingServiceOverride,
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
-    anyhow::{Context, Result, anyhow},
+    anyhow::{Result, anyhow},
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::{move_and_async_delete_path_contents, validate_account_paths_for_direct_io},
+        utils::validate_account_paths_for_direct_io,
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
@@ -132,7 +135,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -593,6 +596,8 @@ impl ValidatorTpuConfig {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+                max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
                 ..Default::default()
             },
             qos_config: SwQosConfig::default(),
@@ -823,28 +828,17 @@ impl Validator {
         let genesis_config = load_genesis(config, ledger_path)?;
         metrics_config_sanity_check(genesis_config.cluster_type)?;
 
-        info!("Validating and cleaning accounts paths...");
+        info!("Validating accounts paths...");
         *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
-        let mut timer = Measure::start("validate_and_clean_accounts_paths");
+        let mut timer = Measure::start("validate_account_paths");
         validate_account_paths(config)?;
-        cleanup_accounts_paths(config);
         timer.stop();
-        info!("Validating and cleaning accounts paths done. {timer}");
+        info!("Validating accounts paths done. {timer}");
 
         snapshot_utils::purge_incomplete_bank_snapshots(&config.snapshot_config.bank_snapshots_dir);
         snapshot_utils::purge_old_bank_snapshots_at_startup(
             &config.snapshot_config.bank_snapshots_dir,
         );
-
-        info!("Cleaning orphaned account snapshot directories...");
-        let mut timer = Measure::start("clean_orphaned_account_snapshot_dirs");
-        clean_orphaned_account_snapshot_dirs(
-            &config.snapshot_config.bank_snapshots_dir,
-            &config.account_snapshot_paths,
-        )
-        .context("failed to clean orphaned account snapshot directories")?;
-        timer.stop();
-        info!("Cleaning orphaned account snapshot directories done. {timer}");
 
         // token used to cancel tpu-client-next, streamer and BLS streamer.
         let cancel = CancellationToken::new();
@@ -1491,10 +1485,8 @@ impl Validator {
         // small (but highly overprovisioned) number for performance and easier
         // debug if things go off the rails.
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
-        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
-        let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
-        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
-        let (reward_certs_sender, reward_certs_receiver) = bounded(1);
+
+        let (reward_certs_handler, build_reward_certs_receiver) = RewardCertsHandler::new();
 
         let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
 
@@ -1515,8 +1507,7 @@ impl Validator {
             record_receiver_receiver,
             optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+            reward_certs_handler,
             banking_stage_sender: banking_stage_sender_for_bcl,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
@@ -1672,7 +1663,6 @@ impl Validator {
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
                 build_reward_certs_receiver,
-                reward_certs_sender,
             },
         )
         .map_err(ValidatorError::Other)?;
@@ -2314,6 +2304,11 @@ fn load_blockstore(
 
     let (bank_forks, starting_snapshot_hashes) = bank_from_snapshot_opt
         .unwrap_or_else(|| {
+            // Clean run from genesis — must not use any existing state from previous runs.
+            bank_forks_utils::discard_previous_run_state(
+                &config.snapshot_config.bank_snapshots_dir,
+                &config.account_paths,
+            );
             bank_forks_utils::load_bank_forks_from_genesis(
                 genesis_config,
                 &blockstore,
@@ -2957,12 +2952,6 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     }
 
     online_stake_percentage as u64
-}
-
-fn cleanup_accounts_paths(config: &ValidatorConfig) {
-    for account_path in &config.account_paths {
-        move_and_async_delete_path_contents(account_path);
-    }
 }
 
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {

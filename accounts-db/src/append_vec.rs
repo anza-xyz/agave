@@ -283,6 +283,13 @@ impl AppendVec {
         Ok(())
     }
 
+    /// Detach the on-disk file from this AppendVec's lifetime so dropping the AppendVec no
+    /// longer removes the file. Used when ownership of the file is being handed off (e.g. to a
+    /// bank snapshot's storages list that needs the file to outlive validator exit).
+    pub fn disable_remove_on_drop(&self) {
+        self.remove_file_on_drop.store(false, Ordering::Release);
+    }
+
     /// Return AppendVec opened in read-only file-io mode or `None` if it already is such
     pub(crate) fn reopen_as_readonly_file_io(&self) -> Option<Self> {
         if matches!(self.read_write_state, ReadWriteState::ReadOnly) {

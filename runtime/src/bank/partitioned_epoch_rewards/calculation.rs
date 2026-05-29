@@ -7,13 +7,16 @@ use {
         StakeRewardCalculation, epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
+        alpenglow_epoch_type::AlpenglowEpochType,
         bank::{
             RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
             fee_distribution::ExternalCollectorType, null_tracer,
         },
         inflation_rewards::{
             adjust_delegation_for_rent,
-            points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
+            points::{
+                CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points_for_tower,
+            },
             redeem_rewards,
         },
         reward_info::RewardInfo,
@@ -220,7 +223,7 @@ impl Bank {
         stake_history: &StakeHistory,
         stake_delegations: Vec<(&Pubkey, &StakeAccount<Delegation>)>,
         cached_vote_accounts: CachedVoteAccounts<'_>,
-        prev_epoch: Epoch,
+        rewarded_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
@@ -253,7 +256,7 @@ impl Bank {
                     stake_history,
                     stake_delegations,
                     cached_vote_accounts,
-                    prev_epoch,
+                    rewarded_epoch,
                     reward_calc_tracer,
                     thread_pool,
                     metrics,
@@ -392,7 +395,7 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
-        let validator_rewards_lamports =
+        let epoch_inflation_rewards =
             self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
         // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
         // produced upstream of this call (or unfiltered when VAT is off),
@@ -410,7 +413,7 @@ impl Bank {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
-                validator_rewards_lamports,
+                epoch_inflation_rewards,
                 reward_calc_tracer,
                 thread_pool,
                 metrics,
@@ -438,16 +441,18 @@ impl Bank {
         stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
-        rewards: u64,
+        epoch_inflation_rewards: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> Option<CalculateValidatorRewardsResult> {
+        let ag_epoch_type = self.get_alpenglow_epoch_type(rewarded_epoch);
         self.calculate_reward_points_partitioned(
             stake_history,
             &stake_delegations,
             &cached_vote_accounts,
-            rewards,
+            epoch_inflation_rewards,
+            &ag_epoch_type,
             thread_pool,
             metrics,
         )
@@ -459,6 +464,7 @@ impl Bank {
                     cached_vote_accounts,
                     rewarded_epoch,
                     point_value.clone(),
+                    &ag_epoch_type,
                     thread_pool,
                     reward_calc_tracer,
                     metrics,
@@ -515,6 +521,7 @@ impl Bank {
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
         adjust_delegations_for_rent: bool,
+        ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
@@ -622,6 +629,8 @@ impl Bank {
                 adjust_delegations_for_rent,
             },
             reward_calc_tracer,
+            ag_epoch_type,
+            &self.epoch_stakes,
             current_lamports,
             minimum_lamports,
         ) {
@@ -661,6 +670,7 @@ impl Bank {
 
     /// Calculates epoch rewards for stake/commission accounts
     /// Returns commission accounts, stake rewards, and the sum of all stake rewards in lamports
+    #[allow(clippy::too_many_arguments)]
     fn calculate_stake_rewards_and_commissions<'a>(
         &self,
         stake_history: &StakeHistory,
@@ -668,6 +678,7 @@ impl Bank {
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         point_value: PointValue,
+        ag_epoch_type: &AlpenglowEpochType,
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         metrics: &mut RewardsMetrics,
@@ -710,6 +721,7 @@ impl Bank {
                         delay_commission_updates,
                         commission_rate_in_basis_points,
                         adjust_delegations_for_rent,
+                        ag_epoch_type,
                         custom_commission_collector,
                     );
 
@@ -784,7 +796,8 @@ impl Bank {
         stake_history: &StakeHistory,
         stake_delegations: &Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: &CachedVoteAccounts<'_>,
-        rewards: u64,
+        epoch_inflation_rewards: u64,
+        ag_epoch_type: &AlpenglowEpochType,
         thread_pool: &ThreadPool,
         metrics: &RewardsMetrics,
     ) -> Option<PointValue> {
@@ -795,6 +808,24 @@ impl Bank {
 
         let solana_vote_program: Pubkey = solana_vote_program::id();
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        match ag_epoch_type {
+            AlpenglowEpochType::Alpenglow { .. } => {
+                // In alpenglow, we do not need to compute `PointValue::points` as the final
+                // rewards are simply the total credits stored in the vote account.  We just need
+                // to return a `Some` value with valid rewards.
+                return Some(PointValue {
+                    rewards: epoch_inflation_rewards,
+                    points: 0,
+                });
+            }
+            AlpenglowEpochType::Tower => {
+                // For tower we need to compute the valid `PointValue::points`.
+            }
+            AlpenglowEpochType::MigrationEpoch { .. } => {
+                // For the migrating epoch, we need to compute the tower portion of `PointValue::points`.
+            }
+        }
+
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -809,11 +840,12 @@ impl Bank {
                         return 0;
                     }
 
-                    calculate_points(
+                    calculate_points_for_tower(
                         stake_account.stake_state(),
                         DelegatedVoteState::from(vote_account.vote_state_view()),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
+                        &self.epoch_stakes,
                     )
                     .unwrap_or(0)
                 })
@@ -821,7 +853,10 @@ impl Bank {
         }));
         metrics.calculate_points_us.fetch_add(measure_us, Relaxed);
 
-        (points > 0).then_some(PointValue { rewards, points })
+        (points > 0).then_some(PointValue {
+            rewards: epoch_inflation_rewards,
+            points,
+        })
     }
 
     /// If rewards are still active, recalculates partitioned stake rewards and
@@ -860,6 +895,7 @@ impl Bank {
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.
         let rewarded_epoch = self.epoch().saturating_sub(1);
+        let ag_epoch_type = self.get_alpenglow_epoch_type(rewarded_epoch);
 
         let point_value = PointValue {
             rewards: epoch_rewards_sysvar.total_rewards,
@@ -893,6 +929,7 @@ impl Bank {
                 cached_vote_accounts,
                 rewarded_epoch,
                 point_value,
+                &ag_epoch_type,
                 thread_pool,
                 null_tracer(),
                 &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
@@ -1195,7 +1232,7 @@ mod tests {
         let expected_rewards = 100_000_000_000;
 
         let stakes = bank.stakes_cache.stakes();
-        let rewarded_epoch = 1;
+        let rewarded_epoch = 0;
         let EpochRewardCalculateParamInfo {
             stake_history,
             stake_delegations,
@@ -1258,6 +1295,7 @@ mod tests {
             &stake_delegations,
             &cached_vote_accounts,
             expected_rewards,
+            &AlpenglowEpochType::Tower,
             &thread_pool,
             &rewards_metrics,
         );
@@ -1291,6 +1329,7 @@ mod tests {
             &stake_delegations,
             &cached_vote_accounts,
             expected_rewards,
+            &AlpenglowEpochType::Tower,
             &thread_pool,
             &rewards_metrics,
         );
@@ -1341,6 +1380,7 @@ mod tests {
             cached_vote_accounts,
             rewarded_epoch,
             point_value,
+            &AlpenglowEpochType::Tower,
             &thread_pool,
             null_tracer(),
             &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
@@ -1978,6 +2018,7 @@ mod tests {
                 cached_vote_accounts,
                 rewarded_epoch,
                 point_value,
+                &AlpenglowEpochType::Tower,
                 &thread_pool,
                 reward_calc_tracer,
                 &mut rewards_metrics,
@@ -2041,7 +2082,7 @@ mod tests {
             num_rewards_per_block,
             SLOTS_PER_EPOCH,
         );
-        let rewarded_epoch = bank.epoch();
+        let rewarded_epoch = bank.epoch() - 1;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
@@ -3464,6 +3505,9 @@ mod tests {
         );
         let pre_balance = bank.get_balance(&collector_into_vote_address);
         assert_ne!(pre_balance, 0);
+        // Fund the converted vote account enough to pass VAT filtering.
+        let pre_balance =
+            pre_balance.max(bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of()));
 
         // Transform the collector into a vote account, see that all rewards
         // are burned for this epoch

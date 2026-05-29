@@ -84,6 +84,7 @@ pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
         + NUM_PRECOMPILES
 }
 
+#[derive(Debug)]
 pub struct ValidatorVoteKeypairs {
     pub node_keypair: Keypair,
     pub vote_keypair: Keypair,
@@ -384,7 +385,7 @@ pub fn bls_pubkey_to_compressed_bytes(
     bincode::serialize(&key).unwrap().try_into().unwrap()
 }
 
-fn create_validator(
+pub(crate) fn create_validator(
     rent: &Rent,
     node_pubkey: Pubkey,
     node_lamports: u64,

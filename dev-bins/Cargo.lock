@@ -6421,6 +6421,7 @@ dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
  "base64 0.22.1",
+ "bitvec",
  "chrono",
  "clap",
  "console 0.16.3",
@@ -6433,6 +6434,7 @@ dependencies = [
  "solana-account 4.3.0",
  "solana-account-decoder",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",
@@ -8219,6 +8221,7 @@ dependencies = [
 name = "solana-rpc-client"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-votor-messages",
  "async-trait",
  "base64 0.22.1",
  "bincode",
@@ -8234,6 +8237,7 @@ dependencies = [
  "solana-account 4.3.0",
  "solana-account-decoder",
  "solana-account-decoder-client-types",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-commitment-config",
  "solana-epoch-info",
@@ -8433,7 +8437,6 @@ dependencies = [
  "static_assertions",
  "strum",
  "strum_macros",
- "symlink",
  "tempfile",
  "thiserror 2.0.18",
  "wincode",

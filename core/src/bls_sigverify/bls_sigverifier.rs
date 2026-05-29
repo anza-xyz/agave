@@ -10,13 +10,12 @@ use {
     crate::cluster_info_vote_listener::VerifiedVoterSlotsSender,
     agave_votor::{
         consensus_metrics::ConsensusMetricsEventSender,
-        consensus_rewards::{self},
+        consensus_rewards::{self, AddVoteMessage},
         generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
         consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -200,7 +199,7 @@ impl SigVerifier {
     fn maybe_prune_caches(&mut self, root_slot: Slot) {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
-            self.verified_certs.retain(|cert| cert.slot() > root_slot);
+            self.verified_certs.retain(|cert| cert.slot() >= root_slot);
         }
     }
 

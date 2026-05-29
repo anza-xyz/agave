@@ -41,6 +41,7 @@ pub use {
 use {
     crate::{
         account_saver::collect_accounts_to_store,
+        alpenglow_epoch_type::AlpenglowEpochType,
         bank::{
             entry_bytes_budget::EntryBytesBudget,
             metrics::*,
@@ -196,6 +197,7 @@ use {
     },
     solana_vote_interface::state::VoteStateV4,
     std::{
+        cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt,
         ops::AddAssign,
@@ -1953,8 +1955,15 @@ impl Bank {
         let (_, update_sysvars_time_us) = measure_us!({
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
-            // Keep setting the tower clock sysvar till we have not migrated to Alpenglow.
-            if self.get_alpenglow_genesis_certificate().is_none() {
+
+            if self.get_alpenglow_genesis_certificate().is_some() {
+                // Alpenglow banks have the timestamp populated via the footer
+                // We only populate the slot here
+                self.update_clock_slot_for_alpenglow();
+            } else {
+                // PoH banks have the timestamp and slot populated at the beginning
+                // Note: The first alpenglow bank will have the timestamp populated
+                // here at the beginning as well as at the end via the footer - this is intentional.
                 self.update_clock(Some(parent_epoch));
             }
             self.update_last_restart_slot()
@@ -2453,6 +2462,31 @@ impl Bank {
         });
     }
 
+    /// In Alpenglow the clock sysvar's timestamp is populated from the block footer.
+    /// The timestamp value on the block footer is used as an estimate for when the block *ended*.
+    /// This is applied at the end of execution on the bank for use in the child.
+    ///
+    /// However we still need to update the slot and epoch fields for the clock sysvar at the *start*
+    /// of the bank, as transactions executing in this bank need to be able to read these values.
+    /// This function updates the slot and epoch fields while preserving the timestamp fields from the parent
+    /// bank's footer.
+    fn update_clock_slot_for_alpenglow(&self) {
+        let clock = self.clock();
+        let clock = sysvar::clock::Clock {
+            slot: self.slot,
+            epoch: self.epoch_schedule().get_epoch(self.slot),
+            leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
+            epoch_start_timestamp: clock.epoch_start_timestamp,
+            unix_timestamp: clock.unix_timestamp,
+        };
+        self.update_sysvar_account(&sysvar::clock::id(), |account| {
+            create_account(
+                &clock,
+                self.inherit_specially_retained_account_fields(account),
+            )
+        });
+    }
+
     pub fn update_last_restart_slot(&self) {
         // First, see what the currently stored last restart slot is.
         let current_last_restart_slot = self
@@ -2500,9 +2534,8 @@ impl Bank {
         });
         // Simply force fill sysvar cache rather than checking which sysvar was
         // actually updated since tests don't need to be optimized for performance.
-        self.transaction_processor.reset_sysvar_cache();
         self.transaction_processor
-            .fill_missing_sysvar_cache_entries(self);
+            .reset_and_fill_sysvar_cache_entries(self);
     }
 
     fn update_slot_history(&self) {
@@ -3277,6 +3310,9 @@ impl Bank {
         alpenclock_acct.set_data_from_slice(&data);
 
         self.store_account_and_update_capitalization(&NANOSECOND_CLOCK_ACCOUNT, &alpenclock_acct);
+
+        self.transaction_processor
+            .reset_and_fill_sysvar_cache_entries(self);
     }
 
     /// Get the nanosecond clock value. Returns `None` if the nanosecond clock has not been
@@ -4535,7 +4571,6 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
                 self.stakes_cache.check_and_store(
@@ -4545,10 +4580,7 @@ impl Bank {
                 )
             })
         });
-        self.update_bank_hash_stats(&accounts);
-        self.rc
-            .accounts
-            .store_accounts_par(accounts, None, &self.ancestors);
+        self.store_accounts_without_stakes_cache(accounts);
         m.stop();
         self.rc
             .accounts
@@ -6398,6 +6430,46 @@ impl Bank {
         let block_id =
             solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
         bank.set_block_id(Some(block_id));
+    }
+
+    pub(crate) fn get_alpenglow_migration_slot(&self) -> Option<Slot> {
+        let genesis_cert = self.get_alpenglow_genesis_certificate()?;
+        debug_assert!(
+            genesis_cert.cert_type.is_genesis(),
+            "cert_type={:?}",
+            genesis_cert.cert_type
+        );
+        Some(genesis_cert.cert_type.slot())
+    }
+
+    /// Returns `AlpenglowEpochType` for the given `epoch`.
+    ///
+    /// Calling this function with an epoch >= `Bank::epoch` can return false information as it is
+    /// possible that we have not observed the genesis cert yet but will in the upcoming slots.
+    pub(crate) fn get_alpenglow_epoch_type(&self, epoch: Epoch) -> AlpenglowEpochType {
+        debug_assert!(epoch < self.epoch);
+        let Some(migration_slot) = self.get_alpenglow_migration_slot() else {
+            return AlpenglowEpochType::Tower;
+        };
+        let migration_epoch = self.epoch_schedule.get_epoch(migration_slot);
+        match migration_epoch.cmp(&epoch) {
+            Ordering::Less => AlpenglowEpochType::Alpenglow { migration_epoch },
+            Ordering::Greater => AlpenglowEpochType::Tower,
+            Ordering::Equal => {
+                let first_slot_in_epoch =
+                    self.epoch_schedule.get_first_slot_in_epoch(migration_epoch);
+                // + 1 because the migration_slot is still tower.
+                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
+                let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(migration_epoch);
+                let num_ag_slots = slots_in_epoch - num_tower_slots;
+                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
+                AlpenglowEpochType::MigrationEpoch {
+                    num_tower_slots,
+                    num_ag_slots,
+                    migration_epoch,
+                }
+            }
+        }
     }
 }
 

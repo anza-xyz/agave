@@ -4,6 +4,7 @@ use {
         block_component_processor::vote_reward::{
             CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
         },
+        leader_schedule_utils::leader_slot_index,
         validated_block_finalization::{
             BlockFinalizationCertError, ValidatedBlockFinalizationCert,
         },
@@ -70,6 +71,8 @@ pub enum BlockComponentProcessorError {
     NanosecondClockOutOfBounds,
     #[error("Spurious update parent")]
     SpuriousUpdateParent,
+    #[error("UpdateParent marker is only valid in the first slot of a leader window: slot {0}")]
+    UpdateParentNotFirstInLeaderWindow(Slot),
     #[error(
         "UpdateParent cannot be the initial parent marker unless replay starts at UpdateParent"
     )]
@@ -102,7 +105,8 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::GenesisCertificateFailedVerification
             | BlockComponentProcessorError::MissingBlockFooter
             | BlockComponentProcessorError::MultipleUpdateParents
-            | BlockComponentProcessorError::SpuriousUpdateParent => false,
+            | BlockComponentProcessorError::SpuriousUpdateParent
+            | BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(_) => false,
         }
     }
 }
@@ -207,7 +211,7 @@ impl BlockComponentProcessor {
             ),
 
             BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
-                self.on_update_parent(update_parent.inner(), allow_initial_update_parent)
+                self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
             }
 
             // Any other combination means we saw a marker too early
@@ -405,11 +409,16 @@ impl BlockComponentProcessor {
 
     fn on_update_parent(
         &mut self,
+        slot: Slot,
         update_parent: &VersionedUpdateParent,
         allow_initial_update_parent: bool,
     ) -> Result<(), BlockComponentProcessorError> {
         if self.update_parent.is_some() {
             return Err(BlockComponentProcessorError::MultipleUpdateParents);
+        }
+
+        if leader_slot_index(slot) != 0 {
+            return Err(BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(slot));
         }
 
         if !self.has_header && !allow_initial_update_parent {
@@ -1301,8 +1310,23 @@ mod tests {
         });
 
         assert!(matches!(
-            processor.on_update_parent(&update_parent, false),
+            processor.on_update_parent(4, &update_parent, false),
             Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent)
+        ));
+        assert!(processor.update_parent.is_none());
+    }
+
+    #[test]
+    fn test_update_parent_rejects_non_first_leader_window_slot() {
+        let mut processor = BlockComponentProcessor::default();
+        let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
+            new_parent_slot: 0,
+            new_parent_block_id: Hash::default(),
+        });
+
+        assert!(matches!(
+            processor.on_update_parent(5, &update_parent, true),
+            Err(BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(5))
         ));
         assert!(processor.update_parent.is_none());
     }
@@ -1315,7 +1339,7 @@ mod tests {
             new_parent_block_id: Hash::default(),
         });
 
-        processor.on_update_parent(&update_parent, true).unwrap();
+        processor.on_update_parent(4, &update_parent, true).unwrap();
         assert!(processor.update_parent.is_some());
     }
 
@@ -1338,7 +1362,7 @@ mod tests {
         });
 
         assert!(matches!(
-            processor.on_update_parent(&update_parent, false),
+            processor.on_update_parent(4, &update_parent, false),
             Err(BlockComponentProcessorError::AbandonedBank(_))
         ));
     }
@@ -1352,11 +1376,11 @@ mod tests {
         });
 
         // First should succeed
-        processor.on_update_parent(&update_parent, true).unwrap();
+        processor.on_update_parent(4, &update_parent, true).unwrap();
 
         // Second should fail
         assert!(matches!(
-            processor.on_update_parent(&update_parent, true),
+            processor.on_update_parent(4, &update_parent, true),
             Err(BlockComponentProcessorError::MultipleUpdateParents)
         ));
     }
@@ -1366,6 +1390,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         processor
             .on_update_parent(
+                4,
                 &VersionedUpdateParent::V1(UpdateParentV1 {
                     new_parent_slot: 0,
                     new_parent_block_id: Hash::default(),
@@ -1391,10 +1416,11 @@ mod tests {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
-        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let bank = create_child_bank(&bank_forks, &parent, 4);
 
         processor
             .on_update_parent(
+                bank.slot(),
                 &VersionedUpdateParent::V1(UpdateParentV1 {
                     new_parent_slot: 0,
                     new_parent_block_id: Hash::default(),

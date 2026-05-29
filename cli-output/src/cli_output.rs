@@ -11,6 +11,7 @@ use {
         },
     },
     base64::{Engine, prelude::BASE64_STANDARD},
+    bitvec::vec::BitVec,
     chrono::{Local, TimeZone, Utc},
     clap::ArgMatches,
     console::{Emoji, style},
@@ -22,6 +23,7 @@ use {
         UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
         parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
     },
+    solana_bls_signatures::Signature as BLSSignature,
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
@@ -1907,6 +1909,57 @@ impl From<&LandedVote> for CliLandedVote {
             latency: landed_vote.latency,
             slot: landed_vote.slot(),
             confirmation_count: landed_vote.confirmation_count(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliAgGenesisInfoPayload {
+    /// Epoch in which the alpenglow feature was activated.
+    pub epoch: Epoch,
+    /// Slot in which migration to alpenglow happened.
+    pub slot: Slot,
+    /// Hash of the block in which migration to alpenglow happened.
+    pub block_id: Hash,
+    /// Bitvec of validators that signed the block.
+    pub bitvec: BitVec<u8>,
+    /// The aggregate signature of the validators.
+    pub signature: BLSSignature,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)]
+pub enum CliAgGenesisInfo {
+    Tower,
+    Ag(CliAgGenesisInfoPayload),
+}
+
+impl QuietDisplay for CliAgGenesisInfo {}
+impl VerboseDisplay for CliAgGenesisInfo {}
+
+impl fmt::Display for CliAgGenesisInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Tower => writeln!(f, "still running tower"),
+            Self::Ag(payload) => {
+                let CliAgGenesisInfoPayload {
+                    epoch,
+                    slot,
+                    block_id: block_hash,
+                    bitvec,
+                    signature,
+                } = payload;
+                writeln!(f, "Alpenglow genesis information:")?;
+                writeln!(f, "  Feature flag activation: Epoch {epoch}")?;
+                writeln!(f, "  Genesis Block - Slot {slot}, Block ID {block_hash}")?;
+                writeln!(
+                    f,
+                    "  Genesis Vote - {} validators participated, Signature {signature}",
+                    bitvec.count_ones(),
+                )
+            }
         }
     }
 }
