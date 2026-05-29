@@ -4,7 +4,7 @@ use {
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
-        verifying_key_cache,
+        verified_crds_cache, verifying_key_cache,
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -54,27 +54,40 @@ impl Signable for CrdsValue {
     }
 
     fn set_signature(&mut self, signature: Signature) {
-        self.signature = signature
+        self.signature = signature;
+        // Keep self.hash consistent with the new signature: callers (CRDS
+        // shards, pull filters, the verified-CRDS cache) treat hash as the
+        // value's identity.
+        let serialized_data =
+            wincode::serialize(&self.data).expect("failed to serialize CrdsData");
+        self.hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &serialized_data]);
     }
 
     fn verify(&self) -> bool {
+        if verified_crds_cache::contains(&self.hash) {
+            return true;
+        }
         let pubkey = self.pubkey();
         let signable_data = self.signable_data();
         let message = signable_data.borrow();
         let sig_bytes: [u8; 64] = self.signature.into();
         let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-        if let Some(vk) = verifying_key_cache::get(&pubkey) {
-            return vk.verify_strict(message, &signature).is_ok();
-        }
-        let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
-            return false;
-        };
-        if vk.verify_strict(message, &signature).is_ok() {
-            verifying_key_cache::insert(pubkey, vk);
-            true
+        let (vk, fresh_vk) = if let Some(vk) = verifying_key_cache::get(&pubkey) {
+            (vk, false)
         } else {
-            false
+            let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+                return false;
+            };
+            (vk, true)
+        };
+        if vk.verify_strict(message, &signature).is_err() {
+            return false;
         }
+        if fresh_vk {
+            verifying_key_cache::insert(pubkey, vk);
+        }
+        verified_crds_cache::insert(self.hash);
+        true
     }
 }
 
@@ -82,18 +95,27 @@ impl Signable for CrdsValue {
 /// basepoint scalar multiplication. Returns true only if every signature
 /// verifies; on any failure the whole slice is rejected.
 pub(crate) fn verify_signatures_batch(values: &[CrdsValue]) -> bool {
-    // For a single value the batch transcript + RNG setup outweighs the saved
-    // basepoint multiplication, so fall back to scalar verify.
-    if values.len() < 2 {
-        return values.iter().all(CrdsValue::verify);
+    // Drop values whose (signature, data) hash is already known-verified.
+    // Gossip flood-broadcasts mean most incoming values are re-broadcasts of
+    // ones we've already processed, so this typically removes the bulk of the
+    // batch.
+    let unverified: Vec<&CrdsValue> = values
+        .iter()
+        .filter(|v| !verified_crds_cache::contains(&v.hash))
+        .collect();
+    if unverified.len() < 2 {
+        // For a single value the batch transcript + RNG setup outweighs the
+        // saved basepoint multiplication, so fall back to scalar verify.
+        return unverified.iter().all(|v| v.verify());
     }
-    let mut messages_owned: Vec<Vec<u8>> = Vec::with_capacity(values.len());
-    let mut signatures: Vec<ed25519_dalek::Signature> = Vec::with_capacity(values.len());
-    let mut verifying_keys: Vec<ed25519_dalek::VerifyingKey> = Vec::with_capacity(values.len());
-    // Indices in `values`/`verifying_keys` whose VK was freshly decompressed on
-    // this call. Promoted into the cache only if the batch verifies.
+    let mut messages_owned: Vec<Vec<u8>> = Vec::with_capacity(unverified.len());
+    let mut signatures: Vec<ed25519_dalek::Signature> = Vec::with_capacity(unverified.len());
+    let mut verifying_keys: Vec<ed25519_dalek::VerifyingKey> =
+        Vec::with_capacity(unverified.len());
+    // Indices in `unverified` whose VK was freshly decompressed on this call.
+    // Promoted into the cache only if the batch verifies.
     let mut miss_indices: Vec<usize> = Vec::new();
-    for (i, value) in values.iter().enumerate() {
+    for (i, value) in unverified.iter().enumerate() {
         let pubkey = value.pubkey();
         let vk = if let Some(vk) = verifying_key_cache::get(&pubkey) {
             vk
@@ -114,7 +136,10 @@ pub(crate) fn verify_signatures_batch(values: &[CrdsValue]) -> bool {
         return false;
     }
     for i in miss_indices {
-        verifying_key_cache::insert(values[i].pubkey(), verifying_keys[i]);
+        verifying_key_cache::insert(unverified[i].pubkey(), verifying_keys[i]);
+    }
+    for value in &unverified {
+        verified_crds_cache::insert(value.hash);
     }
     true
 }
