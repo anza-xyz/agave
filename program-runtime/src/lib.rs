@@ -4,6 +4,7 @@
 #![deny(clippy::indexing_slicing)]
 
 pub use solana_sbpf;
+pub mod aligned_buffer;
 pub mod cpi;
 pub mod deploy;
 pub mod execution_budget;

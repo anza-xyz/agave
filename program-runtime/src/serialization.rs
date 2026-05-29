@@ -1,15 +1,11 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::memory_context::SerializedAccountMetadata,
+    crate::{aligned_buffer::PooledAlignedBuffer, memory_context::SerializedAccountMetadata},
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
-    solana_sbpf::{
-        aligned_memory::{AlignedMemory, Pod},
-        ebpf::{HOST_ALIGN, MM_INPUT_START},
-        memory_region::MemoryRegion,
-    },
+    solana_sbpf::{aligned_memory::Pod, ebpf::MM_INPUT_START, memory_region::MemoryRegion},
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
@@ -58,7 +54,7 @@ enum SerializeAccount<'a, 'ix_data> {
 }
 
 struct Serializer {
-    buffer: AlignedMemory<HOST_ALIGN>,
+    buffer: PooledAlignedBuffer,
     regions: Vec<MemoryRegion>,
     vaddr: u64,
     region_start: usize,
@@ -76,7 +72,7 @@ impl Serializer {
         account_data_direct_mapping: bool,
     ) -> Serializer {
         Serializer {
-            buffer: AlignedMemory::with_capacity(size),
+            buffer: PooledAlignedBuffer::checkout(size),
             regions: Vec::new(),
             region_start: 0,
             vaddr: start_addr,
@@ -198,7 +194,7 @@ impl Serializer {
         self.vaddr += range.len() as u64;
     }
 
-    fn finish(mut self) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
+    fn finish(mut self) -> (PooledAlignedBuffer, Vec<MemoryRegion>) {
         self.push_region();
         debug_assert_eq!(self.region_start, self.buffer.len());
         (self.buffer, self.regions)
@@ -225,7 +221,7 @@ pub fn serialize_parameters(
     direct_account_pointers_in_program_input: bool,
 ) -> Result<
     (
-        AlignedMemory<HOST_ALIGN>,
+        PooledAlignedBuffer,
         Vec<MemoryRegion>,
         Vec<SerializedAccountMetadata>,
         usize,
@@ -323,7 +319,7 @@ fn serialize_parameters_for_abiv0(
     account_data_direct_mapping: bool,
 ) -> Result<
     (
-        AlignedMemory<HOST_ALIGN>,
+        PooledAlignedBuffer,
         Vec<MemoryRegion>,
         Vec<SerializedAccountMetadata>,
         usize,
@@ -478,7 +474,7 @@ fn serialize_parameters_for_abiv1(
     direct_account_pointers_program_input: bool,
 ) -> Result<
     (
-        AlignedMemory<HOST_ALIGN>,
+        PooledAlignedBuffer,
         Vec<MemoryRegion>,
         Vec<SerializedAccountMetadata>,
         usize,
@@ -689,7 +685,10 @@ mod tests {
         solana_account_info::AccountInfo,
         solana_program_entrypoint::deserialize,
         solana_rent::Rent,
-        solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
+        solana_sbpf::{
+            aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, memory_region::MemoryMapping,
+            program::SBPFVersion, vm::Config,
+        },
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
