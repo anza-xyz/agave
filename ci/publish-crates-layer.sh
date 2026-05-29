@@ -20,7 +20,10 @@ cd "$(dirname "$0")/.."
 
 is_published() {
   local name=$1 version=$2
-  curl -fsSL "https://crates.io/api/v1/crates/${name}/${version}" 2>/dev/null \
+  # crates.io API docs require a user-agent header: https://crates.io/data-access#api
+  curl -fsSL \
+    --user-agent 'Anza (https://github.com/anza-xyz/agave)' \
+    "https://crates.io/api/v1/crates/${name}/${version}" 2>/dev/null \
     | python3 -c "import sys,json; print('version' in json.load(sys.stdin))" \
     || echo "False"
 }
