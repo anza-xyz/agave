@@ -4571,7 +4571,6 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
                 self.stakes_cache.check_and_store(
@@ -4581,10 +4580,7 @@ impl Bank {
                 )
             })
         });
-        self.update_bank_hash_stats(&accounts);
-        self.rc
-            .accounts
-            .store_accounts_par(accounts, None, &self.ancestors);
+        self.store_accounts_without_stakes_cache(accounts);
         m.stop();
         self.rc
             .accounts
