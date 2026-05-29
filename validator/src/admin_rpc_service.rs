@@ -22,7 +22,7 @@ use {
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
-            active_vote_account_exists_in_bank_alpenglow,
+            should_require_vote_history_file,
         },
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
@@ -913,14 +913,15 @@ impl AdminRpcImpl {
             }
 
             if require_vote_history {
-                let voting_has_been_active = {
+                let should_require_vote_history = {
                     let bank_forks = post_init.bank_forks.read().unwrap();
-                    active_vote_account_exists_in_bank_alpenglow(
+                    should_require_vote_history_file(
                         &bank_forks.root_bank(),
                         &post_init.vote_account,
+                        &identity_keypair.pubkey(),
                     )
                 };
-                if voting_has_been_active {
+                if should_require_vote_history {
                     let _ = VoteHistory::restore(
                         meta.vote_history_storage.as_ref(),
                         &identity_keypair.pubkey(),

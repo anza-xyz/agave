@@ -163,7 +163,7 @@ impl VoteStateHandler {
         }
     }
 
-    pub(crate) fn node_pubkey(&self) -> &Pubkey {
+    pub fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V4(v4) => &v4.node_pubkey,
         }
