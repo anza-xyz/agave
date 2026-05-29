@@ -62,6 +62,31 @@ impl Signable for CrdsValue {
     }
 }
 
+/// Batch-verifies signatures via `ed25519_dalek::verify_batch`, amortizing the
+/// basepoint scalar multiplication. Returns true only if every signature
+/// verifies; on any failure the whole slice is rejected.
+pub(crate) fn verify_signatures_batch(values: &[CrdsValue]) -> bool {
+    // For a single value the batch transcript + RNG setup outweighs the saved
+    // basepoint multiplication, so fall back to scalar verify.
+    if values.len() < 2 {
+        return values.iter().all(CrdsValue::verify);
+    }
+    let mut messages_owned: Vec<Vec<u8>> = Vec::with_capacity(values.len());
+    let mut signatures: Vec<ed25519_dalek::Signature> = Vec::with_capacity(values.len());
+    let mut verifying_keys: Vec<ed25519_dalek::VerifyingKey> = Vec::with_capacity(values.len());
+    for value in values {
+        let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(value.pubkey().as_ref()) else {
+            return false;
+        };
+        verifying_keys.push(vk);
+        let sig_bytes: [u8; 64] = value.signature.into();
+        signatures.push(ed25519_dalek::Signature::from_bytes(&sig_bytes));
+        messages_owned.push(wincode::serialize(&value.data).expect("failed to serialize CrdsData"));
+    }
+    let messages: Vec<&[u8]> = messages_owned.iter().map(Vec::as_slice).collect();
+    ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys).is_ok()
+}
+
 /// Type of the replicated value
 /// These are labels for values in a record that is associated with `Pubkey`
 #[derive(PartialEq, Hash, Eq, Clone, Debug)]
