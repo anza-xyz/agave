@@ -356,7 +356,8 @@ async fn generate_pull_request_pipeline(
     pr_number: u64,
 ) -> Result<buildkite::Pipeline> {
     let changed_files = get_changed_files(repo, pr_number).await?;
-    let flags = PullRequestPipelineFlags::from_changed_files(&changed_files);
+    let mut flags = PullRequestPipelineFlags::from_changed_files(&changed_files);
+    flags.coverage = false;
 
     let mut pipeline = buildkite::Pipeline::new();
 
