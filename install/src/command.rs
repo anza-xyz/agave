@@ -309,10 +309,26 @@ fn check_env_path_for_bin_dir(config: &Config) {
 
     if !found {
         println!(
-            "\nPlease update your PATH environment variable to include the solana programs:\n    \
-             PATH=\"{}:$PATH\"\n",
-            config.active_release_bin_dir().to_str().unwrap()
+            "\nPlease update your PATH environment variable to include the solana programs:\n    {}\n",
+            shell_path_update_command(config.active_release_bin_dir().to_str().unwrap())
         );
+    }
+}
+
+fn shell_path_update_command(new_path: &str) -> String {
+    #[cfg(unix)]
+    {
+        let shell = std::env::var("SHELL").ok();
+        return if is_fish_shell(shell.as_deref()) {
+            fish_path_update_command(new_path)
+        } else {
+            sh_path_update_command(new_path)
+        };
+    }
+
+    #[cfg(not(unix))]
+    {
+        format!("PATH=\"{new_path}:$PATH\"")
     }
 }
 
@@ -455,33 +471,13 @@ fn add_to_path(new_path: &str) -> bool {
 
 #[cfg(unix)]
 fn add_to_path(new_path: &str) -> bool {
-    let shell_export_string = format!("\nexport PATH=\"{new_path}:$PATH\"");
     let mut modified_rcfiles = false;
 
-    // Look for sh, bash, and zsh rc files
-    let mut rcfiles = vec![dirs_next::home_dir().map(|p| p.join(".profile"))];
-    if let Ok(shell) = std::env::var("SHELL") {
-        if shell.contains("zsh") {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .ok()
-                .map(PathBuf::from)
-                .or_else(dirs_next::home_dir);
-            let zprofile = zdotdir.map(|p| p.join(".zprofile"));
-            rcfiles.push(zprofile);
-        }
-    }
-
-    if let Some(bash_profile) = dirs_next::home_dir().map(|p| p.join(".bash_profile")) {
-        // Only update .bash_profile if it exists because creating .bash_profile
-        // will cause .profile to not be read
-        if bash_profile.exists() {
-            rcfiles.push(Some(bash_profile));
-        }
-    }
-    let rcfiles = rcfiles.into_iter().filter_map(|f| f.filter(|f| f.exists()));
-
     // For each rc file, append a PATH entry if not already present
-    for rcfile in rcfiles {
+    for (rcfile, shell_update_string) in unix_rcfile_updates(new_path)
+        .into_iter()
+        .filter(|(rcfile, _)| rcfile.exists())
+    {
         if !rcfile.exists() {
             continue;
         }
@@ -498,10 +494,11 @@ fn add_to_path(new_path: &str) -> bool {
                 println!("Unable to read {rcfile:?}: {err}");
             }
             Ok(contents) => {
-                if !contents.contains(&shell_export_string) {
+                let shell_update_command = shell_update_string.trim_start();
+                if !contents.contains(shell_update_command) {
                     println!(
                         "Adding {} to {}",
-                        style(&shell_export_string).italic(),
+                        style(shell_update_command).italic(),
                         style(rcfile.to_str().unwrap()).bold()
                     );
 
@@ -518,7 +515,7 @@ fn add_to_path(new_path: &str) -> bool {
 
                         Ok(())
                     }
-                    append_file(&rcfile, &shell_export_string).unwrap_or_else(|err| {
+                    append_file(&rcfile, &shell_update_string).unwrap_or_else(|err| {
                         println!("Unable to append to {rcfile:?}: {err}");
                     });
                     modified_rcfiles = true;
@@ -536,11 +533,159 @@ fn add_to_path(new_path: &str) -> bool {
             )
             .bold()
             .blue(),
-            shell_export_string
+            shell_path_update_command(new_path)
         );
     }
 
     modified_rcfiles
+}
+
+#[cfg(unix)]
+fn unix_rcfile_updates(new_path: &str) -> Vec<(PathBuf, String)> {
+    let shell = std::env::var("SHELL").ok();
+    let zdotdir = std::env::var("ZDOTDIR").ok().map(PathBuf::from);
+    let xdg_config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+
+    unix_rcfile_updates_for(
+        new_path,
+        shell.as_deref(),
+        dirs_next::home_dir(),
+        zdotdir,
+        xdg_config_home,
+    )
+}
+
+#[cfg(unix)]
+fn unix_rcfile_updates_for(
+    new_path: &str,
+    shell: Option<&str>,
+    home_dir: Option<PathBuf>,
+    zdotdir: Option<PathBuf>,
+    xdg_config_home: Option<PathBuf>,
+) -> Vec<(PathBuf, String)> {
+    if is_fish_shell(shell) {
+        return xdg_config_home
+            .or_else(|| home_dir.map(|home_dir| home_dir.join(".config")))
+            .map(|config_home| {
+                vec![(
+                    config_home.join("fish").join("config.fish"),
+                    format!("\n{}", fish_path_update_command(new_path)),
+                )]
+            })
+            .unwrap_or_default();
+    }
+
+    let sh_path_update = format!("\n{}", sh_path_update_command(new_path));
+    let mut rcfile_updates = vec![];
+
+    if let Some(home_dir) = home_dir.clone() {
+        rcfile_updates.push((home_dir.join(".profile"), sh_path_update.clone()));
+    }
+
+    if shell.is_some_and(|shell| shell.contains("zsh")) {
+        if let Some(zdotdir) = zdotdir.or_else(|| home_dir.clone()) {
+            rcfile_updates.push((zdotdir.join(".zprofile"), sh_path_update.clone()));
+        }
+    }
+
+    if let Some(home_dir) = home_dir {
+        // Only updated later if the file already exists. Creating .bash_profile
+        // will cause .profile to not be read.
+        rcfile_updates.push((home_dir.join(".bash_profile"), sh_path_update));
+    }
+
+    rcfile_updates
+}
+
+#[cfg(unix)]
+fn is_fish_shell(shell: Option<&str>) -> bool {
+    shell.is_some_and(|shell| shell.contains("fish"))
+}
+
+#[cfg(unix)]
+fn fish_path_update_command(new_path: &str) -> String {
+    format!("fish_add_path -g \"{new_path}\"")
+}
+
+#[cfg(unix)]
+fn sh_path_update_command(new_path: &str) -> String {
+    format!("export PATH=\"{new_path}:$PATH\"")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fish_shell_uses_fish_config_and_syntax() {
+        let updates = unix_rcfile_updates_for(
+            "/home/alice/.local/share/solana/install/active_release/bin",
+            Some("/usr/bin/fish"),
+            Some(PathBuf::from("/home/alice")),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            updates,
+            vec![(
+                PathBuf::from("/home/alice/.config/fish/config.fish"),
+                "\nfish_add_path -g \"/home/alice/.local/share/solana/install/active_release/bin\""
+                    .to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn fish_shell_honors_xdg_config_home() {
+        let updates = unix_rcfile_updates_for(
+            "/tmp/agave/bin",
+            Some("/opt/homebrew/bin/fish"),
+            Some(PathBuf::from("/home/alice")),
+            None,
+            Some(PathBuf::from("/tmp/fish-config")),
+        );
+
+        assert_eq!(
+            updates,
+            vec![(
+                PathBuf::from("/tmp/fish-config/fish/config.fish"),
+                "\nfish_add_path -g \"/tmp/agave/bin\"".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn zsh_shell_keeps_profile_and_zprofile_candidates() {
+        let updates = unix_rcfile_updates_for(
+            "/tmp/agave/bin",
+            Some("/bin/zsh"),
+            Some(PathBuf::from("/home/alice")),
+            Some(PathBuf::from("/tmp/zdotdir")),
+            None,
+        );
+
+        assert_eq!(
+            updates,
+            vec![
+                (
+                    PathBuf::from("/home/alice/.profile"),
+                    "\nexport PATH=\"/tmp/agave/bin:$PATH\"".to_string()
+                ),
+                (
+                    PathBuf::from("/tmp/zdotdir/.zprofile"),
+                    "\nexport PATH=\"/tmp/agave/bin:$PATH\"".to_string()
+                ),
+                (
+                    PathBuf::from("/home/alice/.bash_profile"),
+                    "\nexport PATH=\"/tmp/agave/bin:$PATH\"".to_string()
+                )
+            ]
+        );
+    }
 }
 
 pub fn init(
