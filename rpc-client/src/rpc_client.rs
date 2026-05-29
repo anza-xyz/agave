@@ -4211,6 +4211,25 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_latest_blockhash_with_commitment(commitment))
     }
 
+    /// Returns the most recent blockhash and last valid block height along with the response
+    /// context, which includes the slot at which the node observed the blockhash.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method and uses the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
+    pub fn get_latest_blockhash_with_commitment_and_context(
+        &self,
+        commitment: CommitmentConfig,
+    ) -> RpcResult<(Hash, u64)> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_latest_blockhash_with_commitment_and_context(commitment),
+        )
+    }
+
     /// Checks whether a blockhash is still valid for submitting transactions.
     ///
     /// # RPC Reference
@@ -5123,5 +5142,22 @@ mod tests {
 
         let fee: u64 = rpc_client.get_fee_for_message(&message).unwrap();
         assert_eq!(fee, 42);
+    }
+
+    #[test]
+    fn test_get_latest_blockhash_with_commitment_and_context() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let expected_blockhash: Hash = PUBKEY.parse().unwrap();
+
+        let response = rpc_client
+            .get_latest_blockhash_with_commitment_and_context(CommitmentConfig::default())
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert_eq!(response.value, (expected_blockhash, 1234));
+
+        let value = rpc_client
+            .get_latest_blockhash_with_commitment(CommitmentConfig::default())
+            .unwrap();
+        assert_eq!(value, response.value);
     }
 }

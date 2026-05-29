@@ -4942,20 +4942,46 @@ impl RpcClient {
         &self,
         commitment: CommitmentConfig,
     ) -> ClientResult<(Hash, u64)> {
-        let RpcBlockhash {
-            blockhash,
-            last_valid_block_height,
+        Ok(self
+            .get_latest_blockhash_with_commitment_and_context(commitment)
+            .await?
+            .value)
+    }
+
+    /// Returns the most recent blockhash and last valid block height along with the response
+    /// context, which includes the slot at which the node observed the blockhash.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method and uses the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
+    pub async fn get_latest_blockhash_with_commitment_and_context(
+        &self,
+        commitment: CommitmentConfig,
+    ) -> RpcResult<(Hash, u64)> {
+        let Response {
+            context,
+            value:
+                RpcBlockhash {
+                    blockhash,
+                    last_valid_block_height,
+                },
         } = self
             .send::<Response<RpcBlockhash>>(RpcRequest::GetLatestBlockhash, json!([commitment]))
-            .await?
-            .value;
+            .await?;
         let blockhash = blockhash.parse().map_err(|_| {
             ClientError::new_with_request(
                 RpcError::ParseError("Hash".to_string()).into(),
                 RpcRequest::GetLatestBlockhash,
             )
         })?;
-        Ok((blockhash, last_valid_block_height))
+        Ok(Response {
+            context,
+            value: (blockhash, last_valid_block_height),
+        })
     }
 
     /// Checks whether a blockhash is still valid for submitting transactions.
