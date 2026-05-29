@@ -6,6 +6,7 @@ ARG \
   RUST_NIGHTLY_VERSION= \
   NODE_MAJOR= \
   SCCACHE_VERSION= \
+  NEXTEST_VERSION= \
   GRCOV_VERSION= \
   CODECOV_VERSION=
 
@@ -26,6 +27,7 @@ RUN \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
   if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$NEXTEST_VERSION" ]; then echo "ERROR: The NEXTEST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$CODECOV_VERSION" ]; then echo "ERROR: The CODECOV_VERSION argument is required!" && exit 1; fi && \
   apt-get update && \
@@ -106,7 +108,13 @@ RUN \
   rm "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256" && \
   rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
-  curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
+  curl -LOsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
+  curl -LOsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" && \
+  sha256sum -c "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" && \
+  tar -xzf "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
+  mv ./cargo-nextest "$CARGO_HOME/bin/" && \
+  rm "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
+  rm "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" && \
   # nodejs
   sudo mkdir -p /etc/apt/keyrings && \
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
