@@ -1,5 +1,5 @@
 use {
-    agave_votor_messages::{consensus_message::CertificateType, vote::VoteType},
+    agave_votor_messages::{certificate::CertificateType, vote::VoteType},
     solana_metrics::datapoint_info,
     std::time::{Duration, Instant},
 };

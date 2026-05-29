@@ -15,7 +15,8 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{Block, Certificate, ConsensusMessage},
+        certificate::Certificate,
+        consensus_message::{Block, ConsensusMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -589,7 +590,8 @@ mod tests {
         super::*,
         crate::tests::get_cluster_info,
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, CertificateType, VoteMessage},
+            certificate::CertificateType,
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             vote::Vote,
         },
         crossbeam_channel::unbounded,

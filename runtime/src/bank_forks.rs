@@ -787,7 +787,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType},
+            certificate::{Certificate, CertificateType},
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
         },
         assert_matches::assert_matches,

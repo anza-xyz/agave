@@ -2961,7 +2961,7 @@ pub mod tests {
             },
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
-        agave_votor_messages::consensus_message::{Certificate, CertificateType},
+        agave_votor_messages::certificate::{Certificate, CertificateType},
         assert_matches::assert_matches,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,

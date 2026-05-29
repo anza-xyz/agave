@@ -1,6 +1,6 @@
 use {
     agave_votor_messages::{
-        consensus_message::CertificateType,
+        certificate::CertificateType,
         fraction::Fraction,
         vote::{Vote, VoteType},
     },

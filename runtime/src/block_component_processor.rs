@@ -11,7 +11,8 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
-        consensus_message::{Certificate, ConsensusMessage},
+        certificate::Certificate,
+        consensus_message::ConsensusMessage,
         fraction::Fraction,
         migration::{GENESIS_VOTE_THRESHOLD, MigrationStatus},
     },

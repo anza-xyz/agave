@@ -16,7 +16,7 @@ mod tests {
             stake_utils,
         },
         agave_feature_set::FeatureSet,
-        agave_votor_messages::consensus_message::{Certificate, CertificateType},
+        agave_votor_messages::certificate::{Certificate, CertificateType},
         solana_account::{Account, ReadableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,

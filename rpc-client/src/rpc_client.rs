@@ -17,7 +17,7 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
-    agave_votor_messages::consensus_message::Certificate,
+    agave_votor_messages::certificate::Certificate,
     serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},

@@ -2,7 +2,8 @@ use {
     agave_bls_cert_verify::cert_verify::{aggregate_pubkeys, collect_pubkeys, verify_certificate},
     agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType, VoteMessage},
+        certificate::{Certificate, CertificateType},
+        consensus_message::VoteMessage,
         vote::Vote,
     },
     bitvec::vec::BitVec,

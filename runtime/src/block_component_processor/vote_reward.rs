@@ -592,7 +592,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType},
+            certificate::{Certificate, CertificateType},
             reward_certificate::NUM_SLOTS_FOR_REWARD,
         },
         bitvec::prelude::*,

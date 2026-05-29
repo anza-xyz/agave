@@ -14,7 +14,8 @@ use {
         generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
-        consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
+        certificate::CertificateType,
+        consensus_message::{ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
@@ -337,7 +338,8 @@ mod tests {
             consensus_pool::certificate_builder::CertificateBuilder,
         },
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+            certificate::{Certificate, CertificateType},
+            consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},

@@ -3012,7 +3012,7 @@ mod tests {
     #[test]
     fn active_vote_account_exists_in_bank_alpenglow_checks_genesis_certificate_and_votes() {
         use {
-            agave_votor_messages::consensus_message::{Certificate, CertificateType},
+            agave_votor_messages::certificate::{Certificate, CertificateType},
             solana_account::{AccountSharedData, state_traits::StateMut},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };

@@ -44,7 +44,8 @@
 //! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
 use {
     crate::{
-        consensus_message::{Block, Certificate, CertificateType},
+        certificate::{Certificate, CertificateType},
+        consensus_message::Block,
         fraction::Fraction,
     },
     log::*,

@@ -19,7 +19,7 @@ use {
         },
         rpc_sender::*,
     },
-    agave_votor_messages::consensus_message::Certificate,
+    agave_votor_messages::certificate::Certificate,
     base64::{Engine, prelude::BASE64_STANDARD},
     bincode::serialize,
     futures::join,

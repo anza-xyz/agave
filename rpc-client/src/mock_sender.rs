@@ -2,7 +2,7 @@
 
 use {
     crate::rpc_sender::*,
-    agave_votor_messages::consensus_message::{Certificate, CertificateType},
+    agave_votor_messages::certificate::{Certificate, CertificateType},
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     serde_json::{Number, Value, json},

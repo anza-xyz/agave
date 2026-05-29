@@ -9,7 +9,8 @@ use {
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
         self,
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType},
+        certificate::{Certificate, CertificateType},
+        consensus_message::BLS_KEYPAIR_DERIVE_SEED,
         migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
     bincode::serialize,

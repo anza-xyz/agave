@@ -11,7 +11,7 @@ use {
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
-    agave_votor_messages::consensus_message::{Certificate, CertificateType},
+    agave_votor_messages::certificate::{Certificate, CertificateType},
     blockstore_processor::{
         ConfirmationProgress, ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks,
         process_bank_0,

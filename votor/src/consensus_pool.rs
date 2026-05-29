@@ -16,7 +16,8 @@ use {
         generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
-        consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        certificate::{Certificate, CertificateType},
+        consensus_message::{Block, ConsensusMessage, VoteMessage},
         fraction::Fraction,
         migration::MigrationStatus,
         vote::{Vote, VoteType},
