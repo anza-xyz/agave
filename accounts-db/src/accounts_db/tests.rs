@@ -3465,6 +3465,11 @@ impl AccountsDb {
     }
 
     fn get_account_at_slot(&self, pubkey: &Pubkey, slot: Slot) -> Option<AccountSharedData> {
+        // Check the cache for the pubkey first
+        if let Some(cached) = self.accounts_cache.load(slot, pubkey) {
+            return Some(cached.account.clone());
+        }
+
         // Add the slot to ancestors so unrooted slots will be selected
         let mut ancestors = Ancestors::default();
         ancestors.insert(slot);
