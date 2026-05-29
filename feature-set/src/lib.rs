@@ -87,6 +87,7 @@ pub struct FeatureSnapshot {
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub validate_chained_block_id_2: bool,
+    pub upgrade_bpf_stake_program_to_v5_1: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -200,6 +201,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             validate_chained_block_id_2: is_active(&validate_chained_block_id_2::ID),
+            upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
         }
     }
 }
@@ -1545,6 +1547,14 @@ pub mod reduce_slot_time_to_200ms {
     solana_pubkey::declare_id!("iBRLypKvvj9VEvwoTeRpbLhbW55NFR4T3GE9BUR8A16");
 }
 
+pub mod upgrade_bpf_stake_program_to_v5_1 {
+    solana_pubkey::declare_id!("s51VGwCAgebo2745DSUris72RavoLkXGUmVJosESCXr");
+
+    pub mod buffer {
+        solana_pubkey::declare_id!("p51x11QCYMHwuVS1MBcLHKb3MezWyqGS5BEB41CA1dk");
+    }
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2622,6 +2632,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validate_chained_block_id_2::id(),
             "SIMD-340: Encompassing check for validate chained block ID",
+        ),
+        (
+            upgrade_bpf_stake_program_to_v5_1::id(),
+            "SIMD-0391: Upgrade BPF Stake Program to v5.1.0 (fixed-point warmup/cooldown)",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

@@ -523,6 +523,7 @@ impl Bank {
         adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
+        use_fixed_point_stake_math: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -627,6 +628,7 @@ impl Bank {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math,
             },
             reward_calc_tracer,
             ag_epoch_type,
@@ -685,6 +687,7 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
+        let use_fixed_point_stake_math = feature_snapshot.upgrade_bpf_stake_program_to_v5_1;
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
         // Name intentionally doesn't match -- "adjust delegations for rent" is
@@ -723,6 +726,7 @@ impl Bank {
                         adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
+                        use_fixed_point_stake_math,
                     );
 
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
@@ -826,6 +830,7 @@ impl Bank {
             }
         }
 
+        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -846,6 +851,7 @@ impl Bank {
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                         &self.epoch_stakes,
+                        use_fixed_point_stake_math,
                     )
                     .unwrap_or(0)
                 })

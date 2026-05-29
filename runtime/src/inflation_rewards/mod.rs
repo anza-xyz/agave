@@ -6,7 +6,10 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::{alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes},
+    crate::{
+        alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes,
+        stake_delegation::effective_stake,
+    },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
@@ -48,11 +51,16 @@ pub(crate) fn redeem_rewards<'a>(
             stake_history,
             new_rate_activation_epoch,
             commission_rate_in_basis_points,
+            use_fixed_point_stake_math,
             ..
         } = calculation_environment;
-        #[allow(deprecated)]
-        let effective_stake_at_rewarded_epoch =
-            stake.stake(rewarded_epoch, stake_history, new_rate_activation_epoch);
+        let effective_stake_at_rewarded_epoch = effective_stake(
+            &stake,
+            rewarded_epoch,
+            stake_history,
+            new_rate_activation_epoch,
+            use_fixed_point_stake_math,
+        );
         inflation_point_calc_tracer(
             &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(
                 effective_stake_at_rewarded_epoch,
@@ -209,6 +217,7 @@ fn calculate_stake_rewards<'a>(
         new_rate_activation_epoch,
         point_value,
         rewarded_epoch,
+        use_fixed_point_stake_math,
         ..
     } = calculation_environment;
 
@@ -226,6 +235,7 @@ fn calculate_stake_rewards<'a>(
         new_rate_activation_epoch,
         ag_epoch_type,
         epoch_stakes,
+        use_fixed_point_stake_math,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -407,7 +417,7 @@ mod tests {
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
         std::collections::HashMap,
-        test_case::{test_case, test_matrix},
+        test_case::test_matrix,
     };
 
     fn new_stake(
@@ -448,8 +458,12 @@ mod tests {
         )
     }
 
-    #[test_matrix([true, false], [true, false])]
-    fn test_stake_state_redeem_rewards(adjust_delegations_for_rent: bool, ag_enabled: bool) {
+    #[test_matrix([true, false], [true, false], [true, false])]
+    fn test_stake_state_redeem_rewards(
+        adjust_delegations_for_rent: bool,
+        ag_enabled: bool,
+        use_fixed_point_stake_math: bool,
+    ) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -508,6 +522,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -537,6 +552,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -553,8 +569,8 @@ mod tests {
         assert_eq!(stake.credits_observed, 2 * ag_total_stake_multiplier);
     }
 
-    #[test_matrix([true, false])]
-    fn test_stake_state_calculate_rewards(ag_enabled: bool) {
+    #[test_matrix([true, false], [true, false])]
+    fn test_stake_state_calculate_rewards(ag_enabled: bool, use_fixed_point_stake_math: bool) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -600,6 +616,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -631,6 +648,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -660,6 +678,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -692,6 +711,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -722,6 +742,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -754,6 +775,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -780,6 +802,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -803,6 +826,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -833,6 +857,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -863,6 +888,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -885,6 +911,7 @@ mod tests {
                 None,
                 &ag_epoch_type,
                 &epoch_stakes,
+                use_fixed_point_stake_math,
             )
         );
 
@@ -907,6 +934,7 @@ mod tests {
                 None,
                 &ag_epoch_type,
                 &epoch_stakes,
+                use_fixed_point_stake_math,
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -926,6 +954,7 @@ mod tests {
                 None,
                 &ag_epoch_type,
                 &epoch_stakes,
+                use_fixed_point_stake_math,
             )
         );
 
@@ -953,6 +982,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -984,6 +1014,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -1000,6 +1031,7 @@ mod tests {
         total_rewards: u64,
         post_stake: Stake,
         staker_rewards: Option<u64>,
+        use_fixed_point_stake_math: bool,
     ) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // put 1 credit to create rewards
@@ -1023,6 +1055,7 @@ mod tests {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math,
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
@@ -1034,8 +1067,8 @@ mod tests {
         assert_eq!(maybe_rewards.map(|x| x.0), staker_rewards)
     }
 
-    #[test]
-    fn rent_adjusted_stake_delegation_calculations() {
+    #[test_matrix([true, false])]
+    fn rent_adjusted_stake_delegation_calculations(use_fixed_point_stake_math: bool) {
         let old_minimum_balance = 8;
         let new_minimum_balance = 9;
         let rewarded_epoch = 1;
@@ -1062,6 +1095,7 @@ mod tests {
                 credits_observed: 1,
             },
             Some(0),
+            use_fixed_point_stake_math,
         );
 
         // Stake receives no rewards or delegation adjustment -> no update
@@ -1085,6 +1119,7 @@ mod tests {
                 credits_observed: 1,
             },
             None,
+            use_fixed_point_stake_math,
         );
 
         // Already destaked -> no update
@@ -1110,6 +1145,7 @@ mod tests {
                 credits_observed: 0,
             },
             None,
+            use_fixed_point_stake_math,
         );
 
         // Staked, already below minimum, go further below minimum
@@ -1135,6 +1171,7 @@ mod tests {
                 credits_observed: 1,
             },
             Some(1),
+            use_fixed_point_stake_math,
         );
 
         // Delegation hits exactly 0 -> destaked, no rewards
@@ -1159,6 +1196,7 @@ mod tests {
                 credits_observed: 1,
             },
             Some(0),
+            use_fixed_point_stake_math,
         );
 
         // Delegation decreases to 1 -> still staked
@@ -1182,6 +1220,7 @@ mod tests {
                 credits_observed: 1,
             },
             Some(0),
+            use_fixed_point_stake_math,
         );
 
         // Rewards partially cover minimum balance change
@@ -1209,6 +1248,7 @@ mod tests {
                 credits_observed: 1,
             },
             Some(2),
+            use_fixed_point_stake_math,
         );
 
         // Rewards cover minimum balance change -> no change in stake
@@ -1232,6 +1272,7 @@ mod tests {
                 credits_observed: 1,
             },
             Some(1),
+            use_fixed_point_stake_math,
         );
 
         // Well above new minimum balance -> delegation change capped to rewards
@@ -1255,12 +1296,28 @@ mod tests {
                 credits_observed: 1,
             },
             Some(1),
+            use_fixed_point_stake_math,
         );
     }
 
-    #[test_case(u64::MAX, 1_000, u64::MAX => panics "Rewards intermediate calculation should fit within u128")]
-    #[test_case(1, u64::MAX, u64::MAX => panics "Rewards should fit within u64")]
-    fn calculate_rewards_tests(stake: u64, rewards: u64, credits: u64) {
+    #[test_matrix(
+        u64::MAX,
+        1_000,
+        u64::MAX,
+        [true, false] => panics "Rewards intermediate calculation should fit within u128"
+    )]
+    #[test_matrix(
+        1,
+        u64::MAX,
+        u64::MAX,
+        [true, false] => panics "Rewards should fit within u64"
+    )]
+    fn calculate_rewards_tests(
+        stake: u64,
+        rewards: u64,
+        credits: u64,
+        use_fixed_point_stake_math: bool,
+    ) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
         let stake = new_stake(stake, &Pubkey::default(), vote_state.as_ref_v4(), u64::MAX);
@@ -1283,6 +1340,7 @@ mod tests {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math,
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
@@ -1290,8 +1348,11 @@ mod tests {
         );
     }
 
-    #[test_matrix([true, false])]
-    fn test_stake_state_calculate_points_with_typical_values(ag_enabled: bool) {
+    #[test_matrix([true, false], [true, false])]
+    fn test_stake_state_calculate_points_with_typical_values(
+        ag_enabled: bool,
+        use_fixed_point_stake_math: bool,
+    ) {
         let vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
         // bootstrap means fully-vested stake at epoch 0 with
@@ -1331,6 +1392,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math,
                 },
                 null_tracer(),
                 &ag_stake_state,

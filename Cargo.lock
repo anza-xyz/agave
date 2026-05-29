@@ -9353,6 +9353,7 @@ dependencies = [
 name = "solana-program-binaries"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "bincode",
  "solana-account 4.3.0",
  "solana-loader-v3-interface",

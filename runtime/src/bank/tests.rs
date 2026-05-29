@@ -24,6 +24,7 @@ use {
             SLOT_PARAMS_200MS, SLOT_PARAMS_250MS, SLOT_PARAMS_300MS, SLOT_PARAMS_350MS, SlotParams,
             slot_time_feature_gates, slot_time_feature_ids,
         },
+        stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
         stakes::{DeserializableStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes},
@@ -2932,8 +2933,13 @@ fn test_bank_epoch_vote_accounts() {
 
         // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
         //   in the prior epoch (0 in this case)
-        #[allow(deprecated)]
-        let expected_stake = leader_stake.stake(0, &StakeHistory::default(), None);
+        let expected_stake = effective_stake(
+            &leader_stake,
+            0,
+            &StakeHistory::default(),
+            None,
+            parent.use_fixed_point_stake_math(),
+        );
         assert_eq!(
             expected_stake,
             vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
@@ -2950,8 +2956,13 @@ fn test_bank_epoch_vote_accounts() {
     );
 
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    #[allow(deprecated)]
-    let expected_stake = leader_stake.stake(child.epoch(), &StakeHistory::default(), None);
+    let expected_stake = effective_stake(
+        &leader_stake,
+        child.epoch(),
+        &StakeHistory::default(),
+        None,
+        child.use_fixed_point_stake_math(),
+    );
     assert_eq!(
         expected_stake,
         child
@@ -2970,8 +2981,13 @@ fn test_bank_epoch_vote_accounts() {
         SLOTS_PER_EPOCH - (LEADER_SCHEDULE_SLOT_OFFSET % SLOTS_PER_EPOCH) + 1,
     );
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    #[allow(deprecated)]
-    let expected_stake = leader_stake.stake(child.epoch(), &StakeHistory::default(), None);
+    let expected_stake = effective_stake(
+        &leader_stake,
+        child.epoch(),
+        &StakeHistory::default(),
+        None,
+        child.use_fixed_point_stake_math(),
+    );
     assert_eq!(
         expected_stake,
         child
