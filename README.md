@@ -109,3 +109,44 @@ problem is solved by this code?" On the other hand, if a test does fail and you 
 better way to solve the same problem, a Pull Request with your solution would most certainly be
 welcome! Likewise, if rewriting a test can better communicate what code it's protecting, please
 send us that patch!
+
+#########++++++++++++++++++
+
+## RPC Batch Request Limits
+
+The Agave RPC server accepts batch requests containing up to **450 individual RPC calls** per batch.
+
+### Behavior
+
+| Batch Size | HTTP Status | Result |
+|------------|-------------|--------|
+| 1 - 450 | 200 OK | ✅ Success - Returns array of responses |
+| 500 or more | 413 Payload Too Large | ❌ Rejected - Entire batch fails |
+
+### Important Notes
+
+- Batches of **500 or more** requests are rejected with HTTP 413
+- The server returns **no JSON error body** when rejecting large batches
+- This limit applies to the **number of calls** in the batch, not the payload size
+
+### Best Practices for Clients
+
+To avoid errors when working with large batch operations:
+
+```python
+# Split large batches into chunks of 450 or fewer
+def safe_batch_request(requests_list, chunk_size=450):
+    results = []
+    for i in range(0, len(requests_list), chunk_size):
+        chunk = requests_list[i:i + chunk_size]
+        response = requests.post(RPC_URL, json=chunk)
+        if response.status_code == 200:
+            results.extend(response.json())
+        else:
+            # Fall back to individual requests
+            for req in chunk:
+                single_response = requests.post(RPC_URL, json=req)
+                results.append(single_response.json())
+    return results
+```
+
