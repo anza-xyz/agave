@@ -98,9 +98,12 @@ RUN \
   rm -rf $CARGO_HOME/registry && \
   # sccache
   curl -LOsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
+  curl -LOsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256" && \
+  echo "$(cat "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256")  sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c - && \
   tar -xzf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
   mv "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"/sccache "$CARGO_HOME/bin/" && \
   rm "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
+  rm "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256" && \
   rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
   curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
