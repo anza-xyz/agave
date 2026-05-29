@@ -492,7 +492,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn prune(
         &mut self,
         new_root_slot: Slot,
-        upcoming_environment: Option<ProgramRuntimeEnvironment>,
+        new_environment: Option<ProgramRuntimeEnvironment>,
         fork_graph: &FG,
     ) {
         match &mut self.index {
@@ -539,8 +539,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         })
                         .filter(|entry| {
                             // Remove outdated environment of previous feature set
-                            if let Some(upcoming_environment) = upcoming_environment.as_ref()
-                                && !Self::matches_environment(entry, upcoming_environment)
+                            if let Some(new_environment) = new_environment.as_ref()
+                                && !Self::matches_environment(entry, new_environment)
                             {
                                 self.stats
                                     .prunes_environment

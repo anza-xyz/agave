@@ -1659,7 +1659,15 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .prune(self.slot(), upcoming_environment, bank_forks);
+            .prune(
+                self.slot(),
+                upcoming_environment.map(|_| {
+                    ProgramRuntimeEnvironment::clone(
+                        &self.transaction_processor.program_runtime_environment,
+                    )
+                }),
+                bank_forks,
+            );
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
