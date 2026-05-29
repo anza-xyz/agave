@@ -1823,10 +1823,10 @@ impl Bank {
         // the vote reward account state should be created at the epoch boundary in which we
         // activate alpenglow as it will need info from the previous epoch.
         if self.feature_set.snapshot().alpenglow {
+            let epoch_start_capitalization = parent_capitalization;
             EpochInflationAccountState::new_epoch_update_account(
                 self,
-                parent_epoch,
-                parent_capitalization,
+                epoch_start_capitalization,
                 epoch_validator_rewards,
             );
         }

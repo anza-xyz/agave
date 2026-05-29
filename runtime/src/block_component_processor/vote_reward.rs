@@ -700,13 +700,14 @@ mod tests {
     }
 
     fn calc_reward_for_test(
-        prev_bank: &Bank,
         bank: &Bank,
+        epoch_start_capitalization: u64,
+        reward_epoch: Epoch,
         total_stake: u64,
         stake_voted: u64,
     ) -> (u64, u64) {
         let epoch_inflation =
-            bank.calculate_epoch_inflation_rewards(prev_bank.capitalization(), prev_bank.epoch());
+            bank.calculate_epoch_inflation_rewards(epoch_start_capitalization, reward_epoch);
         let numerator = epoch_inflation as u128 * stake_voted as u128;
         let denominator = bank.epoch_schedule.slots_per_epoch as u128 * total_stake as u128;
         let reward: u64 = (numerator / denominator).try_into().unwrap();
@@ -778,8 +779,15 @@ mod tests {
                     .epoch_stakes_from_slot(reward_slot)
                     .unwrap()
                     .total_stake();
+                let reward_epoch = bank.epoch_schedule.get_epoch(reward_slot);
                 let (expected_validator_reward, expected_leader_reward_per_validator) =
-                    calc_reward_for_test(&prev_bank, &bank, total_stake, per_validator_stake);
+                    calc_reward_for_test(
+                        &bank,
+                        prev_bank.capitalization(),
+                        reward_epoch,
+                        total_stake,
+                        per_validator_stake,
+                    );
                 if *validator != leader_vote_pubkey {
                     assert_eq!(got_reward, expected_validator_reward);
                 }
