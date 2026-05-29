@@ -2,6 +2,7 @@
 
 use {
     crate::conformance::{
+        fd_err_map::FiredancerErrorCode,
         fd_hash::{fd_hash_u64_without_seed, fd_hash_without_seed},
         feature_set::feature_set_from_proto,
     },
@@ -10,10 +11,7 @@ use {
         ElfLoaderCtx as ProtoElfLoaderCtx, ElfLoaderEffects as ProtoElfLoaderEffects,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_program_runtime::solana_sbpf::{
-        ebpf,
-        elf::{ElfError, Executable},
-    },
+    solana_program_runtime::solana_sbpf::{ebpf, elf::Executable},
     solana_syscalls::create_program_runtime_environment,
     std::{collections::BTreeSet, ffi::c_int},
 };
@@ -41,7 +39,7 @@ pub fn execute_elf_loader(input: &ProtoElfLoaderCtx) -> ProtoElfLoaderEffects {
         Ok(executable) => executable,
         Err(err) => {
             return ProtoElfLoaderEffects {
-                err_code: elf_err_to_num(&err) as u32,
+                err_code: err.error_code() as u32,
                 ..Default::default()
             };
         }
@@ -63,34 +61,6 @@ pub fn execute_elf_loader(input: &ProtoElfLoaderCtx) -> ProtoElfLoaderEffects {
         text_off: text_vaddr.saturating_sub(ebpf::MM_BYTECODE_START),
         text_cnt: (text_bytes.len() / 8) as u64,
         calldests_hash: fd_hash_u64_without_seed(&calldests),
-    }
-}
-
-fn elf_err_to_num(error: &ElfError) -> u8 {
-    match error {
-        ElfError::FailedToParse(_) => 1,
-        ElfError::EntrypointOutOfBounds => 2,
-        ElfError::InvalidEntrypoint => 3,
-        ElfError::FailedToGetSection(_) => 4,
-        ElfError::UnresolvedSymbol(_, _, _) => 5,
-        ElfError::SectionNotFound(_) => 6,
-        ElfError::RelativeJumpOutOfBounds(_) => 7,
-        ElfError::SymbolHashCollision(_) => 8,
-        ElfError::WrongEndianess => 9,
-        ElfError::WrongAbi => 10,
-        ElfError::WrongMachine => 11,
-        ElfError::WrongClass => 12,
-        ElfError::NotOneTextSection => 13,
-        ElfError::WritableSectionNotSupported(_) => 14,
-        ElfError::AddressOutsideLoadableSection(_) => 15,
-        ElfError::InvalidVirtualAddress(_) => 16,
-        ElfError::UnknownRelocation(_) => 17,
-        ElfError::FailedToReadRelocationInfo => 18,
-        ElfError::WrongType => 19,
-        ElfError::UnknownSymbol(_) => 20,
-        ElfError::ValueOutOfBounds => 21,
-        ElfError::UnsupportedSBPFVersion => 22,
-        ElfError::InvalidProgramHeader => 23,
     }
 }
 
