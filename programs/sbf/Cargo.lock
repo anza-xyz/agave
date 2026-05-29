@@ -9350,7 +9350,6 @@ dependencies = [
  "nix",
  "num_cpus",
  "pem",
- "percentage",
  "quinn",
  "rand 0.9.4",
  "rustls",
