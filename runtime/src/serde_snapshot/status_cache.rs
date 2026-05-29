@@ -5,15 +5,15 @@ use shuttle::sync::Mutex;
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::Mutex;
 use {
-    crate::{bank::BankSlotDelta, snapshot_utils, status_cache::KeySlice},
+    crate::{bank::BankSlotDelta, serde_snapshot, snapshot_utils, status_cache::KeySlice},
     agave_fs::io_setup::IoSetupState,
-    bincode::{self, Options as _},
-    serde::{Deserialize, Serialize},
+    serde::Serialize,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_transaction_error::TransactionError,
     std::{collections::HashMap, path::Path, sync::Arc},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(
@@ -30,46 +30,43 @@ type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,
+    io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<u64> {
-    snapshot_utils::serialize_snapshot_data_file(
-        status_cache_path,
-        &IoSetupState::default(),
-        |stream| {
-            let snapshot_slot_deltas = slot_deltas
-                .iter()
-                .map(|slot_delta| {
-                    let status_map = slot_delta.2.lock().unwrap();
-                    let snapshot_status_map = status_map
-                        .iter()
-                        .map(|(key, value)| {
+    snapshot_utils::serialize_snapshot_data_file(status_cache_path, io_setup, |stream| {
+        let snapshot_slot_deltas = slot_deltas
+            .iter()
+            .map(|slot_delta| {
+                let status_map = slot_delta.2.lock().unwrap();
+                let snapshot_status_map = status_map
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            *key,
                             (
-                                *key,
-                                (
-                                    value.0,
-                                    value
-                                        .1
-                                        .iter()
-                                        .map(|(key_slice, result)| {
-                                            (
-                                                *key_slice,
-                                                result
-                                                    .as_ref()
-                                                    .map(|_| ())
-                                                    .map_err(SerdeTransactionError::from),
-                                            )
-                                        })
-                                        .collect::<Vec<_>>(),
-                                ),
-                            )
-                        })
-                        .collect::<HashMap<_, _>>();
-                    (slot_delta.0, slot_delta.1, snapshot_status_map)
-                })
-                .collect::<Vec<_>>();
-            bincode::serialize_into(stream, &snapshot_slot_deltas)?;
-            Ok(())
-        },
-    )
+                                value.0,
+                                value
+                                    .1
+                                    .iter()
+                                    .map(|(key_slice, result)| {
+                                        (
+                                            *key_slice,
+                                            result
+                                                .as_ref()
+                                                .map(|_| ())
+                                                .map_err(SerdeTransactionError::from),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                (slot_delta.0, slot_delta.1, snapshot_status_map)
+            })
+            .collect::<Vec<_>>();
+        serde_snapshot::serialize_into(stream, &snapshot_slot_deltas)?;
+        Ok(())
+    })
 }
 
 /// Deserializes the status cache from file at `status_cache_path`
@@ -79,11 +76,8 @@ pub fn deserialize_status_cache(
     status_cache_path: &Path,
 ) -> agave_snapshots::Result<Vec<BankSlotDelta>> {
     snapshot_utils::deserialize_snapshot_data_file(status_cache_path, |stream| {
-        let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> = bincode::options()
-            .with_limit(snapshot_utils::MAX_SNAPSHOT_DATA_FILE_SIZE)
-            .with_fixint_encoding()
-            .allow_trailing_bytes()
-            .deserialize_from(stream)?;
+        let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> =
+            serde_snapshot::deserialize_wincode_from(stream)?;
 
         let slot_deltas = snapshot_slot_deltas
             .into_iter()
@@ -121,7 +115,7 @@ pub fn deserialize_status_cache(
     frozen_abi(digest = "5pMgydVNgsYbg64Trhjxbftsug5La7fRDmooyrsHd4wy"),
     derive(AbiExample, AbiEnumVisitor)
 )]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
 enum SerdeTransactionError {
     AccountInUse,
     AccountLoadedTwice,
@@ -308,7 +302,7 @@ impl From<SerdeTransactionError> for TransactionError {
 /// contains a string.
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
 enum SerdeInstructionError {
     GenericError,
     InvalidArgument,
