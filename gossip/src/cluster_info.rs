@@ -1052,48 +1052,61 @@ impl ClusterInfo {
     pub fn rpc_peers(&self) -> Vec<ContactInfo> {
         let self_pubkey = self.id();
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_nodes_contact_info()
-            .filter(|node| {
-                node.pubkey() != &self_pubkey && self.check_socket_addr_space(&node.rpc())
-            })
-            .cloned()
-            .collect()
+        // Pre-size to the known upper bound. Without this, `.collect()` grows
+        // geometrically and reallocates ~log2(num_nodes) times per call —
+        // visible on a live validator as ~7% of all process page faults via
+        // the same pattern in `repair_peers`.
+        let mut peers = Vec::with_capacity(gossip_crds.num_nodes());
+        peers.extend(
+            gossip_crds
+                .get_nodes_contact_info()
+                .filter(|node| {
+                    node.pubkey() != &self_pubkey && self.check_socket_addr_space(&node.rpc())
+                })
+                .cloned(),
+        );
+        peers
     }
 
     // All nodes in gossip (including spy nodes) and the last time we heard about them
     pub fn all_peers(&self) -> Vec<(ContactInfo, u64)> {
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_nodes()
-            .filter_map(|node| {
-                let contact_info = node.value.contact_info()?;
-                Some((contact_info.clone(), node.local_timestamp))
-            })
-            .collect()
+        let mut peers = Vec::with_capacity(gossip_crds.num_nodes());
+        peers.extend(gossip_crds.get_nodes().filter_map(|node| {
+            let contact_info = node.value.contact_info()?;
+            Some((contact_info.clone(), node.local_timestamp))
+        }));
+        peers
     }
 
     pub fn gossip_peers(&self) -> Vec<ContactInfo> {
         let me = self.id();
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_nodes_contact_info()
-            .filter(|node| node.pubkey() != &me && self.check_socket_addr_space(&node.gossip()))
-            .cloned()
-            .collect()
+        let mut peers = Vec::with_capacity(gossip_crds.num_nodes());
+        peers.extend(
+            gossip_crds
+                .get_nodes_contact_info()
+                .filter(|node| node.pubkey() != &me && self.check_socket_addr_space(&node.gossip()))
+                .cloned(),
+        );
+        peers
     }
 
     /// all validators that have a valid tvu port.
     pub fn tvu_peers<R>(&self, query: impl ContactInfoQuery<R>) -> Vec<R> {
         let self_pubkey = self.id();
-        self.time_gossip_read_lock("tvu_peers", &self.stats.tvu_peers)
-            .get_nodes_contact_info()
-            .filter(|node| {
-                node.pubkey() != &self_pubkey
-                    && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
-            })
-            .map(query)
-            .collect()
+        let gossip_crds = self.time_gossip_read_lock("tvu_peers", &self.stats.tvu_peers);
+        let mut peers = Vec::with_capacity(gossip_crds.num_nodes());
+        peers.extend(
+            gossip_crds
+                .get_nodes_contact_info()
+                .filter(|node| {
+                    node.pubkey() != &self_pubkey
+                        && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
+                })
+                .map(query),
+        );
+        peers
     }
 
     /// all tvu peers with valid gossip addrs that likely have the slot being requested
@@ -1101,19 +1114,24 @@ impl ClusterInfo {
         let _st = ScopedTimer::from(&self.stats.repair_peers);
         let self_pubkey = self.id();
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_nodes_contact_info()
-            .filter(|node| {
-                node.pubkey() != &self_pubkey
-                    && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
-                    && self.check_socket_addr_space(&node.serve_repair(contact_info::Protocol::UDP))
-                    && match gossip_crds.get::<&LowestSlot>(*node.pubkey()) {
-                        None => true, // fallback to legacy behavior
-                        Some(lowest_slot) => lowest_slot.lowest <= slot,
-                    }
-            })
-            .cloned()
-            .collect()
+        let mut peers = Vec::with_capacity(gossip_crds.num_nodes());
+        peers.extend(
+            gossip_crds
+                .get_nodes_contact_info()
+                .filter(|node| {
+                    node.pubkey() != &self_pubkey
+                        && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
+                        && self.check_socket_addr_space(
+                            &node.serve_repair(contact_info::Protocol::UDP),
+                        )
+                        && match gossip_crds.get::<&LowestSlot>(*node.pubkey()) {
+                            None => true, // fallback to legacy behavior
+                            Some(lowest_slot) => lowest_slot.lowest <= slot,
+                        }
+                })
+                .cloned(),
+        );
+        peers
     }
 
     fn is_spy_node(node: &ContactInfo, socket_addr_space: &SocketAddrSpace) -> bool {
@@ -1133,14 +1151,17 @@ impl ClusterInfo {
     pub fn tpu_peers(&self) -> Vec<ContactInfo> {
         let self_pubkey = self.id();
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_nodes_contact_info()
-            .filter(|node| {
-                node.pubkey() != &self_pubkey
-                    && self.check_socket_addr_space(&node.tpu(contact_info::Protocol::QUIC))
-            })
-            .cloned()
-            .collect()
+        let mut peers = Vec::with_capacity(gossip_crds.num_nodes());
+        peers.extend(
+            gossip_crds
+                .get_nodes_contact_info()
+                .filter(|node| {
+                    node.pubkey() != &self_pubkey
+                        && self.check_socket_addr_space(&node.tpu(contact_info::Protocol::QUIC))
+                })
+                .cloned(),
+        );
+        peers
     }
 
     fn refresh_my_gossip_contact_info(&self) {
