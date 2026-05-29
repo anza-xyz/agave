@@ -100,21 +100,17 @@ RUN \
   rm -rf $CARGO_HOME/registry && \
   # sccache
   curl -LOsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  curl -LOsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256" && \
-  echo "$(cat "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256")  sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c - && \
+  echo "$(curl -LsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256")  sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c - && \
   tar -xzf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
   mv "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"/sccache "$CARGO_HOME/bin/" && \
   rm "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  rm "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256" && \
   rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
   curl -LOsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  curl -LOsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" && \
-  sha256sum -c "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" && \
+  curl -LsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" | sha256sum -c - && \
   tar -xzf "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
   mv ./cargo-nextest "$CARGO_HOME/bin/" && \
   rm "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  rm "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" && \
   # nodejs
   sudo mkdir -p /etc/apt/keyrings && \
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
@@ -130,12 +126,10 @@ RUN \
   chmod -R a+w /.npm && \
   # grcov
   curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" && \
-  curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/checksums.sha256" && \
-  grep "grcov-x86_64-unknown-linux-musl.tar.bz2" checksums.sha256 | sha256sum -c - && \
+  curl -LsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/checksums.sha256" | grep "grcov-x86_64-unknown-linux-musl.tar.bz2" | sha256sum -c - && \
   tar -xf grcov-x86_64-unknown-linux-musl.tar.bz2 && \
   mv ./grcov $CARGO_HOME/bin && \
   rm grcov-x86_64-unknown-linux-musl.tar.bz2 && \
-  rm checksums.sha256 && \
   # codecov
   curl -Os "https://uploader.codecov.io/${CODECOV_VERSION}/linux/codecov" && \
   curl -Os "https://uploader.codecov.io/${CODECOV_VERSION}/linux/codecov.SHA256SUM" && \
