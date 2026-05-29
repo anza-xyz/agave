@@ -3,7 +3,7 @@ use {
     crate::{
         crds_data::{CrdsData, MAX_WALLCLOCK},
         crds_gossip_pull::CrdsFilter,
-        crds_value::CrdsValue,
+        crds_value::{CrdsValue, verify_signatures_batch},
         ping_pong::{self, Pong},
     },
     serde::{Deserialize, Serialize},
@@ -109,8 +109,8 @@ impl Protocol {
     pub(crate) fn verify(&self) -> bool {
         match self {
             Self::PullRequest(_, caller) => caller.verify(),
-            Self::PullResponse(_, data) => data.iter().all(CrdsValue::verify),
-            Self::PushMessage(_, data) => data.iter().all(CrdsValue::verify),
+            Self::PullResponse(_, data) => verify_signatures_batch(data),
+            Self::PushMessage(_, data) => verify_signatures_batch(data),
             Self::PruneMessage(_, data) => data.verify(),
             Self::PingMessage(ping) => ping.verify(),
             Self::PongMessage(pong) => pong.verify(),

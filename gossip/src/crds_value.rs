@@ -4,6 +4,7 @@ use {
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
+        verifying_key_cache,
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -57,9 +58,65 @@ impl Signable for CrdsValue {
     }
 
     fn verify(&self) -> bool {
-        self.get_signature()
-            .verify(self.pubkey().as_ref(), self.signable_data().borrow())
+        let pubkey = self.pubkey();
+        let signable_data = self.signable_data();
+        let message = signable_data.borrow();
+        let sig_bytes: [u8; 64] = self.signature.into();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        if let Some(vk) = verifying_key_cache::get(&pubkey) {
+            return vk.verify_strict(message, &signature).is_ok();
+        }
+        let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+            return false;
+        };
+        if vk.verify_strict(message, &signature).is_ok() {
+            verifying_key_cache::insert(pubkey, vk);
+            true
+        } else {
+            false
+        }
     }
+}
+
+/// Batch-verifies signatures via `ed25519_dalek::verify_batch`, amortizing the
+/// basepoint scalar multiplication. Returns true only if every signature
+/// verifies; on any failure the whole slice is rejected.
+pub(crate) fn verify_signatures_batch(values: &[CrdsValue]) -> bool {
+    // For a single value the batch transcript + RNG setup outweighs the saved
+    // basepoint multiplication, so fall back to scalar verify.
+    if values.len() < 2 {
+        return values.iter().all(CrdsValue::verify);
+    }
+    let mut messages_owned: Vec<Vec<u8>> = Vec::with_capacity(values.len());
+    let mut signatures: Vec<ed25519_dalek::Signature> = Vec::with_capacity(values.len());
+    let mut verifying_keys: Vec<ed25519_dalek::VerifyingKey> = Vec::with_capacity(values.len());
+    // Indices in `values`/`verifying_keys` whose VK was freshly decompressed on
+    // this call. Promoted into the cache only if the batch verifies.
+    let mut miss_indices: Vec<usize> = Vec::new();
+    for (i, value) in values.iter().enumerate() {
+        let pubkey = value.pubkey();
+        let vk = if let Some(vk) = verifying_key_cache::get(&pubkey) {
+            vk
+        } else {
+            let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+                return false;
+            };
+            miss_indices.push(i);
+            vk
+        };
+        verifying_keys.push(vk);
+        let sig_bytes: [u8; 64] = (*value.signature()).into();
+        signatures.push(ed25519_dalek::Signature::from_bytes(&sig_bytes));
+        messages_owned.push(wincode::serialize(value.data()).expect("failed to serialize CrdsData"));
+    }
+    let messages: Vec<&[u8]> = messages_owned.iter().map(Vec::as_slice).collect();
+    if ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys).is_err() {
+        return false;
+    }
+    for i in miss_indices {
+        verifying_key_cache::insert(values[i].pubkey(), verifying_keys[i]);
+    }
+    true
 }
 
 /// Type of the replicated value
