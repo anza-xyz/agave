@@ -933,7 +933,7 @@ impl Validator {
 
         let migration_status = bank_forks.read().unwrap().migration_status();
 
-        if !config.no_poh_speed_test {
+        if !config.no_poh_speed_test && !migration_status.is_alpenglow_enabled() {
             check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
         }
 
