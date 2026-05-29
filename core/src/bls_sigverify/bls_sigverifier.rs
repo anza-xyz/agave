@@ -199,7 +199,7 @@ impl SigVerifier {
     fn maybe_prune_caches(&mut self, root_slot: Slot) {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
-            self.verified_certs.retain(|cert| cert.slot() > root_slot);
+            self.verified_certs.retain(|cert| cert.slot() >= root_slot);
         }
     }
 
