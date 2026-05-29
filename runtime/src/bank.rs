@@ -1648,23 +1648,18 @@ impl Bank {
         }
     }
 
-    pub fn prune_program_cache(
-        &self,
-        new_root_slot: Slot,
-        new_root_epoch: Epoch,
-        bank_forks: &BankForks,
-    ) {
+    pub fn prune_program_cache(&self, bank_forks: &BankForks) {
         let upcoming_environment = self
             .transaction_processor
             .epoch_boundary_preparation
             .write()
             .unwrap()
-            .reroot(new_root_epoch);
+            .reroot(self.epoch());
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, upcoming_environment, bank_forks);
+            .prune(self.slot(), upcoming_environment, bank_forks);
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
