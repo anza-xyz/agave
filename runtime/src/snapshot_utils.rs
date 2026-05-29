@@ -1246,7 +1246,6 @@ fn unarchive_snapshot(
             io_setup,
         );
 
-        let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
         let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
             |SnapshotFieldsBundle {
                  snapshot_version,
@@ -1258,11 +1257,9 @@ fn unarchive_snapshot(
                 let snapshot_storage_lengths =
                     accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
                 let (storage, measure_untar) = measure_time!(
-                    SnapshotStorageRebuilder::spawn_rebuilder_threads(
+                    SnapshotStorageRebuilder::rebuild_storages(
                         snapshot_storage_lengths,
-                        append_vec_files,
-                        file_receiver,
-                        num_rebuilder_threads,
+                        append_vec_files.into_iter().chain(file_receiver),
                         next_append_vec_id,
                         SnapshotFrom::Archive,
                         None,
@@ -1528,15 +1525,11 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         ..
     } = snapshot_fields_from_files(&file_receiver)?;
 
-    let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-
     let snapshot_storage_lengths =
         accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
-    let storage = SnapshotStorageRebuilder::spawn_rebuilder_threads(
+    let storage = SnapshotStorageRebuilder::rebuild_storages(
         snapshot_storage_lengths,
-        append_vec_files,
-        file_receiver,
-        num_rebuilder_threads,
+        append_vec_files.into_iter().chain(file_receiver),
         next_append_vec_id,
         SnapshotFrom::Dir,
         obsolete_accounts,
@@ -2705,14 +2698,14 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let deserialized_accounts =
+        let mut deserialized_accounts =
             deserialize_obsolete_accounts(bank_snapshot_dir, MAX_OBSOLETE_ACCOUNTS_FILE_SIZE)
                 .unwrap()
-                .into_dashmap();
+                .into_hashmap();
 
         // Verify
         for storage in &snapshot_storages {
-            let obsolete_accounts = deserialized_accounts.remove(&storage.slot()).unwrap().1;
+            let obsolete_accounts = deserialized_accounts.remove(&storage.slot()).unwrap();
             assert!(obsolete_accounts.into_tuple().2 == 0);
         }
     }
