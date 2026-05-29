@@ -1560,20 +1560,20 @@ pub fn process_logs(
                 println!(); // keep em separated
                 println!("Transaction executed in slot {}:", logs.context.slot);
                 println!("  Signature: {}", logs.value.signature);
-                // In tree mode, every transaction gets an Explorer URL
-                // inferred from --url. The two extra spaces after
-                // "Explorer:" align the URL with the value column under
-                // "Signature:".
+                // Every transaction gets an Explorer URL inferred from
+                // --url, in both flat and tree mode. The two extra spaces
+                // after "Explorer:" align the URL with the value column
+                // under "Signature:".
                 //
                 // The validator occasionally ships `Signature::default()`
                 // (all-zero bytes; base58 = sixty-four `1`s) for real
                 // transactions whose signature wasn't available at the
                 // log-emission point. Any Explorer link built from that
                 // sig is dead on arrival, so suppress it; the user still
-                // sees the bogus signature and the (real) CPI tree below.
-                // See `is_default_signature` for the rationale on parse
+                // sees the bogus signature and the logs below. See
+                // `is_default_signature` for the rationale on parse
                 // failures.
-                if tree && !is_default_signature(&logs.value.signature) {
+                if !is_default_signature(&logs.value.signature) {
                     println!(
                         "  Explorer:  https://explorer.solana.com/tx/{}?{}",
                         logs.value.signature,
