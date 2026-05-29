@@ -36,7 +36,7 @@ env:
 
 jobs:
   check:
-    #if: github.repository == 'anza-xyz/agave'
+    #if: github.repository_owner == 'anza-xyz'
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -75,7 +75,7 @@ jobs:
           cargo check
 
   test_cli:
-    #if: github.repository == 'anza-xyz/agave'
+    #if: github.repository_owner == 'anza-xyz'
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -106,7 +106,7 @@ jobs:
           cargo test --manifest-path clients/cli/Cargo.toml
 
   cargo-test-sbf:
-    #if: github.repository == 'anza-xyz/agave'
+    #if: github.repository_owner == 'anza-xyz'
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
