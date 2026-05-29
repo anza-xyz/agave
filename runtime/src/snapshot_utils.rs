@@ -1282,8 +1282,15 @@ fn unarchive_snapshot(
                 })
             },
         );
-        unarchive_handle.join().unwrap()?;
-        snapshot_result
+        // Producer errors are usually the root cause (no files -> no reception).
+        let unarchive_result = unarchive_handle.join().expect("must join unarchive thread");
+        match (unarchive_result, snapshot_result) {
+            // Rebuilder closed the receiver early; the producer's send failure is just the
+            // downstream symptom — surface the rebuilder's error instead.
+            (Err(SnapshotError::CrossbeamSend(_)), snap @ Err(_)) => snap,
+            (Err(err), _) => Err(err),
+            (Ok(()), snap) => snap,
+        }
     })
 }
 
@@ -1518,26 +1525,35 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         account_paths,
     );
 
-    let SnapshotFieldsBundle {
-        bank_fields,
-        accounts_db_fields,
-        append_vec_files,
-        ..
-    } = snapshot_fields_from_files(&file_receiver)?;
+    let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
+        |SnapshotFieldsBundle {
+             bank_fields,
+             accounts_db_fields,
+             append_vec_files,
+             ..
+         }| {
+            let snapshot_storage_lengths =
+                accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
+            let storage = SnapshotStorageRebuilder::rebuild_storages(
+                snapshot_storage_lengths,
+                append_vec_files.into_iter().chain(file_receiver),
+                next_append_vec_id,
+                SnapshotFrom::Dir,
+                obsolete_accounts,
+            )?;
+            Ok((storage, bank_fields, accounts_db_fields))
+        },
+    );
 
-    let snapshot_storage_lengths =
-        accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
-    let storage = SnapshotStorageRebuilder::rebuild_storages(
-        snapshot_storage_lengths,
-        append_vec_files.into_iter().chain(file_receiver),
-        next_append_vec_id,
-        SnapshotFrom::Dir,
-        obsolete_accounts,
-    )?;
-    stream_files_handle
-        .join()
-        .expect("should join file stream thread")?;
-    Ok((storage, bank_fields, accounts_db_fields))
+    // Producer errors are usually the root cause (no files -> no reception).
+    let stream_files_result = stream_files_handle.join().expect("must join dir thread");
+    match (stream_files_result, snapshot_result) {
+        // Rebuilder closed the receiver early; the producer's send failure is just the
+        // downstream symptom — surface the rebuilder's error instead.
+        (Err(SnapshotError::CrossbeamSend(_)), snap @ Err(_)) => snap,
+        (Err(err), _) => Err(err),
+        (Ok(()), snap) => snap,
+    }
 }
 
 /// Reads the `snapshot_version` from a file. Before opening the file, its size
