@@ -17,6 +17,7 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
+    agave_votor_messages::consensus_message::Certificate,
     serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
@@ -1826,6 +1827,27 @@ impl RpcClient {
     /// ```
     pub fn get_slot_leaders(&self, start_slot: Slot, limit: u64) -> ClientResult<Vec<Pubkey>> {
         self.invoke((self.rpc_client.as_ref()).get_slot_leaders(start_slot, limit))
+    }
+
+    /// Returns Alpenglow's genesis certificate.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgGenesisCert`] RPC method.
+    ///
+    /// [`getAgGenesisCert`]: https://solana.com/docs/rpc/http/getaggenesiscert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let cert = rpc_client.get_ag_genesis_cert()?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+        self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
     /// Get block production for the current epoch.

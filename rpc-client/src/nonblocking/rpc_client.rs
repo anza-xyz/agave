@@ -19,6 +19,7 @@ use {
         },
         rpc_sender::*,
     },
+    agave_votor_messages::consensus_message::Certificate,
     base64::{Engine, prelude::BASE64_STANDARD},
     bincode::serialize,
     futures::join,
@@ -2094,6 +2095,30 @@ impl RpcClient {
                     })
                     .collect()
             })
+    }
+
+    /// Returns Alpenglow's genesis certificate.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgGenesisCert`] RPC method.
+    ///
+    /// [`getAgGenesisCert`]: https://solana.com/docs/rpc/http/getaggenesiscert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let cert = rpc_client.get_ag_genesis_cert().await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+        self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 
     /// Get block production for the current epoch.

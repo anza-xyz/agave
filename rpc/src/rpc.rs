@@ -8,6 +8,7 @@ use {
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
+    agave_votor_messages::consensus_message::Certificate,
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -918,6 +919,11 @@ impl JsonRpcRequestProcessor {
         // fine
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.epoch_schedule().clone()
+    }
+
+    pub fn get_ag_genesis_cert(&self) -> Option<Certificate> {
+        let bank = self.bank(Some(CommitmentConfig::finalized()));
+        bank.get_alpenglow_genesis_certificate()
     }
 
     pub fn get_balance(
@@ -3029,6 +3035,9 @@ pub mod rpc_bank {
             limit: u64,
         ) -> Result<Vec<String>>;
 
+        #[rpc(meta, name = "getAgGenesisCert")]
+        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>>;
+
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
             &self,
@@ -3102,6 +3111,11 @@ pub mod rpc_bank {
                 .into_iter()
                 .map(|identity| identity.to_string())
                 .collect())
+        }
+
+        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>> {
+            debug!("get_ag_genesis_cert rpc request received");
+            Ok(meta.get_ag_genesis_cert())
         }
 
         fn get_block_production(
