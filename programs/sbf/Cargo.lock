@@ -7062,6 +7062,7 @@ dependencies = [
  "assert_matches",
  "bv",
  "crossbeam-channel",
+ "ed25519-dalek 2.2.0",
  "flate2",
  "indexmap",
  "itertools 0.14.0",
