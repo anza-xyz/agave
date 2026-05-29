@@ -22,6 +22,7 @@ agave-unstable-api = []
 [dependencies]
 agave-snapshots = { workspace = true }
 log = { workspace = true }
+reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
 solana-clock = { workspace = true }
 solana-file-download = { workspace = true }
 solana-genesis-config = { workspace = true }
@@ -29,6 +30,7 @@ solana-runtime = { workspace = true }
 
 [dev-dependencies]
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
