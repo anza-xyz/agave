@@ -4,6 +4,7 @@ use {
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
+        verifying_key_cache,
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -57,8 +58,26 @@ impl Signable for CrdsValue {
     }
 
     fn verify(&self) -> bool {
-        self.get_signature()
-            .verify(self.pubkey().as_ref(), self.signable_data().borrow())
+        let pubkey = self.pubkey();
+        let signable_data = self.signable_data();
+        let message = signable_data.borrow();
+        let sig_bytes: [u8; 64] = self.signature.into();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        let (vk, fresh_vk) = if let Some(vk) = verifying_key_cache::get(&pubkey) {
+            (vk, false)
+        } else {
+            let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+                return false;
+            };
+            (vk, true)
+        };
+        if vk.verify_strict(message, &signature).is_err() {
+            return false;
+        }
+        if fresh_vk {
+            verifying_key_cache::insert(pubkey, vk);
+        }
+        true
     }
 }
 

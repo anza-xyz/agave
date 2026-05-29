@@ -31,6 +31,7 @@ mod protocol;
 mod push_active_set;
 mod received_cache;
 pub mod restart_crds_values;
+mod verifying_key_cache;
 pub mod weighted_shuffle;
 
 #[macro_use]
