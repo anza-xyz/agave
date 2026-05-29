@@ -2713,7 +2713,9 @@ pub fn check_chained_block_id(
     bank: &Bank,
     migration_status: &MigrationStatus,
 ) -> ChainedBlockIdCheck {
-    if !bank.feature_set.snapshot().validate_chained_block_id {
+    let feature_snapshot = bank.feature_set.snapshot();
+    if !(feature_snapshot.validate_chained_block_id || feature_snapshot.validate_chained_block_id_2)
+    {
         return ChainedBlockIdCheck::Inactive;
     }
 
@@ -6371,6 +6373,27 @@ pub mod tests {
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 3a: With only the replacement feature active, replay should
+        // still run the existing inter-slot SIMD-0340 check.
+        insert_shreds_with_chained_merkle_root(14, 0, Hash::new_unique());
+        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
+        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
+        child_bank.activate_feature(&agave_feature_set::validate_chained_block_id_2::id());
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 3b: With both feature gates inactive, replay should not run the
+        // chained block ID check.
+        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
+        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
+        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id_2::id());
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            ChainedBlockIdCheck::Inactive
         ));
 
         // Case 4: UpdateParent metadata does not bypass Tower validation.

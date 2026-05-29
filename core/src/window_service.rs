@@ -131,14 +131,26 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
+        let validate_chained_block_id_2 = shred::filter::check_feature_activation_from_bank(
+            &feature_set::validate_chained_block_id_2::id(),
+            shred_slot,
+            &root_bank,
+        );
+
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict)
             | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-            PossibleDuplicateShred::ChainedMerkleRootConflict(_shred, _conflict) => {
-                if validate_chained_block_id {
+            PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
+                if validate_chained_block_id || validate_chained_block_id_2 {
                     // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
                     // We still need to mark the block as dead for other client teams.
+                    blockstore.set_dead_slot(shred_slot)?;
+                }
+                return Ok(());
+            }
+            PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+                if validate_chained_block_id_2 {
                     blockstore.set_dead_slot(shred_slot)?;
                 }
                 return Ok(());
