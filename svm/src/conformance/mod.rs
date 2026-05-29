@@ -6,6 +6,8 @@ pub mod callback;
 #[cfg(feature = "conformance")]
 pub mod elf_loader;
 #[cfg(feature = "conformance")]
+mod fd_err_map;
+#[cfg(feature = "conformance")]
 pub mod fd_hash;
 #[cfg(feature = "conformance")]
 pub mod feature_set;
