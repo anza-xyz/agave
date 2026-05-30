@@ -469,18 +469,14 @@ fn select_freshest_window(
 /// Clamps the block producer timestamp to ensure that the leader produces a timestamp that conforms
 /// to Alpenglow clock bounds.
 fn skew_block_producer_time_nanos(
-    parent_slot: Slot,
     parent_time_nanos: i64,
-    working_bank_slot: Slot,
     working_bank_time_nanos: i64,
-    ns_per_slot: u64,
+    elapsed_slot_duration_nanos: u128,
 ) -> i64 {
     let (min_working_bank_time, max_working_bank_time) =
         BlockComponentProcessor::nanosecond_time_bounds(
-            parent_slot,
             parent_time_nanos,
-            working_bank_slot,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
 
     working_bank_time_nanos
@@ -509,14 +505,13 @@ fn produce_block_footer(
             .get_nanosecond_clock()
             .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
         let parent_slot = parent_bank.slot();
-        let ns_per_slot = u64::try_from(bank.ns_per_slot_at_slot(slot)).unwrap_or(u64::MAX);
+        let elapsed_slot_duration_nanos =
+            bank.slot_range_duration_nanos(parent_slot.saturating_add(1), slot);
 
         block_producer_time_nanos = skew_block_producer_time_nanos(
-            parent_slot,
             parent_time_nanos,
-            slot,
             block_producer_time_nanos,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
     }
 

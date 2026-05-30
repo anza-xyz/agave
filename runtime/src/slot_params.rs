@@ -1,4 +1,11 @@
-use {solana_clock::Slot, solana_epoch_schedule::EpochSchedule};
+use {
+    solana_clock::Slot,
+    solana_epoch_schedule::EpochSchedule,
+    std::{
+        collections::BTreeMap,
+        ops::Bound::{Excluded, Included},
+    },
+};
 
 pub const DEFAULT_MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
 
@@ -118,7 +125,7 @@ pub(crate) struct SlotParamsArchive {
     /// parameters apply to some other slot?" Examples include shred filtering
     /// for incoming shreds and inflation calculations that span historical slot
     /// ranges.
-    param_transitions: Vec<(Slot, SlotParams)>,
+    param_transitions: BTreeMap<Slot, SlotParams>,
 }
 
 impl Default for SlotParamsArchive {
@@ -134,14 +141,14 @@ impl SlotParamsArchive {
     /// right shape for delayed, epoch-boundary-effective feature transitions.
     pub(crate) fn new(_epoch_schedule: &EpochSchedule, baseline_params: SlotParams) -> Self {
         Self {
-            param_transitions: vec![(0, baseline_params)],
+            param_transitions: BTreeMap::from([(0, baseline_params)]),
         }
     }
 
     /// Returns the baseline params supplied at genesis or snapshot restore.
     pub(crate) fn baseline_params(&self) -> SlotParams {
         self.param_transitions
-            .first()
+            .first_key_value()
             .map(|(_, params)| *params)
             .unwrap_or(LEGACY_SLOT_PARAMS)
     }
@@ -149,14 +156,43 @@ impl SlotParamsArchive {
     /// Returns the slot params effective at `slot`.
     pub(crate) fn params_at_slot(&self, slot: Slot) -> SlotParams {
         self.param_transitions
-            .iter()
-            .rev()
-            .find_map(|(effective_slot, params)| (*effective_slot <= slot).then_some(*params))
+            .range(..=slot)
+            .next_back()
+            .map(|(_, params)| *params)
             .unwrap_or(LEGACY_SLOT_PARAMS)
     }
 
     /// Returns sorted slot-parameter transitions.
-    pub(crate) fn param_transitions(&self) -> &[(Slot, SlotParams)] {
-        &self.param_transitions
+    pub(crate) fn param_transitions(&self) -> impl Iterator<Item = (Slot, SlotParams)> + '_ {
+        self.param_transitions
+            .iter()
+            .map(|(slot, params)| (*slot, *params))
+    }
+
+    /// Returns the exact wall-clock duration in nanoseconds for
+    /// `start_slot..=end_slot`.
+    pub(crate) fn slot_range_duration_nanos(&self, start_slot: Slot, end_slot: Slot) -> u128 {
+        if start_slot > end_slot {
+            return 0;
+        }
+
+        let mut cursor = start_slot;
+        let mut params = self.params_at_slot(start_slot);
+        let mut duration = 0u128;
+
+        for (&effective_slot, &effective_params) in self
+            .param_transitions
+            .range((Excluded(start_slot), Included(end_slot)))
+        {
+            duration = duration.saturating_add(
+                u128::from(effective_slot.saturating_sub(cursor))
+                    .saturating_mul(params.ns_per_slot()),
+            );
+            cursor = effective_slot;
+            params = effective_params;
+        }
+
+        let remaining_slots = u128::from(end_slot.saturating_sub(cursor)) + 1;
+        duration.saturating_add(remaining_slots.saturating_mul(params.ns_per_slot()))
     }
 }

@@ -456,10 +456,11 @@ impl BlockComponentProcessor {
         let current_time_nanos =
             Self::block_producer_time_nanos_as_i64(footer.block_producer_time_nanos)?;
         let current_slot = bank.slot();
-        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
+        let elapsed_slot_duration_nanos =
+            bank.slot_range_duration_nanos(parent_slot.saturating_add(1), current_slot);
 
         let (lower_bound_nanos, upper_bound_nanos) =
-            Self::nanosecond_time_bounds(parent_slot, parent_time_nanos, current_slot, ns_per_slot);
+            Self::nanosecond_time_bounds(parent_time_nanos, elapsed_slot_duration_nanos);
 
         let is_valid =
             lower_bound_nanos <= current_time_nanos && current_time_nanos <= upper_bound_nanos;
@@ -483,26 +484,24 @@ impl BlockComponentProcessor {
             .map_err(|_| BlockComponentProcessorError::NanosecondClockOutOfBounds)
     }
 
-    /// Given the parent slot, parent time, slot, and default nanoseconds per
-    /// slot, calculate the lower and upper bounds for the block producer time.
-    /// We return (lower_bound, upper_bound), where both bounds are inclusive.
-    /// I.e., the working bank time is valid if lower_bound <= working_bank_time
-    /// <= upper_bound.
+    /// Given a parent time and elapsed slot duration, calculates inclusive
+    /// block producer timestamp bounds.
+    ///
+    /// `parent_time_nanos` describes the parent bank's nanosecond clock.
+    /// `elapsed_slot_duration_nanos` is the summed duration for all skipped
+    /// and working slots after the parent. The returned `(lower_bound,
+    /// upper_bound)` accepts timestamps where
+    /// `lower_bound <= working_bank_time <= upper_bound`.
     ///
     /// Refer to
     /// https://github.com/solana-foundation/solana-improvement-documents/pull/363
     /// for details on the bounds calculation.
     pub fn nanosecond_time_bounds(
-        parent_slot: Slot,
         parent_time_nanos: i64,
-        slot: Slot,
-        ns_per_slot: u64,
+        elapsed_slot_duration_nanos: u128,
     ) -> (i64, i64) {
-        let diff_slots = slot.saturating_sub(parent_slot);
-
         let min_working_bank_time = parent_time_nanos.saturating_add(1);
-        let max_working_bank_time_offset = u128::from(diff_slots)
-            .saturating_mul(u128::from(ns_per_slot))
+        let max_working_bank_time_offset = elapsed_slot_duration_nanos
             .saturating_mul(2)
             .min(i64::MAX as u128) as i64;
         let max_working_bank_time = parent_time_nanos.saturating_add(max_working_bank_time_offset);
@@ -1086,14 +1085,13 @@ mod tests {
         let parent_slot = parent.slot();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let current_slot = bank.slot();
-        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
+        let elapsed_slot_duration_nanos =
+            bank.slot_range_duration_nanos(parent_slot.saturating_add(1), current_slot);
 
         // Use a timestamp in the middle of the valid range
         let (lower_bound, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
-            parent_slot,
             parent_time_nanos,
-            current_slot,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
         let footer_time_nanos = (lower_bound + upper_bound) / 2;
         let expected_time_secs = footer_time_nanos / 1_000_000_000;
@@ -1136,13 +1134,11 @@ mod tests {
         parent.update_clock_from_footer(parent_time_nanos);
 
         let bank: Arc<Bank> = create_child_bank(&bank_forks, &parent, slot_gap);
-        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
+        let elapsed_slot_duration_nanos = bank.slot_range_duration_nanos(1, slot_gap);
 
         let (lower_bound, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
-            0,
             parent_time_nanos,
-            slot_gap,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
 
         let footer_time_nanos = timestamp_fn(parent_time_nanos, lower_bound, upper_bound);
@@ -1235,18 +1231,14 @@ mod tests {
 
     // Helper function to test nanosecond_time_bounds calculation
     fn test_nanosecond_time_bounds_helper(
-        parent_slot: u64,
         parent_time_nanos: i64,
-        working_slot: u64,
-        ns_per_slot: u64,
+        elapsed_slot_duration_nanos: u128,
         expected_lower: i64,
         expected_upper: i64,
     ) {
         let (lower, upper) = BlockComponentProcessor::nanosecond_time_bounds(
-            parent_slot,
             parent_time_nanos,
-            working_slot,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
 
         assert_eq!(lower, expected_lower);
@@ -1264,10 +1256,8 @@ mod tests {
         let working_slot = 15;
         let slot_delta = working_slot - parent_slot;
         test_nanosecond_time_bounds_helper(
-            parent_slot,
             parent_time,
-            working_slot,
-            DEFAULT_NS_PER_SLOT,
+            u128::from(slot_delta).saturating_mul(u128::from(DEFAULT_NS_PER_SLOT)),
             parent_time + 1,
             parent_time + (2 * DEFAULT_NS_PER_SLOT * slot_delta) as i64,
         );
@@ -1282,21 +1272,14 @@ mod tests {
         // Note: In this case, lower > upper, so no timestamp would be valid
         // This is expected since we shouldn't have the same slot for parent and working bank
         let parent_time = 1_000_000_000_000;
-        test_nanosecond_time_bounds_helper(
-            10,
-            parent_time,
-            10,
-            DEFAULT_NS_PER_SLOT,
-            parent_time + 1,
-            parent_time,
-        );
+        test_nanosecond_time_bounds_helper(parent_time, 0, parent_time + 1, parent_time);
     }
 
     #[test]
     fn test_nanosecond_time_bounds_saturates_upper_bound() {
         let parent_time = i64::MAX - 5;
         let (lower, upper) =
-            BlockComponentProcessor::nanosecond_time_bounds(0, parent_time, u64::MAX, u64::MAX);
+            BlockComponentProcessor::nanosecond_time_bounds(parent_time, u128::MAX);
 
         assert_eq!(lower, parent_time + 1);
         assert_eq!(upper, i64::MAX);

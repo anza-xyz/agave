@@ -2755,20 +2755,26 @@ impl Bank {
         let mut duration = 0.0;
 
         for (effective_slot, effective_params) in self.slot_params.param_transitions() {
-            if *effective_slot <= start_slot {
-                params = *effective_params;
+            if effective_slot <= start_slot {
+                params = effective_params;
                 continue;
             }
-            if *effective_slot >= end_slot {
+            if effective_slot >= end_slot {
                 break;
             }
 
-            duration += (*effective_slot - cursor) as f64 / params.slots_per_year();
-            cursor = *effective_slot;
-            params = *effective_params;
+            duration += (effective_slot - cursor) as f64 / params.slots_per_year();
+            cursor = effective_slot;
+            params = effective_params;
         }
 
         duration + (end_slot - cursor) as f64 / params.slots_per_year()
+    }
+
+    /// Returns the exact wall-clock duration in nanoseconds for `start_slot..=end_slot`.
+    pub fn slot_range_duration_nanos(&self, start_slot: Slot, end_slot: Slot) -> u128 {
+        self.slot_params
+            .slot_range_duration_nanos(start_slot, end_slot)
     }
 
     pub fn epoch_duration_in_years(&self, epoch: Epoch) -> f64 {

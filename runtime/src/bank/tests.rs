@@ -6656,6 +6656,12 @@ fn test_slot_params_use_genesis_baseline_without_features() {
         bank.slot_range_duration_in_years(0, 64).to_bits(),
         (64.0 / genesis_slots_per_year).to_bits()
     );
+    assert_eq!(bank.slot_range_duration_nanos(1, 0), 0);
+    assert_eq!(bank.slot_range_duration_nanos(0, 0), genesis_ns_per_slot);
+    assert_eq!(
+        bank.slot_range_duration_nanos(0, 63),
+        64 * genesis_ns_per_slot
+    );
     assert_eq!(
         bank.partitioned_rewards_stake_account_stores_per_block,
         stake_account_stores_per_block
