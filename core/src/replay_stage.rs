@@ -2499,6 +2499,7 @@ impl ReplayStage {
 
             // Switch the blockstore data atomically, handles slot meta chaining so generate new bank forks can proceed
             blockstore.switch_block_from_alternate(slot, location)?;
+            progress.increment_num_bank_switches(slot);
             info!("{my_pubkey}: Switched {slot} from {location:?}");
         }
 
