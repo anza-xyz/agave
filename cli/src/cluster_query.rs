@@ -1651,12 +1651,21 @@ pub async fn process_show_stakes(
         .await?;
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
+    let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
     })?;
+<<<<<<< HEAD
     let stake_history = from_account(&stake_history_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize stake history".to_string())
     })?;
+=======
+    let rent: Rent = rent_account.deserialize_data()?;
+    let stake_history: StakeHistory =
+        bincode::deserialize(&stake_history_account.data).map_err(|_| {
+            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+        })?;
+>>>>>>> 0211338e6 (rpc: perf fix for solana stakes (#12863))
     let new_rate_activation_epoch = get_feature_activation_epoch(
         rpc_client,
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
@@ -1671,9 +1680,7 @@ pub async fn process_show_stakes(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(stake_state) = stake_account.state() {
-            let rent_exempt_balance = rpc_client
-                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
-                .await?;
+            let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
 
             match stake_state {
                 StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
