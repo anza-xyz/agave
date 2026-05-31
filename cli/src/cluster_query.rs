@@ -1655,17 +1655,10 @@ pub async fn process_show_stakes(
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
     })?;
-<<<<<<< HEAD
     let stake_history = from_account(&stake_history_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize stake history".to_string())
     })?;
-=======
     let rent: Rent = rent_account.deserialize_data()?;
-    let stake_history: StakeHistory =
-        bincode::deserialize(&stake_history_account.data).map_err(|_| {
-            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-        })?;
->>>>>>> 0211338e6 (rpc: perf fix for solana stakes (#12863))
     let new_rate_activation_epoch = get_feature_activation_epoch(
         rpc_client,
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
