@@ -1733,6 +1733,7 @@ impl TowerError {
 #[derive(Debug)]
 pub enum ExternalRootSource {
     Tower(Slot),
+    VoteHistory(Slot),
     HardFork(Slot),
 }
 
@@ -1740,6 +1741,7 @@ impl ExternalRootSource {
     fn root(&self) -> Slot {
         match self {
             ExternalRootSource::Tower(slot) => *slot,
+            ExternalRootSource::VoteHistory(slot) => *slot,
             ExternalRootSource::HardFork(slot) => *slot,
         }
     }

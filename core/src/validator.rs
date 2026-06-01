@@ -1539,8 +1539,7 @@ impl Validator {
                  or --do-not-require-vote-history was not specified. Aborting {e}"
             ))
         })?;
-        info!("Tower state: {tower:?}");
-        info!("Vote History state: {vote_history:?}");
+        info!("Tower state: {tower:?}, Vote History state: {vote_history:?}");
 
         migration_status.log_phase();
 
@@ -1648,9 +1647,9 @@ impl Validator {
                 bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
+                cancel: cancel.clone(),
                 staked_nodes: staked_nodes.clone(),
                 key_notifiers: key_notifiers.clone(),
-                cancel: cancel.clone(),
                 bls_connection_cache,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
@@ -1989,26 +1988,25 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
     false
 }
 
-/// Should we require that we have a vote history file:
-/// - There exists a vote account at `vote_account`
-/// - The `node_pubkey` matches `identity`
-/// - The vote account has voted before
-/// - Alpenglow is active in `bank`
-/// - The latest vote is > the alpenglow genesis slot
+/// Should we require that a vote history file is present
 pub fn should_require_vote_history_file(
     bank: &Bank,
     vote_account: &Pubkey,
     identity: &Pubkey,
 ) -> bool {
     let Some(genesis_certificate) = bank.get_alpenglow_genesis_certificate() else {
+        // Vote history is only used when Alpenglow is active
         return false;
     };
+
     let Some(Ok(vote_state)) = bank
         .get_account(vote_account)
         .map(|acct| acct.deserialize_data())
     else {
+        // Must have a vote account
         return false;
     };
+
     let Ok(vote_state_handler) = VoteStateHandler::try_new_from_vote_state_versions(vote_state)
     else {
         return false;
@@ -2021,10 +2019,12 @@ pub fn should_require_vote_history_file(
     }
 
     let Some(last_voted_slot) = vote_state_handler.last_voted_slot() else {
+        // New vote account
         return false;
     };
     let genesis_slot = genesis_certificate.cert_type.slot();
 
+    // We've voted past the alpenglow genesis
     last_voted_slot > genesis_slot
 }
 
@@ -2493,6 +2493,8 @@ impl<'a> ProcessBlockStore<'a> {
         {
             return Ok((tower.clone(), vote_history.clone()));
         }
+
+        // This means we have not fully processed blockstore yet. Attempt to load and process
         let previous_start_process = *self.start_progress.read().unwrap();
         *self.start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
@@ -2562,7 +2564,7 @@ impl<'a> ProcessBlockStore<'a> {
                 restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account);
             // reconciliation attempt 1 of 2 with vote history
             reconcile_blockstore_roots_with_external_source(
-                ExternalRootSource::Tower(vote_history.root()),
+                ExternalRootSource::VoteHistory(vote_history.root()),
                 self.blockstore,
                 &mut self.original_blockstore_root,
             )
@@ -3108,7 +3110,7 @@ mod tests {
     };
 
     #[test]
-    fn active_vote_account_exists_in_bank_alpenglow_checks_genesis_certificate_and_votes() {
+    fn test_should_require_vote_history_file() {
         use {
             agave_votor_messages::certificate::{Certificate, CertificateType},
             solana_account::{AccountSharedData, state_traits::StateMut},
