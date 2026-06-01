@@ -26,7 +26,7 @@ futures-util = "0.3.31"
 log = "0.4.28"
 octocrab = { version = "0.51.0", features = ["stream"] }
 regex = "1.12.3"
-semver = "1.0.27"
+semver = { version = "1.0.27", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_yaml = "0.9.34"

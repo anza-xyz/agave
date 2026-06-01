@@ -73,7 +73,7 @@ struct WorkspaceSection {
 
 #[derive(Deserialize)]
 struct PackageSection {
-    version: String,
+    version: Version,
 }
 
 pub async fn workspace_version(client: &octocrab::Octocrab, xy: Xy) -> Result<Version> {
@@ -97,6 +97,5 @@ pub async fn workspace_version(client: &octocrab::Octocrab, xy: Xy) -> Result<Ve
 
     let parsed: CargoToml = toml::from_str(&raw)
         .map_err(|e| anyhow!("failed to parse Cargo.toml at ref {reference}: {e}"))?;
-    Version::parse(&parsed.workspace.package.version)
-        .map_err(|e| anyhow!("invalid workspace version at ref {reference}: {e}"))
+    Ok(parsed.workspace.package.version)
 }
