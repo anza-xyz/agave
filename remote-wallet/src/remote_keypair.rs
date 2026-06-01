@@ -60,7 +60,6 @@ pub fn generate_remote_keypair(
     confirm_key: bool,
     keypair_name: &str,
 ) -> Result<RemoteKeypair, RemoteWalletError> {
-    locator.manufacturer.check_enabled()?;
     #[cfg(feature = "keystone")]
     if matches!(
         locator.manufacturer,
