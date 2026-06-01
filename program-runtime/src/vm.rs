@@ -570,5 +570,5 @@ fn initialize_abi_v2_areas<C: ContextObject>(
 
     invoke_context
         .memory_contexts
-        .update_abi_v2_account_permissions(invoke_context.transaction_context)
+        .abi_v2_prepare_for_instruction(invoke_context.transaction_context)
 }

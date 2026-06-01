@@ -294,6 +294,10 @@ impl TransactionAccounts {
         self.shared_account_fields.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.shared_account_fields.is_empty()
+    }
+
     pub fn touch(&self, index: IndexOfAccount) -> Result<(), InstructionError> {
         self.touched_flags
             .get(index as usize)

@@ -699,8 +699,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
         &raw const self.instruction_trace[..]
     }
 
-    pub fn return_data_buffer(&self) -> &Vec<u8> {
-        &self.return_data_bytes
+    pub fn return_data_region(&mut self) -> MemoryRegion {
+        MemoryRegion::new(
+            &raw mut self.return_data_bytes[..],
+            self.transaction_frame.return_data_scratchpad.ptr(),
+        )
     }
 
     pub fn instruction_payload_regions(&self, regions: &mut [MemoryRegion]) {
@@ -742,12 +745,15 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     pub fn resize_region(
         &mut self,
-        vm_address: u64,
+        old_region: &MemoryRegion,
         new_len: u64,
     ) -> Result<MemoryRegion, InstructionError> {
+        let vm_address = old_region.vm_addr;
         let new_region = match vm_address {
             RETURN_DATA_SCRATCHPAD => {
                 self.return_data_bytes.resize(new_len as usize, 0);
+                let insn_ctx = self.get_current_instruction_context()?;
+                self.transaction_frame.return_data_pubkey = *insn_ctx.get_program_key()?;
                 unsafe {
                     self.transaction_frame
                         .return_data_scratchpad
@@ -769,6 +775,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 account.resize_payload_region(new_len as usize)?
             }
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS..GUEST_INSTRUCTION_DATA_END_ADDRESS => {
+                if !old_region.writable {
+                    return Err(InstructionError::InvalidArgument);
+                }
                 let ix_address = vm_address
                     .checked_sub(GUEST_INSTRUCTION_DATA_BASE_ADDRESS)
                     .ok_or(InstructionError::InvalidArgument)?;
@@ -786,6 +795,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 MemoryRegion::new(&raw mut data_vec[..], vm_address)
             }
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS..GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS => {
+                if !old_region.writable {
+                    return Err(InstructionError::InvalidArgument);
+                }
                 let ix_address = vm_address
                     .checked_sub(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS)
                     .ok_or(InstructionError::InvalidArgument)?;

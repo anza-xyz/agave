@@ -56,7 +56,7 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
             ExecutionRecordingConfig {
                 enable_cpi_recording: true,
                 enable_log_recording: true,
-                enable_return_data_recording: false,
+                enable_return_data_recording: true,
                 enable_transaction_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
@@ -443,7 +443,7 @@ fn buffer_resize_return_scratchpad_success() {
     let result = common_set_buffer_length(0x04);
     result.status.expect("success");
     let return_data = result.return_data.expect("should have return data");
-    assert_eq!(128, return_data.data.len());
+    assert_eq!(256, return_data.data.len());
     assert_eq!(return_data.data[127], 42);
 }
 
@@ -453,6 +453,7 @@ fn buffer_resize_return_scratchpad_oob_access() {
     // requested buffer size.
     let result = common_set_buffer_length(0x05);
     result.status.expect_err("err");
+    assert_eq!(128, result.return_data.unwrap().data.len());
     assert!(
         result
             .log_messages
@@ -479,7 +480,7 @@ fn buffer_resize_readonly_account() {
             .unwrap()
             .last()
             .unwrap()
-            .contains("Invalid pointer")
+            .contains("instruction modified data of a read-only account")
     );
 }
 
@@ -493,6 +494,6 @@ fn buffer_resize_somebody_elses_account() {
             .unwrap()
             .last()
             .unwrap()
-            .contains("Invalid pointer")
+            .contains("instruction modified data of an account it does not own")
     );
 }
