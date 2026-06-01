@@ -1,64 +1,55 @@
 use {
     super::resolve::BranchVersion,
-    anyhow::{Result, anyhow},
-    futures_util::TryStreamExt,
+    anyhow::{Result, anyhow, bail},
     semver::Version,
     serde::Deserialize,
-    std::env,
-    tokio::pin,
+    std::process::Command,
 };
 
-const OWNER: &str = "anza-xyz";
-const REPO: &str = "agave";
+const REMOTE: &str = "https://github.com/anza-xyz/agave.git";
+const RAW_BASE: &str = "https://raw.githubusercontent.com/anza-xyz/agave";
 
-pub fn github_client() -> Result<octocrab::Octocrab> {
-    let builder = match env::var("GH_TOKEN") {
-        Ok(token) if !token.trim().is_empty() => {
-            octocrab::Octocrab::builder().personal_token(token)
-        }
-        _ => {
-            log::warn!("`GH_TOKEN` is not set; using unauthenticated GitHub client");
-            octocrab::Octocrab::builder()
-        }
-    };
-
-    Ok(builder.build()?)
+fn ls_remote(flag: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["ls-remote", flag, REMOTE])
+        .output()
+        .map_err(|e| anyhow!("failed to invoke `git ls-remote`: {e}"))?;
+    if !output.status.success() {
+        bail!(
+            "`git ls-remote {flag} {REMOTE}` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        );
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| anyhow!("`git ls-remote` stdout is not utf-8: {e}"))?;
+    Ok(stdout.lines().map(str::to_owned).collect())
 }
 
-pub async fn release_heads(client: &octocrab::Octocrab) -> Result<Vec<BranchVersion>> {
-    let page = client.repos(OWNER, REPO).list_branches().send().await?;
-    let stream = page.into_stream(client);
-    pin!(stream);
-
-    let mut heads = vec![];
-    while let Some(branch) = stream.try_next().await? {
-        if let Ok(bv) = branch.name.parse::<BranchVersion>() {
-            heads.push(bv);
-        }
-    }
-
-    Ok(heads)
+fn strip_ref(line: &str, prefix: &str) -> Option<String> {
+    let (_sha, refname) = line.split_once('\t')?;
+    refname.strip_prefix(prefix).map(str::to_owned)
 }
 
-pub async fn release_tags(client: &octocrab::Octocrab) -> Result<Vec<Version>> {
-    let page = client.repos(OWNER, REPO).list_tags().send().await?;
-    let stream = page.into_stream(client);
-    pin!(stream);
+pub fn release_heads() -> Result<Vec<BranchVersion>> {
+    let lines = ls_remote("--heads")?;
+    Ok(lines
+        .iter()
+        .filter_map(|l| strip_ref(l, "refs/heads/"))
+        .filter_map(|name| name.parse::<BranchVersion>().ok())
+        .collect())
+}
 
-    let mut tags = vec![];
-    while let Some(tag) = stream.try_next().await? {
-        let Some(stripped) = tag.name.strip_prefix('v') else {
-            continue;
-        };
-        let Ok(v) = Version::parse(stripped) else {
-            continue;
-        };
-        if v.pre.is_empty() && v.build.is_empty() {
-            tags.push(v);
-        }
-    }
-
-    Ok(tags)
+pub fn release_tags() -> Result<Vec<Version>> {
+    let lines = ls_remote("--tags")?;
+    Ok(lines
+        .iter()
+        .filter_map(|l| strip_ref(l, "refs/tags/"))
+        .filter_map(|name| {
+            let stripped = name.strip_prefix('v')?;
+            let v = Version::parse(stripped).ok()?;
+            (v.pre.is_empty() && v.build.is_empty()).then_some(v)
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -76,26 +67,20 @@ struct PackageSection {
     version: Version,
 }
 
-pub async fn workspace_version(client: &octocrab::Octocrab, bv: BranchVersion) -> Result<Version> {
-    let reference = bv.to_string();
-    let content_items = client
-        .repos(OWNER, REPO)
-        .get_content()
-        .path("Cargo.toml")
-        .r#ref(&reference)
+pub async fn workspace_version(client: &reqwest::Client, bv: BranchVersion) -> Result<Version> {
+    let url = format!("{RAW_BASE}/{bv}/Cargo.toml");
+    let resp = client
+        .get(&url)
         .send()
-        .await?;
-
-    let item = content_items
-        .items
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("Cargo.toml not found at ref {reference}"))?;
-    let raw = item
-        .decoded_content()
-        .ok_or_else(|| anyhow!("Cargo.toml at ref {reference} has no decodable content"))?;
-
+        .await
+        .map_err(|e| anyhow!("GET {url}: {e}"))?
+        .error_for_status()
+        .map_err(|e| anyhow!("GET {url}: {e}"))?;
+    let raw = resp
+        .text()
+        .await
+        .map_err(|e| anyhow!("read body for {url}: {e}"))?;
     let parsed: CargoToml = toml::from_str(&raw)
-        .map_err(|e| anyhow!("failed to parse Cargo.toml at ref {reference}: {e}"))?;
+        .map_err(|e| anyhow!("failed to parse Cargo.toml at {url}: {e}"))?;
     Ok(parsed.workspace.package.version)
 }

@@ -10,15 +10,14 @@ use {
 };
 
 pub async fn run() -> Result<()> {
-    let client = fetch::github_client()?;
-
-    let mut heads = fetch::release_heads(&client).await?;
-    let tags = fetch::release_tags(&client).await?;
+    let mut heads = fetch::release_heads()?;
+    let tags = fetch::release_tags()?;
 
     heads.sort();
     heads.reverse();
     heads.truncate(3);
 
+    let client = reqwest::Client::new();
     let fetched = try_join_all(
         heads
             .iter()
