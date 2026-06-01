@@ -25,6 +25,7 @@ conformance = [
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dep:xxhash-rust",
     "dev-context-only-utils",
     "solana-instruction-error/serde",
     "solana-pubkey/default",
@@ -111,6 +112,7 @@ solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
+xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
