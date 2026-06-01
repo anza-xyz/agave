@@ -57,12 +57,6 @@ pub fn stage_of(v: &Version) -> Result<Stage> {
     }
 }
 
-#[derive(Default)]
-pub struct EnvInputs {
-    pub branch: Option<String>,
-    pub channel: Option<String>,
-}
-
 #[derive(Debug)]
 pub struct ChannelInfo {
     pub edge_channel: String,
@@ -77,7 +71,8 @@ pub struct ChannelInfo {
 pub fn derive_channels(
     versions: &BTreeMap<BranchVersion, Version>,
     tags: &[Version],
-    env_in: &EnvInputs,
+    branch: Option<&str>,
+    channel: Option<&str>,
 ) -> Result<ChannelInfo> {
     for (bv, v) in versions {
         if v.major != bv.major || v.minor != bv.minor {
@@ -119,15 +114,12 @@ pub fn derive_channels(
         .map(|v| format!("v{v}"))
         .unwrap_or_default();
 
-    let channel = env_in
-        .channel
-        .clone()
-        .unwrap_or_else(|| match env_in.branch.as_deref() {
-            Some(b) if b == stable_channel => "stable".into(),
-            Some(b) if b == edge_channel => "edge".into(),
-            Some(b) if b == beta_channel => "beta".into(),
-            _ => String::new(),
-        });
+    let channel = channel.map(str::to_owned).unwrap_or_else(|| match branch {
+        Some(b) if b == stable_channel => "stable".into(),
+        Some(b) if b == edge_channel => "edge".into(),
+        Some(b) if b == beta_channel => "beta".into(),
+        _ => String::new(),
+    });
 
     let channel_latest_tag = match channel.as_str() {
         "beta" => beta_channel_latest_tag.clone(),
@@ -185,7 +177,7 @@ mod tests {
     fn promotes_top_when_top_is_beta() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
 
-        let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
+        let info = derive_channels(&vs, &[], None, None).unwrap();
 
         assert_eq!(info.beta_channel, "v4.1");
         assert_eq!(info.stable_channel, "v4.0");
@@ -195,7 +187,7 @@ mod tests {
     fn promotes_top_when_top_is_ga() {
         let vs = versions(&[(bv(4, 0), "4.0.5"), (bv(4, 1), "4.1.0")]);
 
-        let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
+        let info = derive_channels(&vs, &[], None, None).unwrap();
 
         assert_eq!(info.beta_channel, "v4.1");
         assert_eq!(info.stable_channel, "v4.0");
@@ -209,7 +201,7 @@ mod tests {
             (bv(4, 1), "4.1.0-alpha.0"),
         ]);
 
-        let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
+        let info = derive_channels(&vs, &[], None, None).unwrap();
 
         assert_eq!(info.beta_channel, "v4.0");
         assert_eq!(info.stable_channel, "v3.1");
@@ -219,7 +211,7 @@ mod tests {
     fn rc_top_is_promoted() {
         let vs = versions(&[(bv(4, 0), "4.0.10"), (bv(4, 1), "4.1.0-rc.2")]);
 
-        let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
+        let info = derive_channels(&vs, &[], None, None).unwrap();
 
         assert_eq!(info.beta_channel, "v4.1");
         assert_eq!(info.stable_channel, "v4.0");
@@ -229,7 +221,7 @@ mod tests {
     fn rejects_mismatched_workspace_version() {
         let vs = versions(&[(bv(4, 0), "5.0.0")]);
 
-        let err = derive_channels(&vs, &[], &EnvInputs::default()).unwrap_err();
+        let err = derive_channels(&vs, &[], None, None).unwrap_err();
 
         assert!(err.to_string().contains("does not match branch"));
     }
@@ -238,7 +230,7 @@ mod tests {
     fn rejects_unknown_prerelease_label() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-dev.0")]);
 
-        let err = derive_channels(&vs, &[], &EnvInputs::default()).unwrap_err();
+        let err = derive_channels(&vs, &[], None, None).unwrap_err();
 
         assert!(err.to_string().contains("unknown prerelease label"));
     }
@@ -247,14 +239,14 @@ mod tests {
     fn rejects_when_only_alpha_top_and_nothing_below() {
         let vs = versions(&[(bv(4, 1), "4.1.0-alpha.0")]);
 
-        let err = derive_channels(&vs, &[], &EnvInputs::default()).unwrap_err();
+        let err = derive_channels(&vs, &[], None, None).unwrap_err();
 
         assert!(err.to_string().contains("no BETA-eligible"));
     }
 
     #[test]
     fn rejects_empty() {
-        let err = derive_channels(&BTreeMap::new(), &[], &EnvInputs::default()).unwrap_err();
+        let err = derive_channels(&BTreeMap::new(), &[], None, None).unwrap_err();
 
         assert!(err.to_string().contains("no BETA-eligible"));
     }
@@ -264,7 +256,7 @@ mod tests {
         let vs = versions(&[(bv(3, 0), "3.0.5"), (bv(3, 1), "3.1.0-beta.0")]);
         let tags = vec![v("3.0.1"), v("3.0.5"), v("3.0.2"), v("2.9.9")];
 
-        let info = derive_channels(&vs, &tags, &EnvInputs::default()).unwrap();
+        let info = derive_channels(&vs, &tags, None, None).unwrap();
 
         assert_eq!(info.beta_channel_latest_tag, "");
         assert_eq!(info.stable_channel_latest_tag, "v3.0.5");
@@ -273,12 +265,8 @@ mod tests {
     #[test]
     fn channel_from_branch_match() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
-        let env_in = EnvInputs {
-            branch: Some("v4.1".into()),
-            channel: None,
-        };
 
-        let info = derive_channels(&vs, &[], &env_in).unwrap();
+        let info = derive_channels(&vs, &[], Some("v4.1"), None).unwrap();
 
         assert_eq!(info.channel, "beta");
     }
@@ -286,12 +274,8 @@ mod tests {
     #[test]
     fn channel_env_var_wins() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
-        let env_in = EnvInputs {
-            branch: Some("master".into()),
-            channel: Some("stable".into()),
-        };
 
-        let info = derive_channels(&vs, &[], &env_in).unwrap();
+        let info = derive_channels(&vs, &[], Some("master"), Some("stable")).unwrap();
 
         assert_eq!(info.channel, "stable");
     }

@@ -4,7 +4,7 @@ mod resolve;
 use {
     anyhow::Result,
     futures_util::future::try_join_all,
-    resolve::{BranchVersion, EnvInputs, derive_channels, print_channel_info},
+    resolve::{BranchVersion, derive_channels, print_channel_info},
     semver::Version,
     std::{collections::BTreeMap, env},
 };
@@ -28,7 +28,9 @@ pub async fn run() -> Result<()> {
     .await?;
     let versions: BTreeMap<BranchVersion, Version> = heads.into_iter().zip(fetched).collect();
 
-    let info = derive_channels(&versions, &tags, &read_env())?;
+    let branch = pick_env("CI_BASE_BRANCH").or_else(|| pick_env("CI_BRANCH"));
+    let channel = pick_env("CHANNEL");
+    let info = derive_channels(&versions, &tags, branch.as_deref(), channel.as_deref())?;
     print_channel_info(&info);
 
     Ok(())
@@ -36,11 +38,4 @@ pub async fn run() -> Result<()> {
 
 fn pick_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.is_empty())
-}
-
-fn read_env() -> EnvInputs {
-    EnvInputs {
-        branch: pick_env("CI_BASE_BRANCH").or_else(|| pick_env("CI_BRANCH")),
-        channel: pick_env("CHANNEL"),
-    }
 }
