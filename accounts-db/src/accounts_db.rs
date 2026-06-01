@@ -1615,8 +1615,8 @@ impl AccountsDb {
         );
 
         // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
-        // retained for incremental snapshots. Once a snapshot occurs, drain the list and look for
-        // newly shrinkable storages.
+        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and look
+        // for newly shrinkable storages.
         if self
             .latest_full_snapshot_slot_advanced_since_clean
             .swap(false, Ordering::Acquire)
@@ -1638,13 +1638,13 @@ impl AccountsDb {
                             prev,
                             latest_full_snapshot_slot
                         ));
-                    timings.zero_lamport_single_ref_slots_added_to_shrink_count =
+                    timings.zero_lamport_single_ref_slots_added_to_shrink_count +=
                         added_to_shrink_count;
-                    timings.zero_lamport_sweep_us = sweep_us;
+                    timings.zero_lamport_sweep_us += sweep_us;
                 } else {
-                    // First snapshot we've observed (this will be the snapshot set on boot). Initialize
-                    // the last swept full snapshot slot to this snapshot since we know all zero-lamport
-                    // single ref accounts were checked during index generation
+                    // First full snapshot we've observed (this will be the snapshot set on boot).
+                    // Initialize the last swept full snapshot slot to this snapshot since we know
+                    // all zero-lamport single ref accounts were checked during index generation
                     *self.last_swept_full_snapshot_slot.lock_write() =
                         Some(latest_full_snapshot_slot);
                 }
@@ -1660,10 +1660,10 @@ impl AccountsDb {
     /// `last_swept_full_snapshot_slot` watermark to `latest_full_snapshot_slot` on completion.
     fn check_shrink_eligibility_after_snapshot(
         &self,
-        prev_swept_exclusive: Slot,
+        last_swept_full_snapshot_slot: Slot,
         latest_full_snapshot_slot: Slot,
     ) -> u64 {
-        let start = prev_swept_exclusive.saturating_add(1);
+        let start = last_swept_full_snapshot_slot.saturating_add(1);
 
         let mut added_to_shrink_count = 0;
         // Held for the full scan. Safe because the only paths that take this lock in production
@@ -1675,8 +1675,9 @@ impl AccountsDb {
                 && self.is_shrinking_productive(&store)
                 && self.is_candidate_for_shrink(&store)
             {
-                shrink_candidates.insert(slot);
-                added_to_shrink_count += 1;
+                if shrink_candidates.insert(slot) {
+                    added_to_shrink_count += 1;
+                }
             }
         }
         drop(shrink_candidates);
@@ -2129,7 +2130,7 @@ impl AccountsDb {
             ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
             (
-                "zero_lamport_single_ref_slots_added_to_shrink",
+                "zero_lamport_single_ref_slots_added_to_shrink_count",
                 key_timings.zero_lamport_single_ref_slots_added_to_shrink_count,
                 i64
             ),

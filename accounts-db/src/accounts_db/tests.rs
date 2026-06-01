@@ -3606,7 +3606,6 @@ define_accounts_db_test!(
 /// zero lamport single ref accounts can be removed by shrink
 #[test]
 fn test_zero_lamport_single_ref_resweep_after_snapshot_advances() {
-    agave_logger::setup();
     let db = AccountsDb::new_single_for_tests_with_provider_and_config(
         AccountsFileProvider::default(),
         AccountsDbConfig {
@@ -3637,10 +3636,8 @@ fn test_zero_lamport_single_ref_resweep_after_snapshot_advances() {
     db.add_root_and_flush_write_cache(zero_lamport_single_ref_slot);
 
     // First clean: slot 1 is reclaimed, making slot key_zero a ZLSR. The unref path marks
-    // marks key_zero on slot 2's storage, but because the snapshot is still at 0 it does not
+    // key_zero on slot 2's storage, but because the snapshot is still at 0 it does not
     // mark the slot shrinkable yet.
-    // is still at 0 we clear shrink_candidate_slots
-    // so the second clean's sweep is the only thing that can re-add it.
     db.clean_accounts(Some(zero_lamport_single_ref_slot), false);
     assert!(
         !db.shrink_candidate_slots
