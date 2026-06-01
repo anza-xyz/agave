@@ -58,6 +58,7 @@ use {
         event_handler::{EventHandler, EventHandlerContext},
         generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
+        standstill::StandstillSignal,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
@@ -104,6 +105,7 @@ pub struct VotorConfig {
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub consensus_metrics_sender: ConsensusMetricsEventSender,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    pub standstill_signal: Arc<StandstillSignal>,
     pub bank_forks_controller: Arc<dyn BankForksController>,
 
     // Senders / Notifiers
@@ -175,6 +177,7 @@ impl Votor {
             build_reward_certs_receiver,
             generated_cert_types,
             highest_finalized,
+            standstill_signal,
             bank_forks_controller,
         } = config;
 
@@ -225,6 +228,7 @@ impl Votor {
             migration_status: migration_status.clone(),
             event_receiver,
             timer_manager: Arc::clone(&timer_manager),
+            standstill_signal,
             shared_context,
             voting_context,
             root_context,

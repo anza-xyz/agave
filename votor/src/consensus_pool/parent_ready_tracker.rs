@@ -63,7 +63,7 @@ struct ParentReadyStatus {
 }
 
 impl ParentReadyTracker {
-    /// Creates a new tracker with the root bank as implicitely notarized fallback
+    /// Creates a new tracker with the root bank as implicitly notarized fallback
     pub(super) fn new(cluster_info: Arc<ClusterInfo>, root_block @ (root_slot, _): Block) -> Self {
         let mut slot_statuses = HashMap::new();
         slot_statuses.insert(
@@ -317,7 +317,7 @@ mod tests {
         assert!(tracker.parent_ready(root_slot + 1, root_block));
         assert_eq!(tracker.highest_parent_ready(), root_slot + 1);
 
-        // Adding new certs should work as root slot is implicitely notarized fallback
+        // Adding new certs should work as root slot is implicitly notarized fallback
         tracker.add_new_skip(root_slot + 1, &mut events);
         tracker.add_new_skip(root_slot + 2, &mut events);
         assert!(tracker.parent_ready(root_slot + 3, root_block));

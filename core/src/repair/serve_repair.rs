@@ -2552,6 +2552,7 @@ mod tests {
             ancestor_duplicate_slots_sender,
             repair_validators,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+            standstill_signal: Arc::new(agave_votor::standstill::StandstillSignal::new()),
         }
     }
 

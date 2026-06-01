@@ -80,6 +80,3 @@ const DELTA_BLOCK_PROPAGATION: Duration = DELTA.checked_mul(3).unwrap();
 /// This accounts for up to `DELTA` difference between the leader and the other
 /// validator triggering the parent ready event and for block propagation delay.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_add(DELTA_BLOCK_PROPAGATION).unwrap();
-
-/// Timeout for standstill detection mechanism.
-pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);

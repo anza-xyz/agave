@@ -1,8 +1,10 @@
 use {
-    crate::{event::VotorEvent, timer_manager::stats::TimerManagerStats},
+    crate::{
+        event::VotorEvent, standstill::scale_standstill_timeout,
+        timer_manager::stats::TimerManagerStats,
+    },
     crossbeam_channel::Sender,
     solana_clock::Slot,
-    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
         cmp::Reverse,
@@ -10,27 +12,6 @@ use {
         time::{Duration, Instant},
     },
 };
-
-/// Dynamic skip timeouts can be increased to a maximum of 1hour.
-const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
-
-/// Calculate the timeout multiplier based on standstill state.
-/// Returns 1.0 if not in standstill, or 1.05^n where n is the number of
-/// leader windows since standstill started.
-fn calculate_timeout_multiplier(slot: Slot, standstill_slot: Option<Slot>) -> f64 {
-    match standstill_slot {
-        None => 1.0,
-        Some(standstill_slot) => {
-            // Calculate number of leader windows since standstill
-            let slots_since_standstill = slot.saturating_sub(standstill_slot);
-            let leader_windows = slots_since_standstill
-                .checked_div(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot)
-                .expect("NUM_CONSECUTIVE_LEADER_SLOTS is non-zero");
-            // Extend timeout by 5% for each leader window
-            1.05_f64.powi(leader_windows as i32)
-        }
-    }
-}
 
 #[derive(Clone)]
 struct TimeoutConfig {
@@ -40,14 +21,15 @@ struct TimeoutConfig {
 }
 
 impl TimeoutConfig {
+    /// Returns a copy with `delta_timeout` scaled by the standstill multiplier
+    /// and capped at [`crate::standstill::MAX_STANDSTILL_TIMEOUT`]. `delta_first_slice`
+    /// and `delta_block` are protocol pacing, not a function of network synchrony,
+    /// so they are not scaled.
     fn scaled(&self, slot: Slot, standstill_slot: Option<Slot>) -> TimeoutConfig {
-        let multiplier = calculate_timeout_multiplier(slot, standstill_slot);
-        let delta_timeout = Duration::try_from_secs_f64(
-            (self.delta_timeout.as_secs_f64() * multiplier).clamp(0.0, MAX_TIMEOUT.as_secs_f64()),
-        )
-        .unwrap_or(MAX_TIMEOUT);
+        let scaled_delta_timeout =
+            scale_standstill_timeout(self.delta_timeout, slot, standstill_slot);
         TimeoutConfig {
-            delta_timeout,
+            delta_timeout: scaled_delta_timeout,
             delta_first_slice: self.delta_first_slice,
             delta_block: self.delta_block,
         }
@@ -82,10 +64,8 @@ enum TimerState {
 impl TimerState {
     /// Creates a new instance of the state machine.
     ///
-    /// The `timeout_multiplier` extends only the network-DELTA-derived timeout
-    /// (`delta_timeout`). `delta_first_slice` and `delta_block` are protocol
-    /// pacing, not a function of network delays, so they are not scaled. Also
-    /// returns the next time the timer should fire.
+    /// `timeout_config` should already have any standstill scaling applied via
+    /// [`TimeoutConfig::scaled`]. Also returns the next time the timer should fire.
     fn new(slot: Slot, timeout_config: TimeoutConfig, now: Instant) -> (Self, Instant) {
         let window = (slot..=last_of_consecutive_leader_slots(slot)).collect::<VecDeque<_>>();
         assert!(!window.is_empty());
@@ -274,7 +254,9 @@ impl Timers {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::unbounded,
+        super::*,
+        crate::{common::DELTA_TIMEOUT, standstill::MAX_STANDSTILL_TIMEOUT},
+        crossbeam_channel::unbounded,
         solana_clock::DEFAULT_MS_PER_SLOT,
     };
 
@@ -358,26 +340,30 @@ mod tests {
     }
 
     #[test]
-    fn timer_state_with_multiplier() {
-        // Test that timeout multiplier correctly extends the timeout duration
+    fn timer_state_with_standstill() {
+        // Test that the standstill multiplier correctly extends `delta_timeout`
+        // but leaves `delta_block` unchanged.
         let delta_timeout = Duration::from_millis(100);
         let delta_first_slice = Duration::from_millis(10);
         let delta_block = Duration::from_millis(50);
         let now = Instant::now();
-        let slot = 0;
+        // 8 slots since standstill = 2 leader windows = 1.05^2 multiplier.
+        let slot = 8;
+        let standstill_slot = Some(0);
+        let expected_multiplier = 1.05_f64.powi(2);
 
         let timeout_config = TimeoutConfig {
             delta_timeout,
             delta_first_slice,
             delta_block,
         }
-        // 1 leader window standstill -> 1.05x multiplier
-        .scaled(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot, Some(0));
+        .scaled(slot, standstill_slot);
         let (mut timer_state, next_fire) = TimerState::new(slot, timeout_config, now);
 
-        // The first timeout should fire at now + (delta_timeout * 1.05) + delta_first_slice
-        // = now + 105ms + delta_first_slice
-        let expected_first_fire = now + Duration::from_millis(105) + delta_first_slice;
+        // The first timeout fires at `now + (delta_timeout * multiplier) + delta_first_slice`.
+        let expected_first_fire = now
+            + Duration::from_secs_f64(delta_timeout.as_secs_f64() * expected_multiplier)
+            + delta_first_slice;
         assert!(
             next_fire >= expected_first_fire - Duration::from_micros(100)
                 && next_fire <= expected_first_fire + Duration::from_micros(100),
@@ -387,49 +373,19 @@ mod tests {
         // Progress the timer to get TimeoutCrashedLeader
         assert!(matches!(
             timer_state.progress(next_fire).unwrap(),
-            VotorEvent::TimeoutCrashedLeader(0)
+            VotorEvent::TimeoutCrashedLeader(8)
         ));
 
-        // Slot 0's block deadline is `now + delta_block + scaled_delta_timeout`
-        // = now + 50ms + 105ms = now + 155ms (unaffected by delta_first_slice).
+        // Slot 0's block deadline is `now + delta_block + scaled_delta_timeout`, so
+        // the gap from the (delta_first_slice-shifted) first fire is `delta_block - delta_first_slice`.
         let next = timer_state.next_fire().unwrap();
-        let expected_next = now + Duration::from_millis(155);
-        let skew = if next >= expected_next {
-            next - expected_next
-        } else {
-            expected_next - next
-        };
+        let expected_delta = delta_block - delta_first_slice;
+        let actual_delta = next - next_fire;
         assert!(
-            skew <= Duration::from_micros(100),
-            "Expected slot-0 deadline around {expected_next:?}, got {next:?}",
+            actual_delta >= expected_delta - Duration::from_micros(100)
+                && actual_delta <= expected_delta + Duration::from_micros(100),
+            "Expected delta around {expected_delta:?}, got {actual_delta:?}",
         );
-    }
-
-    #[test]
-    fn test_calculate_timeout_multiplier() {
-        // No standstill - multiplier should be 1.0
-        assert_eq!(calculate_timeout_multiplier(100, None), 1.0);
-
-        // Standstill at slot 0
-        // At slot 0 (same slot) - 0 leader windows passed
-        assert_eq!(calculate_timeout_multiplier(0, Some(0)), 1.0);
-
-        // At slot 4 (1 leader window = 4 slots) - 1.05^1
-        let multiplier = calculate_timeout_multiplier(4, Some(0));
-        assert!((multiplier - 1.05).abs() < 0.001);
-
-        // At slot 8 (2 leader windows) - 1.05^2
-        let multiplier = calculate_timeout_multiplier(8, Some(0));
-        assert!((multiplier - 1.1025).abs() < 0.001);
-
-        // At slot 40 (10 leader windows) - 1.05^10
-        let multiplier = calculate_timeout_multiplier(40, Some(0));
-        let expected = 1.05_f64.powi(10);
-        assert!((multiplier - expected).abs() < 0.001);
-
-        // Standstill at slot 20, current slot 28 (2 leader windows)
-        let multiplier = calculate_timeout_multiplier(28, Some(20));
-        assert!((multiplier - 1.1025).abs() < 0.001);
     }
 
     #[test]
@@ -437,24 +393,27 @@ mod tests {
         let now = Instant::now();
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
         let delta_first_slice = delta_block;
+        // A slot far enough past standstill that 1.05^n explodes past 1h.
+        // 1.05^400 ≈ 3.7e8 — well above the 3600s cap.
+        let slot = 4 * 400;
+        let standstill_slot = Some(0);
 
         let timeout_config = TimeoutConfig {
             delta_timeout: DELTA_TIMEOUT,
             delta_first_slice,
             delta_block,
         }
-        // ensure a large multiplier that would exceed MAX_TIMEOUT
-        .scaled(1000, Some(0));
-        let (mut timer_state, next_fire) = TimerState::new(1000, timeout_config, now);
+        .scaled(slot, standstill_slot);
+        let (mut timer_state, next_fire) = TimerState::new(slot, timeout_config, now);
 
-        // The first timeout should be capped at MAX_TIMEOUT (+ unscaled delta_first_slice).
-        let expected_first_fire = now + MAX_TIMEOUT + delta_first_slice;
+        // The first timeout should be capped at MAX_STANDSTILL_TIMEOUT (+ unscaled delta_first_slice).
+        let expected_first_fire = now + MAX_STANDSTILL_TIMEOUT + delta_first_slice;
         assert_eq!(next_fire, expected_first_fire);
 
         // Progress the timer to get TimeoutCrashedLeader
         assert!(matches!(
             timer_state.progress(next_fire).unwrap(),
-            VotorEvent::TimeoutCrashedLeader(1000)
+            VotorEvent::TimeoutCrashedLeader(s) if s == slot
         ));
 
         // Slot 0's block deadline is `T + delta_block + scaled_delta_timeout`, so
