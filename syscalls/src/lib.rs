@@ -2693,7 +2693,7 @@ declare_builtin_function!(
         let Some((idx, region)) = memory_mapping.find_region(region_base_address) else {
             return Err(SyscallError::InvalidPointer.into());
         };
-        if region.vm_addr != region_base_address || !(region.writable || region.access_violation_handler_payload.is_some()) {
+        if region.vm_addr != region_base_address {
             return Err(SyscallError::InvalidPointer.into());
         }
         if let Some(_increase_bytes) = new_len.checked_sub(region.len) {
@@ -2709,7 +2709,7 @@ declare_builtin_function!(
         }
         let new_region = invoke_context
             .transaction_context
-            .resize_region(region_base_address, new_len)?;
+            .resize_region(region, new_len)?;
         unsafe {
             // FIXME(nagisa): RISKY! The above might have realloc'd, but replace_region can
             // still fail, leaving the memory mapping in an entirely invalid and unsound state

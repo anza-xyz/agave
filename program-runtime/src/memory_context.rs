@@ -159,17 +159,28 @@ impl MemoryContexts {
         Ok(())
     }
 
-    pub fn update_abi_v2_account_permissions(
+    /// Modifies the memory regions as needed between any instruction edges.
+    ///
+    /// This function is to be called before execution changes between instructions: before a new
+    /// program is executed, after a CPI return, etc.
+    pub fn abi_v2_prepare_for_instruction(
         &mut self,
         transaction_context: &TransactionContext,
     ) -> Result<(), InstructionError> {
         let current_instruction = transaction_context.get_current_instruction_context()?;
+        let regions = self.abiv2_mappings.get_regions_mut();
+
+        // Before using the scratchpad the instruction has to call set_buffer_length syscall.
+        // This is required in order to set the `program_id`.
+        let return_data_scratchpad = regions
+            .get_mut(abiv2_region_index_from_vm_address(RETURN_DATA_SCRATCHPAD))
+            .expect("return data scratchpad always present");
+        return_data_scratchpad.writable = false;
+
         let accounts_in_transaction = transaction_context.accounts().len();
         let accounts_start = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
         let accounts_end = accounts_start.saturating_add(accounts_in_transaction);
-        let account_regions = self
-            .abiv2_mappings
-            .get_regions_mut()
+        let account_regions = regions
             .get_mut(accounts_start..accounts_end)
             .expect("Account regions should have been configured.");
 
@@ -232,7 +243,9 @@ pub struct SerializedAccountMetadata {
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> Vec<MemoryRegion> {
+pub(crate) fn create_abiv2_regions(
+    transaction_context: &mut TransactionContext,
+) -> Vec<MemoryRegion> {
     let mut v2_regions: Vec<MemoryRegion> = vec![MemoryRegion::default(); NUMBER_OF_REGIONS];
 
     // Filled on a later stage, but we still want to have at least base vm_addrs be accurate so that
@@ -277,10 +290,9 @@ pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> 
         .unwrap() = MemoryRegion::new(instruction_trace_slice, INSTRUCTION_TRACE_AREA);
 
     // Index 7: Return data scratchpad area
-    let return_data_slice = &raw const transaction_context.return_data_buffer()[..];
     *v2_regions
         .get_mut(abiv2_region_index_from_vm_address(RETURN_DATA_SCRATCHPAD))
-        .unwrap() = MemoryRegion::new(return_data_slice, RETURN_DATA_SCRATCHPAD);
+        .unwrap() = transaction_context.return_data_region();
 
     // Indexes 8..264: Transaction accounts payload
     let start_idx = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
@@ -344,7 +356,7 @@ mod test {
                 AccountSharedData::new(60, 2, &program),
             ),
             (
-                program.clone(),
+                program,
                 AccountSharedData::new(20, 3, &Pubkey::new_unique()),
             ),
         ];
@@ -365,7 +377,7 @@ mod test {
             .unwrap();
 
         let mut memory_contexts = MemoryContexts::new();
-        let abi_v2_regions = create_abiv2_regions(&tx_context);
+        let abi_v2_regions = create_abiv2_regions(&mut tx_context);
         *memory_contexts.abiv2_mappings = unsafe {
             MemoryMapping::new_uninitialized(
                 abi_v2_regions,
@@ -382,7 +394,7 @@ mod test {
         // IX 1
         tx_context.push().unwrap();
         memory_contexts
-            .update_abi_v2_account_permissions(&tx_context)
+            .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
         let ix1_regions = memory_contexts
             .abiv2_mappings
@@ -423,7 +435,7 @@ mod test {
         tx_context.push().unwrap();
 
         memory_contexts
-            .update_abi_v2_account_permissions(&tx_context)
+            .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
         let ix2_regions = memory_contexts
             .abiv2_mappings
@@ -464,7 +476,7 @@ mod test {
 
         tx_context.push().unwrap();
         memory_contexts
-            .update_abi_v2_account_permissions(&tx_context)
+            .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
         let ix3_regions = memory_contexts
             .abiv2_mappings
@@ -495,7 +507,7 @@ mod test {
         first_account.writable = true;
         first_account.access_violation_handler_payload = None;
         memory_contexts
-            .update_abi_v2_account_permissions(&tx_context)
+            .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
         let ix3_regions = memory_contexts
             .abiv2_mappings
