@@ -80,7 +80,7 @@ pub async fn workspace_version(client: &reqwest::Client, bv: BranchVersion) -> R
         .text()
         .await
         .map_err(|e| anyhow!("read body for {url}: {e}"))?;
-    let parsed: CargoToml = toml::from_str(&raw)
-        .map_err(|e| anyhow!("failed to parse Cargo.toml at {url}: {e}"))?;
+    let parsed: CargoToml =
+        toml::from_str(&raw).map_err(|e| anyhow!("failed to parse Cargo.toml at {url}: {e}"))?;
     Ok(parsed.workspace.package.version)
 }
