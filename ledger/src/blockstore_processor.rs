@@ -2950,7 +2950,6 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            blockstore::hashes_per_tick_for_ledger,
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
@@ -3854,7 +3853,7 @@ pub mod tests {
             entries.push(entry);
         }
 
-        let hashes_per_tick = hashes_per_tick_for_ledger(&genesis_config);
+        let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
         let remaining_hashes = hashes_per_tick - entries.len() as u64;
         let tick_entry = next_entry_mut(&mut last_entry_hash, remaining_hashes, vec![]);
         entries.push(tick_entry);

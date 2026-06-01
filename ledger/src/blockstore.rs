@@ -396,13 +396,6 @@ impl SlotMetaWorkingSetEntry {
     }
 }
 
-pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
-    let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
-        return 0;
-    };
-    hashes_per_tick
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParentInfo {
     /// Parent slot to expose through SlotMeta and replay.
@@ -6157,9 +6150,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    // Slot-0 tick entries are created before a Bank exists, so derive the
-    // effective hashes-per-tick directly from genesis feature state here.
-    let hashes_per_tick = hashes_per_tick_for_ledger(genesis_config);
+    // Slot-0 tick entries are created before a Bank exists, so use the
+    // genesis PoH config directly.
+    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);

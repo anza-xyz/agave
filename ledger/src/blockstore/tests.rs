@@ -193,15 +193,6 @@ fn data_shreds(shreds: Vec<Shred>) -> Vec<Shred> {
 }
 
 #[test]
-fn test_hashes_per_tick_for_ledger() {
-    let mut genesis_config = GenesisConfig::default();
-    assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
-
-    genesis_config.poh_config.hashes_per_tick = Some(2);
-    assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
-}
-
-#[test]
 fn test_create_new_ledger() {
     agave_logger::setup();
     let mint_total = 1_000_000_000_000;
