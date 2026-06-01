@@ -3,6 +3,7 @@ use {
         error::{LedgerToolError, Result},
         ledger_utils::get_program_ids,
     },
+    agave_votor::consensus_pool::certificate_builder::MAXIMUM_VALIDATORS,
     chrono::{Local, TimeZone},
     itertools::Either,
     pretty_hex::PrettyHex,
@@ -49,8 +50,6 @@ use {
         sync::Arc,
     },
 };
-
-const MAX_CERTIFICATE_VALIDATORS: usize = 4096;
 
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -734,7 +733,7 @@ fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> CliPopulatedFooter
 }
 
 fn validator_count_log(bitmap: &[u8]) -> String {
-    match decode(bitmap, MAX_CERTIFICATE_VALIDATORS) {
+    match decode(bitmap, MAXIMUM_VALIDATORS) {
         Ok(Decoded::Base2(validators)) => validators.count_ones().to_string(),
         Ok(Decoded::Base3(first, second)) => first
             .count_ones()
