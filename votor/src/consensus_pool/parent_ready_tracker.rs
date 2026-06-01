@@ -231,6 +231,15 @@ impl ParentReadyTracker {
         }
     }
 
+    /// Returns whether the block is notarized or notarized-fallback
+    ///
+    /// This includes any special cases like: genesis, snapshot root, migration Genesis cert
+    pub(super) fn has_notar_fallback_or_stronger(&self, block @ (slot, _): Block) -> bool {
+        self.slot_statuses
+            .get(&slot)
+            .is_some_and(|ss| ss.notar_fallbacks.contains(&block))
+    }
+
     fn highest_parent_ready(&self) -> Slot {
         self.highest_with_parent_ready
     }
