@@ -120,6 +120,7 @@ fn create_store_for_shrink_tests(
         slot as AccountsFileId,
         file_size,
         AccountsFileProvider::AppendVec,
+        StorageAccess::File,
     ));
     accounts_db.storage.insert(Arc::clone(&store));
     store.add_accounts(num_zero_lamport_single_ref_accounts.max(1), alive_bytes);
