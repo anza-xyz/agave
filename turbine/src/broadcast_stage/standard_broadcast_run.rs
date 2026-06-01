@@ -288,10 +288,11 @@ impl StandardBroadcastRun {
     }
 
     /// Leaf that binds the current replay parent into the double-merkle block id.
-    fn parent_info_leaf(&self) -> Hash {
+    fn parent_info_leaf(&self, fec_set_count: u32) -> Hash {
         hashv(&[
             &self.parent_for_double_merkle.0.to_le_bytes(),
             self.parent_for_double_merkle.1.as_bytes(),
+            &fec_set_count.to_le_bytes(),
         ])
     }
 
@@ -482,15 +483,16 @@ impl StandardBroadcastRun {
                 .should_use_double_merkle_block_id(bank.slot())
             {
                 // Block id is the double merkle root
-                let fec_set_count = self.double_merkle_leaves.len();
+                let fec_set_count = u32::try_from(self.double_merkle_leaves.len()).unwrap();
                 // Add the final leaf (parent info)
-                self.double_merkle_leaves.push(self.parent_info_leaf());
+                self.double_merkle_leaves
+                    .push(self.parent_info_leaf(fec_set_count));
 
                 // Compute the double merkle root
                 // Blockstore population of the DoubleMerkleMeta happens asynchronously when shreds are inserted
                 let merkle_tree = MerkleTree::try_new_with_len(
                     self.double_merkle_leaves.drain(..).map(Ok),
-                    fec_set_count + 1,
+                    fec_set_count as usize + 1,
                 )
                 .expect("Double merkle tree construction cannot fail");
                 *merkle_tree.root()
@@ -1286,11 +1288,13 @@ mod test {
             bs.parent_for_double_merkle,
             (new_parent_slot, new_parent_block_id)
         );
+        let fec_set_count = 3u32;
         assert_eq!(
-            bs.parent_info_leaf(),
+            bs.parent_info_leaf(fec_set_count),
             hashv(&[
                 &new_parent_slot.to_le_bytes(),
-                new_parent_block_id.as_bytes()
+                new_parent_block_id.as_bytes(),
+                &fec_set_count.to_le_bytes(),
             ])
         );
 

@@ -2,15 +2,18 @@
 
 use {
     crate::rpc_sender::*,
+    agave_votor_messages::certificate::{Certificate, CertificateType},
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     serde_json::{Number, Value, json},
     solana_account_decoder_client_types::{
         UiAccount, UiAccountData, UiAccountEncoding, token::UiTokenAmount,
     },
+    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
     solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
@@ -171,6 +174,14 @@ impl RpcSender for MockSender {
                 block_height: 34,
                 transaction_count: Some(123),
             })?,
+            "getAgGenesisCert" => {
+                let cert = Certificate {
+                    cert_type: CertificateType::Genesis(0, Hash::default()),
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: Vec::default(),
+                };
+                serde_json::to_value(Some(cert))?
+            }
             "getSignatureStatuses" => {
                 let status: TransactionResult<()> = if self.url == "account_in_use" {
                     Err(TransactionError::AccountInUse)

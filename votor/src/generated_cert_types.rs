@@ -1,8 +1,8 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    agave_votor_messages::consensus_message::CertificateType, parking_lot::RwLock,
-    solana_clock::Slot, std::collections::HashSet,
+    agave_votor_messages::certificate::CertificateType, parking_lot::RwLock, solana_clock::Slot,
+    std::collections::HashSet,
 };
 
 /// A simple container that allows the consensus pool to communicate with the bls sigverifier

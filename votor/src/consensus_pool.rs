@@ -16,7 +16,8 @@ use {
         generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
-        consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        certificate::{Certificate, CertificateType},
+        consensus_message::{Block, ConsensusMessage, VoteMessage},
         fraction::Fraction,
         migration::MigrationStatus,
         vote::{Vote, VoteType},
@@ -583,15 +584,8 @@ impl ConsensusPool {
     /// Checks if a specific block has a NotarizeFallback certificate (or stronger).
     /// This is used for verifying that an intrawindow block's parent has been certified.
     pub(crate) fn block_has_notar_fallback_or_stronger(&self, block: Block) -> bool {
-        let (slot, block_id) = block;
-        self.completed_certificates
-            .contains_key(&CertificateType::NotarizeFallback(slot, block_id))
-            || self
-                .completed_certificates
-                .contains_key(&CertificateType::Notarize(slot, block_id))
-            || self
-                .completed_certificates
-                .contains_key(&CertificateType::FinalizeFast(slot, block_id))
+        self.parent_ready_tracker
+            .has_notar_fallback_or_stronger(block)
     }
 
     /// Takes the pending safe-to-notar blocks that need parent verification.

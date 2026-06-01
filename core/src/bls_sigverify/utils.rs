@@ -4,10 +4,11 @@ use {
         bls_sigverify::{errors::SigVerifyCertError, stats::SigVerifyCertStats},
         cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
-    agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-    agave_votor_messages::{
-        consensus_message::ConsensusMessage, reward_certificate::AddVoteMessage,
+    agave_votor::{
+        consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+        consensus_rewards::AddVoteMessage,
     },
+    agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Sender, TrySendError},
     solana_clock::Slot,
     solana_pubkey::Pubkey,

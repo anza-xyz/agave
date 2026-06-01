@@ -50,7 +50,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -396,13 +396,6 @@ impl SlotMetaWorkingSetEntry {
     }
 }
 
-pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
-    let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
-        return 0;
-    };
-    hashes_per_tick
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParentInfo {
     /// Parent slot to expose through SlotMeta and replay.
@@ -493,6 +486,14 @@ impl ParentInfo {
     /// True when this metadata came from an `UpdateParent` marker.
     fn has_update_parent(&self) -> bool {
         self.replay_fec_set_index > 0
+    }
+
+    fn validate_update_parent_slot(&self, slot: Slot) -> Result<()> {
+        if self.has_update_parent() && leader_slot_index(slot) != 0 {
+            return Err(BlockstoreError::UpdateParentNotFirstInLeaderWindow(slot));
+        }
+
+        Ok(())
     }
 
     /// True when this metadata came from the slot's block header.
@@ -990,11 +991,14 @@ impl Blockstore {
         };
 
         // Block was full above, get_block_location returned Some, but may have
-        // been purged by BlockstoreCleanupService in between.
-        let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)? else {
-            return Ok(None);
-        };
-        Ok(Some((dmm, location)))
+        // been purged by BlockstoreCleanupService in between, or swapped out.
+        if let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)?
+            && dmm.double_merkle_root == block_id
+        {
+            Ok(Some((dmm, location)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Gets the double merkle meta for the given block.
@@ -1149,6 +1153,11 @@ impl Blockstore {
         let Some(new_parent_info) = new_parent_info else {
             return Ok(());
         };
+
+        if let Err(err) = new_parent_info.validate_update_parent_slot(slot) {
+            self.mark_invalid_parent_info_dead(write_batch, new_parent_info, slot, location, &err)?;
+            return Err(err);
+        }
 
         let max_root = self.max_root();
         if let Err(err) = new_parent_info.validate_shred_parent(slot, shred_parent_slot, max_root) {
@@ -1880,10 +1889,15 @@ impl Blockstore {
                     .map_err(|_| shred::Error::InvalidMerkleRoot)
                     .and_then(|mr| mr.ok_or(shred::Error::InvalidMerkleRoot))
             })
-            // Add parent info as the last leaf
+            // Add parent info as the last leaf. The `fec_set_count` is bound
+            // into this leaf so that an adversary cannot convince a verifier
+            // that the count is off-by-one when the number of FEC sets is
+            // even (which makes the total leaf count odd and causes the last
+            // leaf to be hashed with itself during tree construction).
             .chain(std::iter::once(Ok(hashv(&[
                 &parent_slot.to_le_bytes(),
                 parent_block_id.as_ref(),
+                &fec_set_count.to_le_bytes(),
             ]))));
 
         MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count as usize + 1)
@@ -6141,9 +6155,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    // Slot-0 tick entries are created before a Bank exists, so derive the
-    // effective hashes-per-tick directly from genesis feature state here.
-    let hashes_per_tick = hashes_per_tick_for_ledger(genesis_config);
+    // Slot-0 tick entries are created before a Bank exists, so use the
+    // genesis PoH config directly.
+    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);

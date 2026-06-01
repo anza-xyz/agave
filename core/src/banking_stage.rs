@@ -1351,7 +1351,9 @@ mod tests {
                 })
                 .unwrap()
         })
-        .for_each(|handle| handle.join().unwrap());
+        .for_each(|handle| {
+            handle.join().unwrap();
+        });
 
         banking_stage.join().unwrap();
         exit.store(true, Ordering::Relaxed);

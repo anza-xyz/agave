@@ -52,7 +52,10 @@ pub fn serialize_status_cache(
                                         .map(|(key_slice, result)| {
                                             (
                                                 *key_slice,
-                                                result.clone().map_err(SerdeTransactionError::from),
+                                                result
+                                                    .as_ref()
+                                                    .map(|_| ())
+                                                    .map_err(SerdeTransactionError::from),
                                             )
                                         })
                                         .collect::<Vec<_>>(),
@@ -83,21 +86,21 @@ pub fn deserialize_status_cache(
             .deserialize_from(stream)?;
 
         let slot_deltas = snapshot_slot_deltas
-            .iter()
+            .into_iter()
             .map(|slot_delta| {
                 let status_map = slot_delta
                     .2
-                    .iter()
+                    .into_iter()
                     .map(|(key, value)| {
                         (
-                            *key,
+                            key,
                             (
                                 value.0,
                                 value
                                     .1
-                                    .iter()
+                                    .into_iter()
                                     .map(|(key_slice, result)| {
-                                        (*key_slice, result.clone().map_err(TransactionError::from))
+                                        (key_slice, result.map_err(TransactionError::from))
                                     })
                                     .collect::<Vec<_>>(),
                             ),
@@ -161,8 +164,8 @@ enum SerdeTransactionError {
     CommitCancelled,
 }
 
-impl From<TransactionError> for SerdeTransactionError {
-    fn from(err: TransactionError) -> Self {
+impl From<&TransactionError> for SerdeTransactionError {
+    fn from(err: &TransactionError) -> Self {
         match err {
             TransactionError::AccountInUse => Self::AccountInUse,
             TransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
@@ -172,7 +175,9 @@ impl From<TransactionError> for SerdeTransactionError {
             TransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
             TransactionError::AlreadyProcessed => Self::AlreadyProcessed,
             TransactionError::BlockhashNotFound => Self::BlockhashNotFound,
-            TransactionError::InstructionError(i, inner) => Self::InstructionError(i, inner.into()),
+            TransactionError::InstructionError(i, inner) => {
+                Self::InstructionError(*i, inner.into())
+            }
             TransactionError::CallChainTooDeep => Self::CallChainTooDeep,
             TransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
             TransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
@@ -204,9 +209,11 @@ impl From<TransactionError> for SerdeTransactionError {
             TransactionError::WouldExceedAccountDataTotalLimit => {
                 Self::WouldExceedAccountDataTotalLimit
             }
-            TransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
+            TransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(*i),
             TransactionError::InsufficientFundsForRent { account_index } => {
-                Self::InsufficientFundsForRent { account_index }
+                Self::InsufficientFundsForRent {
+                    account_index: *account_index,
+                }
             }
             TransactionError::MaxLoadedAccountsDataSizeExceeded => {
                 Self::MaxLoadedAccountsDataSizeExceeded
@@ -216,7 +223,9 @@ impl From<TransactionError> for SerdeTransactionError {
             }
             TransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
             TransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
-                Self::ProgramExecutionTemporarilyRestricted { account_index }
+                Self::ProgramExecutionTemporarilyRestricted {
+                    account_index: *account_index,
+                }
             }
             TransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
             TransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
@@ -429,8 +438,8 @@ impl From<SerdeInstructionError> for InstructionError {
     }
 }
 
-impl From<InstructionError> for SerdeInstructionError {
-    fn from(err: InstructionError) -> Self {
+impl From<&InstructionError> for SerdeInstructionError {
+    fn from(err: &InstructionError) -> Self {
         match err {
             InstructionError::GenericError => Self::GenericError,
             InstructionError::InvalidArgument => Self::InvalidArgument,
@@ -458,7 +467,7 @@ impl From<InstructionError> for SerdeInstructionError {
             InstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
             InstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
             InstructionError::DuplicateAccountOutOfSync => Self::DuplicateAccountOutOfSync,
-            InstructionError::Custom(n) => Self::Custom(n),
+            InstructionError::Custom(n) => Self::Custom(*n),
             InstructionError::InvalidError => Self::InvalidError,
             InstructionError::ExecutableDataModified => Self::ExecutableDataModified,
             InstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,

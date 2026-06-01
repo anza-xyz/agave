@@ -17,6 +17,7 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
+    agave_votor_messages::certificate::Certificate,
     serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
@@ -1826,6 +1827,27 @@ impl RpcClient {
     /// ```
     pub fn get_slot_leaders(&self, start_slot: Slot, limit: u64) -> ClientResult<Vec<Pubkey>> {
         self.invoke((self.rpc_client.as_ref()).get_slot_leaders(start_slot, limit))
+    }
+
+    /// Returns Alpenglow's genesis certificate.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgGenesisCert`] RPC method.
+    ///
+    /// [`getAgGenesisCert`]: https://solana.com/docs/rpc/http/getaggenesiscert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let cert = rpc_client.get_ag_genesis_cert()?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+        self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
     /// Get block production for the current epoch.
@@ -4211,6 +4233,25 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_latest_blockhash_with_commitment(commitment))
     }
 
+    /// Returns the most recent blockhash and last valid block height along with the response
+    /// context, which includes the slot at which the node observed the blockhash.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method and uses the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
+    pub fn get_latest_blockhash_with_commitment_and_context(
+        &self,
+        commitment: CommitmentConfig,
+    ) -> RpcResult<(Hash, u64)> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_latest_blockhash_with_commitment_and_context(commitment),
+        )
+    }
+
     /// Checks whether a blockhash is still valid for submitting transactions.
     ///
     /// # RPC Reference
@@ -5123,5 +5164,22 @@ mod tests {
 
         let fee: u64 = rpc_client.get_fee_for_message(&message).unwrap();
         assert_eq!(fee, 42);
+    }
+
+    #[test]
+    fn test_get_latest_blockhash_with_commitment_and_context() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let expected_blockhash: Hash = PUBKEY.parse().unwrap();
+
+        let response = rpc_client
+            .get_latest_blockhash_with_commitment_and_context(CommitmentConfig::default())
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert_eq!(response.value, (expected_blockhash, 1234));
+
+        let value = rpc_client
+            .get_latest_blockhash_with_commitment(CommitmentConfig::default())
+            .unwrap();
+        assert_eq!(value, response.value);
     }
 }

@@ -15,7 +15,8 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{Block, Certificate, ConsensusMessage},
+        certificate::Certificate,
+        consensus_message::{Block, ConsensusMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -296,7 +297,9 @@ impl ConsensusPoolService {
                 // Genesis cert though.
                 if kick_off_parent_ready {
                     events.push(VotorEvent::Standstill(
-                        consensus_pool.highest_finalized_slot().unwrap_or(0),
+                        consensus_pool
+                            .highest_finalized_slot()
+                            .unwrap_or(ctx.sharable_banks.root().slot()),
                     ));
                 }
                 stats.standstill = true;
@@ -587,7 +590,8 @@ mod tests {
         super::*,
         crate::tests::get_cluster_info,
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, CertificateType, VoteMessage},
+            certificate::CertificateType,
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             vote::Vote,
         },
         crossbeam_channel::unbounded,

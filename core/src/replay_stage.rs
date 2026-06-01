@@ -1055,8 +1055,6 @@ impl ReplayStage {
                         &optimistic_parent_receiver,
                         &replay_highest_frozen,
                         &mut highest_frozen_slot,
-                        &mut progress,
-                        did_complete_bank,
                     );
                     let mut process_switch_bank_events_time =
                         Measure::start("process_switch_bank_events_time");
@@ -1579,7 +1577,6 @@ impl ReplayStage {
         Ok(Self { t_replay })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn alpenglow_handle_newly_frozen_banks(
         new_frozen_slots: &[Slot],
         migration_status: &MigrationStatus,
@@ -1590,8 +1587,6 @@ impl ReplayStage {
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
         replay_highest_frozen: &ReplayHighestFrozen,
         highest_frozen_slot: &mut Slot,
-        progress: &mut ProgressMap,
-        did_complete_bank: bool,
     ) {
         let flh_candidate_banks = {
             let bank_forks_r = bank_forks.read().unwrap();
@@ -1620,10 +1615,6 @@ impl ReplayStage {
                 *l_highest_frozen = *highest;
                 replay_highest_frozen.freeze_notification.notify_one();
             }
-        }
-        if did_complete_bank {
-            let bank_forks_r = bank_forks.read().unwrap();
-            progress.handle_new_root(&bank_forks_r);
         }
     }
 
@@ -2499,6 +2490,7 @@ impl ReplayStage {
 
             // Switch the blockstore data atomically, handles slot meta chaining so generate new bank forks can proceed
             blockstore.switch_block_from_alternate(slot, location)?;
+            progress.increment_num_bank_switches(slot);
             info!("{my_pubkey}: Switched {slot} from {location:?}");
         }
 
@@ -5037,7 +5029,7 @@ impl ReplayStage {
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     ) -> Result<(), TryRecvError> {
         if let Some(command) = bank_forks_controller_receiver.take_set_root_command() {
-            Self::process_set_root_command(command, context, my_pubkey);
+            Self::process_set_root_command(command, context, my_pubkey, progress);
         }
 
         loop {
@@ -5055,6 +5047,7 @@ impl ReplayStage {
         command: SetRootCommand,
         context: &ProcessBankForksContext,
         my_pubkey: &Pubkey,
+        progress: &mut ProgressMap,
     ) {
         let SetRootCommand {
             parent_slot,
@@ -5073,7 +5066,7 @@ impl ReplayStage {
             &context.bank_forks,
             context.rpc_subscriptions.as_deref(),
             my_pubkey,
-            |_| {},
+            |bank_forks| progress.handle_new_root(bank_forks),
         );
     }
 

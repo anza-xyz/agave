@@ -5257,9 +5257,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "9ycftRwjpQ17PrhnwhGPbVzDKd3Q9BybmLYU8UD1Pg1T"
+                    "F4ns41hFn3ignVHqaVehaTZ8LMUxPaELAgvN8iTcowDD"
                 } else {
-                    "4XzjZMjhP9s8iBeFQsnHFwaQ991dpiBGHEkzj1ifAcpS"
+                    "FyxeAqHjieaKMA6mLK3yfSD46Xcw2U6hzKfyeu1qVuCD"
                 },
             );
         }
@@ -5268,9 +5268,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7sbqfkN4W3PkBREyduDc3R2eiKu68JKYRXZt6gCWNt4N"
+                    "sF1tuUv3r5JCr9smYyhm9Qv27f5jcoJ75LnoLGV5Scd"
                 } else {
-                    "ArB3XNVLJsyV7AtrG3C3Bj4akb8s7AzpS5rHJnqGW5sw"
+                    "DrpEs59czmKpLQvR9kBjSmWJUYMNKDdQ4Zsyu4WjfoPb"
                 },
             );
             break;
@@ -6655,6 +6655,12 @@ fn test_slot_params_use_genesis_baseline_without_features() {
     assert_eq!(
         bank.slot_range_duration_in_years(0, 64).to_bits(),
         (64.0 / genesis_slots_per_year).to_bits()
+    );
+    assert_eq!(bank.slot_range_duration_nanos(1, 0), 0);
+    assert_eq!(bank.slot_range_duration_nanos(0, 0), genesis_ns_per_slot);
+    assert_eq!(
+        bank.slot_range_duration_nanos(0, 63),
+        64 * genesis_ns_per_slot
     );
     assert_eq!(
         bank.partitioned_rewards_stake_account_stores_per_block,

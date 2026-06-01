@@ -99,16 +99,13 @@ impl Write for IoUringFileWriter<'_> {
         }
     }
 
-    /// Flush can only be called once.
-    /// Flush will close the underlying file.
+    /// Flush will close the underlying file. Writes are not allowed after flush,
+    /// and subsequent flushes do nothing.
     fn flush(&mut self) -> Result<()> {
-        // @TODO -- once file creator supports multiple partial writes we
-        // can support multiple flushes
+        // Since `write` is disallowed after finalization, no new data can arrive
+        // once we've flushed and this call can be safely ignored.
         if self.finalized {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "file writer has already been finalized by flush",
-            ));
+            return Ok(());
         }
 
         // Handle the case where we are flushing after the buffer has already been dispatched during a write.
@@ -217,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_only_one_flush() {
+    fn test_no_writes_after_flush_but_flush_is_idempotent() {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir = Arc::new(File::open(temp_dir.path()).unwrap());
         let file_path = temp_dir.path().join("test.txt");
@@ -228,7 +225,8 @@ mod tests {
         let mut io_uring_file_writer =
             IoUringFileWriter::new(io_uring_file_creator, file_path.clone(), 0o666, dir).unwrap();
         io_uring_file_writer.flush().unwrap();
+        // Writes are rejected after flush, but a subsequent flush is a no-op and succeeds.
         assert!(io_uring_file_writer.write(&[0]).is_err());
-        assert!(io_uring_file_writer.flush().is_err());
+        io_uring_file_writer.flush().unwrap();
     }
 }

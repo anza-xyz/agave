@@ -40,8 +40,6 @@ use {
 };
 
 pub trait ChannelSend<T>: Send + 'static {
-    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>>;
-
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>>;
 
     fn is_empty(&self) -> bool;
@@ -53,11 +51,6 @@ impl<T> ChannelSend<T> for Sender<T>
 where
     T: Send + 'static,
 {
-    #[inline]
-    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
-        self.send(msg)
-    }
-
     #[inline]
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         self.try_send(msg)

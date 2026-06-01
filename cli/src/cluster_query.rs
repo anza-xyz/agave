@@ -3,6 +3,7 @@ use {
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         feature::get_feature_activation_epoch,
     },
+    agave_votor_messages::certificate::Certificate,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
@@ -40,6 +41,7 @@ use {
     },
     solana_sdk_ids::sysvar::{self, stake_history},
     solana_signature::Signature,
+    solana_signer_store::{Decoded, decode},
     solana_slot_history::{self as slot_history, SlotHistory},
     solana_stake_interface::{self as stake, stake_history::StakeHistory, state::StakeStateV2},
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -188,6 +190,11 @@ impl ClusterQuerySubCommands for App<'_, '_> {
             SubCommand::with_name("epoch-info")
                 .about("Get information about the current epoch")
                 .alias("get-epoch-info"),
+        )
+        .subcommand(
+            SubCommand::with_name("alpenglow-genesis-info")
+                .about("Get info about the Alpenglow genesis cert")
+                .alias("get-alpenglow-genesis-info"),
         )
         .subcommand(
             SubCommand::with_name("genesis-hash")
@@ -503,6 +510,12 @@ pub fn parse_get_block_time(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
 
 pub fn parse_get_epoch(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     Ok(CliCommandInfo::without_signers(CliCommand::GetEpoch))
+}
+
+pub fn parse_get_ag_genesis_info(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::GetAgGenesisInfo,
+    ))
 }
 
 pub fn parse_get_epoch_info(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -1072,6 +1085,39 @@ pub async fn process_get_epoch(rpc_client: &RpcClient, _config: &CliConfig<'_>) 
     Ok(epoch_info.epoch.to_string())
 }
 
+pub async fn process_get_ag_genesis_info(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+) -> ProcessResult {
+    let cert = rpc_client.get_ag_genesis_cert().await?;
+    let ag_genesis_info = match cert {
+        None => CliAgGenesisInfo::Tower,
+        Some(Certificate {
+            cert_type,
+            signature,
+            bitmap,
+        }) => {
+            debug_assert!(cert_type.is_genesis());
+            let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+            let epoch = epoch_schedule.get_epoch(cert_type.slot());
+            const MAX_VALIDATORS: usize = 4096;
+            let Decoded::Base2(bitvec) = decode(&bitmap, MAX_VALIDATORS)
+                .map_err(|_| Box::new(CliError::InvalidAgGenesisCert))?
+            else {
+                return Err(Box::new(CliError::InvalidAgGenesisCert));
+            };
+            CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
+                epoch,
+                slot: cert_type.slot(),
+                block_id: cert_type.to_block().unwrap().1,
+                bitvec,
+                signature,
+            })
+        }
+    };
+    Ok(config.output_format.formatted_string(&ag_genesis_info))
+}
+
 pub async fn process_get_epoch_info(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
@@ -1603,8 +1649,11 @@ pub async fn process_show_stakes(
                 .collect();
 
             if !pubkeys.is_empty() {
+                let mut pubkeys: Vec<String> = pubkeys.into_iter().collect();
+                pubkeys.sort();
                 return Err(CliError::RpcRequestError(format!(
-                    "Failed to retrieve matching vote account for {pubkeys:?}."
+                    "Failed to retrieve matching vote account for {}.",
+                    pubkeys.join(", ")
                 ))
                 .into());
             }
@@ -1651,9 +1700,11 @@ pub async fn process_show_stakes(
         .await?;
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
+    let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
     })?;
+    let rent: Rent = rent_account.deserialize_data()?;
     let stake_history: StakeHistory =
         bincode::deserialize(&stake_history_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize stake history".to_string())
@@ -1672,9 +1723,7 @@ pub async fn process_show_stakes(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(stake_state) = stake_account.state() {
-            let rent_exempt_balance = rpc_client
-                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
-                .await?;
+            let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
 
             match stake_state {
                 StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {

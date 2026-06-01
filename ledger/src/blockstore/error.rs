@@ -90,6 +90,8 @@ pub enum BlockstoreError {
         update_parent_slot: Slot,
         shred_parent_slot: Slot,
     },
+    #[error("update parent is only valid in the first slot of a leader window for slot {0}")]
+    UpdateParentNotFirstInLeaderWindow(Slot),
     #[error("unexpected block component")]
     UnexpectedBlockComponent,
     #[error("multiple update parents for slot {0}")]

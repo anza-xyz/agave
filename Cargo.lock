@@ -7445,6 +7445,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signature",
  "solana-signer",
+ "solana-signer-store",
  "solana-slot-history",
  "solana-stake-interface",
  "solana-syscalls",
@@ -7484,6 +7485,7 @@ dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
  "base64 0.22.1",
+ "bitvec",
  "chrono",
  "clap 2.33.3",
  "console 0.16.3",
@@ -7496,6 +7498,7 @@ dependencies = [
  "solana-account 4.3.0",
  "solana-account-decoder",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",
@@ -8976,9 +8979,9 @@ dependencies = [
 
 [[package]]
 name = "solana-message"
-version = "4.1.1"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a634d1db65a393d4e87ec49ef97c8dfb12201e2ba9e5faf87ff34e632f29e509"
+checksum = "a81a5ae2aa5c27925de70bc94fc42f1ca80a46c951ae101b419aa4eac9abb56a"
 dependencies = [
  "blake3",
  "lazy_static",
@@ -9760,6 +9763,7 @@ dependencies = [
 name = "solana-rpc-client"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-votor-messages",
  "assert_matches",
  "async-trait",
  "base64 0.22.1",
@@ -9779,6 +9783,7 @@ dependencies = [
  "solana-account 4.3.0",
  "solana-account-decoder",
  "solana-account-decoder-client-types",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-commitment-config",
  "solana-epoch-info",
@@ -10050,7 +10055,6 @@ dependencies = [
  "static_assertions",
  "strum",
  "strum_macros",
- "symlink",
  "tempfile",
  "test-case",
  "thiserror 2.0.18",
@@ -10518,7 +10522,6 @@ dependencies = [
  "nix",
  "num_cpus",
  "pem",
- "percentage",
  "quinn",
  "rand 0.9.4",
  "rustls",
@@ -10913,6 +10916,7 @@ checksum = "0ced92c60aa76ec4780a9d93f3bd64dfa916e1b998eacc6f1c110f3f444f02c9"
 name = "solana-tls-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "quinn",
  "rustls",
  "solana-keypair",
  "solana-pubkey 4.2.0",

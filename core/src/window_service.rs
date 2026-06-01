@@ -172,7 +172,7 @@ fn run_check_duplicate(
 
         if !migration_status.is_alpenglow_enabled() {
             // The state machine can be exited as soon as alpenglow is enabled.
-            // Notify duplicate consensus state machine
+            // Notify duplicate consensus state machine. If channel is full we wait.
             duplicate_slots_sender.send(shred_slot)?;
         }
 

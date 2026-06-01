@@ -1,5 +1,8 @@
 use {
-    agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        consensus_message::VoteMessage,
+    },
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
     solana_signer_store::{EncodeError, encode_base2, encode_base3},
@@ -271,8 +274,7 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::{
-            consensus_message::{CertificateType, VoteMessage},
-            vote::Vote,
+            certificate::CertificateType, consensus_message::VoteMessage, vote::Vote,
         },
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, PreparedHashedMessage,
