@@ -50,7 +50,6 @@ use {
             ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
         },
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
-        consensus_rewards::{AddVoteMessage, BuildRewardCertsRequest, ConsensusRewardsService},
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
@@ -121,8 +120,6 @@ pub struct VotorConfig {
     pub event_receiver: VotorEventReceiver,
     pub consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
-    pub reward_votes_receiver: Receiver<AddVoteMessage>,
-    pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
 /// Context shared with block creation, replay, gossip, banking stage etc
@@ -141,7 +138,6 @@ pub struct Votor {
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
-    consensus_rewards_service: ConsensusRewardsService,
     metrics: JoinHandle<()>,
 }
 
@@ -171,8 +167,6 @@ impl Votor {
             consensus_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
-            reward_votes_receiver,
-            build_reward_certs_receiver,
             generated_cert_types,
             highest_finalized,
             bank_forks_controller,
@@ -256,19 +250,10 @@ impl Votor {
         );
         let event_handler = EventHandler::new(event_handler_context);
         let consensus_pool_service = ConsensusPoolService::new(consensus_pool_context);
-        let consensus_rewards_service = ConsensusRewardsService::new(
-            cluster_info,
-            leader_schedule_cache,
-            sharable_banks,
-            exit,
-            reward_votes_receiver,
-            build_reward_certs_receiver,
-        );
 
         Self {
             event_handler,
             consensus_pool_service,
-            consensus_rewards_service,
             timer_manager,
             metrics,
         }
@@ -276,7 +261,6 @@ impl Votor {
 
     pub fn join(self) -> thread::Result<()> {
         self.consensus_pool_service.join()?;
-        self.consensus_rewards_service.join()?;
 
         // Loop till we manage to unwrap the Arc and then we can join.
         let mut timer_manager = self.timer_manager;

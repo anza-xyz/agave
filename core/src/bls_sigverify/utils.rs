@@ -1,13 +1,11 @@
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
     crate::{
+        block_creation_loop::rewards::msg_types::AddVoteMessage,
         bls_sigverify::{errors::SigVerifyCertError, stats::SigVerifyCertStats},
         cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
-    agave_votor::{
-        consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        consensus_rewards::AddVoteMessage,
-    },
+    agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
     agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Sender, TrySendError},
     solana_clock::Slot,

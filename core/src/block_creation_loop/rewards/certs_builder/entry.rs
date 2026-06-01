@@ -1,5 +1,6 @@
 use {
-    super::{BuildRewardCertsRespError, BuildRewardCertsRespSucc},
+    super::BuildRewardCertsRespError,
+    crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
     agave_votor_messages::{
         consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate, vote::Vote,
     },
@@ -81,7 +82,7 @@ impl Entry {
     pub(super) fn build_certs(
         self,
         reward_slot: Slot,
-    ) -> Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError> {
+    ) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
         let notar = self.notar.build_cert(reward_slot)?;
         let skip = match self.skip.build_sig_bitmap() {
             Err(e) => match e {
@@ -107,7 +108,7 @@ impl Entry {
             }
         };
 
-        Ok(BuildRewardCertsRespSucc {
+        Ok(RewardRespSucc {
             skip,
             notar,
             validators,
