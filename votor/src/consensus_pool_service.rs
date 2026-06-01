@@ -308,8 +308,9 @@ impl ConsensusPoolService {
                     ctx.vote_history_highest_parent_ready,
                 );
                 events.push(VotorEvent::ParentReady { slot, parent_block });
-                highest_parent_ready = slot;
                 kick_off_parent_ready = true;
+                // Intentionally do not increment `highest_parent_ready` in case
+                // this is a cluster restart and we are the very first leader.
             }
 
             Self::add_produce_block_event(
@@ -959,6 +960,80 @@ mod tests {
         assert!(
             produce_event.is_some(),
             "Should have received a ProduceWindow event"
+        );
+    }
+
+    #[test]
+    fn test_can_produce_window_immediately_on_restart() {
+        let ctx = TestContext::default();
+        let (repair_event_sender, _repair_event_receiver) = unbounded();
+        let (event_sender, event_receiver) = unbounded();
+        let (consensus_message_sender, consensus_message_receiver) = unbounded();
+
+        let root_bank = ctx.sharable_banks.root();
+        let next_leader_slot = ctx
+            .leader_schedule_cache
+            .next_leader_slot(&ctx.my_pubkey, 0, &root_bank, None, 1000000)
+            .expect("Should find a leader slot")
+            .0;
+        let restored_parent_ready = (
+            next_leader_slot,
+            (next_leader_slot.checked_sub(1).unwrap(), Hash::new_unique()),
+        );
+        let exit = ctx.exit.clone();
+
+        let pool_ctx = ConsensusPoolContext {
+            exit: exit.clone(),
+            migration_status: Arc::new(MigrationStatus::post_migration_status()),
+            generated_cert_types: Arc::new(GeneratedCertTypes::default()),
+            cluster_info: ctx.cluster_info.clone(),
+            my_vote_pubkey: ctx.my_vote_pubkey,
+            blockstore: ctx.blockstore.clone(),
+            sharable_banks: ctx.sharable_banks.clone(),
+            leader_schedule_cache: ctx.leader_schedule_cache.clone(),
+            vote_history_highest_parent_ready: Some(restored_parent_ready),
+            consensus_message_receiver,
+            bls_sender: ctx.bls_sender.clone(),
+            event_sender,
+            commitment_sender: ctx.commitment_sender.clone(),
+            highest_finalized: ctx.highest_finalized.clone(),
+            repair_event_sender,
+        };
+
+        let handle =
+            thread::spawn(move || ConsensusPoolService::consensus_pool_ingest_loop(pool_ctx));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut saw_parent_ready = false;
+        let mut saw_produce_window = false;
+        while Instant::now() < deadline && !saw_produce_window {
+            let timeout = deadline.saturating_duration_since(Instant::now());
+            let Ok(event) = event_receiver.recv_timeout(timeout) else {
+                break;
+            };
+
+            match event {
+                VotorEvent::ParentReady { slot, parent_block } => {
+                    saw_parent_ready |= (slot, parent_block) == restored_parent_ready;
+                }
+                VotorEvent::ProduceWindow(LeaderWindowInfo { start_slot, .. }) => {
+                    saw_produce_window |= start_slot == restored_parent_ready.0;
+                }
+                _ => {}
+            }
+        }
+
+        exit.store(true, Ordering::Relaxed);
+        drop(consensus_message_sender);
+        let _ = handle.join().unwrap();
+
+        assert!(
+            saw_parent_ready,
+            "Should have received kick-off ParentReady"
+        );
+        assert!(
+            saw_produce_window,
+            "Should have received ProduceWindow for kick-off ParentReady"
         );
     }
 

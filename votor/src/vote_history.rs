@@ -238,6 +238,9 @@ impl VoteHistory {
             .parent_ready_slots
             .iter()
             .max_by_key(|(slot, _)| *slot)?;
+
+        // Choose the parent that maximizes the amount of slots skipped.
+        // This matches the block production parent selection logic in the `ParentReadyTracker`.
         parents.iter().min().copied().map(|parent| (slot, parent))
     }
 
