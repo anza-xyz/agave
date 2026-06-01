@@ -24,14 +24,12 @@ use {
         serialization::serialize_parameters,
         solana_sbpf::memory_region::MemoryRegion,
     },
-    solana_svm_log_collector::LogCollector,
     std::ffi::c_int,
 };
 
 pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEffects {
     let instr_context = InstrContext::from(input);
 
-    let log_collector = LogCollector::new_ref();
     let feature_set = instr_context.feature_set;
     let virtual_address_space_adjustments = feature_set.virtual_address_space_adjustments;
     let direct_mapping = feature_set.account_data_direct_mapping;
@@ -73,7 +71,7 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
         &mut transaction_context,
         &mut program_cache,
         environment_config,
-        Some(log_collector.clone()),
+        None,
         compute_budget.to_budget(),
         compute_budget.to_cost(),
     );

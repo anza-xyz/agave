@@ -17,12 +17,8 @@ use {
             elf::ElfError,
             error::{EbpfError, StableResult},
         },
-        stable_log,
     },
-    solana_pubkey::Pubkey,
-    solana_svm_log_collector::LogCollector,
     solana_syscalls::SyscallError,
-    std::{cell::RefCell, rc::Rc},
 };
 
 const ERR_KIND_UNSPECIFIED: i32 = 0;
@@ -129,21 +125,13 @@ impl FiredancerErrorCode for InstructionError {
     }
 }
 
-/// Map a VM `program_result` to `(error, error_kind, r0)`. The failure log is
-/// reproduced here because Firedancer logs at the point of failure rather than
-/// propagating error data.
+/// Map a VM `program_result` to `(error, error_kind, r0)`.
 pub(crate) fn unpack_stable_result(
     program_result: StableResult<u64, EbpfError>,
-    log_collector: &Option<Rc<RefCell<LogCollector>>>,
-    program_id: &Pubkey,
 ) -> (i64, i32, u64) {
     let err = match program_result {
         StableResult::Ok(n) => return (0, ERR_KIND_UNSPECIFIED, n),
         StableResult::Err(err) => err,
-    };
-
-    let log = |error: &dyn std::fmt::Display| {
-        stable_log::program_failure(log_collector, program_id, &error);
     };
 
     // Agave wraps syscall-side failures in `EbpfError::SyscallError`; recover
@@ -152,33 +140,24 @@ pub(crate) fn unpack_stable_result(
     let (err_no, err_kind) = match &err {
         EbpfError::SyscallError(boxed) => {
             if let Some(e) = boxed.downcast_ref::<InstructionError>() {
-                log(e);
                 (e.error_code(), ERR_KIND_INSTRUCTION)
             } else if let Some(e) = boxed.downcast_ref::<SyscallError>() {
-                log(e);
                 (e.error_code(), ERR_KIND_SYSCALL)
             } else if let Some(e) = boxed.downcast_ref::<MemoryTranslationError>() {
                 let e: SyscallError = e.clone().into();
-                log(&e);
                 (e.error_code(), ERR_KIND_SYSCALL)
             } else if let Some(e) = boxed.downcast_ref::<CpiError>() {
                 let e: SyscallError = e.clone().into();
-                log(&e);
                 (e.error_code(), ERR_KIND_SYSCALL)
             } else if let Some(e) = boxed.downcast_ref::<EbpfError>() {
-                log(e);
                 (e.error_code(), ERR_KIND_EBPF)
             } else if boxed.downcast_ref::<PoseidonSyscallError>().is_some() {
-                (-1, ERR_KIND_SYSCALL) // not logged in Agave
+                (-1, ERR_KIND_SYSCALL)
             } else {
-                log(&err); // unknown downcast: -1 highlights the gap
-                (-1, ERR_KIND_UNSPECIFIED)
+                (-1, ERR_KIND_UNSPECIFIED) // unknown downcast: -1 highlights the gap
             }
         }
-        _ => {
-            log(&err);
-            (err.error_code(), ERR_KIND_EBPF)
-        }
+        _ => (err.error_code(), ERR_KIND_EBPF),
     };
     (err_no as i64, err_kind, 0)
 }

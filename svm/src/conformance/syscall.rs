@@ -33,7 +33,6 @@ use {
         },
     },
     solana_pubkey::Pubkey,
-    solana_svm_log_collector::LogCollector,
     std::{ffi::c_int, sync::Arc},
 };
 
@@ -50,7 +49,6 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
     let syscall_invocation = input.syscall_invocation.unwrap_or_default();
     let registers = get_registers(&vm_context);
 
-    let log_collector = LogCollector::new_ref();
     let feature_set = instr_context.feature_set;
     let virtual_address_space_adjustments = feature_set.virtual_address_space_adjustments;
     let account_data_direct_mapping = feature_set.account_data_direct_mapping;
@@ -126,7 +124,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         &mut transaction_context,
         &mut program_cache,
         environment_config,
-        Some(log_collector.clone()),
+        None,
         compute_budget.to_budget(),
         compute_budget.to_cost(),
     );
@@ -227,18 +225,11 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         virtual_address_space_adjustments,
     );
 
-    let (error, error_kind, r0) =
-        unpack_stable_result(program_result, &Some(log_collector.clone()), &program_id);
+    let (error, error_kind, r0) = unpack_stable_result(program_result);
     let cu_avail = invoke_context.get_remaining();
     invoke_context
         .pop()
         .expect("failed to pop instruction context");
-
-    let log = log_collector
-        .borrow()
-        .get_recorded_content()
-        .join("\n")
-        .into_bytes();
 
     ProtoSyscallEffects {
         error,
@@ -249,7 +240,6 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         stack: stack.as_slice().to_vec(),
         input_data_regions,
         frame_count: call_depth,
-        log,
         rodata: rodata.as_slice().to_vec(),
         pc: 0,
         ..Default::default()
@@ -424,8 +414,9 @@ mod tests {
         ));
 
         assert_eq!(effects.error, 0);
-        let log = String::from_utf8(effects.log).unwrap();
-        assert!(log.contains("hello"), "got: {log:?}");
+        // Logs are no longer collected (the harness runs without a log
+        // collector), so the syscall succeeding is all we assert here.
+        assert!(effects.cu_avail < 200_000, "syscall should consume compute");
     }
 
     #[test]
