@@ -2879,14 +2879,22 @@ impl Bank {
             (slot_delta <= slots_per_epoch)
                 .then_some((*pubkey, (last_timestamp.slot, last_timestamp.timestamp)))
         });
-        let slot_duration = Duration::from_nanos(self.ns_per_slot as u64);
+        let elapsed_slot_duration = |from_slot: Slot, to_slot: Slot| {
+            if from_slot >= to_slot {
+                Duration::ZERO
+            } else {
+                Duration::from_nanos_u128(
+                    self.slot_range_duration_nanos(from_slot.saturating_add(1), to_slot),
+                )
+            }
+        };
         let epoch = self.epoch_schedule().get_epoch(self.slot());
         let stakes = self.epoch_vote_accounts(epoch)?;
         let stake_weighted_timestamp = calculate_stake_weighted_timestamp(
             recent_timestamps,
             stakes,
             self.slot(),
-            slot_duration,
+            elapsed_slot_duration,
             epoch_start_timestamp,
             max_allowable_drift,
         );
