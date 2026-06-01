@@ -225,16 +225,16 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         virtual_address_space_adjustments,
     );
 
-    let (error, error_kind, r0) = unpack_stable_result(program_result);
+    let unpacked = unpack_stable_result(program_result);
     let cu_avail = invoke_context.get_remaining();
     invoke_context
         .pop()
         .expect("failed to pop instruction context");
 
     ProtoSyscallEffects {
-        error,
-        error_kind,
-        r0,
+        error: unpacked.error,
+        error_kind: unpacked.error_kind,
+        r0: unpacked.r0,
         cu_avail,
         heap: heap.as_slice().to_vec(),
         stack: stack.as_slice().to_vec(),

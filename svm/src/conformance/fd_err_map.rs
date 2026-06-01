@@ -125,12 +125,27 @@ impl FiredancerErrorCode for InstructionError {
     }
 }
 
-/// Map a VM `program_result` to `(error, error_kind, r0)`.
-pub(crate) fn unpack_stable_result(
-    program_result: StableResult<u64, EbpfError>,
-) -> (i64, i32, u64) {
+/// A VM `program_result` mapped into the fields a conformance fixture compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UnpackedResult {
+    /// Firedancer error number (negated Agave enum index), or `0` on success.
+    pub error: i64,
+    /// Which error taxonomy `error` belongs to (`ERR_KIND_*`).
+    pub error_kind: i32,
+    /// The program return value (`r0`), only meaningful on success.
+    pub r0: u64,
+}
+
+/// Map a VM `program_result` to its [`UnpackedResult`].
+pub(crate) fn unpack_stable_result(program_result: StableResult<u64, EbpfError>) -> UnpackedResult {
     let err = match program_result {
-        StableResult::Ok(n) => return (0, ERR_KIND_UNSPECIFIED, n),
+        StableResult::Ok(n) => {
+            return UnpackedResult {
+                error: 0,
+                error_kind: ERR_KIND_UNSPECIFIED,
+                r0: n,
+            };
+        }
         StableResult::Err(err) => err,
     };
 
@@ -159,5 +174,9 @@ pub(crate) fn unpack_stable_result(
         }
         _ => (err.error_code(), ERR_KIND_EBPF),
     };
-    (err_no as i64, err_kind, 0)
+    UnpackedResult {
+        error: err_no as i64,
+        error_kind: err_kind,
+        r0: 0,
+    }
 }
