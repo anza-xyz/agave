@@ -8331,6 +8331,7 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "bincode",
+ "bitvec",
  "bytemuck",
  "crossbeam-channel",
  "dashmap",
