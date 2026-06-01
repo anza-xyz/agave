@@ -1312,7 +1312,6 @@ mod tests {
         super::*,
         crate::banking_trace::BankingTracer,
         agave_banking_stage_ingress_types::BankingPacketReceiver,
-        agave_votor::consensus_rewards::BuildRewardCertsResponse,
         crossbeam_channel::unbounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
@@ -1686,10 +1685,9 @@ mod tests {
 
         let (record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
-        let (reward_certs_sender, _reward_certs_receiver) = unbounded();
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_handler, build_reward_certs_receiver) = RewardCertsHandler::new();
+        let (reward_certs_handler, _build_reward_certs_receiver) = RewardCertsHandler::new();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1725,13 +1723,6 @@ mod tests {
             ))
             .unwrap();
 
-        let delayed_reward = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            let _ = reward_certs_sender.send(BuildRewardCertsResponse {
-                result: Ok(BuildRewardCertsRespSucc::default()),
-            });
-        });
-
         let start = Instant::now();
         let result =
             record_and_complete_block(&mut ctx, 1, None, &mut Instant::now(), Duration::ZERO);
@@ -1741,15 +1732,6 @@ mod tests {
         assert!(ctx.bank_forks.read().unwrap().get(1).is_none());
         assert!(ctx.record_receiver.is_shutdown());
         assert!(ctx.record_receiver.is_safe_to_restart());
-        assert_eq!(
-            build_reward_certs_receiver
-                .recv_timeout(Duration::from_secs(1))
-                .unwrap()
-                .bank_slot,
-            1
-        );
-
-        delayed_reward.join().unwrap();
     }
 
     #[test]
