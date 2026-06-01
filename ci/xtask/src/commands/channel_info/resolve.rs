@@ -1,20 +1,37 @@
 use {
     anyhow::{Result, anyhow, bail},
     semver::Version,
-    std::collections::BTreeMap,
+    std::{collections::BTreeMap, fmt, str::FromStr},
 };
 
-/// `(major, minor)` pair identifying a `vX.Y` release line.
-pub type Xy = (u64, u64);
-
-pub fn parse_xy(s: &str) -> Option<Xy> {
-    let s = s.strip_prefix('v')?;
-    let (maj, min) = s.split_once('.')?;
-    Some((maj.parse().ok()?, min.parse().ok()?))
+/// `vX.Y` release-line identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct BranchVersion {
+    pub major: u64,
+    pub minor: u64,
 }
 
-pub fn xy_branch(xy: Xy) -> String {
-    format!("v{}.{}", xy.0, xy.1)
+impl FromStr for BranchVersion {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let rest = s
+            .strip_prefix('v')
+            .ok_or_else(|| anyhow!("missing `v` prefix in `{s}`"))?;
+        let (maj, min) = rest
+            .split_once('.')
+            .ok_or_else(|| anyhow!("missing `.` separator in `{s}`"))?;
+        Ok(Self {
+            major: maj.parse()?,
+            minor: min.parse()?,
+        })
+    }
+}
+
+impl fmt::Display for BranchVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "v{}.{}", self.major, self.minor)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,26 +75,23 @@ pub struct ChannelInfo {
 }
 
 pub fn derive_channels(
-    versions: &BTreeMap<Xy, Version>,
+    versions: &BTreeMap<BranchVersion, Version>,
     tags: &[Version],
     env_in: &EnvInputs,
 ) -> Result<ChannelInfo> {
-    for (xy, v) in versions {
-        if (v.major, v.minor) != *xy {
-            bail!(
-                "branch {} workspace version {v} does not match branch (major, minor)",
-                xy_branch(*xy),
-            );
+    for (bv, v) in versions {
+        if v.major != bv.major || v.minor != bv.minor {
+            bail!("branch {bv} workspace version {v} does not match branch (major, minor)");
         }
     }
 
-    let sorted: Vec<Xy> = versions.keys().rev().copied().collect();
+    let sorted: Vec<BranchVersion> = versions.keys().rev().copied().collect();
     let h1 = sorted.first().copied();
     let h2 = sorted.get(1).copied();
     let h3 = sorted.get(2).copied();
 
     let h1_stage = h1
-        .map(|xy| stage_of(versions.get(&xy).expect("h1 is in versions")))
+        .map(|bv| stage_of(versions.get(&bv).expect("h1 is in versions")))
         .transpose()?;
 
     let (beta, stable) = match h1_stage {
@@ -91,16 +105,12 @@ pub fn derive_channels(
     if let Some(s) = stable
         && s >= beta
     {
-        bail!(
-            "STABLE {} is not less than BETA {}",
-            xy_branch(s),
-            xy_branch(beta),
-        );
+        bail!("STABLE {s} is not less than BETA {beta}");
     }
 
     let edge_channel = "master".to_string();
-    let beta_channel = xy_branch(beta);
-    let stable_channel = stable.map(xy_branch).unwrap_or_default();
+    let beta_channel = beta.to_string();
+    let stable_channel = stable.map(|s| s.to_string()).unwrap_or_default();
     let beta_channel_latest_tag = latest_tag_for(tags, beta)
         .map(|v| format!("v{v}"))
         .unwrap_or_default();
@@ -136,8 +146,10 @@ pub fn derive_channels(
     })
 }
 
-fn latest_tag_for(tags: &[Version], xy: Xy) -> Option<&Version> {
-    tags.iter().filter(|t| (t.major, t.minor) == xy).max()
+fn latest_tag_for(tags: &[Version], bv: BranchVersion) -> Option<&Version> {
+    tags.iter()
+        .filter(|t| t.major == bv.major && t.minor == bv.minor)
+        .max()
 }
 
 pub fn print_channel_info(info: &ChannelInfo) {
@@ -161,13 +173,17 @@ mod tests {
         Version::parse(s).expect("valid version")
     }
 
-    fn versions(pairs: &[(Xy, &str)]) -> BTreeMap<Xy, Version> {
-        pairs.iter().map(|(xy, s)| (*xy, v(s))).collect()
+    fn bv(major: u64, minor: u64) -> BranchVersion {
+        BranchVersion { major, minor }
+    }
+
+    fn versions(pairs: &[(BranchVersion, &str)]) -> BTreeMap<BranchVersion, Version> {
+        pairs.iter().map(|(b, s)| (*b, v(s))).collect()
     }
 
     #[test]
     fn promotes_top_when_top_is_beta() {
-        let vs = versions(&[((4, 0), "4.0.0"), ((4, 1), "4.1.0-beta.0")]);
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
 
         let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
 
@@ -177,7 +193,7 @@ mod tests {
 
     #[test]
     fn promotes_top_when_top_is_ga() {
-        let vs = versions(&[((4, 0), "4.0.5"), ((4, 1), "4.1.0")]);
+        let vs = versions(&[(bv(4, 0), "4.0.5"), (bv(4, 1), "4.1.0")]);
 
         let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
 
@@ -188,9 +204,9 @@ mod tests {
     #[test]
     fn holds_channels_when_top_is_alpha() {
         let vs = versions(&[
-            ((3, 1), "3.1.15"),
-            ((4, 0), "4.0.0"),
-            ((4, 1), "4.1.0-alpha.0"),
+            (bv(3, 1), "3.1.15"),
+            (bv(4, 0), "4.0.0"),
+            (bv(4, 1), "4.1.0-alpha.0"),
         ]);
 
         let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
@@ -201,7 +217,7 @@ mod tests {
 
     #[test]
     fn rc_top_is_promoted() {
-        let vs = versions(&[((4, 0), "4.0.10"), ((4, 1), "4.1.0-rc.2")]);
+        let vs = versions(&[(bv(4, 0), "4.0.10"), (bv(4, 1), "4.1.0-rc.2")]);
 
         let info = derive_channels(&vs, &[], &EnvInputs::default()).unwrap();
 
@@ -211,7 +227,7 @@ mod tests {
 
     #[test]
     fn rejects_mismatched_workspace_version() {
-        let vs = versions(&[((4, 0), "5.0.0")]);
+        let vs = versions(&[(bv(4, 0), "5.0.0")]);
 
         let err = derive_channels(&vs, &[], &EnvInputs::default()).unwrap_err();
 
@@ -220,7 +236,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_prerelease_label() {
-        let vs = versions(&[((4, 0), "4.0.0"), ((4, 1), "4.1.0-dev.0")]);
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-dev.0")]);
 
         let err = derive_channels(&vs, &[], &EnvInputs::default()).unwrap_err();
 
@@ -229,7 +245,7 @@ mod tests {
 
     #[test]
     fn rejects_when_only_alpha_top_and_nothing_below() {
-        let vs = versions(&[((4, 1), "4.1.0-alpha.0")]);
+        let vs = versions(&[(bv(4, 1), "4.1.0-alpha.0")]);
 
         let err = derive_channels(&vs, &[], &EnvInputs::default()).unwrap_err();
 
@@ -245,7 +261,7 @@ mod tests {
 
     #[test]
     fn picks_latest_tag_per_channel() {
-        let vs = versions(&[((3, 0), "3.0.5"), ((3, 1), "3.1.0-beta.0")]);
+        let vs = versions(&[(bv(3, 0), "3.0.5"), (bv(3, 1), "3.1.0-beta.0")]);
         let tags = vec![v("3.0.1"), v("3.0.5"), v("3.0.2"), v("2.9.9")];
 
         let info = derive_channels(&vs, &tags, &EnvInputs::default()).unwrap();
@@ -256,7 +272,7 @@ mod tests {
 
     #[test]
     fn channel_from_branch_match() {
-        let vs = versions(&[((4, 0), "4.0.0"), ((4, 1), "4.1.0-beta.0")]);
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
         let env_in = EnvInputs {
             branch: Some("v4.1".into()),
             channel: None,
@@ -269,7 +285,7 @@ mod tests {
 
     #[test]
     fn channel_env_var_wins() {
-        let vs = versions(&[((4, 0), "4.0.0"), ((4, 1), "4.1.0-beta.0")]);
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
         let env_in = EnvInputs {
             branch: Some("master".into()),
             channel: Some("stable".into()),

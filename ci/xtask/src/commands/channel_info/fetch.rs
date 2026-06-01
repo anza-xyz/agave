@@ -1,5 +1,5 @@
 use {
-    super::resolve::{Xy, parse_xy, xy_branch},
+    super::resolve::BranchVersion,
     anyhow::{Result, anyhow},
     futures_util::TryStreamExt,
     semver::Version,
@@ -25,15 +25,15 @@ pub fn github_client() -> Result<octocrab::Octocrab> {
     Ok(builder.build()?)
 }
 
-pub async fn release_heads(client: &octocrab::Octocrab) -> Result<Vec<Xy>> {
+pub async fn release_heads(client: &octocrab::Octocrab) -> Result<Vec<BranchVersion>> {
     let page = client.repos(OWNER, REPO).list_branches().send().await?;
     let stream = page.into_stream(client);
     pin!(stream);
 
     let mut heads = vec![];
     while let Some(branch) = stream.try_next().await? {
-        if let Some(xy) = parse_xy(&branch.name) {
-            heads.push(xy);
+        if let Ok(bv) = branch.name.parse::<BranchVersion>() {
+            heads.push(bv);
         }
     }
 
@@ -76,8 +76,8 @@ struct PackageSection {
     version: Version,
 }
 
-pub async fn workspace_version(client: &octocrab::Octocrab, xy: Xy) -> Result<Version> {
-    let reference = xy_branch(xy);
+pub async fn workspace_version(client: &octocrab::Octocrab, bv: BranchVersion) -> Result<Version> {
+    let reference = bv.to_string();
     let content_items = client
         .repos(OWNER, REPO)
         .get_content()

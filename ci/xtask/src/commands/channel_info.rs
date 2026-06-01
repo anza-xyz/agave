@@ -4,7 +4,7 @@ mod resolve;
 use {
     anyhow::Result,
     futures_util::future::try_join_all,
-    resolve::{EnvInputs, Xy, derive_channels, print_channel_info},
+    resolve::{BranchVersion, EnvInputs, derive_channels, print_channel_info},
     semver::Version,
     std::{collections::BTreeMap, env},
 };
@@ -23,10 +23,10 @@ pub async fn run() -> Result<()> {
         heads
             .iter()
             .copied()
-            .map(|xy| fetch::workspace_version(&client, xy)),
+            .map(|bv| fetch::workspace_version(&client, bv)),
     )
     .await?;
-    let versions: BTreeMap<Xy, Version> = heads.into_iter().zip(fetched).collect();
+    let versions: BTreeMap<BranchVersion, Version> = heads.into_iter().zip(fetched).collect();
 
     let info = derive_channels(&versions, &tags, &read_env())?;
     print_channel_info(&info);
