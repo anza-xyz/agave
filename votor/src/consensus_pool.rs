@@ -593,6 +593,9 @@ impl ConsensusPool {
             || self
                 .completed_certificates
                 .contains_key(&CertificateType::FinalizeFast(slot, block_id))
+            || self
+                .completed_certificates
+                .contains_key(&CertificateType::Genesis(slot, block_id))
     }
 
     /// Takes the pending safe-to-notar blocks that need parent verification.
