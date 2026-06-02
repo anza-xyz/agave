@@ -119,8 +119,9 @@ const CHANNEL_CONSUME_CAPACITY: usize = 1024;
 /// of `MAX_GOSSIP_TRAFFIC` (103,896).
 pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 4096; // 2^12
 const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
-const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
-const GOSSIP_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(1280 / 64);
+pub(crate) const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
+// max amount of time we wait for a Pong before pinging again
+pub(crate) const GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT: Duration = Duration::from_secs(2);
 pub const DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS: u64 = 10_000;
 pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
 // Limit number of unique pubkeys in the crds table.
@@ -188,7 +189,7 @@ impl ClusterInfo {
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
                 GOSSIP_PING_CACHE_TTL,
-                GOSSIP_PING_CACHE_RATE_LIMIT_DELAY,
+                GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             stats: GossipStats::default(),
