@@ -1648,7 +1648,7 @@ impl AccountsDb {
         (candidates, min_dirty_slot)
     }
 
-    /// Loop through slots in `(last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
+    /// Loop through slots in `[last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
     /// check each storage to determine if it is eligible for shrink, since zero-lamport single-ref
     /// accounts become shrinkable after a full snapshot advances past their slot. Advances the
     /// `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
