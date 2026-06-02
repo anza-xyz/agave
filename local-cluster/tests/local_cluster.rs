@@ -1467,11 +1467,7 @@ fn test_snapshots_restart_validity() {
 
         // Verify account balances on validator
         trace!("Verifying balances");
-        cluster_tests::verify_balances(
-            expected_balances.clone(),
-            &cluster.entry_point_info,
-            cluster.connection_cache.clone(),
-        );
+        cluster_tests::verify_balances(expected_balances.clone(), &cluster.entry_point_info);
 
         // Check that we can still push transactions
         trace!("Spending and verifying");
@@ -1758,7 +1754,6 @@ fn test_optimistic_confirmation_violation_detection() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&node_to_restart).unwrap().clone()],
-        &cluster.connection_cache,
         "test_optimistic_confirmation_violation",
     );
 }
@@ -4504,7 +4499,6 @@ fn test_slot_hash_expiry() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&a_pubkey).unwrap().clone()],
-        &cluster.connection_cache,
         "test_slot_hashes_expiry",
     );
 }
@@ -4775,7 +4769,6 @@ fn test_duplicate_with_pruned_ancestor() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&our_node_pubkey).unwrap().clone()],
-        &cluster.connection_cache,
         "test_duplicate_with_pruned_ancestor",
     );
 }
