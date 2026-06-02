@@ -34,7 +34,7 @@ pub struct OptimisticallyConfirmedBank {
 }
 
 impl OptimisticallyConfirmedBank {
-    pub fn locked_from_bank_forks_root(bank_forks: &Arc<RwLock<BankForks>>) -> Arc<RwLock<Self>> {
+    pub fn locked_from_bank_forks_root(bank_forks: &RwLock<BankForks>) -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(Self {
             bank: bank_forks.read().unwrap().root_bank(),
         }))

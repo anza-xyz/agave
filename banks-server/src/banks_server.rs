@@ -506,7 +506,7 @@ pub async fn start_tcp_server(
             let client = create_client(None, tpu_addr, exit.clone());
 
             SendTransactionService::new(
-                &bank_forks,
+                bank_forks.clone(),
                 receiver,
                 client,
                 Config {

@@ -481,7 +481,7 @@ impl JsonRpcRequestProcessor {
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
-            &bank_forks,
+            bank_forks.clone(),
             transaction_receiver,
             client,
             SendTransactionServiceConfig {
@@ -6958,7 +6958,7 @@ pub mod tests {
 
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
-            &bank_forks,
+            bank_forks.clone(),
             receiver,
             client,
             SendTransactionServiceConfig {
@@ -7270,7 +7270,7 @@ pub mod tests {
         );
 
         SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client,
             SendTransactionServiceConfig {

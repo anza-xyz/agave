@@ -200,7 +200,7 @@ impl Tvu {
     pub fn new(
         vote_account: &Pubkey,
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: &Arc<ClusterInfo>,
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
@@ -621,7 +621,7 @@ impl Tvu {
         );
 
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
-            Box::new(EpochSpecs::from(bank_forks.clone()));
+            Box::new(EpochSpecs::from(bank_forks));
 
         let duplicate_shred_listener = DuplicateShredListener::new(
             exit,
@@ -830,7 +830,7 @@ pub mod tests {
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
-            &bank_forks,
+            bank_forks.clone(),
             &cref1,
             TvuSockets {
                 repair: target1.sockets.repair,

@@ -394,7 +394,7 @@ impl RequestMiddleware for RpcRequestMiddleware {
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {
-            process_rest(&self.bank_forks, path)
+            process_rest(self.bank_forks.clone(), path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
         } else if request.uri().path() == "/health" {
@@ -433,7 +433,7 @@ async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, Sup
     Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
 }
 
-async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
+async fn handle_rest(bank_forks: &RwLock<BankForks>, path: &str) -> Option<String> {
     match path {
         "/v0/circulating-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
@@ -452,8 +452,7 @@ async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<
     }
 }
 
-fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> RequestMiddlewareAction {
-    let bank_forks = bank_forks.clone();
+fn process_rest(bank_forks: Arc<RwLock<BankForks>>, path: &str) -> RequestMiddlewareAction {
     let path = path.to_string();
 
     RequestMiddlewareAction::Respond {
@@ -692,7 +691,7 @@ impl JsonRpcService {
         );
 
         let _send_transaction_service = Arc::new(SendTransactionService::new(
-            &bank_forks,
+            bank_forks.clone(),
             receiver,
             client.clone(),
             send_transaction_service_config,
@@ -723,7 +722,7 @@ impl JsonRpcService {
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,
                     snapshot_config,
-                    bank_forks.clone(),
+                    bank_forks,
                     health.clone(),
                 );
                 let server = ServerBuilder::with_meta_extractor(

@@ -1356,7 +1356,7 @@ impl Validator {
 
             let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history {
                 Some(SamplePerformanceService::new(
-                    &bank_forks,
+                    bank_forks.clone(),
                     blockstore.clone(),
                     exit.clone(),
                 ))
@@ -1579,7 +1579,7 @@ impl Validator {
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
-            &bank_forks,
+            bank_forks.clone(),
             &cluster_info,
             TvuSockets {
                 repair: node.sockets.repair.try_clone().unwrap(),
@@ -2030,7 +2030,7 @@ pub fn should_require_vote_history_file(
 
 fn restore_vote_history(
     config: &ValidatorConfig,
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: &RwLock<BankForks>,
     identity: &Pubkey,
     vote_account: &Pubkey,
 ) -> VoteHistory {

@@ -559,7 +559,7 @@ mod tests {
     }
 
     fn create_child_bank(
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: &RwLock<BankForks>,
         parent: &Arc<Bank>,
         slot: u64,
     ) -> Arc<Bank> {
