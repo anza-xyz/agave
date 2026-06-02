@@ -810,8 +810,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 MemoryRegion::new(&raw mut ix[..], vm_address)
             }
             _ => {
-                // FIXME(nagisa): this is a forward-compatibility hazard.
-                debug_assert!(false, "unknown writable region requested for resizing?");
                 return Err(InstructionError::InvalidArgument);
             }
         };

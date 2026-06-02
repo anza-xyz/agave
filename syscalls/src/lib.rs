@@ -2921,7 +2921,10 @@ mod tests {
         solana_sysvar_id::SysvarId,
         solana_transaction_context::{
             instruction_accounts::InstructionAccount,
-            vm_addresses::{GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_REGION_SIZE},
+            vm_addresses::{
+                GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_ACCOUNT_PAYLOAD_END_ADDRESS,
+                GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+            },
         },
         std::{
             hash::{DefaultHasher, Hash, Hasher},
@@ -8169,6 +8172,10 @@ mod tests {
             region.writable = true;
         }
         for (idx, region) in regions.clone().into_iter().enumerate() {
+            if region.vm_addr == RETURN_DATA_SCRATCHPAD {
+                // The return data scratchpad can be resized even when it is not writable
+                continue;
+            }
             regions[idx].writable = false;
             let mapping =
                 unsafe { MemoryMapping::new(regions.clone(), &config, SBPFVersion::V4).unwrap() };
@@ -8178,8 +8185,14 @@ mod tests {
             let err =
                 SyscallSetBufferLength::rust(&mut invoke_context, region.vm_addr, 4096, 0, 0, 0)
                     .unwrap_err();
-            let err = err.downcast::<SyscallError>().unwrap();
-            assert_eq!(SyscallError::InvalidPointer, *err);
+            let err = err.downcast::<InstructionError>().unwrap();
+            if (GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS..GUEST_ACCOUNT_PAYLOAD_END_ADDRESS)
+                .contains(&region.vm_addr)
+            {
+                assert_eq!(InstructionError::MissingAccount, *err);
+            } else {
+                assert_eq!(InstructionError::InvalidArgument, *err);
+            }
         }
     }
 
