@@ -8377,6 +8377,7 @@ version = "4.2.0-alpha.0"
 name = "solana-sbf-rust-abi-v2-memory"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "solana-pubkey 4.2.0",
  "solana-transaction-context",
 ]
 

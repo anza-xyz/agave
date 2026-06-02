@@ -141,6 +141,8 @@ pub struct ComputeBudget {
     pub bls12_381_additional_pair_cost: u64,
     /// Base cost for the `SetBufferLength` syscall.
     pub set_buffer_length_base_cost: u64,
+    /// Cost for sol_assign_owner available in ABIv2
+    pub abi_v2_assign_owner: u64,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -224,6 +226,7 @@ impl ComputeBudget {
             bls12_381_one_pair_cost: cost.bls12_381_one_pair_cost,
             bls12_381_additional_pair_cost: cost.bls12_381_additional_pair_cost,
             set_buffer_length_base_cost: cost.set_buffer_length_base_cost,
+            abi_v2_assign_owner: cost.abi_v2_assign_owner,
         }
     }
 
@@ -292,6 +295,7 @@ impl ComputeBudget {
             bls12_381_one_pair_cost: self.bls12_381_one_pair_cost,
             bls12_381_additional_pair_cost: self.bls12_381_additional_pair_cost,
             set_buffer_length_base_cost: self.set_buffer_length_base_cost,
+            abi_v2_assign_owner: self.abi_v2_assign_owner,
         }
     }
 

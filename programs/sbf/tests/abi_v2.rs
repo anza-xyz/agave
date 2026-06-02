@@ -151,7 +151,7 @@ fn regions_sanity_test() {
 
     let result = bank_client
         .send_and_confirm_message(&[&mint_keypair, &acc_1_keypair, &acc_2_keypair], message);
-    std::println!("result: {:?}", result);
+    std::eprintln!("result: {:?}", result);
     assert!(result.is_ok());
 }
 
@@ -495,5 +495,92 @@ fn buffer_resize_somebody_elses_account() {
             .last()
             .unwrap()
             .contains("instruction modified data of an account it does not own")
+    );
+}
+
+#[test]
+fn test_assign_owner() {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_abi_v2_memory",
+    );
+
+    let acc_1_key = Pubkey::new_unique();
+    let new_owner = Pubkey::new_unique();
+
+    let mut payload = new_owner.as_array().to_vec();
+    payload.push(0);
+    let mut acc_1 = AccountSharedData::create_from_existing_shared_data(
+        223450,
+        Arc::new(payload.clone()),
+        program_id,
+        false,
+        64,
+    );
+    bank.store_account(&acc_1_key, &acc_1);
+
+    let acc_2_key = Pubkey::new_unique();
+    let acc_2 = AccountSharedData::create_from_existing_shared_data(
+        90123,
+        Arc::new(Vec::new()),
+        program_id,
+        false,
+        64,
+    );
+    bank.store_account(&acc_2_key, &acc_2);
+
+    let acc_3_key = Pubkey::new_unique();
+    let acc_3 = AccountSharedData::create_from_existing_shared_data(
+        897,
+        Arc::new(Vec::new()),
+        program_id,
+        false,
+        90,
+    );
+    bank.store_account(&acc_3_key, &acc_3);
+
+    let metas_for_ix_1 = vec![
+        AccountMeta::new_readonly(acc_1_key, false),
+        AccountMeta::new(acc_2_key, false),
+    ];
+    let ix_1 = Instruction::new_with_bytes(program_id, &[9], metas_for_ix_1);
+    let message = Message::new(&[ix_1], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+    assert!(logs.last().unwrap().contains("success"));
+
+    let acc_2 = bank.get_account(&acc_2_key).unwrap();
+    assert_eq!(acc_2.owner(), &new_owner);
+
+    // Try writing to the account afterwards
+    *payload.last_mut().unwrap() = 1;
+    acc_1.set_data(payload);
+    bank.store_account(&acc_1_key, &acc_1);
+
+    let metas_for_ix_2 = vec![
+        AccountMeta::new_readonly(acc_1_key, false),
+        AccountMeta::new(acc_3_key, false),
+    ];
+    let ix_1 = Instruction::new_with_bytes(program_id, &[9], metas_for_ix_2);
+    let message = Message::new(&[ix_1], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+    assert!(
+        logs.last()
+            .unwrap()
+            .contains("Access violation in unknown section at address 0x900000000 of size 1")
     );
 }
