@@ -11,18 +11,21 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     std::{convert::TryFrom, fmt, time::Duration},
-    ur_parse_lib::keystone_ur_decoder::probe_decode,
-    ur_parse_lib::keystone_ur_encoder::probe_encode,
-    ur_registry::crypto_key_path::{CryptoKeyPath, PathComponent},
-    ur_registry::extend::crypto_multi_accounts::CryptoMultiAccounts,
-    ur_registry::extend::key_derivation::KeyDerivationCall,
-    ur_registry::extend::key_derivation_schema::{Curve, KeyDerivationSchema},
-    ur_registry::extend::qr_hardware_call::{
-        CallParams, CallType, HardWareCallVersion, QRHardwareCall,
+    ur_parse_lib::{keystone_ur_decoder::probe_decode, keystone_ur_encoder::probe_encode},
+    ur_registry::{
+        crypto_key_path::{CryptoKeyPath, PathComponent},
+        extend::{
+            crypto_multi_accounts::CryptoMultiAccounts,
+            key_derivation::KeyDerivationCall,
+            key_derivation_schema::{Curve, KeyDerivationSchema},
+            qr_hardware_call::{CallParams, CallType, HardWareCallVersion, QRHardwareCall},
+        },
+        solana::{
+            sol_sign_request::{SignType, SolSignRequest},
+            sol_signature::SolSignature,
+        },
+        traits::RegistryItem,
     },
-    ur_registry::solana::sol_sign_request::{SignType, SolSignRequest},
-    ur_registry::solana::sol_signature::SolSignature,
-    ur_registry::traits::RegistryItem,
 };
 
 static CHECK_MARK: Emoji = Emoji("✅ ", "");
@@ -136,8 +139,7 @@ impl EapduHeader {
             u16::from_be_bytes([packet[EAPDU_OFFSET_P1], packet[EAPDU_OFFSET_P1 + 1]]);
         let packet_sequence =
             u16::from_be_bytes([packet[EAPDU_OFFSET_P2], packet[EAPDU_OFFSET_P2 + 1]]);
-        let request_id =
-            u16::from_be_bytes([packet[EAPDU_OFFSET_LC], packet[EAPDU_OFFSET_LC + 1]]);
+        let request_id = u16::from_be_bytes([packet[EAPDU_OFFSET_LC], packet[EAPDU_OFFSET_LC + 1]]);
 
         if !is_valid_command(command) || total_packets == 0 || packet_sequence >= total_packets {
             return Err(RemoteWalletError::Protocol("Unable to parse packet header"));
@@ -190,12 +192,14 @@ impl KeystoneWallet {
             }
         }
 
-        handle.claim_interface(usb_io.interface_number).map_err(|e| {
-            RemoteWalletError::Hid(format!(
-                "Failed to claim USB interface {}: {e}",
-                usb_io.interface_number
-            ))
-        })?;
+        handle
+            .claim_interface(usb_io.interface_number)
+            .map_err(|e| {
+                RemoteWalletError::Hid(format!(
+                    "Failed to claim USB interface {}: {e}",
+                    usb_io.interface_number
+                ))
+            })?;
 
         Ok(Self {
             device,
@@ -211,9 +215,7 @@ impl KeystoneWallet {
         })
     }
 
-    fn discover_usb_io(
-        device: &rusb::Device<rusb::Context>,
-    ) -> Result<UsbIo, RemoteWalletError> {
+    fn discover_usb_io(device: &rusb::Device<rusb::Context>) -> Result<UsbIo, RemoteWalletError> {
         let config = device
             .active_config_descriptor()
             .or_else(|_| device.config_descriptor(0))
@@ -580,7 +582,7 @@ fn find_endpoint_pair(
 }
 
 fn is_valid_command(value: u16) -> bool {
-    matches!(value, 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06)
+    matches!(value, 0x01..=0x06)
 }
 
 fn parse_ur_pubkey(ur: &str) -> Result<Vec<u8>, RemoteWalletError> {
@@ -592,7 +594,7 @@ fn parse_ur_pubkey(ur: &str) -> Result<Vec<u8>, RemoteWalletError> {
         .data
         .ok_or(RemoteWalletError::Protocol("No pubkey in response"))?
         .get_keys()
-        .get(0)
+        .first()
         .ok_or(RemoteWalletError::Protocol("Empty pubkey list"))
         .map(|key| key.get_key())
 }
@@ -617,7 +619,7 @@ fn parse_json_field(json_str: &str, field_name: &str) -> Result<String, RemoteWa
 
     if let Some(device_error) = json.get(JSON_FIELD_ERROR).and_then(|v| v.as_str()) {
         if !device_error.trim().is_empty() {
-            return Err(RemoteWalletError::KeystoneError(format!("{device_error}")));
+            return Err(RemoteWalletError::KeystoneError(device_error.to_string()));
         }
     }
 
@@ -642,9 +644,10 @@ impl RemoteWallet<rusb::Device<rusb::Context>> for KeystoneWallet {
         self.mfp = mfp;
 
         // Get device descriptor for model and serial
-        let device_descriptor = self.device.device_descriptor().map_err(|e| {
-            RemoteWalletError::Hid(format!("Failed to get device descriptor: {}", e))
-        })?;
+        let device_descriptor = self
+            .device
+            .device_descriptor()
+            .map_err(|e| RemoteWalletError::Hid(format!("Failed to get device descriptor: {e}")))?;
 
         let model = format!(
             "Keystone {:04x}:{:04x}",
@@ -701,9 +704,7 @@ impl RemoteWallet<rusb::Device<rusb::Context>> for KeystoneWallet {
                     "CmdResolveUR returned empty payload",
                 ));
             }
-            let pubkey = parse_ur_pubkey(&pubkey_ur)?;
-
-            pubkey
+            parse_ur_pubkey(&pubkey_ur)?
         };
 
         Pubkey::try_from(pubkey_bytes).map_err(|_| RemoteWalletError::Protocol(ERROR_KEY_SIZE))
