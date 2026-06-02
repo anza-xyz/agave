@@ -2684,6 +2684,7 @@ impl AccountsDb {
 
     /// These accounts were found during shrink of `slot` to be slot_list=[slot] and ref_count == 1 and lamports = 0.
     /// This means this slot contained the only account data for this pubkey and it is zero lamport.
+    /// And also `slot` is <= the latest full snapshot slot, and can purge zero lamport accounts.
     /// Thus, we did NOT treat this as an alive account, so we did NOT copy the zero lamport account to the new
     /// storage. So, the account will no longer be alive or exist at `slot`.
     /// So, first, remove the ref count since this newly shrunk storage will no longer access it.
@@ -5268,7 +5269,7 @@ impl AccountsDb {
     /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
     fn update_index_for_shrink<'a>(
         &self,
-        infos: Vec<AccountInfo>,
+        infos: &[AccountInfo],
         accounts: &impl StorableAccounts<'a>,
         update_index_thread_selection: UpdateIndexThreadSelection,
         thread_pool: &ThreadPool,
@@ -5729,9 +5730,14 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
+        let mark_zero_lamport_single_ref_time = Measure::start("mark_zero_lamport_single_ref");
+        let num_zero_lamport_single_ref_accounts_marked =
+            self.mark_zero_lamport_single_ref_accounts_for_shrink(&infos, &accounts, storage);
+        let mark_zero_lamport_single_ref_us = mark_zero_lamport_single_ref_time.end_as_us();
+
         let update_index_time = Measure::start("update_index");
         self.update_index_for_shrink(
-            infos,
+            &infos,
             &accounts,
             update_index_thread_selection,
             &self.thread_pool_background,
@@ -5745,11 +5751,18 @@ impl AccountsDb {
             .write_to_storage_us
             .fetch_add(write_accounts_us, Ordering::Relaxed);
         stats
+            .mark_zero_lamport_single_ref_accounts_us
+            .fetch_add(mark_zero_lamport_single_ref_us, Ordering::Relaxed);
+        stats
             .update_index_us
             .fetch_add(update_index_us, Ordering::Relaxed);
         stats
             .num_accounts_stored
             .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
+        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
+            num_zero_lamport_single_ref_accounts_marked,
+            Ordering::Relaxed,
+        );
         stats.report();
 
         StoreAccountsTiming {
@@ -6026,6 +6039,39 @@ impl AccountsDb {
             }
         }
 
+        num_marked
+    }
+
+    /// Marks zero lamport single reference accounts in the storage during store_accounts_for_shrink
+    ///
+    /// Returns the number of accounts marked.
+    fn mark_zero_lamport_single_ref_accounts_for_shrink<'a>(
+        &self,
+        account_infos: &[AccountInfo],
+        accounts: &impl StorableAccounts<'a>,
+        storage: &AccountStorageEntry,
+    ) -> u64 {
+        debug_assert_eq!(account_infos.len(), accounts.len());
+        let mut num_marked = 0;
+        for (i, account_info) in account_infos.iter().enumerate() {
+            if account_info.is_zero_lamport() {
+                let pubkey = accounts.pubkey(i);
+                let is_single_ref = self.accounts_index.get_and_then(pubkey, |entry| {
+                    let is_single_ref = entry.is_some_and(|entry| {
+                        entry.ref_count() == 1 && entry.slot_list_lock_read_len() == 1
+                    });
+                    (false, is_single_ref)
+                });
+                if is_single_ref {
+                    debug_assert!(!account_info.is_cached());
+                    debug_assert_eq!(account_info.store_id(), storage.id());
+                    if storage.insert_zero_lamport_single_ref_account_offset(account_info.offset())
+                    {
+                        num_marked += 1;
+                    }
+                }
+            }
+        }
         num_marked
     }
 
