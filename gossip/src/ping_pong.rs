@@ -1,5 +1,6 @@
 use {
     crate::cluster_info_metrics::should_report_message_signature,
+    indexmap::IndexMap,
     lazy_lru::LruCache,
     rand::{CryptoRng, Rng},
     serde::{Deserialize, Serialize},
@@ -13,6 +14,7 @@ use {
     std::{
         borrow::Cow,
         net::{IpAddr, SocketAddr},
+        ops::Range,
         time::{Duration, Instant},
     },
     wincode::{SchemaRead, SchemaWrite},
@@ -58,16 +60,24 @@ pub struct Pong {
 pub struct PingCache<const N: usize> {
     // Time-to-live of received pong messages.
     ttl: Duration,
-    // Rate limit delay to generate pings for a given address
-    rate_limit_delay: Duration,
-    // Timestamp and expected pong hash for each pinged remote node.
-    // Used for rate-limiting and pong validation.
-    pings: LruCache<(Pubkey, SocketAddr), (Instant, Hash)>,
+    // Timeout range (ms) waiting for a Pong. Randomized per-entry to stagger expiry.
+    outstanding_ping_timeout_ms: Range<u64>,
+    // Capacity for the pings store.
+    max_pings: usize,
+    // Expiry time and expected pong hash for each pinged remote node.
+    pings: IndexMap<(Pubkey, SocketAddr), (Instant, Hash)>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
     // Timestamp of last ping message sent to a remote IP.
     ping_times: LruCache<IpAddr, Instant>,
 }
+
+/// max number of slots in [`PingCache::pings`] to probe when looking for a
+/// reclaimable entry for a new ping. Probing only happens once the cache is
+/// full. The chance of hitting at least one timed-out (evictable) slot is
+/// `1 - (1 - f)^MAX_PING_PROBES`, where `f` is the fraction of entries that
+/// have timed out. E.g. with `f = 0.5` that is `1 - 0.5^8` ~ 99.6%.
+const MAX_PING_PROBES: usize = 8;
 
 impl<const N: usize> Ping<N> {
     pub fn new(token: [u8; N], keypair: &Keypair) -> Self {
@@ -156,15 +166,23 @@ impl Signable for Pong {
 }
 
 impl<const N: usize> PingCache<N> {
-    pub fn new(ttl: Duration, rate_limit_delay: Duration, cap: usize) -> Self {
-        // Sanity check ttl/rate_limit_delay
-        assert!(rate_limit_delay <= ttl / 2);
+    pub fn new(ttl: Duration, outstanding_ping_timeout_ms: Range<u64>, max_pings: usize) -> Self {
+        assert!(
+            outstanding_ping_timeout_ms.start < outstanding_ping_timeout_ms.end,
+            "outstanding_ping_timeout_ms must be non-empty"
+        );
+        assert!(
+            outstanding_ping_timeout_ms.end <= (ttl / 2).as_millis() as u64,
+            "outstanding_ping_timeout_ms.end must be <= ttl/2"
+        );
+        assert!(max_pings > 0, "Must cache nonzero amount of hosts");
         Self {
             ttl,
-            rate_limit_delay,
-            pings: LruCache::new(cap),
-            pongs: LruCache::new(cap),
-            ping_times: LruCache::new(cap),
+            outstanding_ping_timeout_ms,
+            max_pings,
+            pings: IndexMap::with_capacity(max_pings),
+            pongs: LruCache::new(max_pings),
+            ping_times: LruCache::new(max_pings),
         }
     }
 
@@ -173,10 +191,18 @@ impl<const N: usize> PingCache<N> {
     /// Note: Does not verify the signature.
     pub fn add(&mut self, pong: &Pong, socket: SocketAddr, now: Instant) -> bool {
         let remote_node = (pong.pubkey(), socket);
-        if !matches!(self.pings.peek(&remote_node), Some((_, h)) if *h == pong.hash) {
+        // We can not just pop an entry from self.pings based on remote_node
+        // contents - that value is attacker controlled and could invalidate an
+        // in-flight ping.
+        let Some((index, _, (_timeout, hash))) = self.pings.get_full(&remote_node) else {
             return false;
         };
-        self.pings.pop(&remote_node);
+        // check only hash, a late Pong is still perfectly valid.
+        if *hash != pong.hash {
+            return false;
+        }
+        // at this point we are certain the pong is valid.
+        self.pings.swap_remove_index(index);
         self.pongs.put(remote_node, now);
         if let Some(sent_time) = self.ping_times.pop(&socket.ip())
             && should_report_message_signature(
@@ -204,12 +230,39 @@ impl<const N: usize> PingCache<N> {
         now: Instant,
         remote_node: (Pubkey, SocketAddr),
     ) -> Option<Ping<N>> {
-        // Rate limit consecutive pings sent to a remote node.
-        if matches!(self.pings.peek(&remote_node),
-            Some((t, _)) if now.saturating_duration_since(*t) < self.rate_limit_delay)
-        {
-            return None;
+        // If the existing ping is still in-flight don't send another one.
+        let is_new_key = if let Some((expiry, _)) = self.pings.get(&remote_node) {
+            if now < *expiry {
+                return None;
+            }
+            false // existing entry will be updated in-place
+        } else {
+            true // no entry for this node yet
+        };
+
+        // If this is a new entry and the pings store is at capacity,
+        // probe random existing entries and evict the first timed-out one
+        // (expiry in the past, peer never responded).
+        // Decline if all probes are in-flight — avoids evicting challenges
+        // still awaiting a Pong.
+        if is_new_key && self.pings.len() >= self.max_pings {
+            let n = self.pings.len();
+            let mut evicted = false;
+            for _ in 0..MAX_PING_PROBES {
+                let idx = rng.random_range(0..n);
+                if let Some((_, (expiry, _))) = self.pings.get_index(idx)
+                    && now >= *expiry
+                {
+                    self.pings.swap_remove_index(idx);
+                    evicted = true;
+                    break;
+                }
+            }
+            if !evicted {
+                return None;
+            }
         }
+
         let token = {
             let mut token = [0u8; N];
             const FILL: usize = std::mem::size_of::<u64>();
@@ -220,9 +273,14 @@ impl<const N: usize> PingCache<N> {
                 .expect("token is known to fit FILL bytes") = entropy;
             token
         };
+        // Deadline by which we expect a reply. Randomized to stagger expiries across entries.
+        let expiry = now
+            + Duration::from_millis(rng.random_range(
+                self.outstanding_ping_timeout_ms.start..self.outstanding_ping_timeout_ms.end,
+            ));
         // The hash we expect to see in the Pong message
         let ping_hash = hash_ping_token(&token);
-        self.pings.put(remote_node, (now, ping_hash));
+        self.pings.insert(remote_node, (expiry, ping_hash));
         self.ping_times.put(remote_node.1.ip(), Instant::now());
         Some(Ping::new(token, keypair))
     }
@@ -277,6 +335,9 @@ fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
 mod tests {
     use {
         super::*,
+        crate::cluster_info::{
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL,
+        },
         std::{
             collections::HashSet,
             iter::repeat_with,
@@ -307,7 +368,8 @@ mod tests {
         let mut rng = rand::rng();
         let ttl = Duration::from_millis(256);
         let delay = ttl / 64;
-        let mut cache = PingCache::new(ttl, delay, /*cap=*/ 1000);
+        let delay_ms = delay.as_millis() as u64;
+        let mut cache = PingCache::new(ttl, delay_ms..delay_ms + 1, /*cap=*/ 1000);
         let this_node = Keypair::new();
         let sockets: Vec<_> = (1u8..=3)
             .map(|i| {
@@ -466,16 +528,125 @@ mod tests {
     }
 
     #[test]
+    fn test_ping_cache_full_no_stale() {
+        // Verify that when the pings cache is at capacity and all entries are
+        // fresh, new pings are declined rather than evicting in-flight ones.
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let cap = 3usize;
+        let mut cache = PingCache::<32>::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            cap,
+        );
+        let sockets: Vec<SocketAddr> = (1u8..=4)
+            .map(|i| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(i, i, i, i), 8000)))
+            .collect();
+        let keypairs: Vec<Keypair> = (0..4).map(|_| Keypair::new()).collect();
+
+        // Fill cache to capacity (3 entries)
+        let mut pings = Vec::new();
+        for i in 0..cap {
+            let node = (keypairs[i].pubkey(), sockets[i]);
+            let (check, ping) = cache.check(&mut rng, &this_node, Instant::now(), node);
+            assert!(!check, "No pong yet, check should be false");
+            assert!(ping.is_some(), "Should issue ping for entry {i}");
+            pings.push((i, ping.unwrap()));
+        }
+        assert_eq!(cache.pings.len(), cap, "Cache should be at capacity");
+
+        // 4th new node must be declined — cache full, no stale entries
+        let node4 = (keypairs[3].pubkey(), sockets[3]);
+        let (check, ping) = cache.check(&mut rng, &this_node, Instant::now(), node4);
+        assert!(!check, "No pong, check should be false");
+        assert!(
+            ping.is_none(),
+            "Must decline new ping when cache is full and no stale entries"
+        );
+
+        // Complete handshake for node 0 — frees one slot
+        let (idx0, ping0) = &pings[0];
+        let pong0 = Pong::new(ping0, &keypairs[*idx0]);
+        assert!(
+            cache.add(&pong0, sockets[0], Instant::now()),
+            "Valid pong should be accepted"
+        );
+        assert_eq!(
+            cache.pings.len(),
+            cap - 1,
+            "One slot should have been freed"
+        );
+
+        // Now 4th node should get a ping
+        let (check, ping) = cache.check(&mut rng, &this_node, Instant::now(), node4);
+        assert!(!check, "No pong for node4 yet");
+        assert!(
+            ping.is_some(),
+            "Should issue ping for node4 after slot freed"
+        );
+    }
+
+    #[test]
+    fn test_ping_cache_full_with_stale() {
+        // Verify that when the pings cache is at capacity and entries are timed
+        // out (age >= outstanding_ping_timeout, peer never responded), a new
+        // ping reclaims a stale slot.
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let cap = 3usize;
+        let mut cache = PingCache::<32>::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            cap,
+        );
+        let sockets: Vec<SocketAddr> = (1u8..=4)
+            .map(|i| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(i, i, i, i), 8000)))
+            .collect();
+        let keypairs: Vec<Keypair> = (0..4).map(|_| Keypair::new()).collect();
+        let now = Instant::now();
+
+        // Fill cache to capacity with nodes that won't answer pongs
+        for i in 0..cap {
+            let node = (keypairs[i].pubkey(), sockets[i]);
+            let (_, ping) = cache.check(&mut rng, &this_node, now, node);
+            assert!(ping.is_some(), "Should issue ping for entry {i}");
+        }
+        assert_eq!(cache.pings.len(), cap, "Cache should be at capacity");
+
+        // Advance time so all in-flight pings are now stale
+        let expired =
+            now + Duration::from_millis(GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.end + 1);
+
+        // 4th node should get a ping by reclaiming a stale slot
+        let node4 = (keypairs[3].pubkey(), sockets[3]);
+        // The 8-probe eviction is normally probabilistic; but with all entries
+        // stale, we expect it to always succeed.
+        let (check, ping) = cache.check(&mut rng, &this_node, expired, node4);
+        assert!(!check, "No pong for node4");
+        assert!(
+            ping.is_some(),
+            "Should issue ping for node4 by reclaiming a stale entry"
+        );
+        assert_eq!(
+            cache.pings.len(),
+            cap,
+            "Net size unchanged: one evicted, one inserted"
+        );
+    }
+
+    #[test]
     fn test_expired_pong_returns_check_false() {
         let mut rng = rand::rng();
         let this_node = Keypair::new();
         let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 10, 10, 10), 8000));
         let remote_node_keypair = Keypair::new();
         let remote_node = (remote_node_keypair.pubkey(), remote_socket);
-        let ttl = Duration::from_secs(20 * 60); // 20 minutes
-        let delay = ttl / 64;
         let mut now = Instant::now();
-        let mut cache = PingCache::<32>::new(ttl, delay, /*cap=*/ 1000);
+        let mut cache = PingCache::<32>::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            /*cap=*/ 1000,
+        );
 
         // Add a pong for the remote node
         cache.mock_pong(remote_node.0, remote_node.1, now);
@@ -486,7 +657,7 @@ mod tests {
         assert!(ping.is_none(), "Should not generate ping for recent pong");
 
         // Advance time past TTL to expire the pong
-        now = now + ttl + Duration::from_secs(1);
+        now = now + GOSSIP_PING_CACHE_TTL + Duration::from_secs(1);
 
         // After expiration, check should return false but should_ping should be true (to re-verify)
         let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
