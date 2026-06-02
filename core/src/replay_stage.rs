@@ -34,8 +34,7 @@ use {
     },
     agave_votor::{
         event::{
-            CompletedBlock, LeaderWindowInfo, SwitchBankEvent, SwitchBankEventReceiver, VotorEvent,
-            VotorEventSender,
+            CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, VotorEvent, VotorEventSender,
         },
         root_utils,
         vote_history_storage::SavedVoteHistory,
@@ -461,7 +460,7 @@ pub struct ReplayReceivers {
     pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
     pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
-    pub switch_bank_receiver: SwitchBankEventReceiver,
+    pub latest_switch_request: LatestSwitchRequest,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -489,6 +488,7 @@ struct ReplayLoopTiming {
     process_duplicate_slots_elapsed_us: u64,
     process_unfrozen_gossip_verified_vote_hashes_elapsed_us: u64,
     process_popular_pruned_forks_elapsed_us: u64,
+    process_switch_bank_events_elapsed_us: u64,
     repair_correct_slots_elapsed_us: u64,
     retransmit_not_propagated_elapsed_us: u64,
     generate_new_bank_forks_read_lock_us: Saturating<u64>,
@@ -651,6 +651,11 @@ impl ReplayLoopTiming {
                     i64
                 ),
                 (
+                    "process_switch_bank_events_elapsed_us",
+                    self.process_switch_bank_events_elapsed_us as i64,
+                    i64
+                ),
+                (
                     "wait_receive_elapsed_us",
                     self.wait_receive_elapsed_us as i64,
                     i64
@@ -776,7 +781,7 @@ impl ReplayStage {
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
-            switch_bank_receiver,
+            latest_switch_request,
         } = receivers;
 
         trace!("replay stage");
@@ -1020,6 +1025,15 @@ impl ReplayStage {
                 }
 
                 if migration_status.is_alpenglow_enabled() {
+                    if my_pubkey != cluster_info.id() {
+                        identity_keypair = cluster_info.keypair();
+                        let my_old_pubkey = my_pubkey;
+                        my_pubkey = identity_keypair.pubkey();
+                        migration_status.set_pubkey(my_pubkey);
+
+                        warn!("Identity changed from {my_old_pubkey} to {my_pubkey}");
+                    }
+
                     process_soft_dead_slots(
                         &my_pubkey,
                         &blockstore,
@@ -1041,12 +1055,12 @@ impl ReplayStage {
                         &optimistic_parent_receiver,
                         &replay_highest_frozen,
                         &mut highest_frozen_slot,
-                        &mut progress,
-                        did_complete_bank,
                     );
+                    let mut process_switch_bank_events_time =
+                        Measure::start("process_switch_bank_events_time");
                     Self::process_switch_bank_events(
                         &my_pubkey,
-                        &switch_bank_receiver,
+                        &latest_switch_request,
                         &mut pending_switch,
                         &blockstore,
                         &bank_forks,
@@ -1054,6 +1068,10 @@ impl ReplayStage {
                         &mut async_verification_freelist,
                     )
                     .expect("Blockstore operations must succeed");
+                    process_switch_bank_events_time.stop();
+                    replay_timing.process_switch_bank_events_elapsed_us +=
+                        process_switch_bank_events_time.as_us();
+
                     // Banks might have been switched above, these maps are no longer accurate
                     drop(ancestors);
                     drop(descendants);
@@ -1559,7 +1577,6 @@ impl ReplayStage {
         Ok(Self { t_replay })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn alpenglow_handle_newly_frozen_banks(
         new_frozen_slots: &[Slot],
         migration_status: &MigrationStatus,
@@ -1570,8 +1587,6 @@ impl ReplayStage {
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
         replay_highest_frozen: &ReplayHighestFrozen,
         highest_frozen_slot: &mut Slot,
-        progress: &mut ProgressMap,
-        did_complete_bank: bool,
     ) {
         let flh_candidate_banks = {
             let bank_forks_r = bank_forks.read().unwrap();
@@ -1600,10 +1615,6 @@ impl ReplayStage {
                 *l_highest_frozen = *highest;
                 replay_highest_frozen.freeze_notification.notify_one();
             }
-        }
-        if did_complete_bank {
-            let bank_forks_r = bank_forks.read().unwrap();
-            progress.handle_new_root(&bank_forks_r);
         }
     }
 
@@ -2369,7 +2380,7 @@ impl ReplayStage {
     /// this in `pending_switch`
     fn process_switch_bank_events(
         my_pubkey: &Pubkey,
-        switch_bank_receiver: &SwitchBankEventReceiver,
+        latest_switch_request: &LatestSwitchRequest,
         pending_switch: &mut Option<(Slot, Hash)>,
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
@@ -2378,13 +2389,11 @@ impl ReplayStage {
     ) -> Result<(), BlockstoreError> {
         let root = bank_forks.read().unwrap().root();
 
-        if let Some(switch_bank_event) = switch_bank_receiver
-            .try_iter()
-            .max()
-            .filter(|SwitchBankEvent::Switch { slot, .. }| *slot > root)
+        if let Some((slot, block_id)) = latest_switch_request
+            .take()
+            .map(|ev| ev.block())
+            .filter(|(slot, _)| *slot > root)
         {
-            let (slot, block_id) = switch_bank_event.block();
-
             // Overwrite the pending switch, later switches take precedence
             if Some(slot) >= pending_switch.map(|(slot, _)| slot) {
                 if let Some(prev_switch_request) = pending_switch.replace((slot, block_id)) {
@@ -2481,6 +2490,7 @@ impl ReplayStage {
 
             // Switch the blockstore data atomically, handles slot meta chaining so generate new bank forks can proceed
             blockstore.switch_block_from_alternate(slot, location)?;
+            progress.increment_num_bank_switches(slot);
             info!("{my_pubkey}: Switched {slot} from {location:?}");
         }
 
@@ -5019,7 +5029,7 @@ impl ReplayStage {
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     ) -> Result<(), TryRecvError> {
         if let Some(command) = bank_forks_controller_receiver.take_set_root_command() {
-            Self::process_set_root_command(command, context, my_pubkey);
+            Self::process_set_root_command(command, context, my_pubkey, progress);
         }
 
         loop {
@@ -5037,6 +5047,7 @@ impl ReplayStage {
         command: SetRootCommand,
         context: &ProcessBankForksContext,
         my_pubkey: &Pubkey,
+        progress: &mut ProgressMap,
     ) {
         let SetRootCommand {
             parent_slot,
@@ -5055,7 +5066,7 @@ impl ReplayStage {
             &context.bank_forks,
             context.rpc_subscriptions.as_deref(),
             my_pubkey,
-            |_| {},
+            |bank_forks| progress.handle_new_root(bank_forks),
         );
     }
 

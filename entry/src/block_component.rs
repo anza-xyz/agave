@@ -132,7 +132,7 @@
 use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType},
+        certificate::{Certificate, CertificateType},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -445,6 +445,20 @@ impl VersionedBlockMarker {
     pub fn new_genesis_certificate(g: GenesisCertificate) -> Self {
         let g = BlockMarkerV1::GenesisCertificate(LengthPrefixed::new(g));
         VersionedBlockMarker::V1(g)
+    }
+
+    pub fn is_update_parent(&self) -> bool {
+        match self {
+            VersionedBlockMarker::V1(BlockMarkerV1::UpdateParent(_)) => true,
+            VersionedBlockMarker::V1(_) => false,
+        }
+    }
+
+    pub fn is_footer(&self) -> bool {
+        match self {
+            VersionedBlockMarker::V1(BlockMarkerV1::BlockFooter(_)) => true,
+            VersionedBlockMarker::V1(_) => false,
+        }
     }
 }
 

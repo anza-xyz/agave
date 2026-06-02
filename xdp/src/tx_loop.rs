@@ -21,6 +21,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
+        io,
         net::{IpAddr, SocketAddr, SocketAddrV4},
         thread,
         time::Duration,
@@ -81,7 +82,6 @@ pub struct TxLoopConfig {
 
 pub struct TxLoopBuilder<U: Umem> {
     cpu_id: usize,
-    queue_id: QueueId,
     zero_copy: bool,
     src_mac: MacAddress,
     queue: DeviceQueue,
@@ -138,7 +138,6 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
 
         TxLoopBuilder {
             cpu_id,
-            queue_id,
             zero_copy,
             src_mac,
             queue,
@@ -147,10 +146,9 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         }
     }
 
-    pub fn build(self) -> TxLoop<OwnedUmem<PageAlignedMemory>> {
+    pub fn build(self) -> Result<TxLoop<OwnedUmem<PageAlignedMemory>>, io::Error> {
         let TxLoopBuilder {
             cpu_id,
-            queue_id,
             zero_copy,
             src_mac,
             queue,
@@ -158,8 +156,16 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
             umem,
         } = self;
 
-        let Ok((socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-            panic!("failed to create AF_XDP socket on queue {queue_id:?}");
+        let queue_id = queue.id();
+        let (socket, tx) = match Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) {
+            Ok(socket_tx) => socket_tx,
+            Err(err) => {
+                log::error!(
+                    "failed to create AF_XDP TX socket for queue {queue_id:?} on CPU {cpu_id}: \
+                     {err}"
+                );
+                return Err(err);
+            }
         };
 
         let Tx {
@@ -170,13 +176,13 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         } = tx;
         let ring = ring.unwrap();
 
-        TxLoop {
+        Ok(TxLoop {
             cpu_id,
             src_mac,
             socket,
             ring,
             completion,
-        }
+        })
     }
 }
 
@@ -205,6 +211,9 @@ pub trait TxPacket {
 
     /// Explicit congestion notification bits to set on the packet.
     fn ecn(&self) -> Option<EcnCodepoint>;
+
+    /// Returns true when this packet is expected to occasionally exceed the route MTU.
+    fn allow_mtu_overflow(&self) -> bool;
 }
 
 impl<U: Umem> TxLoop<U> {
@@ -284,6 +293,7 @@ impl<U: Umem> TxLoop<U> {
                 let src_ip = src_addr.ip();
                 let src_port = src_addr.port();
                 let ecn = item.ecn();
+                let can_overflow_mtu = item.allow_mtu_overflow();
                 for addr in item.dst_addrs().as_ref() {
                     if ring.available() == 0 || umem.available() == 0 {
                         commit_pending(&mut ring, &mut written_uncommitted);
@@ -337,14 +347,16 @@ impl<U: Umem> TxLoop<U> {
                         if l3_inner_packet_len > gre.mtu as usize
                             || l3_outer_gre_packet_len > next_hop.mtu as usize
                         {
-                            log::warn!(
-                                "dropping packet: GRE payload exceeds MTU for {addr}: L3 inner \
-                                 packet length {l3_inner_packet_len}, L3 outer GRE packet length \
-                                 {l3_outer_gre_packet_len}, MTU: {mtu}, underlay_mtu: \
-                                 {underlay_mtu}.",
-                                mtu = gre.mtu,
-                                underlay_mtu = next_hop.mtu
-                            );
+                            if !can_overflow_mtu {
+                                log::warn!(
+                                    "dropping packet: GRE payload exceeds MTU for {addr}: L3 \
+                                     inner packet length {l3_inner_packet_len}, L3 outer GRE \
+                                     packet length {l3_outer_gre_packet_len}, MTU: {mtu}, \
+                                     underlay_mtu: {underlay_mtu}.",
+                                    mtu = gre.mtu,
+                                    underlay_mtu = next_hop.mtu
+                                );
+                            }
                             batched_packets -= 1;
                             umem.release(frame.offset());
                             continue;
@@ -396,11 +408,13 @@ impl<U: Umem> TxLoop<U> {
 
                         let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
                         if l3_packet_len > next_hop.mtu as usize {
-                            log::warn!(
-                                "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} \
-                                 for {addr}",
-                                mtu = next_hop.mtu
-                            );
+                            if !can_overflow_mtu {
+                                log::warn!(
+                                    "dropping packet: packet size {l3_packet_len} exceeds MTU \
+                                     {mtu} for {addr}",
+                                    mtu = next_hop.mtu
+                                );
+                            }
                             batched_packets -= 1;
                             umem.release(frame.offset());
                             continue;

@@ -5,7 +5,7 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
-        block_creation_loop::ReplayHighestFrozen,
+        block_creation_loop::{ReplayHighestFrozen, rewards::msg_types::AddVoteMessage},
         bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
@@ -30,14 +30,13 @@ use {
     },
     agave_votor::{
         consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-        event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         generated_cert_types::GeneratedCertTypes,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -98,7 +97,7 @@ use {
 const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
 /// The maximum number of alpenglow packets that can be processed in a single batch
-const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
+pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// The maximum number of distinct bls messages that can be sent in a single batch.
 /// This is overprovisioned to account for standstill scenarios, where a large amount
 /// of votes / certificate need to be refreshed.
@@ -188,10 +187,6 @@ pub struct AlpenglowInitializationState {
     // For BLS voting service
     pub bls_connection_cache: Arc<ConnectionCache>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
-
-    // For rewards
-    pub reward_certs_sender: Sender<BuildRewardCertsResponse>,
-    pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
 impl Tvu {
@@ -246,6 +241,7 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
+        reward_votes_sender: Sender<AddVoteMessage>,
     ) -> Result<Self, String> {
         let migration_status = bank_forks.read().unwrap().migration_status();
 
@@ -274,14 +270,11 @@ impl Tvu {
             bls_connection_cache,
             voting_service_test_override,
             highest_finalized,
-            build_reward_certs_receiver,
-            reward_certs_sender,
         } = votor_init;
 
         // streamer and sigverify for A2A BLS messages
         let (consensus_message_sender, consensus_message_receiver) =
             bounded(MAX_ALPENGLOW_PACKET_NUM);
-        let (reward_votes_sender, reward_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
@@ -410,7 +403,9 @@ impl Tvu {
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
-        let (duplicate_slots_sender, duplicate_slots_receiver) = unbounded();
+        // This channel is used by both gossip and window service. Gossip will not fill this
+        // beyond 50%, while window_service will perform a blocking send.
+        let (duplicate_slots_sender, duplicate_slots_receiver) = bounded(2048);
         let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
             unbounded();
         let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
@@ -428,12 +423,8 @@ impl Tvu {
             completed_slots_receiver,
         };
 
-        // Create switch block event channel for ReplayStage
-        // We emit a switch bank event when we observe a ParentReady.
-        // The event is immediately consumed and the latest is stored in ReplayStage.
-        // We overprovision at 100 leader windows - we would require almost 3 minutes of stuck
-        // replay to hit the limit.
-        let (switch_bank_sender, switch_bank_receiver) = bounded(100);
+        // Shared latest switch-bank request from Votor to ReplayStage.
+        let latest_switch_request = LatestSwitchRequest::default();
 
         let window_service = {
             let epoch_schedule = bank_forks
@@ -522,15 +513,12 @@ impl Tvu {
             leader_window_info_sender,
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
-            switch_bank_sender,
+            latest_switch_request: latest_switch_request.clone(),
             own_vote_sender: consensus_message_sender.clone(),
-            reward_certs_sender,
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
             consensus_metrics_receiver,
-            reward_votes_receiver,
-            build_reward_certs_receiver,
         };
         let votor = Votor::new(votor_config);
 
@@ -566,7 +554,7 @@ impl Tvu {
             gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
-            switch_bank_receiver,
+            latest_switch_request,
         };
 
         let replay_stage_config = ReplayStageConfig {
@@ -834,11 +822,10 @@ pub mod tests {
                 thread::sleep(Duration::from_secs(1));
             }
         });
-        let (reward_certs_sender, _reward_certs_receiver) = bounded(1);
-        let (_build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
+        let (reward_votes_sender, _reward_votes_receiver) = unbounded();
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -912,9 +899,8 @@ pub mod tests {
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,
                 bank_forks_controller_receiver,
-                build_reward_certs_receiver,
-                reward_certs_sender,
             },
+            reward_votes_sender,
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);

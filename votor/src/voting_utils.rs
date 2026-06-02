@@ -152,6 +152,9 @@ pub fn generate_vote_tx(
     wait_to_vote_slot: Option<u64>,
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
 ) -> GenerateVoteTxResult {
+    if authorized_voter_keypairs.read().unwrap().is_empty() {
+        return GenerateVoteTxResult::NonVoting;
+    }
     if bank.get_vote_account(&vote_account_pubkey).is_none() {
         return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
     }
@@ -235,11 +238,6 @@ fn insert_vote_and_create_bls_message(
     is_refresh: bool,
     context: &mut VotingContext,
 ) -> Result<BLSOp, VoteError> {
-    // Update and save the vote history
-    if !is_refresh {
-        context.vote_history.add_vote(vote);
-    }
-
     let bank = context.sharable_banks.root();
     let message = match generate_vote_tx(
         vote,
@@ -259,6 +257,15 @@ fn insert_vote_and_create_bls_message(
             }
         }
     };
+
+    // Only record after generate_vote_tx has produced a signed message.
+    // Recording before would leave vote_history claiming we voted for the
+    // slot when HotSpare/NonVoting/NoRankFound short-circuited the broadcast,
+    // permanently blocking us from voting for that slot.
+    if !is_refresh {
+        context.vote_history.add_vote(vote);
+    }
+
     context
         .own_vote_sender
         .send(vec![message.clone()])
@@ -320,7 +327,7 @@ mod tests {
         vote: Vote,
         my_bls_keypair: &BLSKeypair,
     ) -> ConsensusMessage {
-        let vote_serialized = bincode::serialize(&vote).unwrap();
+        let vote_serialized = wincode::serialize(&vote).unwrap();
         let signature = my_bls_keypair.sign(&vote_serialized);
         ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -475,12 +482,18 @@ mod tests {
         // Empty authorized voter keypairs to simulate non voting node
         voting_context.authorized_voter_keypairs = Arc::new(std::sync::RwLock::new(vec![]));
         let vote = Vote::new_skip_vote(5);
-        // For non-voting nodes, we just return Ok(None)
-        assert!(
-            generate_vote_message(vote, false, &mut voting_context)
-                .unwrap()
-                .is_none()
-        );
+        assert!(matches!(
+            generate_vote_tx(
+                vote,
+                &voting_context.sharable_banks.root(),
+                voting_context.vote_account_pubkey,
+                &voting_context.identity_keypair,
+                &voting_context.authorized_voter_keypairs,
+                voting_context.wait_to_vote_slot,
+                &mut voting_context.derived_bls_keypairs,
+            ),
+            GenerateVoteTxResult::NonVoting
+        ));
 
         // Recover correct value to vote again
         voting_context.authorized_voter_keypairs = Arc::new(RwLock::new(vec![Arc::new(
@@ -504,23 +517,21 @@ mod tests {
         let mut voting_context =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
-        // Wrong identity keypair
-        voting_context.identity_keypair = Arc::new(Keypair::new());
+        // Wrong identity keypair should return HotSpare based on rank_map.node_pubkey.
+        let wrong_identity_keypair = Arc::new(Keypair::new());
         let vote = Vote::new_notarization_vote(6, Hash::new_unique());
-        assert!(
-            generate_vote_message(vote, true, &mut voting_context)
-                .unwrap()
-                .is_none()
-        );
-
-        // Recover correct value to vote again
-        voting_context.identity_keypair =
-            Arc::new(validator_keypairs[my_index].node_keypair.insecure_clone());
-        assert!(
-            generate_vote_message(vote, true, &mut voting_context)
-                .unwrap()
-                .is_some()
-        );
+        assert!(matches!(
+            generate_vote_tx(
+                vote,
+                &voting_context.sharable_banks.root(),
+                voting_context.vote_account_pubkey,
+                &wrong_identity_keypair,
+                &voting_context.authorized_voter_keypairs,
+                voting_context.wait_to_vote_slot,
+                &mut voting_context.derived_bls_keypairs,
+            ),
+            GenerateVoteTxResult::HotSpare
+        ));
     }
 
     #[test]

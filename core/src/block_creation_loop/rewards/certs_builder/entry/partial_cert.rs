@@ -104,7 +104,7 @@ impl PartialCert {
 mod tests {
     use {
         super::*,
-        crate::consensus_rewards::entry::tests::{
+        crate::block_creation_loop::rewards::certs_builder::entry::tests::{
             get_rank_map_keypairs, new_vote, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
@@ -112,7 +112,7 @@ mod tests {
     };
 
     fn new_invalid_vote(vote: Vote, rank: usize) -> VoteMessage {
-        let serialized = bincode::serialize(&vote).unwrap();
+        let serialized = wincode::serialize(&vote).unwrap();
         let keypair = BlsKeypair::new();
         let signature = keypair.sign(&serialized).into();
         VoteMessage {

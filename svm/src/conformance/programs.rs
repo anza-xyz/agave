@@ -103,8 +103,8 @@ pub fn add_program_to_program_cache(
     loader_key: &Pubkey,
     elf: &[u8],
     feature_set: &SVMFeatureSet,
-    compute_budget: &ComputeBudget,
 ) {
+    let compute_budget = ComputeBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8);
     let program_runtime_environment = create_program_runtime_environment(
         feature_set,
         &compute_budget.to_budget(),

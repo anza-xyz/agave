@@ -1,13 +1,12 @@
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
     crate::{
+        block_creation_loop::rewards::msg_types::AddVoteMessage,
         bls_sigverify::{errors::SigVerifyCertError, stats::SigVerifyCertStats},
         cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
     agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-    agave_votor_messages::{
-        consensus_message::ConsensusMessage, reward_certificate::AddVoteMessage,
-    },
+    agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Sender, TrySendError},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -98,6 +97,8 @@ pub(super) fn send_votes_to_repair(
     Ok(())
 }
 
+/// Sends the `messages` to the consensus pool.  If the channel is bounded and full, then does a
+/// blocking send.
 pub(super) fn send_certs_to_pool(
     messages: Vec<ConsensusMessage>,
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
@@ -110,11 +111,19 @@ pub(super) fn send_certs_to_pool(
     match channel_to_pool.try_send(messages) {
         Ok(()) => {
             stats.pool_sent += len as u64;
+            stats.pool_outstanding_msgs = channel_to_pool.len() as u64;
             Ok(())
         }
-        Err(TrySendError::Full(_)) => {
+        Err(TrySendError::Full(msgs)) => {
             stats.pool_channel_full += 1;
-            Ok(())
+            error!("certs channel to consensus pool is full.  Doing a blocking send.");
+            match channel_to_pool.send(msgs) {
+                Ok(()) => {
+                    info!("certs channel to consensus pool has space again");
+                    Ok(())
+                }
+                Err(_) => Err(SigVerifyCertError::ConsensusPoolChannelDisconnected),
+            }
         }
         Err(TrySendError::Disconnected(_)) => {
             Err(SigVerifyCertError::ConsensusPoolChannelDisconnected)

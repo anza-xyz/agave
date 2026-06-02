@@ -2701,7 +2701,9 @@ mod tests {
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
-        solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_stake_interface::stake_history::{
+            self, SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
+        },
         solana_sysvar_id::SysvarId,
         solana_transaction_context::instruction_accounts::InstructionAccount,
         std::{
@@ -2711,6 +2713,14 @@ mod tests {
         },
         test_case::test_case,
     };
+
+    fn create_stake_history_account_for_test(stake_history: &StakeHistory) -> AccountSharedData {
+        let data_len = STAKE_HISTORY_ACCOUNT_SIZE
+            .max(bincode::serialized_size(stake_history).unwrap() as usize);
+        let mut account = AccountSharedData::new(1, data_len, &sysvar::id());
+        account.serialize_data(stake_history).unwrap();
+        account
+    }
 
     macro_rules! assert_access_violation {
         ($result:expr, $va:expr, $len:expr) => {
@@ -4529,17 +4539,17 @@ mod tests {
 
         let src_history = src_history;
 
-        let mut src_history_buf = vec![0; StakeHistory::size_of()];
+        let mut src_history_buf = vec![0; STAKE_HISTORY_ACCOUNT_SIZE];
         bincode::serialize_into(&mut src_history_buf, &src_history).unwrap();
 
         let transaction_accounts = vec![(
             sysvar::stake_history::id(),
-            create_account_shared_data_for_test(&src_history),
+            create_stake_history_account_for_test(&src_history),
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         {
-            let mut got_history_buf = vec![0; StakeHistory::size_of()];
+            let mut got_history_buf = vec![0; STAKE_HISTORY_ACCOUNT_SIZE];
             let got_history_buf_va = 0x100000000;
             let history_id_va = 0x200000000;
             let history_id = StakeHistory::id().to_bytes();
@@ -4564,7 +4574,7 @@ mod tests {
                 history_id_va,
                 got_history_buf_va,
                 0,
-                StakeHistory::size_of() as u64,
+                STAKE_HISTORY_ACCOUNT_SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);

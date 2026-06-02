@@ -152,21 +152,44 @@ pub(crate) enum EpochRewardPhase {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub(super) struct RewardCommission {
     // Note: This field becomes always `None` once SIMD-0232 is activated.
     // After full activation, it can be removed on feature cleanup.
     pub(super) commission_bps: Option<u16>,
     pub(super) commission_lamports: u64,
+    pub(super) burned_lamports: u64,
+    pub(super) is_vote_account: bool,
 }
 
 pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
+
+/// Helper struct to give the amounts distributed to commission accounts or
+/// burned in different manners
+#[derive(Debug, Default)]
+pub(super) struct RewardCommissionLamportAmounts {
+    /// Lamports distributed across all commission collectors, except the
+    /// incinerator.
+    ///
+    /// Also the maximum capitalization increase by the end of the first block
+    /// of the epoch.
+    pub(super) distributed_lamports: u64,
+    /// lamports distributed to the incinerator.
+    ///
+    /// Tracked separately to give a better upper bound for capitalization at
+    /// the end of the first block of an epoch, needed for Alpenglow's
+    /// `EpochInflationAccountState`
+    pub(super) distributed_to_incinerator_lamports: u64,
+    /// lamports burned from undistributed commissions
+    pub(super) burned_lamports: u64,
+}
 
 #[derive(Debug, Default)]
 pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
-    /// total lamports across all `accounts_with_rewards`
-    pub(super) total_reward_commission_lamports: u64,
+    /// amounts distributed to those accounts, and burned after calculation
+    pub(super) amounts: RewardCommissionLamportAmounts,
 }
 
 /// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts

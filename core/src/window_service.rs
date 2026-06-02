@@ -114,7 +114,10 @@ fn run_check_duplicate(
     duplicate_slots_sender: &DuplicateSlotSender,
     bank_forks: &RwLock<BankForks>,
 ) -> Result<()> {
-    let mut root_bank = bank_forks.read().unwrap().root_bank();
+    let (mut root_bank, migration_status) = {
+        let bank_forks_r = bank_forks.read().unwrap();
+        (bank_forks_r.root_bank(), bank_forks_r.migration_status())
+    };
     let mut last_updated = Instant::now();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
         if last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
@@ -159,10 +162,19 @@ fn run_check_duplicate(
             }
         };
 
-        // Propagate duplicate proof through gossip
-        cluster_info.push_duplicate_shred(&shred1, &shred2)?;
-        // Notify duplicate consensus state machine
-        duplicate_slots_sender.send(shred_slot)?;
+        if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
+            // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
+            // however we do not need to propagate the duplicate proof through gossip.
+            // We still propagate during the mixed migration epoch, to account for other nodes that are stuck
+            // and require a duplicate proof to proceed
+            cluster_info.push_duplicate_shred(&shred1, &shred2)?;
+        }
+
+        if !migration_status.is_alpenglow_enabled() {
+            // The state machine can be exited as soon as alpenglow is enabled.
+            // Notify duplicate consensus state machine. If channel is full we wait.
+            duplicate_slots_sender.send(shred_slot)?;
+        }
 
         Ok(())
     };

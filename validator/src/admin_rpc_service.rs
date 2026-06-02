@@ -1,5 +1,7 @@
 use {
-    agave_votor::event::VotorEvent,
+    agave_votor::{
+        event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
+    },
     crossbeam_channel::Sender,
     jsonrpc_core::{BoxFuture, ErrorCode, MetaIoHandler, Metadata, Result},
     jsonrpc_core_client::{RpcError, transports::ipc},
@@ -20,6 +22,7 @@ use {
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
+            should_require_vote_history_file,
         },
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
@@ -56,6 +59,7 @@ pub struct AdminRpcRequestMetadata {
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub tower_storage: Arc<dyn TowerStorage>,
+    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     pub rpc_to_plugin_manager_sender: Option<Sender<GeyserPluginManagerRequest>>,
@@ -219,6 +223,7 @@ pub trait AdminRpc {
         meta: Self::Metadata,
         keypair_file: String,
         require_tower: bool,
+        require_vote_history: bool,
     ) -> Result<()>;
 
     #[rpc(meta, name = "setIdentityFromBytes")]
@@ -227,6 +232,7 @@ pub trait AdminRpc {
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
         require_tower: bool,
+        require_vote_history: bool,
     ) -> Result<()>;
 
     #[rpc(meta, name = "setStakedNodesOverrides")]
@@ -559,6 +565,7 @@ impl AdminRpc for AdminRpcImpl {
         meta: Self::Metadata,
         keypair_file: String,
         require_tower: bool,
+        require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity request received");
 
@@ -568,7 +575,12 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_tower)
+        AdminRpcImpl::set_identity_keypair(
+            meta,
+            identity_keypair,
+            require_tower,
+            require_vote_history,
+        )
     }
 
     fn set_identity_from_bytes(
@@ -576,6 +588,7 @@ impl AdminRpc for AdminRpcImpl {
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
         require_tower: bool,
+        require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
 
@@ -585,7 +598,12 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_tower)
+        AdminRpcImpl::set_identity_keypair(
+            meta,
+            identity_keypair,
+            require_tower,
+            require_vote_history,
+        )
     }
 
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
@@ -880,6 +898,7 @@ impl AdminRpcImpl {
         meta: AdminRpcRequestMetadata,
         identity_keypair: Keypair,
         require_tower: bool,
+        require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
             if require_tower {
@@ -891,6 +910,34 @@ impl AdminRpcImpl {
                             err
                         ))
                     })?;
+            }
+
+            if require_vote_history {
+                let should_require_vote_history = {
+                    let bank_forks = post_init.bank_forks.read().unwrap();
+                    should_require_vote_history_file(
+                        &bank_forks.root_bank(),
+                        &post_init.vote_account,
+                        &identity_keypair.pubkey(),
+                    )
+                };
+                if should_require_vote_history {
+                    let _ = VoteHistory::restore(
+                        meta.vote_history_storage.as_ref(),
+                        &identity_keypair.pubkey(),
+                    )
+                    .map_err(|err| {
+                        jsonrpc_core::error::Error::invalid_params(format!(
+                            "Unable to load vote history file for identity {}: {}. The vote \
+                             account {} has prior Alpenglow votes. Ensure the vote history file \
+                             is present or (dangerous) use --do-not-require-vote-history if you \
+                             know what you're doing",
+                            identity_keypair.pubkey(),
+                            err,
+                            post_init.vote_account
+                        ))
+                    })?;
+                }
             }
 
             for (key, notifier) in &*post_init.notifies.read().unwrap() {
@@ -1147,6 +1194,9 @@ mod tests {
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
                 tower_storage: Arc::new(NullTowerStorage {}),
+                vote_history_storage: Arc::new(
+                    agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
+                ),
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
                     cluster_info,
                     bank_forks,
@@ -1205,7 +1255,7 @@ mod tests {
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false, false]}}"#,
         );
         let response = io.handle_request_sync(&set_id_request, meta.clone());
         let actual_parsed_response: Value =
@@ -1279,6 +1329,9 @@ mod tests {
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
                 tower_storage: Arc::new(NullTowerStorage {}),
+                vote_history_storage: Arc::new(
+                    agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
+                ),
                 post_init: post_init.clone(),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1359,6 +1412,9 @@ mod tests {
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             tower_storage: Arc::new(NullTowerStorage {}),
+            vote_history_storage: Arc::new(
+                agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
+            ),
             post_init: post_init.clone(),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             rpc_to_plugin_manager_sender: None,
@@ -1376,7 +1432,7 @@ mod tests {
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false, false]}}"#,
         );
         let response = test_validator.handle_request(&set_id_request);
         let actual_parsed_response: Value =
@@ -1452,6 +1508,9 @@ mod tests {
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs,
             tower_storage: Arc::new(NullTowerStorage {}),
+            vote_history_storage: Arc::new(
+                agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
+            ),
             post_init: Arc::new(RwLock::new(None)),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             rpc_to_plugin_manager_sender: None,

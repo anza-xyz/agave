@@ -963,6 +963,10 @@ pub struct AccountsDb {
     /// for incremental snapshot support.
     zero_lamport_accounts_to_purge_after_full_snapshot: DashSet<(Slot, Pubkey)>,
 
+    /// Set by `set_latest_full_snapshot_slot` when the snapshot advances. Read and cleared by
+    /// clean
+    latest_full_snapshot_slot_advanced_since_clean: AtomicBool,
+
     /// GeyserPlugin accounts update notifier
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 
@@ -1147,6 +1151,7 @@ impl AccountsDb {
             is_bank_drop_callback_enabled: AtomicBool::default(),
             dirty_stores: DashMap::default(),
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
+            latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
@@ -1593,28 +1598,32 @@ impl AccountsDb {
 
         timings.delta_key_count = Self::count_pubkeys(&candidates);
 
-        // Check if we should purge any of the
-        // zero_lamport_accounts_to_purge_later, based on the
-        // latest_full_snapshot_slot.
-        let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-        assert!(
-            latest_full_snapshot_slot.is_some()
+        debug_assert!(
+            self.latest_full_snapshot_slot().is_some()
                 || self
                     .zero_lamport_accounts_to_purge_after_full_snapshot
                     .is_empty(),
             "if snapshots are disabled, then zero_lamport_accounts_to_purge_later should always \
              be empty"
         );
-        if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
-            self.zero_lamport_accounts_to_purge_after_full_snapshot
-                .retain(|(slot, pubkey)| {
-                    let is_candidate_for_clean =
-                        max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
-                    if is_candidate_for_clean {
-                        insert_candidate(*pubkey, true);
-                    }
-                    !is_candidate_for_clean
-                });
+
+        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be retained
+        // for incremental snapshots. Once a snapshot occurs, drain the list
+        if self
+            .latest_full_snapshot_slot_advanced_since_clean
+            .swap(false, Ordering::Acquire)
+        {
+            if let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot() {
+                self.zero_lamport_accounts_to_purge_after_full_snapshot
+                    .retain(|(slot, pubkey)| {
+                        let is_candidate_for_clean =
+                            max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
+                        if is_candidate_for_clean {
+                            insert_candidate(*pubkey, true);
+                        }
+                        !is_candidate_for_clean
+                    });
+            }
         }
 
         (candidates, min_dirty_slot)
@@ -3713,7 +3722,7 @@ impl AccountsDb {
         //          |                           |
         //          V                           |
         // S3 store_accounts_for_shrink()/      | index
-        //        update_index_stored_accounts()| (replaces existing store_id, offset in stores)
+        //        update_index_for_shrink()     | (replaces existing store_id, offset in stores)
         //          |                           |
         //          V                           |
         // S4 do_shrink_slot_store()/           | map of stores (removes old entry)
@@ -4846,6 +4855,7 @@ impl AccountsDb {
     ///
     /// Only intended to be called at startup (or by tests).
     /// Only intended to be used while testing the experimental accumulator hash.
+    /// NOT safe to call concurrently with flush operations
     pub fn calculate_accounts_lt_hash_at_startup_from_index(
         &self,
         ancestors: &Ancestors,
@@ -4857,7 +4867,7 @@ impl AccountsDb {
         // A different parallel implementation that iterated over the bins *sequentially* and then
         // hashed the accounts *within* a bin in parallel took about 600 seconds.  That impl uses
         // less memory, as only a single index bin is loaded into mem at a time.
-        let lt_hash = self
+        let mut lt_hash = self
             .accounts_index
             .account_maps
             .par_iter()
@@ -4894,6 +4904,36 @@ impl AccountsDb {
                 accum.mix_in(&elem);
                 accum
             });
+
+        let cache_lt_hash = {
+            let mut cache_lt_hash = LtHash::identity();
+            for pubkey in self.accounts_cache.cached_pubkeys().iter() {
+                // mix out whatever older version the index walk produced (if any)
+                self.accounts_index.get_with_and_then(
+                    pubkey,
+                    ancestors,
+                    false,
+                    |(slot, account_info)| {
+                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                            .get_loaded_account(|loaded_account| {
+                                cache_lt_hash
+                                    .mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
+                            });
+                    },
+                );
+                // mix in the cache version
+                if let Some((account, _slot)) = self.load(
+                    ancestors,
+                    pubkey,
+                    LoadHint::FixedMaxRoot,
+                    PopulateReadCache::False,
+                ) {
+                    cache_lt_hash.mix_in(&Self::lt_hash_account(&account, pubkey).0);
+                }
+            }
+            cache_lt_hash
+        };
+        lt_hash.mix_in(&cache_lt_hash);
 
         AccountsLtHash(lt_hash)
     }
@@ -5125,6 +5165,54 @@ impl AccountsDb {
             } else {
                 vec![reclaims]
             }
+        }
+    }
+
+    /// Updates the accounts index for the shrink path: each account at `accounts.slot(i)` has
+    /// its existing index entry replaced to point at the rewritten storage at `target_slot`.
+    ///
+    /// Unlike `update_index_stored_accounts` this does not collect reclaims — the caller is
+    /// responsible for the source storage's alive-bytes accounting. Secondary indexes are also
+    /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
+    fn update_index_for_shrink<'a>(
+        &self,
+        infos: Vec<AccountInfo>,
+        accounts: &impl StorableAccounts<'a>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
+        thread_pool: &ThreadPool,
+    ) {
+        let target_slot = accounts.target_slot();
+        let len = std::cmp::min(accounts.len(), infos.len());
+
+        let update = |start, end| {
+            (start..end).for_each(|i| {
+                let info: AccountInfo = infos[i];
+                debug_assert!(!info.is_cached());
+                accounts.account(i, |account| {
+                    let old_slot = accounts.slot(i);
+                    self.accounts_index
+                        .replace(target_slot, old_slot, account.pubkey(), info);
+                });
+            });
+        };
+
+        let threshold = 1;
+        if matches!(
+            update_index_thread_selection,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        ) && len > threshold
+        {
+            let chunk_size = len.div_ceil(thread_pool.current_num_threads());
+            let batches = 1 + len / chunk_size;
+            thread_pool.install(|| {
+                (0..batches).into_par_iter().for_each(|batch| {
+                    let start = batch * chunk_size;
+                    let end = std::cmp::min(start + chunk_size, len);
+                    update(start, end)
+                })
+            });
+        } else {
+            update(0, len);
         }
     }
 
@@ -5550,10 +5638,9 @@ impl AccountsDb {
         let write_accounts_us = write_accounts_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
-        self.update_index_stored_accounts(
+        self.update_index_for_shrink(
             infos,
             &accounts,
-            UpsertReclaim::IgnoreReclaims,
             update_index_thread_selection,
             &self.thread_pool_background,
         );
@@ -5982,6 +6069,8 @@ impl AccountsDb {
     /// Sets the latest full snapshot slot to `slot`
     pub fn set_latest_full_snapshot_slot(&self, slot: Slot) {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
+        self.latest_full_snapshot_slot_advanced_since_clean
+            .store(true, Ordering::Release);
     }
 
     fn generate_index_for_slot<'a>(

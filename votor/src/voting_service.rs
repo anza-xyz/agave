@@ -3,7 +3,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
+    agave_votor_messages::{certificate::Certificate, consensus_message::ConsensusMessage},
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -251,7 +251,8 @@ mod tests {
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+            certificate::{Certificate, CertificateType},
+            consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},

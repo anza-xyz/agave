@@ -2,9 +2,9 @@
 
 #[cfg(feature = "conformance")]
 pub mod account_state;
-pub mod context;
+#[cfg(feature = "conformance")]
+pub mod elf_loader;
 #[cfg(feature = "conformance")]
 pub mod feature_set;
-pub mod harness;
+pub mod instr;
 pub mod programs;
-pub mod sysvar;

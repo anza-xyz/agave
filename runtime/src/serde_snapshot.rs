@@ -50,7 +50,7 @@ use {
         result::Result,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicBool, Ordering},
         },
         thread,
         time::Instant,
@@ -66,6 +66,7 @@ use {
 mod obsolete_accounts;
 mod status_cache;
 mod storage;
+mod storages_list;
 mod tests;
 mod types;
 mod utils;
@@ -74,6 +75,7 @@ pub(crate) use {
     obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+    storages_list::{StorageListItem, StoragesList},
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
@@ -903,7 +905,7 @@ pub(crate) fn remap_append_vec_file(
     old_append_vec_id: SerializedAccountsFileId,
     append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
-    num_collisions: &AtomicUsize,
+    num_collisions: &mut usize,
 ) -> io::Result<(AccountsFileId, FileInfo)> {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     let append_vec_path_cstr = cstring_from_path(&append_vec_file_info.path)?;
@@ -955,7 +957,7 @@ pub(crate) fn remap_append_vec_file(
 
         // If we made it this far, a file exists at the new path.  Record the collision
         // and try again.
-        num_collisions.fetch_add(1, Ordering::Relaxed);
+        *num_collisions += 1;
     };
 
     // Only rename the file if the new ID is actually different from the original. In the target_os
@@ -983,7 +985,7 @@ pub(crate) fn remap_and_reconstruct_single_storage(
     current_len: usize,
     append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
-    num_collisions: &AtomicUsize,
+    num_collisions: &mut usize,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
         slot,

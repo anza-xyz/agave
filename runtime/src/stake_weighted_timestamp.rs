@@ -27,7 +27,7 @@ pub(crate) fn calculate_stake_weighted_timestamp<I, K, V, T>(
     unique_timestamps: I,
     stakes: &HashMap<Pubkey, (u64, T /*Account|VoteAccount*/)>,
     slot: Slot,
-    slot_duration: Duration,
+    elapsed_slot_duration: impl Fn(Slot, Slot) -> Duration,
     epoch_start_timestamp: Option<(Slot, UnixTimestamp)>,
     max_allowable_drift: MaxAllowableDrift,
 ) -> Option<UnixTimestamp>
@@ -40,7 +40,7 @@ where
     let mut total_stake: u128 = 0;
     for (vote_pubkey, slot_timestamp) in unique_timestamps {
         let (timestamp_slot, timestamp) = slot_timestamp.borrow();
-        let offset = slot_duration.saturating_mul(slot.saturating_sub(*timestamp_slot) as u32);
+        let offset = elapsed_slot_duration(*timestamp_slot, slot);
         let estimate = timestamp.saturating_add(offset.as_secs() as i64);
         let stake = stakes
             .get(vote_pubkey.borrow())
@@ -67,8 +67,7 @@ where
     }
     // Bound estimate by `max_allowable_drift` since the start of the epoch
     if let Some((epoch_start_slot, epoch_start_timestamp)) = epoch_start_timestamp {
-        let poh_estimate_offset =
-            slot_duration.saturating_mul(slot.saturating_sub(epoch_start_slot) as u32);
+        let poh_estimate_offset = elapsed_slot_duration(epoch_start_slot, slot);
         let estimate_offset =
             Duration::from_secs((estimate as u64).saturating_sub(epoch_start_timestamp as u64));
         let max_allowable_drift_fast =
@@ -102,6 +101,12 @@ pub mod tests {
         super::*, solana_account::Account, solana_clock::DEFAULT_MS_PER_SLOT,
         solana_native_token::LAMPORTS_PER_SOL,
     };
+
+    fn constant_elapsed_slot_duration(slot_duration: Duration) -> impl Fn(Slot, Slot) -> Duration {
+        move |from_slot, to_slot| {
+            slot_duration.saturating_mul(to_slot.saturating_sub(from_slot) as u32)
+        }
+    }
 
     #[test]
     fn test_calculate_stake_weighted_timestamp_uses_median() {
@@ -166,7 +171,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             None,
             max_allowable_drift,
         )
@@ -189,7 +194,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             None,
             max_allowable_drift,
         )
@@ -212,7 +217,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             None,
             max_allowable_drift,
         )
@@ -260,7 +265,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             None,
             max_allowable_drift,
         )
@@ -297,7 +302,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             None,
             max_allowable_drift,
         )
@@ -363,7 +368,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -384,7 +389,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -405,7 +410,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -425,7 +430,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -509,7 +514,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             allowable_drift_25,
         )
@@ -520,7 +525,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             allowable_drift_50,
         )
@@ -550,7 +555,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             allowable_drift_25,
         )
@@ -561,7 +566,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             allowable_drift_50,
         )
@@ -641,7 +646,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -671,7 +676,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -701,7 +706,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )
@@ -767,7 +772,7 @@ pub mod tests {
             &unique_timestamps,
             &stakes,
             slot as Slot,
-            slot_duration,
+            constant_elapsed_slot_duration(slot_duration),
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
         )

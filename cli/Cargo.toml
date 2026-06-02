@@ -80,6 +80,7 @@ solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-syscalls = { workspace = true }
@@ -106,7 +107,7 @@ solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }
 solana-sha256-hasher = { workspace = true }
-solana-test-validator = { path = "../test-validator" }
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 

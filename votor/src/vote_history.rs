@@ -10,6 +10,7 @@ use {
     solana_pubkey::Pubkey,
     std::collections::{HashMap, HashSet, hash_map::Entry},
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -33,7 +34,7 @@ impl VoteHistoryVersions {
     derive(AbiExample),
     frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
 )]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
     pub node_pubkey: Pubkey,
@@ -163,8 +164,7 @@ impl VoteHistory {
     /// Add a new vote to the voting history
     pub fn add_vote(&mut self, vote: Vote) {
         assert!(vote.slot() >= self.root);
-        // TODO: these assert!s are for my debugging, can consider removing
-        // in final version
+        // Asserts here guard against vote equivocation.
         match vote {
             Vote::Notarize(vote) => {
                 assert!(self.voted.insert(vote.slot));
@@ -212,8 +212,7 @@ impl VoteHistory {
 
     /// Add a new parent ready slot
     ///
-    /// Returns true if the insertion was successful and this was the
-    /// first parent ready for this slot, indicating we should set timeouts.
+    /// Returns true if this was the first parent ready for this slot.
     pub fn add_parent_ready(&mut self, slot: Slot, parent: Block) -> bool {
         if slot < self.root {
             return false;
@@ -231,7 +230,18 @@ impl VoteHistory {
     }
 
     pub fn highest_parent_ready_slot(&self) -> Option<Slot> {
-        self.parent_ready_slots.keys().max().copied()
+        self.highest_parent_ready().map(|(slot, _)| slot)
+    }
+
+    pub fn highest_parent_ready(&self) -> Option<(Slot, Block)> {
+        let (&slot, parents) = self
+            .parent_ready_slots
+            .iter()
+            .max_by_key(|(slot, _)| *slot)?;
+
+        // Choose the parent that maximizes the amount of slots skipped.
+        // This matches the block production parent selection logic in the `ParentReadyTracker`.
+        parents.iter().min().copied().map(|parent| (slot, parent))
     }
 
     /// Sets the new root slot and cleans up outdated slots < `root`
@@ -274,7 +284,10 @@ pub enum VoteHistoryError {
     IoError(#[from] std::io::Error),
 
     #[error("Serialization Error: {0}")]
-    SerializeError(#[from] bincode::Error),
+    SerializeError(#[from] wincode::WriteError),
+
+    #[error("Deserialization Error: {0}")]
+    DeserializeError(#[from] wincode::ReadError),
 
     #[error("The signature on the saved vote history is invalid")]
     InvalidSignature,
@@ -493,6 +506,14 @@ mod test {
         assert!(vote_history.is_parent_ready(2, &block_id_2_1));
         assert!(vote_history.is_parent_ready(2, &block_id_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
+        let expected_parent = [block_id_2_0, block_id_2_1, block_id_0]
+            .into_iter()
+            .min()
+            .unwrap();
+        assert_eq!(
+            vote_history.highest_parent_ready(),
+            Some((2, expected_parent))
+        );
 
         // Adding a parent ready for slot before root silently returns false
         assert!(!vote_history.add_parent_ready(1, block_id_0));

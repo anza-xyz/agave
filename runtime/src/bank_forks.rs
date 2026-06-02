@@ -540,7 +540,7 @@ impl BankForks {
 
     pub fn prune_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(root, root_bank.epoch(), self);
+            root_bank.prune_program_cache(self);
         }
     }
 
@@ -787,7 +787,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType},
+            certificate::{Certificate, CertificateType},
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
         },
         assert_matches::assert_matches,
@@ -1029,7 +1029,7 @@ mod tests {
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
         let genesis_cert = Certificate {
-            cert_type: CertificateType::Finalize(1),
+            cert_type: CertificateType::Genesis(1, Hash::default()),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };

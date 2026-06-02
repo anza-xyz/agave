@@ -368,7 +368,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.dynamic_port_range)
             .validator(port_range_validator)
-            .help("Range to use for dynamically assigned ports"),
+            .help(
+                "Range to use for dynamically assigned ports. MIN_PORT-MAX_PORT yields the range \
+                 [MIN_PORT, MAX_PORT)",
+            ),
     )
     .arg(
         Arg::with_name("maximum_local_snapshot_age")
@@ -545,6 +548,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("require-tower")
             .takes_value(false)
             .help("Refuse to start if saved tower state is not found"),
+    )
+    .arg(
+        clap::Arg::with_name("do_not_require_vote_history")
+            .long("do-not-require-vote-history")
+            .takes_value(false)
+            .help("Do not require saved vote history state for startup"),
     )
     .arg(
         Arg::with_name("expected_genesis_hash")

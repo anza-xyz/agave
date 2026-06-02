@@ -14,7 +14,9 @@
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
 //! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
 #[cfg(target_os = "linux")]
-pub use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
+pub use crate::io_uring::sequential_file_reader::{
+    SequentialFileReader, SequentialFileReaderBuilder,
+};
 use {
     crate::{
         FileSize,
@@ -71,7 +73,20 @@ pub trait FileBufRead<'a>: BufRead {
     ///
     /// `read_limit` provides a pre-defined limit on the number of bytes that can be read
     /// from the file (unless EOF is reached).
+    ///
+    /// If the file was previously queued via `add_file_to_prefetch`, the reader
+    /// advances to that file (validating identity / `read_limit`) rather than
+    /// re-queueing it.
     fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()>;
+
+    /// Queue `file` for read-ahead (prefetch). Files are processed in FIFO order
+    /// by subsequent `set_file` calls.
+    ///
+    /// This is a hint to keep the read pipeline saturated for readers that
+    /// support concurrent read-ahead. Implementations without read-ahead may
+    /// ignore the call. Callers must still invoke `set_file` to switch the
+    /// active file.
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()>;
 
     /// Returns the current file offset corresponding to the start of the buffer
     /// that will be returned by the next call to `fill_buf`.
@@ -155,11 +170,29 @@ impl<'a, const N: usize> BufferedReader<'a, N> {
         self.file_offset_of_next_read = 0;
         self.buf_valid_bytes = 0..0;
     }
+
+    /// Reset to idle state and re-type with a fresh lifetime `'b`.
+    pub fn rebind<'b>(self) -> io::Result<BufferedReader<'b, N>> {
+        Ok(BufferedReader {
+            file_offset_of_next_read: 0,
+            buf: self.buf,
+            buf_valid_bytes: 0..0,
+            file_last_offset: 0,
+            file_len_valid: 0,
+            file: None,
+        })
+    }
 }
 
 impl<'a, const N: usize> FileBufRead<'a> for BufferedReader<'a, N> {
     fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
         self.do_set_file(file, read_limit);
+        Ok(())
+    }
+
+    /// `BufferedReader` does not perform read-ahead — the call is a no-op and
+    /// the file becomes active only when `set_file` is later invoked.
+    fn add_file_to_prefetch(&mut self, _file: &'a File, _read_limit: FileSize) -> io::Result<()> {
         Ok(())
     }
 
@@ -358,6 +391,10 @@ impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
     fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
         self.overflow_buf.clear();
         self.reader.set_file(file, read_limit)
+    }
+
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
+        self.reader.add_file_to_prefetch(file, read_limit)
     }
 
     fn get_file_offset(&self) -> FileSize {

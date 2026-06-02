@@ -19,7 +19,6 @@ name = "solana_runtime"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "agave-feature-set/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
     "solana-program-binaries",
@@ -66,6 +65,7 @@ arrayref = { workspace = true }
 assert_matches = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
@@ -76,7 +76,6 @@ log = { workspace = true }
 mockall = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
-num_cpus = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -179,7 +178,6 @@ spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
-symlink = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }

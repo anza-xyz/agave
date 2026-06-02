@@ -3,8 +3,7 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
-    crate::consensus_rewards::BuildRewardCertsRespError,
-    agave_votor_messages::reward_certificate::NotarRewardCertificate,
+    agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -95,7 +94,7 @@ impl NotarEntry {
 mod tests {
     use {
         super::*,
-        crate::consensus_rewards::entry::tests::{
+        crate::block_creation_loop::rewards::certs_builder::entry::tests::{
             get_rank_map_keypairs, new_vote, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},

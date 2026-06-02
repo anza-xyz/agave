@@ -19,6 +19,7 @@ use {
         },
         rpc_sender::*,
     },
+    agave_votor_messages::certificate::Certificate,
     base64::{Engine, prelude::BASE64_STANDARD},
     bincode::serialize,
     futures::join,
@@ -2094,6 +2095,30 @@ impl RpcClient {
                     })
                     .collect()
             })
+    }
+
+    /// Returns Alpenglow's genesis certificate.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgGenesisCert`] RPC method.
+    ///
+    /// [`getAgGenesisCert`]: https://solana.com/docs/rpc/http/getaggenesiscert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let cert = rpc_client.get_ag_genesis_cert().await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+        self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 
     /// Get block production for the current epoch.
@@ -4942,20 +4967,46 @@ impl RpcClient {
         &self,
         commitment: CommitmentConfig,
     ) -> ClientResult<(Hash, u64)> {
-        let RpcBlockhash {
-            blockhash,
-            last_valid_block_height,
+        Ok(self
+            .get_latest_blockhash_with_commitment_and_context(commitment)
+            .await?
+            .value)
+    }
+
+    /// Returns the most recent blockhash and last valid block height along with the response
+    /// context, which includes the slot at which the node observed the blockhash.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method and uses the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
+    pub async fn get_latest_blockhash_with_commitment_and_context(
+        &self,
+        commitment: CommitmentConfig,
+    ) -> RpcResult<(Hash, u64)> {
+        let Response {
+            context,
+            value:
+                RpcBlockhash {
+                    blockhash,
+                    last_valid_block_height,
+                },
         } = self
             .send::<Response<RpcBlockhash>>(RpcRequest::GetLatestBlockhash, json!([commitment]))
-            .await?
-            .value;
+            .await?;
         let blockhash = blockhash.parse().map_err(|_| {
             ClientError::new_with_request(
                 RpcError::ParseError("Hash".to_string()).into(),
                 RpcRequest::GetLatestBlockhash,
             )
         })?;
-        Ok((blockhash, last_valid_block_height))
+        Ok(Response {
+            context,
+            value: (blockhash, last_valid_block_height),
+        })
     }
 
     /// Checks whether a blockhash is still valid for submitting transactions.

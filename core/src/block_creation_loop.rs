@@ -7,17 +7,19 @@
 use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
+        block_creation_loop::rewards::{
+            certs_requestor::CertsRequestor,
+            msg_types::{AddVoteMessage, RewardRespSucc},
+            reward_certs_service::RewardCertsService,
+        },
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{
-            BuildRewardCertsRequest, BuildRewardCertsRespSucc, BuildRewardCertsResponse,
-            NotarRewardCertificate, SkipRewardCertificate,
-        },
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, select_biased},
+    crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
     solana_entry::block_component::{
         BlockFooterV1, GenesisCertificate, UpdateParentV1, VersionedBlockMarker,
@@ -35,7 +37,7 @@ use {
     solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
     solana_runtime::{
         bank::{Bank, NewBankOptions},
-        bank_forks::BankForks,
+        bank_forks::{BankForks, SharableBanks},
         bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
@@ -56,6 +58,7 @@ use {
     thiserror::Error,
 };
 
+pub(crate) mod rewards;
 mod stats;
 
 /// Source of a leader-window notification consumed by BCL.
@@ -67,25 +70,39 @@ enum ParentSource {
 }
 
 pub struct BlockCreationLoop {
-    thread: JoinHandle<()>,
+    t_block_creation_loop: JoinHandle<()>,
+    reward_certs_service: RewardCertsService,
 }
 
 impl BlockCreationLoop {
-    pub fn new(config: BlockCreationLoopConfig) -> Self {
-        let thread = Builder::new()
+    pub fn new(config: BlockCreationLoopConfig) -> (Self, Sender<AddVoteMessage>) {
+        let (reward_certs_service, certs_requestor, votes_sender) = RewardCertsService::new(
+            config.cluster_info.clone(),
+            config.leader_schedule_cache.clone(),
+            config.sharable_banks.clone(),
+            config.exit.clone(),
+        );
+        let t_block_creation_loop = Builder::new()
             .name("solBlkCreatLoop".to_string())
             .spawn(move || {
                 info!("BlockCreationLoop has started");
-                start_loop(config);
+                start_loop(config, certs_requestor);
                 info!("BlockCreationLoop has stopped");
             })
             .unwrap();
 
-        Self { thread }
+        (
+            Self {
+                t_block_creation_loop,
+                reward_certs_service,
+            },
+            votes_sender,
+        )
     }
 
     pub fn join(self) -> thread::Result<()> {
-        self.thread.join()
+        self.t_block_creation_loop.join()?;
+        self.reward_certs_service.join()
     }
 }
 
@@ -94,6 +111,7 @@ pub struct BlockCreationLoopConfig {
 
     // Shared state
     pub bank_forks: Arc<RwLock<BankForks>>,
+    pub sharable_banks: SharableBanks,
     pub bank_forks_controller: Arc<dyn BankForksController>,
     pub blockstore: Arc<Blockstore>,
     pub cluster_info: Arc<ClusterInfo>,
@@ -114,11 +132,6 @@ pub struct BlockCreationLoopConfig {
     // Channel to receive RecordReceiver from PohService
     pub record_receiver_receiver: Receiver<RecordReceiver>,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
-
-    /// Channel to send the request to build reward certs.
-    pub build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
-    /// Channel to receive the built reward certs.
-    pub reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 
     /// Sender for packets to banking stage (used to re-inject transactions after sad leader handover).
     pub banking_stage_sender: BankingPacketSender,
@@ -145,8 +158,7 @@ struct LeaderContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
-    reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
+    reward_certs_requestor: CertsRequestor,
     /// Banking-stage ingress used to reschedule transactions after sad handover.
     banking_stage_sender: BankingPacketSender,
 
@@ -209,7 +221,7 @@ enum StartLeaderError {
 /// The `votor::consensus_pool_service` tracks when it is our leader window, and
 /// communicates the skip timer and parent slot for our window. This loop takes the responsibility
 /// of creating our `NUM_CONSECUTIVE_LEADER_SLOTS` blocks and finishing them within the required timeout.
-fn start_loop(config: BlockCreationLoopConfig) {
+fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequestor) {
     let BlockCreationLoopConfig {
         exit,
         bank_forks,
@@ -226,10 +238,9 @@ fn start_loop(config: BlockCreationLoopConfig) {
         replay_highest_frozen,
         highest_parent_ready,
         optimistic_parent_receiver,
-        build_reward_certs_sender,
-        reward_certs_receiver,
         highest_finalized,
         banking_stage_sender,
+        sharable_banks: _,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -276,8 +287,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         slot_status_notifier,
         banking_tracer,
         replay_highest_frozen,
-        build_reward_certs_sender,
-        reward_certs_receiver,
+        reward_certs_requestor,
         banking_stage_sender,
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
@@ -476,18 +486,14 @@ fn select_freshest_window(
 /// Clamps the block producer timestamp to ensure that the leader produces a timestamp that conforms
 /// to Alpenglow clock bounds.
 fn skew_block_producer_time_nanos(
-    parent_slot: Slot,
     parent_time_nanos: i64,
-    working_bank_slot: Slot,
     working_bank_time_nanos: i64,
-    ns_per_slot: u64,
+    elapsed_slot_duration_nanos: u128,
 ) -> i64 {
     let (min_working_bank_time, max_working_bank_time) =
         BlockComponentProcessor::nanosecond_time_bounds(
-            parent_slot,
             parent_time_nanos,
-            working_bank_slot,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
 
     working_bank_time_nanos
@@ -516,14 +522,13 @@ fn produce_block_footer(
             .get_nanosecond_clock()
             .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
         let parent_slot = parent_bank.slot();
-        let ns_per_slot = u64::try_from(bank.ns_per_slot_at_slot(slot)).unwrap_or(u64::MAX);
+        let elapsed_slot_duration_nanos =
+            bank.slot_range_duration_nanos(parent_slot.saturating_add(1), slot);
 
         block_producer_time_nanos = skew_block_producer_time_nanos(
-            parent_slot,
             parent_time_nanos,
-            slot,
             block_producer_time_nanos,
-            ns_per_slot,
+            elapsed_slot_duration_nanos,
         );
     }
 
@@ -629,10 +634,10 @@ fn record_and_complete_block(
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
-    drain_stale_reward_certs(ctx, bank_slot);
-    ctx.build_reward_certs_sender
-        .send(BuildRewardCertsRequest { bank_slot })
-        .map_err(|_| PohRecorderError::ChannelDisconnected)?;
+    let reward_cert_request = ctx
+        .reward_certs_requestor
+        .request_reward_certs(ctx.my_pubkey, bank_slot)
+        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
@@ -733,7 +738,7 @@ fn record_and_complete_block(
         "optimistic_parent should be None after receiving ParentReady"
     );
 
-    // Alpentick and clear bank
+    // Alpentick, produce the footer, and clear bank
     let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     let bank = w_poh_recorder
         .bank()
@@ -751,8 +756,11 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
-        let reward_certs = recv_reward_certs(ctx, bank_slot)?;
-        let BuildRewardCertsRespSucc {
+        let reward_certs = ctx
+            .reward_certs_requestor
+            .recv_reward_certs(ctx.my_pubkey, reward_cert_request)
+            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+        let RewardRespSucc {
             skip,
             notar,
             validators: _,
@@ -762,11 +770,15 @@ fn record_and_complete_block(
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
 
+        // BankingStage may still be executing batches that were already recorded.
+        // Footer processing mutates vote accounts directly, so wait for execution to complete first.
+        bank.wait_for_inflight_commits();
+
         BlockComponentProcessor::update_bank_with_footer_fields(
             &bank,
             i64::try_from(footer.block_producer_time_nanos)
                 .expect("locally produced block timestamp must fit in i64"),
-            Hash::default(), // Banks we produce do not need the bank hash mismatch check
+            None, // Banks we produce do not need the bank hash mismatch check
             reward_cert,
             final_cert_input,
         )?;
@@ -821,49 +833,6 @@ fn process_parent_ready(
         ctx.my_pubkey, info.start_slot, info.end_slot
     );
     Ok(false)
-}
-
-/// Drop reward-certificate responses left over from an older bank slot.
-fn drain_stale_reward_certs(ctx: &LeaderContext, bank_slot: Slot) {
-    for reward_cert in ctx.reward_certs_receiver.try_iter() {
-        warn!(
-            "{}: dropping stale reward cert response for bank slot {}, before starting {bank_slot}",
-            ctx.my_pubkey, reward_cert.bank_slot
-        );
-    }
-}
-
-/// Wait for the reward-certificate response for `bank_slot`, ignoring stale
-/// responses generated for banks that have already been abandoned.
-fn recv_reward_certs(
-    ctx: &LeaderContext,
-    bank_slot: Slot,
-) -> Result<BuildRewardCertsRespSucc, PohRecorderError> {
-    loop {
-        if ctx.exit.load(Ordering::Relaxed) {
-            return Err(PohRecorderError::ChannelDisconnected);
-        }
-
-        match ctx
-            .reward_certs_receiver
-            .recv_timeout(Duration::from_millis(100))
-        {
-            Ok(reward_certs) if reward_certs.bank_slot == bank_slot => {
-                break reward_certs.result.map_err(PohRecorderError::from);
-            }
-            Ok(reward_certs) => {
-                warn!(
-                    "{}: ignoring stale reward cert response for bank slot {}, expected \
-                     {bank_slot}",
-                    ctx.my_pubkey, reward_certs.bank_slot
-                );
-            }
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(PohRecorderError::ChannelDisconnected);
-            }
-        }
-    }
 }
 
 /// Stop record intake, drain any already-reserved records, and reset PoH after
@@ -1011,6 +980,9 @@ fn handle_parent_ready(
         let batch: PacketBatch = packets.into();
         let banking_packet_batch = Arc::new(vec![batch]);
         ctx.banking_stage_sender
+            // technically this send can evict to make room (which may drop a few packets)
+            // but this should (hopefully) not be significant amounts since we are evicting
+            // at most 1 batch.
             .send(banking_packet_batch)
             .map_err(|_| PohRecorderError::RescheduleTransactionsError(slot))?;
     }
@@ -1293,6 +1265,13 @@ fn create_and_insert_leader_bank(
         &parent_bank.hash(),
     );
 
+    // If this is the first alpenglow block, set PoH to low power mode.
+    // This is persisted in the recorder when we set bank.
+    // Replayers will update hashes_per_tick when they process the genesis certificate block marker.
+    if should_include_genesis_certificate(parent_slot, &ctx.genesis_cert) {
+        tpu_bank.set_hashes_per_tick(None);
+    }
+
     // Insert the bank
     let tpu_bank = ctx.bank_forks_controller.insert_bank(tpu_bank)?;
 
@@ -1326,7 +1305,7 @@ fn maybe_include_genesis_certificate(
     parent_slot: Slot,
     ctx: &LeaderContext,
 ) -> Result<(), PohRecorderError> {
-    if parent_slot != ctx.genesis_cert.slot || parent_slot == 0 {
+    if !should_include_genesis_certificate(parent_slot, &ctx.genesis_cert) {
         return Ok(());
     }
 
@@ -1348,13 +1327,19 @@ fn maybe_include_genesis_certificate(
     Ok(())
 }
 
+fn should_include_genesis_certificate(
+    parent_slot: Slot,
+    genesis_cert: &GenesisCertificate,
+) -> bool {
+    parent_slot == genesis_cert.slot && parent_slot != 0
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::banking_trace::BankingTracer,
         agave_banking_stage_ingress_types::BankingPacketReceiver,
-        agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, RewardCertError},
         crossbeam_channel::unbounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
@@ -1547,10 +1532,9 @@ mod tests {
 
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
-        let (build_reward_certs_sender, _build_reward_certs_receiver) = unbounded();
-        let (reward_certs_sender, reward_certs_receiver) = unbounded();
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1569,8 +1553,7 @@ mod tests {
             slot_status_notifier: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+            reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
@@ -1615,27 +1598,6 @@ mod tests {
         assert!(ctx.bank_forks.read().unwrap().get(1).is_none());
         assert!(ctx.record_receiver.is_shutdown());
         assert!(ctx.record_receiver.is_safe_to_restart());
-
-        reward_certs_sender
-            .send(BuildRewardCertsResponse {
-                bank_slot: 1,
-                result: Err(BuildRewardCertsRespError::RewardCertTryNew(
-                    RewardCertError::InvalidBitmap,
-                )),
-            })
-            .unwrap();
-        reward_certs_sender
-            .send(BuildRewardCertsResponse {
-                bank_slot: 2,
-                result: Ok(BuildRewardCertsRespSucc {
-                    validators: vec![my_pubkey],
-                    ..BuildRewardCertsRespSucc::default()
-                }),
-            })
-            .unwrap();
-
-        let reward_certs = recv_reward_certs(&ctx, 2).unwrap();
-        assert_eq!(reward_certs.validators, vec![my_pubkey]);
     }
 
     #[test]
@@ -1680,12 +1642,11 @@ mod tests {
 
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
-        let (build_reward_certs_sender, _build_reward_certs_receiver) = unbounded();
-        let (_reward_certs_sender, reward_certs_receiver) = unbounded();
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let mut genesis_cert = test_genesis_certificate();
         genesis_cert.slot = parent_bank.slot();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1704,8 +1665,7 @@ mod tests {
             slot_status_notifier: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+            reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
@@ -1753,10 +1713,9 @@ mod tests {
 
         let (record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
-        let (build_reward_certs_sender, build_reward_certs_receiver) = unbounded();
-        let (reward_certs_sender, reward_certs_receiver) = unbounded();
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let (reward_certs_requestor, _reward_request_receiver) = CertsRequestor::new();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1775,8 +1734,7 @@ mod tests {
             slot_status_notifier: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+            reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
@@ -1793,14 +1751,6 @@ mod tests {
             ))
             .unwrap();
 
-        let delayed_reward = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            let _ = reward_certs_sender.send(BuildRewardCertsResponse {
-                bank_slot: 1,
-                result: Ok(BuildRewardCertsRespSucc::default()),
-            });
-        });
-
         let start = Instant::now();
         let result =
             record_and_complete_block(&mut ctx, 1, None, &mut Instant::now(), Duration::ZERO);
@@ -1810,15 +1760,6 @@ mod tests {
         assert!(ctx.bank_forks.read().unwrap().get(1).is_none());
         assert!(ctx.record_receiver.is_shutdown());
         assert!(ctx.record_receiver.is_safe_to_restart());
-        assert_eq!(
-            build_reward_certs_receiver
-                .recv_timeout(Duration::from_secs(1))
-                .unwrap()
-                .bank_slot,
-            1
-        );
-
-        delayed_reward.join().unwrap();
     }
 
     #[test]
@@ -1875,10 +1816,9 @@ mod tests {
 
         let (record_sender, record_receiver) = record_channels(false);
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
-        let (build_reward_certs_sender, _build_reward_certs_receiver) = unbounded();
-        let (_reward_certs_sender, reward_certs_receiver) = unbounded();
         let (banking_stage_sender, banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1897,8 +1837,7 @@ mod tests {
             slot_status_notifier: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            build_reward_certs_sender,
-            reward_certs_receiver,
+            reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),

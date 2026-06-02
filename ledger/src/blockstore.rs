@@ -47,10 +47,10 @@ use {
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::{HASH_BYTES, Hash},
     solana_keypair::Keypair,
-    solana_measure::measure::Measure,
+    solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -101,7 +101,7 @@ pub use {
         blockstore::error::{BlockstoreError, Result},
         blockstore_db::{default_num_compaction_threads, default_num_flush_threads},
         blockstore_meta::{OptimisticSlotMetaVersioned, SlotMeta},
-        blockstore_metrics::BlockstoreInsertionMetrics,
+        blockstore_metrics::{BlockstoreInsertionMetrics, BlockstoreSwitchBankMetrics},
     },
     blockstore_purge::PurgeType,
     rocksdb::properties as RocksProperties,
@@ -396,13 +396,6 @@ impl SlotMetaWorkingSetEntry {
     }
 }
 
-pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
-    let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
-        return 0;
-    };
-    hashes_per_tick
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParentInfo {
     /// Parent slot to expose through SlotMeta and replay.
@@ -493,6 +486,14 @@ impl ParentInfo {
     /// True when this metadata came from an `UpdateParent` marker.
     fn has_update_parent(&self) -> bool {
         self.replay_fec_set_index > 0
+    }
+
+    fn validate_update_parent_slot(&self, slot: Slot) -> Result<()> {
+        if self.has_update_parent() && leader_slot_index(slot) != 0 {
+            return Err(BlockstoreError::UpdateParentNotFirstInLeaderWindow(slot));
+        }
+
+        Ok(())
     }
 
     /// True when this metadata came from the slot's block header.
@@ -989,11 +990,15 @@ impl Blockstore {
             return Ok(None);
         };
 
-        // Get the doulbe merkle meta - the block must be full, so we can unwrap here
-        let dmm = self
-            .get_double_merkle_meta_maybe_populate_proofs(slot, location)?
-            .expect("block is full, double merkle meta must exist");
-        Ok(Some((dmm, location)))
+        // Block was full above, get_block_location returned Some, but may have
+        // been purged by BlockstoreCleanupService in between, or swapped out.
+        if let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)?
+            && dmm.double_merkle_root == block_id
+        {
+            Ok(Some((dmm, location)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Gets the double merkle meta for the given block.
@@ -1148,6 +1153,11 @@ impl Blockstore {
         let Some(new_parent_info) = new_parent_info else {
             return Ok(());
         };
+
+        if let Err(err) = new_parent_info.validate_update_parent_slot(slot) {
+            self.mark_invalid_parent_info_dead(write_batch, new_parent_info, slot, location, &err)?;
+            return Err(err);
+        }
 
         let max_root = self.max_root();
         if let Err(err) = new_parent_info.validate_shred_parent(slot, shred_parent_slot, max_root) {
@@ -1879,10 +1889,15 @@ impl Blockstore {
                     .map_err(|_| shred::Error::InvalidMerkleRoot)
                     .and_then(|mr| mr.ok_or(shred::Error::InvalidMerkleRoot))
             })
-            // Add parent info as the last leaf
+            // Add parent info as the last leaf. The `fec_set_count` is bound
+            // into this leaf so that an adversary cannot convince a verifier
+            // that the count is off-by-one when the number of FEC sets is
+            // even (which makes the total leaf count odd and causes the last
+            // leaf to be hashed with itself during tree construction).
             .chain(std::iter::once(Ok(hashv(&[
                 &parent_slot.to_le_bytes(),
                 parent_block_id.as_ref(),
+                &fec_set_count.to_le_bytes(),
             ]))));
 
         MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count as usize + 1)
@@ -2363,9 +2378,15 @@ impl Blockstore {
             "Cannot switch from Original location"
         );
 
-        let lock = self.insert_shreds_lock.lock().unwrap();
+        let mut metrics = BlockstoreSwitchBankMetrics::default();
+
+        let mut total_measure = Measure::start("switch_block_from_alternate_total");
+
+        let (lock, lock_time_us) = measure_us!(self.insert_shreds_lock.lock().unwrap());
+        metrics.lock_elapsed_us = lock_time_us;
 
         // 1. Backup the original block if needed
+        let mut backup_measure = Measure::start("switch_block_from_alternate_backup");
         if let Some(dmr) = self.get_double_merkle_root(slot, BlockLocation::Original)? {
             let backup_location = BlockLocation::Alternate { block_id: dmr };
             if self
@@ -2375,8 +2396,11 @@ impl Blockstore {
                 self.copy_shreds_locked(&lock, slot, BlockLocation::Original, backup_location)?;
             }
         }
+        backup_measure.stop();
+        metrics.backup_elapsed_us = backup_measure.as_us();
 
         // 2. Purge the original column data, keeping alternate columns intact
+        let mut purge_measure = Measure::start("switch_block_from_alternate_purge");
         self.purge_slot_cleanup_chaining_keep_alt(slot)
             .or_else(|err| {
                 if matches!(err, BlockstoreError::SlotUnavailable) {
@@ -2386,14 +2410,19 @@ impl Blockstore {
                     Err(err)
                 }
             })?;
+        purge_measure.stop();
+        metrics.purge_elapsed_us = purge_measure.as_us();
 
         // 3. Copy shreds from alternate location to original
+        let mut copy_measure = Measure::start("switch_block_from_alternate_copy");
         let alt_meta = self
             .meta_from_location(slot, from_location)?
             .expect("Alternate slot must have SlotMeta");
         debug_assert!(alt_meta.is_full(), "Alternate slot must be full");
 
         self.copy_shreds_locked(&lock, slot, from_location, BlockLocation::Original)?;
+        copy_measure.stop();
+        metrics.copy_elapsed_us = copy_measure.as_us();
 
         // 4. Verify the switch was successful
         debug_assert!(
@@ -2402,7 +2431,10 @@ impl Blockstore {
                 .is_full(),
             "Slot must be full after switch"
         );
+        total_measure.stop();
+        metrics.total_elapsed_us = total_measure.as_us();
 
+        metrics.report_metrics(slot, from_location);
         Ok(())
     }
 
@@ -2833,7 +2865,12 @@ impl Blockstore {
             write_batch,
             shred_source,
         );
-        newly_completed_data_sets.extend(completed_data_sets);
+
+        if matches!(location, BlockLocation::Original) {
+            // We don't currently notify RPC when we complete data sets in alternate columns. This can be extended in the future
+            // if necessary.
+            newly_completed_data_sets.extend(completed_data_sets);
+        }
         merkle_root_metas
             .entry((location, erasure_set))
             .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
@@ -6118,9 +6155,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    // Slot-0 tick entries are created before a Bank exists, so derive the
-    // effective hashes-per-tick directly from genesis feature state here.
-    let hashes_per_tick = hashes_per_tick_for_ledger(genesis_config);
+    // Slot-0 tick entries are created before a Bank exists, so use the
+    // genesis PoH config directly.
+    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);
@@ -6475,6 +6512,34 @@ pub fn test_all_empty_or_min(blockstore: &Blockstore, min_slot: Slot) {
             .unwrap()
             .next()
             .map(|(slot, _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_meta_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _), _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_index_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _), _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_data_shred_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _, _), _)| slot >= min_slot)
+            .unwrap_or(true)
+        & blockstore
+            .alt_merkle_root_meta_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .next()
+            .map(|((slot, _, _), _)| slot >= min_slot)
             .unwrap_or(true);
     assert!(condition_met);
 }

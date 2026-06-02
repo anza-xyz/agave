@@ -296,8 +296,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
+        self.transaction_context.push()?;
         self.memory_contexts.push_placeholder();
-        self.transaction_context.push()
+        Ok(())
     }
 
     /// Pop a stack frame from the invocation stack

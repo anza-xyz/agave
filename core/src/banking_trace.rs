@@ -2,11 +2,12 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
     chrono::{DateTime, Local},
-    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, unbounded},
+    crossbeam_channel::{Receiver, SendError, TryRecvError, TrySendError, bounded},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -20,6 +21,14 @@ use {
     },
     thiserror::Error,
 };
+
+/// Capacity of the vote channel between sigverify and the banking-stage.
+/// Sized to fit all votes from a reasonably sized cluster for 1 slot, + margin.
+const VOTE_CHANNEL_CAPACITY: usize = 1024 * 8;
+
+/// Capacity of the non-vote (transaction) channel between sigverify and the banking-stage.
+/// Larger than the vote channel to absorb bursty TPU load.
+const NON_VOTE_CHANNEL_CAPACITY: usize = 1024 * 16;
 
 pub type BankingPacketSender = TracedSender;
 pub type TracerThreadResult = Result<(), TraceError>;
@@ -50,13 +59,12 @@ pub const DISABLED_BAKING_TRACE_DIR: DirByteLimit = 0;
 pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit =
     TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD * TRACE_FILE_ROTATE_COUNT;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ActiveTracer {
-    trace_sender: Sender<TimedTracedEvent>,
+    trace_sender: EvictingSender<TimedTracedEvent>,
     exit: Arc<AtomicBool>,
 }
 
-#[derive(Debug)]
 pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
@@ -203,7 +211,9 @@ impl BankingTracer {
                     ));
                 }
 
-                let (trace_sender, trace_receiver) = unbounded();
+                const TRACING_CHANNEL_CAPACITY: usize = 50_000;
+                let (trace_sender, trace_receiver) =
+                    EvictingSender::new_bounded(TRACING_CHANNEL_CAPACITY);
 
                 let file_appender = Self::create_file_appender(path, rotate_threshold_size)?;
 
@@ -242,9 +252,8 @@ impl BankingTracer {
     fn trace_event(&self, on_trace: impl Fn() -> TimedTracedEvent) {
         if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
             if !exit.load(Ordering::Relaxed) {
-                trace_sender
-                    .send(on_trace())
-                    .expect("active tracer thread unless exited");
+                // Ignore errors in sending to tracer - it is a non-critical component.
+                let _ = trace_sender.try_send(on_trace());
             }
         }
     }
@@ -252,10 +261,14 @@ impl BankingTracer {
     pub fn create_channels(&self) -> Channels {
         let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
 
-        let (tpu_vote_sender, tpu_vote_receiver) =
-            Self::channel(ChannelLabel::TpuVote, self.active_tracer.as_ref().cloned());
+        let (tpu_vote_sender, tpu_vote_receiver) = Self::channel(
+            ChannelLabel::TpuVote,
+            VOTE_CHANNEL_CAPACITY,
+            self.active_tracer.as_ref().cloned(),
+        );
         let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
             ChannelLabel::GossipVote,
+            VOTE_CHANNEL_CAPACITY,
             self.active_tracer.as_ref().cloned(),
         );
 
@@ -270,20 +283,26 @@ impl BankingTracer {
     }
 
     pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
-        Self::channel(ChannelLabel::NonVote, self.active_tracer.as_ref().cloned())
+        Self::channel(
+            ChannelLabel::NonVote,
+            NON_VOTE_CHANNEL_CAPACITY,
+            self.active_tracer.as_ref().cloned(),
+        )
     }
 
     pub fn channel_for_test() -> (TracedSender, Receiver<BankingPacketBatch>) {
-        Self::channel(ChannelLabel::Dummy, None)
+        Self::channel(ChannelLabel::Dummy, VOTE_CHANNEL_CAPACITY, None)
     }
 
     fn channel(
         label: ChannelLabel,
+        capacity: usize,
         active_tracer: Option<ActiveTracer>,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(capacity);
+        let evicting = EvictingSender::new(sender, receiver.clone());
 
-        (TracedSender::new(label, sender, active_tracer), receiver)
+        (TracedSender::new(label, evicting, active_tracer), receiver)
     }
 
     pub fn ensure_cleanup_path(path: &PathBuf) -> Result<(), io::Error> {
@@ -357,14 +376,14 @@ impl BankingTracer {
 #[derive(Clone)]
 pub struct TracedSender {
     label: ChannelLabel,
-    sender: Sender<BankingPacketBatch>,
+    sender: EvictingSender<BankingPacketBatch>,
     active_tracer: Option<ActiveTracer>,
 }
 
 impl TracedSender {
     fn new(
         label: ChannelLabel,
-        sender: Sender<BankingPacketBatch>,
+        sender: EvictingSender<BankingPacketBatch>,
         active_tracer: Option<ActiveTracer>,
     ) -> Self {
         Self {
@@ -374,21 +393,24 @@ impl TracedSender {
         }
     }
 
-    pub fn send(&self, batch: BankingPacketBatch) -> Result<(), SendError<BankingPacketBatch>> {
+    /// Send a batch on the channel. This may evict an existing batch to make
+    /// room; in that case `Ok(n)` is returned where `n` is the number of
+    /// evicted packets. On channel disconnect returns `Err(SendError)`.
+    pub fn send(&self, batch: BankingPacketBatch) -> Result<usize, SendError<BankingPacketBatch>> {
         if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
             if !exit.load(Ordering::Relaxed) {
-                trace_sender
-                    .send(TimedTracedEvent(
-                        SystemTime::now(),
-                        TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
-                    ))
-                    .map_err(|err| {
-                        error!("unexpected error when tracing a banking event...: {err:?}");
-                        SendError(BankingPacketBatch::clone(&batch))
-                    })?;
+                // Ignore errors in sending to tracer - it is a non-critical component.
+                let _ = trace_sender.try_send(TimedTracedEvent(
+                    SystemTime::now(),
+                    TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
+                ));
             }
         }
-        self.sender.send(batch)
+        match self.sender.try_send(batch) {
+            Ok(()) => Ok(0),
+            Err(TrySendError::Full(b)) => Ok(b.iter().map(|pb| pb.len()).sum()),
+            Err(TrySendError::Disconnected(b)) => Err(SendError(b)),
+        }
     }
 
     pub fn len(&self) -> usize {

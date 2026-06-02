@@ -1,0 +1,134 @@
+name: Trigger Buildkite Pipeline (Pull Request)
+
+on:
+  pull_request_target:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  member_check:
+    runs-on: ubuntu-24.04
+    if: github.repository_owner == 'anza-xyz' && github.event.action != 'labeled'
+    outputs:
+      should_trigger: ${{ steps.check.outputs.should_trigger }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check permission
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          USERNAME: ${{ github.event.sender.login }}
+        run: |
+          ROLE_NAME=$(curl -sS -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            https://api.github.com/repos/$REPO/collaborators/$USERNAME/permission | jq -r ".role_name")
+
+          case "$ROLE_NAME" in
+            admin|maintain|write|triage)
+              echo "should_trigger=true" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "should_trigger=false" >> $GITHUB_OUTPUT
+              exit 1
+              ;;
+          esac
+
+  label_check:
+    runs-on: ubuntu-24.04
+    if: github.repository_owner == 'anza-xyz' && github.event.action == 'labeled' && github.event.label.name == 'CI'
+    outputs:
+      should_trigger: ${{ steps.check.outputs.should_trigger }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Remove CI label
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "should_trigger=true" >> $GITHUB_OUTPUT
+
+          curl -sS -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI" \
+            || echo "CI label was already removed."
+
+  trigger:
+    runs-on: ubuntu-24.04
+    needs:
+      - member_check
+      - label_check
+    if: >-
+      always() &&
+      (needs.member_check.outputs.should_trigger == 'true' || needs.label_check.outputs.should_trigger == 'true')
+    permissions: {}
+    steps:
+      - name: Prepare Buildkite pipeline info
+        id: prepare
+        env:
+          BUILDKITE_PIPELINE: ${{ vars.BUILDKITE_PIPELINE }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          COMMIT_SHORT="${COMMIT:0:8}"
+          BRANCH="pull/${PR_NUMBER}/head"
+          MESSAGE="PR#${PR_NUMBER} - ${COMMIT_SHORT}"
+          BUILD_META_DATA="{\"pr_number\":\"${PR_NUMBER}\"}"
+
+          echo "branch=$BRANCH" | tee -a $GITHUB_OUTPUT
+          echo "build_meta_data=$BUILD_META_DATA" | tee -a $GITHUB_OUTPUT
+          echo "commit=$COMMIT" | tee -a $GITHUB_OUTPUT
+          echo "message=$MESSAGE" | tee -a $GITHUB_OUTPUT
+          echo "pipeline=$BUILDKITE_PIPELINE" | tee -a $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" | tee -a $GITHUB_OUTPUT
+
+      - name: Trigger a Buildkite Build
+        uses: "buildkite/trigger-pipeline-action@909fed762c73d5ae2b5d555ab910d66b3fae2670" # v2.4.1
+        with:
+          pipeline: ${{ steps.prepare.outputs.pipeline }}
+          buildkite_api_access_token: ${{ secrets.BUILDKITE_API_ACCESS_TOKEN }}
+          branch: "${{ steps.prepare.outputs.branch }}"
+          build_meta_data: "${{ steps.prepare.outputs.build_meta_data }}"
+          commit: "${{ steps.prepare.outputs.commit }}"
+          message: "${{ steps.prepare.outputs.message }}"
+          pull_request_base_branch: "${{ github.event.pull_request.base.ref }}"
+
+      - name: Summary
+        env:
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          BUILDKITE_PIPELINE: ${{ vars.BUILDKITE_PIPELINE }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+          MESSAGE: ${{ steps.prepare.outputs.message }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "## Buildkite Pipeline Info"
+            echo ""
+            echo "| Key | Value |"
+            echo "|-----|-------|"
+            echo "| Pipeline | \`$BUILDKITE_PIPELINE\` |"
+            echo "| Branch | \`$BRANCH\` |"
+            echo "| Commit | \`$COMMIT\` |"
+            echo "| PR Number | #$PR_NUMBER |"
+            echo "| Message | $MESSAGE |"
+          } >> $GITHUB_STEP_SUMMARY

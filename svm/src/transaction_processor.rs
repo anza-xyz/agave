@@ -46,7 +46,7 @@ use {
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
             ProgramToLoad,
         },
-        program_cache_entry::ProgramCacheEntry,
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
@@ -321,6 +321,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .iter()
             .map(|program_id| ProgramToLoad {
                 program_id,
+                loader: ProgramCacheEntryOwner::NativeLoader,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             })
@@ -1184,6 +1185,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         callbacks: &CB,
     ) {
         let mut sysvar_cache = self.sysvar_cache.write().unwrap();
+        Self::fill_missing_sysvar_cache_entries_from_accounts(&mut sysvar_cache, callbacks);
+    }
+
+    pub fn reset_and_fill_sysvar_cache_entries<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+    ) {
+        let mut sysvar_cache = self.sysvar_cache.write().unwrap();
+        sysvar_cache.reset();
+        Self::fill_missing_sysvar_cache_entries_from_accounts(&mut sysvar_cache, callbacks);
+    }
+
+    fn fill_missing_sysvar_cache_entries_from_accounts<CB: TransactionProcessingCallback>(
+        sysvar_cache: &mut SysvarCache,
+        callbacks: &CB,
+    ) {
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
             if let Some((account, _slot)) = callbacks.get_account_shared_data(pubkey) {
                 set_sysvar(account.data());
@@ -1703,6 +1720,7 @@ mod tests {
             &account_loader,
             vec![ProgramToLoad {
                 program_id: &key,
+                loader: ProgramCacheEntryOwner::LoaderV3,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             }],
@@ -1741,6 +1759,7 @@ mod tests {
                 &account_loader,
                 vec![ProgramToLoad {
                     program_id: &key,
+                    loader: ProgramCacheEntryOwner::LoaderV2,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
@@ -1890,6 +1909,31 @@ mod tests {
         let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         // Fill the sysvar cache
         transaction_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+
+        let updated_clock = Clock {
+            slot: 6,
+            epoch_start_timestamp: 7,
+            epoch: 8,
+            leader_schedule_epoch: 9,
+            unix_timestamp: 10,
+        };
+        let updated_clock_account = create_account_shared_data_for_test(&updated_clock);
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(sysvar::clock::id(), updated_clock_account);
+        transaction_processor.reset_and_fill_sysvar_cache_entries(&mock_bank);
+        {
+            let sysvar_cache = transaction_processor.sysvar_cache.read().unwrap();
+            assert_eq!(
+                sysvar_cache
+                    .get_clock()
+                    .expect("clock sysvar missing in cache"),
+                updated_clock.clone().into()
+            );
+        }
+
         // Reset the sysvar cache
         transaction_processor.reset_sysvar_cache();
 
@@ -1915,7 +1959,7 @@ mod tests {
 
         assert_eq!(
             cached_clock.expect("clock sysvar missing in cache"),
-            clock.into()
+            updated_clock.into()
         );
         assert_eq!(
             cached_epoch_schedule.expect("epoch_schedule sysvar missing in cache"),
@@ -1963,6 +2007,7 @@ mod tests {
             .extract(
                 &mut vec![ProgramToLoad {
                     program_id: &key,
+                    loader: ProgramCacheEntryOwner::NativeLoader,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],

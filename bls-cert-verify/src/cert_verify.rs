@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType},
+        certificate::{Certificate, CertificateType},
         vote::Vote,
     },
     bitvec::vec::BitVec,

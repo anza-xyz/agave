@@ -18,6 +18,8 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
+  `getLatestBlockhash` response together with its context (notably `context.slot`).
 ### Validator
 #### Breaking
 #### Deprecations

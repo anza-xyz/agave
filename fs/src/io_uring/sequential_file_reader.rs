@@ -139,7 +139,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 
         if self.register_buffer {
             // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
-            // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
+            // guarantees that the ring is destroyed before `backing_buffer` is dropped.
             unsafe { IoBufferChunk::register(buf_slice_mut, &ring)? };
         }
 
@@ -166,7 +166,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             ring,
             state: SequentialFileReaderState::default(),
             open_file_flags,
-            _backing_buffer: buffer,
+            backing_buffer: buffer,
             _phantom: PhantomData,
         })
     }
@@ -200,14 +200,14 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 ///
 /// Implements read-ahead using io_uring.
 pub struct SequentialFileReader<'a> {
-    // Note: ring's state is tied to `_backing_buffer` - contains unsafe pointer references
-    // to the buffer. Ring should be drained and dropped before `_backing_buffer`.
+    // Note: ring's state is tied to `backing_buffer` - contains unsafe pointer references
+    // to the buffer. Ring should be drained and dropped before `backing_buffer`.
     ring: Ring<BuffersState, ReadOp>,
     open_file_flags: i32,
     state: SequentialFileReaderState,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    _backing_buffer: PageAlignedMemory,
+    backing_buffer: PageAlignedMemory,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -251,8 +251,20 @@ impl<'a> SequentialFileReader<'a> {
         Ok(())
     }
 
-    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
-        self.add_file_by_fd(file.as_raw_fd(), read_limit)
+    /// Reset to idle state and re-type with a fresh lifetime `'b`.
+    ///
+    /// Drains the prefetch queue (cancels in-flight reads) before returning.
+    pub fn rebind<'b>(mut self) -> io::Result<SequentialFileReader<'b>> {
+        while !self.state.files.is_empty() {
+            self.move_to_next_file()?;
+        }
+        Ok(SequentialFileReader {
+            ring: self.ring,
+            open_file_flags: self.open_file_flags,
+            state: self.state,
+            backing_buffer: self.backing_buffer,
+            _phantom: PhantomData,
+        })
     }
 
     /// Caller must ensure that the file is not closed while the reader is using it.
@@ -488,6 +500,10 @@ impl<'a> FileBufRead<'a> for SequentialFileReader<'a> {
             self.add_file_to_prefetch(file, read_limit)?;
         }
         Ok(())
+    }
+
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
+        self.add_file_by_fd(file.as_raw_fd(), read_limit)
     }
 
     fn get_file_offset(&self) -> FileSize {

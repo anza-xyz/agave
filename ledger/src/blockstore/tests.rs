@@ -193,15 +193,6 @@ fn data_shreds(shreds: Vec<Shred>) -> Vec<Shred> {
 }
 
 #[test]
-fn test_hashes_per_tick_for_ledger() {
-    let mut genesis_config = GenesisConfig::default();
-    assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
-
-    genesis_config.poh_config.hashes_per_tick = Some(2);
-    assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
-}
-
-#[test]
 fn test_create_new_ledger() {
     agave_logger::setup();
     let mint_total = 1_000_000_000_000;
@@ -6655,7 +6646,12 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         }
     }
 
-    let parent_info_hash = hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+    let fec_set_count = u32::try_from(fec_set_roots.len()).unwrap();
+    let parent_info_hash = hashv(&[
+        &parent_slot.to_le_bytes(),
+        parent_block_id.as_ref(),
+        &fec_set_count.to_le_bytes(),
+    ]);
     let merkle_tree_leaves: Vec<_> = fec_set_roots
         .iter()
         .copied()
@@ -6975,31 +6971,58 @@ fn test_invalid_update_parent_parent_info_marks_dead() {
 }
 
 #[test]
+fn test_update_parent_non_first_leader_window_marks_dead() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 10;
+    let shred_parent_slot = 5;
+    let update_parent_slot = 3;
+    let mut shreds = create_block_header_shreds(slot, shred_parent_slot, Hash::new_unique());
+    shreds.extend(create_update_parent_shreds_with_shred_parent(
+        slot,
+        shred_parent_slot,
+        update_parent_slot,
+        Hash::new_unique(),
+        32,
+        true,
+    ));
+
+    blockstore.insert_shreds(shreds, None, true).unwrap();
+
+    let meta = blockstore.meta(slot).unwrap().unwrap();
+    assert!(blockstore.is_dead(slot));
+    assert_eq!(meta.parent_slot, Some(shred_parent_slot));
+    assert!(!meta.has_update_parent());
+}
+
+#[test]
 fn test_block_header_followed_by_update_parent() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
+    let slot = 12;
     let parent_5_id = Hash::new_unique();
     blockstore
-        .insert_shreds(create_block_header_shreds(10, 5, parent_5_id), None, true)
+        .insert_shreds(create_block_header_shreds(slot, 5, parent_5_id), None, true)
         .unwrap();
 
-    assert_eq!(blockstore.meta(10).unwrap().unwrap().parent_slot, Some(5));
-    verify_next_slots(&blockstore, 5, &[10]);
+    assert_eq!(blockstore.meta(slot).unwrap().unwrap().parent_slot, Some(5));
+    verify_next_slots(&blockstore, 5, &[slot]);
 
     let parent_3_id = Hash::new_unique();
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(10, 5, 3, parent_3_id, 32, true),
+            create_update_parent_shreds_with_shred_parent(slot, 5, 3, parent_3_id, 32, true),
             None,
             true,
         )
         .unwrap();
 
-    assert_eq!(blockstore.meta(10).unwrap().unwrap().parent_slot, Some(3));
+    assert_eq!(blockstore.meta(slot).unwrap().unwrap().parent_slot, Some(3));
 
     let parent_info = blockstore
-        .get_parent_info(10, BlockLocation::Original)
+        .get_parent_info(slot, BlockLocation::Original)
         .unwrap()
         .unwrap();
     assert_eq!(parent_info.parent_slot, 3);
@@ -7007,7 +7030,7 @@ fn test_block_header_followed_by_update_parent() {
     assert!(parent_info.has_update_parent());
 
     verify_next_slots(&blockstore, 5, &[]);
-    verify_next_slots(&blockstore, 3, &[10]);
+    verify_next_slots(&blockstore, 3, &[slot]);
 }
 
 #[test]
@@ -7015,7 +7038,7 @@ fn test_post_update_orig_after() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-    let slot = 90;
+    let slot = 92;
     let original_parent = 85;
     let update_parent = 80;
     blockstore
@@ -7072,7 +7095,7 @@ fn test_update_parent_shred_parent(update_parent_first: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-    let slot = 90;
+    let slot = 92;
     let original_parent = 85;
     let update_parent = 80;
     let bad_shred_parent = 84;
@@ -7134,7 +7157,7 @@ fn test_marker_boundary_ooo() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-    let slot = 93;
+    let slot = 96;
     let original_parent = 88;
     let update_parent = 80;
     blockstore

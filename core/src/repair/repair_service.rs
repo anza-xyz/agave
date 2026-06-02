@@ -18,6 +18,7 @@ use {
             },
         },
     },
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
     rand::prelude::IndexedRandom as _,
@@ -851,6 +852,7 @@ impl RepairService {
         repair_tracker: &mut RepairTracker,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
+        migration_status: &MigrationStatus,
     ) {
         let RepairChannels {
             verified_voter_slots_receiver,
@@ -889,13 +891,15 @@ impl RepairService {
             repair_metrics,
         );
 
-        Self::handle_popular_pruned_forks(
-            root_bank.clone(),
-            repair_weight,
-            popular_pruned_forks_requests,
-            popular_pruned_forks_sender,
-            repair_metrics,
-        );
+        if !migration_status.is_alpenglow_enabled() {
+            Self::handle_popular_pruned_forks(
+                root_bank.clone(),
+                repair_weight,
+                popular_pruned_forks_requests,
+                popular_pruned_forks_sender,
+                repair_metrics,
+            );
+        }
 
         Self::build_and_send_repair_batch(
             serve_repair,
@@ -933,7 +937,7 @@ impl RepairService {
                     sharable_banks,
                     repair_info.repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
-                    migration_status,
+                    migration_status.clone(),
                 )
             },
             repair_metrics: RepairMetrics::default(),
@@ -951,6 +955,7 @@ impl RepairService {
                 &mut repair_tracker,
                 outstanding_requests,
                 repair_socket,
+                migration_status.as_ref(),
             );
             repair_tracker.repair_metrics.maybe_report();
             sleep(Duration::from_millis(REPAIR_MS));

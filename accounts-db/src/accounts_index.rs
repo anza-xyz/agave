@@ -949,6 +949,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         map.upsert(pubkey, new_item, Some(old_slot), reclaims, reclaim);
     }
 
+    /// Replaces the slot list entry at `old_slot` with `(new_slot, account_info)` for `pubkey`.
+    ///
+    /// Used by the shrink path: the account already exists in the index at `old_slot`, and
+    /// shrink is rewriting it into a new storage at `new_slot`. The previous entry is discarded
+    /// (no reclaims are returned — the caller manages the source storage's alive-bytes accounting).
+    ///
+    /// Panics if `old_slot` is not present in the slot list.
+    pub fn replace(&self, new_slot: Slot, old_slot: Slot, pubkey: &Pubkey, account_info: T) {
+        let map = self.get_bin(pubkey);
+        map.replace(pubkey, (new_slot, account_info), old_slot);
+    }
+
     pub fn ref_count_from_storage(&self, pubkey: &Pubkey) -> RefCount {
         let map = self.get_bin(pubkey);
         map.get_internal_inner(pubkey, |entry| {
@@ -2240,6 +2252,100 @@ mod tests {
             (false, entry.unwrap().slot_list_lock_read_len())
         });
         assert_eq!(slot_list_len, 1);
+    }
+
+    #[test]
+    fn test_replace_same_slot() {
+        // When new_slot == old_slot, replace acts as an in-place update of the account_info.
+        let key = solana_pubkey::new_rand();
+        let index = AccountsIndex::<u64, u64>::default_for_tests();
+        let mut gc = ReclaimsSlotList::new();
+
+        let slot = 5;
+        index.upsert(
+            slot,
+            slot,
+            &key,
+            100,
+            &mut gc,
+            UpsertReclaim::IgnoreReclaims,
+        );
+        assert_eq!(index.ref_count_from_storage(&key), 1);
+
+        let account_info = 200;
+
+        index.replace(slot, slot, &key, account_info);
+
+        // Slot list now holds the new account_info at the same slot.
+        let slot_list = index.get_and_then(&key, |entry| {
+            (false, entry.unwrap().slot_list_read_lock().clone_list())
+        });
+        assert_eq!(slot_list, SlotList::from([(slot, account_info)]));
+        // Replace doesn't change refcounts.
+        assert_eq!(index.ref_count_from_storage(&key), 1);
+    }
+
+    #[test]
+    fn test_replace_moves_entry_to_new_slot() {
+        // Replace finds the entry at old_slot, swaps it out for one at new_slot.
+        let key = solana_pubkey::new_rand();
+        let index = AccountsIndex::<u64, u64>::default_for_tests();
+        let mut gc = ReclaimsSlotList::new();
+
+        let old_slot = 5;
+        let new_slot = 10;
+        let account_info = 200;
+        index.upsert(
+            old_slot,
+            old_slot,
+            &key,
+            100,
+            &mut gc,
+            UpsertReclaim::IgnoreReclaims,
+        );
+        assert_eq!(index.ref_count_from_storage(&key), 1);
+
+        index.replace(new_slot, old_slot, &key, account_info);
+
+        let slot_list = index.get_and_then(&key, |entry| {
+            (false, entry.unwrap().slot_list_read_lock().clone_list())
+        });
+        assert_eq!(slot_list, SlotList::from([(new_slot, account_info)]));
+        // Moving an entry between slots must not change the ref count.
+        assert_eq!(index.ref_count_from_storage(&key), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected to find a slot to replace in the slot list")]
+    fn test_replace_missing_old_slot_panics() {
+        let key = solana_pubkey::new_rand();
+        let index = AccountsIndex::<u64, u64>::default_for_tests();
+        let mut gc = ReclaimsSlotList::new();
+
+        index.upsert(5, 5, &key, 100, &mut gc, UpsertReclaim::IgnoreReclaims);
+        // No entry at slot 99 — replace must panic rather than silently appending.
+        index.replace(10, 99, &key, 200);
+    }
+
+    #[test]
+    #[should_panic(expected = "Replace should only be used for uncached accounts")]
+    fn test_replace_cached_account_info_panics() {
+        // Shrink only ever rewrites uncached accounts; passing a cached AccountInfo to replace
+        // is a programming error and must trip the assertion.
+        let key = solana_pubkey::new_rand();
+        let index =
+            AccountsIndex::<CacheableIndexValueTest, CacheableIndexValueTest>::default_for_tests();
+        let mut gc = ReclaimsSlotList::new();
+
+        index.upsert(
+            5,
+            5,
+            &key,
+            CacheableIndexValueTest(false),
+            &mut gc,
+            UpsertReclaim::IgnoreReclaims,
+        );
+        index.replace(10, 5, &key, CacheableIndexValueTest(true));
     }
 
     fn account_maps_stats_len<T: IndexValue>(index: &AccountsIndex<T, T>) -> usize {

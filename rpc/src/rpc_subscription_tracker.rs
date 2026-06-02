@@ -19,7 +19,7 @@ use {
         fmt,
         sync::{
             Arc, RwLock, Weak,
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
     },
     thiserror::Error,
@@ -186,6 +186,10 @@ struct SubscriptionControlInner {
     subscriptions: DashMap<SubscriptionParams, WeakSubscriptionTokenRef>,
     next_id: AtomicU64,
     max_active_subscriptions: usize,
+    // Number of live `SubscriptionToken`s issued by `subscribe()`. Counts
+    // duplicate subscribers to the same params separately so the configured
+    // cap is enforced per subscriber, not per deduplicated upstream stream.
+    subscriber_count: AtomicUsize,
     sender: crossbeam_channel::Sender<TimestampedNotificationEntry>,
     broadcast_sender: broadcast::Sender<RpcNotification>,
     counter: TokenCounter,
@@ -201,6 +205,7 @@ impl SubscriptionControl {
             subscriptions: DashMap::new(),
             next_id: AtomicU64::new(0),
             max_active_subscriptions,
+            subscriber_count: AtomicUsize::new(0),
             sender,
             broadcast_sender,
             counter: TokenCounter::new("rpc_pubsub_total_subscriptions"),
@@ -216,52 +221,67 @@ impl SubscriptionControl {
             "Total existing subscriptions: {}",
             self.0.subscriptions.len()
         );
-        let count = self.0.subscriptions.len();
-        let create_token_and_weak_ref = |id, params| {
-            let token = SubscriptionToken(
-                Arc::new(SubscriptionTokenInner {
-                    control: Arc::clone(&self.0),
-                    params,
-                    id,
-                }),
-                self.0.counter.create_token(),
-            );
-            let weak_ref = WeakSubscriptionTokenRef(Arc::downgrade(&token.0), token.0.id);
-            (token, weak_ref)
+        // Reserve a subscriber slot up front. The cap is per live token holder,
+        // not per deduplicated upstream stream, so duplicate subscribes to the
+        // same params each consume their own slot.
+        let subscriber_guard = SubscriberCountGuard::try_reserve(&self.0).ok_or_else(|| {
+            inc_new_counter_info!("rpc-subscription-refused-limit-reached", 1);
+            Error::TooManySubscriptions
+        })?;
+
+        let create_inner = |id, params| {
+            Arc::new(SubscriptionTokenInner {
+                control: Arc::clone(&self.0),
+                params,
+                id,
+            })
         };
 
         match self.0.subscriptions.entry(params) {
             DashEntry::Occupied(mut entry) => match entry.get().0.upgrade() {
-                Some(token_ref) => Ok(SubscriptionToken(token_ref, self.0.counter.create_token())),
+                Some(inner) => Ok(SubscriptionToken(
+                    inner,
+                    self.0.counter.create_token(),
+                    subscriber_guard,
+                )),
                 // This means the last Arc for this Weak pointer entered the drop just before us,
                 // but could not remove the entry since we are holding the write lock.
                 // See `Drop` implementation for `SubscriptionTokenInner` for further info.
                 None => {
-                    let (token, weak_ref) =
-                        create_token_and_weak_ref(entry.get().1, entry.key().clone());
+                    let inner = create_inner(entry.get().1, entry.key().clone());
+                    let weak_ref = WeakSubscriptionTokenRef(Arc::downgrade(&inner), inner.id);
                     entry.insert(weak_ref);
-                    Ok(token)
+                    Ok(SubscriptionToken(
+                        inner,
+                        self.0.counter.create_token(),
+                        subscriber_guard,
+                    ))
                 }
             },
             DashEntry::Vacant(entry) => {
-                if count >= self.0.max_active_subscriptions {
-                    inc_new_counter_info!("rpc-subscription-refused-limit-reached", 1);
-                    return Err(Error::TooManySubscriptions);
-                }
                 let id = SubscriptionId::from(self.0.next_id.fetch_add(1, Ordering::AcqRel));
-                let (token, weak_ref) = create_token_and_weak_ref(id, entry.key().clone());
+                let inner = create_inner(id, entry.key().clone());
+                let weak_ref = WeakSubscriptionTokenRef(Arc::downgrade(&inner), id);
                 let _ = self
                     .0
                     .sender
-                    .send(NotificationEntry::Subscribed(token.0.params.clone(), id).into());
+                    .send(NotificationEntry::Subscribed(inner.params.clone(), id).into());
                 entry.insert(weak_ref);
                 datapoint_info!(
                     "rpc-subscription",
                     ("total", self.0.subscriptions.len(), i64)
                 );
-                Ok(token)
+                Ok(SubscriptionToken(
+                    inner,
+                    self.0.counter.create_token(),
+                    subscriber_guard,
+                ))
             }
         }
+    }
+
+    pub fn subscriber_total(&self) -> usize {
+        self.0.subscriber_count.load(Ordering::Relaxed)
     }
 
     pub fn total(&self) -> usize {
@@ -577,11 +597,36 @@ impl Drop for SubscriptionTokenInner {
     }
 }
 
-// allowing dead code here to appease clippy, but unsure if/how the CounterToken is actually used.
-// further investigation would be necessary before removing
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct SubscriptionToken(Arc<SubscriptionTokenInner>, CounterToken);
+// RAII guard for one subscriber slot. The slot is reserved atomically against
+// the configured cap by `try_reserve` (returns `None` if the cap is reached)
+// and released on drop. Intentionally not `Clone`: each holder must go through
+// `try_reserve` so duplicates cannot bypass the cap.
+struct SubscriberCountGuard(Arc<SubscriptionControlInner>);
+
+impl SubscriberCountGuard {
+    fn try_reserve(control: &Arc<SubscriptionControlInner>) -> Option<Self> {
+        let max = control.max_active_subscriptions;
+        control
+            .subscriber_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current < max).then_some(current + 1)
+            })
+            .ok()?;
+        Some(Self(Arc::clone(control)))
+    }
+}
+
+impl Drop for SubscriberCountGuard {
+    fn drop(&mut self) {
+        self.0.subscriber_count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+pub struct SubscriptionToken(
+    Arc<SubscriptionTokenInner>,
+    #[allow(dead_code)] CounterToken,
+    #[allow(dead_code)] SubscriberCountGuard,
+);
 
 impl SubscriptionToken {
     pub fn id(&self) -> SubscriptionId {
@@ -656,11 +701,74 @@ mod tests {
     }
 
     #[test]
+    fn recreates_inner_when_weak_upgrade_fails() {
+        // Exercise the race-window branch in `subscribe()` where a stale
+        // `WeakSubscriptionTokenRef` is still in the DashMap because the
+        // previous holder's `SubscriptionTokenInner::drop` is blocked on the
+        // entry lock. A fresh subscribe must recreate the inner and reuse the
+        // stored SubscriptionId rather than allocating a new one.
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
+        let control = SubscriptionControl::new(2, sender, broadcast_sender);
+
+        let stored_id = SubscriptionId::from(42);
+        let dead_weak = {
+            let arc = Arc::new(SubscriptionTokenInner {
+                control: Arc::clone(&control.0),
+                params: SubscriptionParams::Slot,
+                id: stored_id,
+            });
+            let weak = Arc::downgrade(&arc);
+            WeakSubscriptionTokenRef(weak, stored_id)
+            // `arc` drops here; its Drop sees Vacant and logs a warning.
+        };
+        control
+            .0
+            .subscriptions
+            .insert(SubscriptionParams::Slot, dead_weak);
+
+        let token = control.subscribe(SubscriptionParams::Slot).unwrap();
+        assert_eq!(token.id(), stored_id);
+        assert_eq!(control.total(), 1);
+        assert_eq!(control.subscriber_total(), 1);
+        // Drain notifications emitted by the test (Drop-on-vacant warning is
+        // log-only; the only entry should be the Subscribed from the recreate).
+        while receiver.try_recv().is_ok() {}
+        drop(token);
+    }
+
+    #[test]
+    fn duplicate_params_consume_separate_subscriber_slots() {
+        // Cap of 1 must reject a second subscriber even when params match an
+        // existing subscription (GHSA: duplicate-params cap bypass).
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
+        let control = SubscriptionControl::new(1, sender, broadcast_sender);
+
+        let token1 = control.subscribe(SubscriptionParams::Slot).unwrap();
+        assert_eq!(control.total(), 1);
+        assert_eq!(control.subscriber_total(), 1);
+
+        assert!(matches!(
+            control.subscribe(SubscriptionParams::Slot),
+            Err(Error::TooManySubscriptions)
+        ));
+        assert_eq!(control.subscriber_total(), 1);
+
+        drop(token1);
+        // After the only holder drops, a fresh subscriber should fit again.
+        let token2 = control.subscribe(SubscriptionParams::Slot).unwrap();
+        assert_eq!(control.subscriber_total(), 1);
+        drop(token2);
+        assert_eq!(control.subscriber_total(), 0);
+    }
+
+    #[test]
     fn notify_subscribe_multiple() {
         let control = ControlWrapper::new();
         let token1 = control.control.subscribe(SubscriptionParams::Slot).unwrap();
         control.assert_subscribed(&SubscriptionParams::Slot, 0);
-        let token2 = token1.clone();
+        let token2 = control.control.subscribe(SubscriptionParams::Slot).unwrap();
         drop(token1);
         let token3 = control.control.subscribe(SubscriptionParams::Slot).unwrap();
         drop(token3);

@@ -49,7 +49,7 @@ solana-keypair = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
+solana-unified-scheduler-pool = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lints]

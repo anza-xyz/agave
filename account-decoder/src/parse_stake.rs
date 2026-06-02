@@ -194,7 +194,7 @@ mod test {
                 stake: 20,
                 activation_epoch: 2,
                 deactivation_epoch: u64::MAX,
-                warmup_cooldown_rate: 0.25,
+                _reserved: [0; 8],
             },
             credits_observed: 10,
         };

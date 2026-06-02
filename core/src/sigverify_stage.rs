@@ -61,6 +61,10 @@ struct SigVerifierStats {
     total_valid_packets: Arc<AtomicUsize>,
     total_dedup_time_us: Arc<AtomicUsize>,
     total_verify_time_us: Arc<AtomicUsize>,
+    /// Max occupancy of the banking_stage output channel since last report.
+    max_pre_send_len: Arc<AtomicUsize>,
+    /// Count of sends in which the EvictingSender had to drop a batch.
+    eviction_drops: Arc<AtomicUsize>,
 }
 
 struct ServicerState {
@@ -115,6 +119,16 @@ impl SigVerifierStats {
                 self.total_verify_time_us.swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
+            (
+                "max_pre_send_len",
+                self.max_pre_send_len.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "eviction_drops",
+                self.eviction_drops.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
         );
     }
 }
@@ -157,6 +171,8 @@ impl SigVerifyStage {
                     total_dedup_time_us: non_vote_stats.total_dedup_time_us.clone(),
                     total_valid_packets: non_vote_stats.total_valid_packets.clone(),
                     total_verify_time_us: non_vote_stats.total_verify_time_us.clone(),
+                    max_pre_send_len: non_vote_stats.max_pre_send_len.clone(),
+                    eviction_drops: non_vote_stats.eviction_drops.clone(),
                 },
             ),
             SigVerifyWorkerState::new(
@@ -169,6 +185,8 @@ impl SigVerifyStage {
                     total_dedup_time_us: tpu_vote_stats.total_dedup_time_us.clone(),
                     total_valid_packets: tpu_vote_stats.total_valid_packets.clone(),
                     total_verify_time_us: tpu_vote_stats.total_verify_time_us.clone(),
+                    max_pre_send_len: tpu_vote_stats.max_pre_send_len.clone(),
+                    eviction_drops: tpu_vote_stats.eviction_drops.clone(),
                 },
             ),
         );

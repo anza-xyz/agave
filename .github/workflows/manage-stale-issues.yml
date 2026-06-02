@@ -21,7 +21,7 @@ jobs:
     # Forks do not need to run this, especially on cron schedule.
     if: >
       github.event_name != 'schedule'
-      || github.repository == 'anza-xyz/agave'
+      || github.repository_owner == 'anza-xyz'
 
     runs-on: ubuntu-24.04
     steps:

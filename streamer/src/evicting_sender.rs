@@ -1,13 +1,22 @@
 use {
     crate::streamer::ChannelSend,
-    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError, bounded},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
 };
 
 /// A sender implementation that evicts the oldest message when the channel is full.
-#[derive(Clone)]
 pub struct EvictingSender<T> {
     sender: Sender<T>,
     receiver: Receiver<T>,
+}
+
+// Manual implementation of Clone since `T` is not required to implement Clone.
+impl<T> Clone for EvictingSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            receiver: self.receiver.clone(),
+        }
+    }
 }
 
 impl<T> EvictingSender<T> {
@@ -29,11 +38,6 @@ impl<T> ChannelSend<T> for EvictingSender<T>
 where
     T: Send + 'static,
 {
-    #[inline]
-    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
-        self.sender.send(msg)
-    }
-
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         let Err(e) = self.sender.try_send(msg) else {
             return Ok(());

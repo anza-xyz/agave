@@ -2,7 +2,9 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loading_task::LoadingTaskWaiter,
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
+        program_cache_entry::{
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType, retention_score,
+        },
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
@@ -188,6 +190,8 @@ impl EpochBoundaryPreparation {
 pub struct ProgramToLoad<'a> {
     /// The program address
     pub program_id: &'a Pubkey,
+    /// The program loader
+    pub loader: ProgramCacheEntryOwner,
     /// Potentially filter out / ignore some entries during the start up / catch up phase
     pub match_criteria: ProgramCacheMatchCriteria,
     /// When the program account was last written to (might be after the deployment slot)
@@ -408,6 +412,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     at.effective_slot
                         .cmp(&entry.effective_slot)
                         .then(at.deployment_slot.cmp(&entry.deployment_slot))
+                        .then(at.account_owner.cmp(&entry.account_owner))
                         .then(
                             // This `.then()` has no effect during normal operation.
                             // Only during the cache preparation phase this does allow entries
@@ -434,8 +439,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
                             ) => {}
-                            (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Closed)
-                                if existing.account_owner != entry.account_owner => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
                                 error!(
@@ -489,7 +492,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn prune(
         &mut self,
         new_root_slot: Slot,
-        upcoming_environment: Option<ProgramRuntimeEnvironment>,
+        new_environment: Option<ProgramRuntimeEnvironment>,
         fork_graph: &FG,
     ) {
         match &mut self.index {
@@ -536,8 +539,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         })
                         .filter(|entry| {
                             // Remove outdated environment of previous feature set
-                            if let Some(upcoming_environment) = upcoming_environment.as_ref()
-                                && !Self::matches_environment(entry, upcoming_environment)
+                            if let Some(new_environment) = new_environment.as_ref()
+                                && !Self::matches_environment(entry, new_environment)
                             {
                                 self.stats
                                     .prunes_environment
@@ -605,7 +608,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         for entry in second_level.iter().rev() {
                             let required_deployment_slot =
                                 filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
-                            if required_deployment_slot != entry.deployment_slot {
+                            if required_deployment_slot != entry.deployment_slot
+                                || program_to_load.loader != entry.account_owner
+                            {
                                 continue;
                             }
                             let entry_in_same_branch = entry.deployment_slot
@@ -970,15 +975,11 @@ pub(crate) mod tests {
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_sbpf::{elf::Executable, program::BuiltinProgram},
-        std::{
-            fs::File,
-            io::Read,
-            ops::ControlFlow,
-            sync::{
-                Arc, RwLock,
-                atomic::{AtomicU64, Ordering},
-            },
+        solana_svm_type_overrides::sync::{
+            Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
+        std::{fs::File, io::Read, ops::ControlFlow},
         test_case::{test_case, test_matrix},
     };
 
@@ -1830,6 +1831,7 @@ pub(crate) mod tests {
                     })
                     .map(|(_program_id, entry)| ProgramToLoad {
                         program_id: key,
+                        loader: entry.account_owner,
                         match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                         last_modification_slot: entry.deployment_slot,
                     })
@@ -2252,6 +2254,7 @@ pub(crate) mod tests {
         let program1 = Pubkey::new_unique();
         let mut missing = vec![ProgramToLoad {
             program_id: &program1,
+            loader: ProgramCacheEntryOwner::LoaderV3,
             match_criteria: ProgramCacheMatchCriteria::NoCriteria,
             last_modification_slot: 0,
         }];

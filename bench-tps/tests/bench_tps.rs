@@ -86,7 +86,7 @@ fn create_test_validator_and_client() -> (
         0,    /* port */
     );
 
-    let test_validator = TestValidatorGenesis::default()
+    let test_validator = TestValidatorGenesis::default_for_tests()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
             lamports_per_byte: 1,

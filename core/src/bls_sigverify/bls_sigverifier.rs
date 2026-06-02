@@ -7,16 +7,17 @@ use {
         errors::SigVerifyError,
         stats::SigVerifierStats,
     },
-    crate::cluster_info_vote_listener::VerifiedVoterSlotsSender,
+    crate::{
+        block_creation_loop::rewards::{certs_builder::wants_vote, msg_types::AddVoteMessage},
+        cluster_info_vote_listener::VerifiedVoterSlotsSender,
+    },
     agave_votor::{
-        consensus_metrics::ConsensusMetricsEventSender,
-        consensus_rewards::{self},
-        generated_cert_types::GeneratedCertTypes,
+        consensus_metrics::ConsensusMetricsEventSender, generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
-        consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
+        certificate::CertificateType,
+        consensus_message::{ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -200,7 +201,7 @@ impl SigVerifier {
     fn maybe_prune_caches(&mut self, root_slot: Slot) {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
-            self.verified_certs.retain(|cert| cert.slot() > root_slot);
+            self.verified_certs.retain(|cert| cert.slot() >= root_slot);
         }
     }
 
@@ -241,7 +242,7 @@ impl SigVerifier {
                     }
                 }
                 ConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() <= root_slot {
+                    if cert.cert_type.slot() < root_slot {
                         self.stats.num_old_certs_received += 1;
                         continue;
                     }
@@ -285,8 +286,7 @@ impl SigVerifier {
         if vote.vote.slot() > root_slot {
             return ret;
         }
-        if consensus_rewards::wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote)
-        {
+        if wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
             return ret;
         }
         self.stats.num_old_votes_received += 1;
@@ -338,7 +338,8 @@ mod tests {
             consensus_pool::certificate_builder::CertificateBuilder,
         },
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+            certificate::{Certificate, CertificateType},
+            consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},

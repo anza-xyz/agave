@@ -17,7 +17,7 @@ use {
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
             ProgramToLoad,
         },
-        program_cache_entry::ProgramCacheEntryType,
+        program_cache_entry::{ProgramCacheEntryOwner, ProgramCacheEntryType},
     },
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -63,6 +63,7 @@ fn program_cache_execution(threads: usize) {
                     .iter()
                     .map(|program_id| ProgramToLoad {
                         program_id,
+                        loader: ProgramCacheEntryOwner::LoaderV3,
                         match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                         last_modification_slot: 0,
                     })

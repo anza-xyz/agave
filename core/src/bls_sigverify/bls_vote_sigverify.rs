@@ -2,16 +2,19 @@
 use qualifier_attr::qualifiers;
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
-    crate::bls_sigverify::{
-        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
-        utils::{
-            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
+    crate::{
+        block_creation_loop::rewards::msg_types::AddVoteMessage,
+        bls_sigverify::{
+            bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
+            utils::{
+                send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair,
+                send_votes_to_rewards,
+            },
         },
     },
-    agave_votor::{consensus_metrics::ConsensusMetricsEvent, consensus_rewards},
+    agave_votor::consensus_metrics::ConsensusMetricsEvent,
     agave_votor_messages::{
         consensus_message::{ConsensusMessage, VoteMessage},
-        reward_certificate::AddVoteMessage,
         vote::Vote,
     },
     rayon::{
@@ -137,7 +140,7 @@ fn process_verified_votes(
     let mut votes_for_metrics = Vec::with_capacity(verified_votes.len());
     for vote in verified_votes {
         let vote_message = vote.vote_message;
-        if consensus_rewards::wants_vote(
+        if crate::block_creation_loop::rewards::certs_builder::wants_vote(
             cluster_info,
             leader_schedule,
             root_bank.slot(),

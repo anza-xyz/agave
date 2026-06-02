@@ -36,10 +36,7 @@ mod serde_snapshot_tests {
             io::{self, BufReader, Cursor, Read, Write},
             ops::RangeFull,
             path::{Path, PathBuf},
-            sync::{
-                Arc,
-                atomic::{AtomicUsize, Ordering},
-            },
+            sync::{Arc, atomic::Ordering},
         },
         tempfile::TempDir,
         test_case::test_case,
@@ -126,7 +123,8 @@ mod serde_snapshot_tests {
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
-        let storage_files = open_storage_files(storage_entries.iter().map(|s| s.as_ref()), false)?;
+        let storage_files = open_storage_files(storage_entries.iter().map(|s| s.as_ref()), false)
+            .collect::<io::Result<Vec<_>>>()?;
         let mut buf_reader =
             storage_file_buf_reader(MAX_BUFFER_SIZE, false, &IoSetupState::default())?;
         for (storage_entry, file) in storage_entries.iter().zip(storage_files.iter()) {
@@ -850,18 +848,18 @@ mod serde_snapshot_tests {
         become_ungovernable(tmp.path());
 
         let next_append_vec_id = AtomicAccountsFileId::new(next_id as u32);
-        let num_collisions = AtomicUsize::new(0);
+        let mut num_collisions = 0;
         let (remapped_id, remapped_file_info) = remap_append_vec_file(
             123,
             old_id,
             old_file_info,
             &next_append_vec_id,
-            &num_collisions,
+            &mut num_collisions,
         )
         .unwrap();
         assert_eq!(remapped_id as usize, expected_remapped_id);
         assert_eq!(&remapped_file_info.path, &expected_remapped_path);
-        assert_eq!(num_collisions.load(Ordering::Relaxed), expected_collisions);
+        assert_eq!(num_collisions, expected_collisions);
     }
 
     #[test]
@@ -879,13 +877,13 @@ mod serde_snapshot_tests {
         // In remap_append_vec_file() we want to handle EEXIST (collisions), but we want to return all
         // other errors
         let next_append_vec_id = AtomicAccountsFileId::new(457);
-        let num_collisions = AtomicUsize::new(0);
+        let mut num_collisions = 0;
         remap_append_vec_file(
             123,
             456,
             original_file_info,
             &next_append_vec_id,
-            &num_collisions,
+            &mut num_collisions,
         )
         .unwrap();
     }

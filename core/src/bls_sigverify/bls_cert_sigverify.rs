@@ -3,7 +3,8 @@ use {
     crate::bls_sigverify::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType, ConsensusMessage},
+        certificate::{Certificate, CertificateType},
+        consensus_message::ConsensusMessage,
         fraction::Fraction,
     },
     crossbeam_channel::Sender,

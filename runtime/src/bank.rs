@@ -33,9 +33,15 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
+pub use {
+    crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
+    solana_reward_info::RewardType,
+};
 use {
     crate::{
         account_saver::collect_accounts_to_store,
+        alpenglow_epoch_type::AlpenglowEpochType,
         bank::{
             entry_bytes_budget::EntryBytesBudget,
             metrics::*,
@@ -56,6 +62,7 @@ use {
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
+        slot_params::{SlotParams, SlotParamsArchive},
         stake_account::StakeAccount,
         stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
@@ -72,9 +79,7 @@ use {
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
-    agave_votor_messages::{
-        consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
-    },
+    agave_votor_messages::{certificate::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT},
     ahash::AHashSet,
     dashmap::DashMap,
     log::*,
@@ -107,11 +112,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{
-        block_cost_limits::simd_0286_block_limit,
-        cost_tracker::CostTracker,
-        shred_limit::{DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT},
-    },
+    solana_cost_model::{block_cost_limits::simd_0286_block_limit, cost_tracker::CostTracker},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -140,13 +141,17 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader, system_program},
+    solana_sdk_ids::{
+        bpf_loader_upgradeable, incinerator, native_loader, system_program, sysvar as sysvar_id,
+    },
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
     solana_stake_interface::{
-        stake_history::StakeHistory, state::Delegation, sysvar::stake_history,
+        stake_history::{SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory},
+        state::Delegation,
+        sysvar::stake_history,
     },
     solana_svm::{
         account_loader::LoadedTransaction,
@@ -190,6 +195,7 @@ use {
     },
     solana_vote_interface::state::VoteStateV4,
     std::{
+        cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt,
         ops::AddAssign,
@@ -217,10 +223,6 @@ use {
     solana_nonce as nonce,
     solana_nonce_account::{SystemAccountKind, get_system_account_kind},
     solana_program_runtime::sysvar_cache::SysvarCache,
-};
-pub use {
-    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
-    solana_reward_info::RewardType,
 };
 
 /// params to `verify_accounts_hash`
@@ -607,6 +609,7 @@ impl PartialEq for Bank {
             ns_per_slot,
             genesis_creation_time,
             slots_per_year,
+            slot_params: _,
             slot,
             bank_id: _,
             epoch,
@@ -668,7 +671,7 @@ impl PartialEq for Bank {
             && signature_count.load(Relaxed) == other.signature_count.load(Relaxed)
             && capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && max_tick_height == &other.max_tick_height
-            && hashes_per_tick == &other.hashes_per_tick
+            && *hashes_per_tick.read().unwrap() == *other.hashes_per_tick.read().unwrap()
             && ticks_per_slot == &other.ticks_per_slot
             && ns_per_slot == &other.ns_per_slot
             && genesis_creation_time == &other.genesis_creation_time
@@ -734,9 +737,6 @@ impl BankFieldsToSerialize {
 pub enum RewardCalculationEvent<'a, 'b> {
     Staking(&'a Pubkey, &'b InflationPointCalculationEvent),
 }
-/// Default maximum serialized entry bytes a bank may accept in one slot.
-pub const DEFAULT_MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
-
 /// type alias is not supported for trait in rust yet. As a workaround, we define the
 /// `RewardCalcTracer` trait explicitly and implement it on any type that implement
 /// `Fn(&RewardCalculationEvent) + Send + Sync`.
@@ -866,7 +866,7 @@ pub struct Bank {
     max_tick_height: u64,
 
     /// The number of hashes in each tick. None value means hashing is disabled.
-    hashes_per_tick: Option<u64>,
+    hashes_per_tick: RwLock<Option<u64>>,
 
     /// The number of ticks in each slot.
     ticks_per_slot: u64,
@@ -879,6 +879,9 @@ pub struct Bank {
 
     /// The number of slots per year, used for inflation
     slots_per_year: f64,
+
+    /// Slot-scoped parameter history used for slot-relative parameter lookups.
+    slot_params: SlotParamsArchive,
 
     /// Bank slot (i.e. block)
     slot: Slot,
@@ -1138,6 +1141,18 @@ struct NewEpochBundle {
     update_rewards_with_thread_pool_time_us: u64,
 }
 
+fn create_stake_history_account(
+    stake_history: &StakeHistory,
+    (lamports, rent_epoch): InheritableAccountFields,
+) -> AccountSharedData {
+    let data_len =
+        STAKE_HISTORY_ACCOUNT_SIZE.max(bincode::serialized_size(stake_history).unwrap() as usize);
+    let mut account = AccountSharedData::new(lamports, data_len, &sysvar_id::id());
+    account.serialize_data(stake_history).unwrap();
+    account.set_rent_epoch(rent_epoch);
+    account
+}
+
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let partitioned_rewards_stake_account_stores_per_block = accounts
@@ -1165,11 +1180,12 @@ impl Bank {
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
             max_tick_height: u64::default(),
-            hashes_per_tick: Option::<u64>::default(),
+            hashes_per_tick: RwLock::default(),
             ticks_per_slot: u64::default(),
             ns_per_slot: u128::default(),
             genesis_creation_time: UnixTimestamp::default(),
             slots_per_year: f64::default(),
+            slot_params: SlotParamsArchive::default(),
             slot: Slot::default(),
             bank_id: BankId::default(),
             epoch: Epoch::default(),
@@ -1395,11 +1411,12 @@ impl Bank {
             partitioned_rewards_stake_account_stores_per_block: parent
                 .partitioned_rewards_stake_account_stores_per_block,
             // TODO: clean this up, so much special-case copying...
-            hashes_per_tick: parent.hashes_per_tick,
+            hashes_per_tick: RwLock::new(parent.hashes_per_tick()),
             ticks_per_slot: parent.ticks_per_slot,
             ns_per_slot: parent.ns_per_slot,
             genesis_creation_time: parent.genesis_creation_time,
             slots_per_year: parent.slots_per_year,
+            slot_params: parent.slot_params.clone(),
             epoch_schedule,
             rent_collector: Self::get_rent_collector_from(&parent.rent_collector, epoch),
             max_tick_height: slot
@@ -1629,23 +1646,26 @@ impl Bank {
         }
     }
 
-    pub fn prune_program_cache(
-        &self,
-        new_root_slot: Slot,
-        new_root_epoch: Epoch,
-        bank_forks: &BankForks,
-    ) {
+    pub fn prune_program_cache(&self, bank_forks: &BankForks) {
         let upcoming_environment = self
             .transaction_processor
             .epoch_boundary_preparation
             .write()
             .unwrap()
-            .reroot(new_root_epoch);
+            .reroot(self.epoch());
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, upcoming_environment, bank_forks);
+            .prune(
+                self.slot(),
+                upcoming_environment.map(|_| {
+                    ProgramRuntimeEnvironment::clone(
+                        &self.transaction_processor.program_runtime_environment,
+                    )
+                }),
+                bank_forks,
+            );
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
@@ -1806,10 +1826,10 @@ impl Bank {
         // the vote reward account state should be created at the epoch boundary in which we
         // activate alpenglow as it will need info from the previous epoch.
         if self.feature_set.snapshot().alpenglow {
+            let epoch_start_capitalization = parent_capitalization;
             EpochInflationAccountState::new_epoch_update_account(
                 self,
-                parent_epoch,
-                parent_capitalization,
+                epoch_start_capitalization,
                 epoch_validator_rewards,
             );
         }
@@ -1936,8 +1956,15 @@ impl Bank {
         let (_, update_sysvars_time_us) = measure_us!({
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
-            // Keep setting the tower clock sysvar till we have not migrated to Alpenglow.
-            if self.get_alpenglow_genesis_certificate().is_none() {
+
+            if self.get_alpenglow_genesis_certificate().is_some() {
+                // Alpenglow banks have the timestamp populated via the footer
+                // We only populate the slot here
+                self.update_clock_slot_for_alpenglow();
+            } else {
+                // PoH banks have the timestamp and slot populated at the beginning
+                // Note: The first alpenglow bank will have the timestamp populated
+                // here at the beginning as well as at the end via the footer - this is intentional.
                 self.update_clock(Some(parent_epoch));
             }
             self.update_last_restart_slot()
@@ -2085,11 +2112,12 @@ impl Bank {
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
             max_tick_height: fields.max_tick_height,
-            hashes_per_tick: fields.hashes_per_tick,
+            hashes_per_tick: RwLock::new(fields.hashes_per_tick),
             ticks_per_slot: fields.ticks_per_slot,
             ns_per_slot: fields.ns_per_slot,
             genesis_creation_time: fields.genesis_creation_time,
             slots_per_year: fields.slots_per_year,
+            slot_params: SlotParamsArchive::default(),
             slot,
             bank_id: 0,
             epoch,
@@ -2168,6 +2196,11 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
+        bank.refresh_slot_params_with_baseline(Self::genesis_config_slot_params(
+            genesis_config,
+            bank.partitioned_rewards_stake_account_stores_per_block,
+        ));
+
         bank.initialize_after_snapshot_restore(|| rewards_calculation_thread_pool);
 
         datapoint_info!(
@@ -2222,7 +2255,7 @@ impl Bank {
             signature_count: self.signature_count.load(Relaxed),
             capitalization: self.capitalization.load(Relaxed),
             max_tick_height: self.max_tick_height,
-            hashes_per_tick: self.hashes_per_tick,
+            hashes_per_tick: *self.hashes_per_tick.read().unwrap(),
             ticks_per_slot: self.ticks_per_slot,
             ns_per_slot: self.ns_per_slot,
             genesis_creation_time: self.genesis_creation_time,
@@ -2430,6 +2463,31 @@ impl Bank {
         });
     }
 
+    /// In Alpenglow the clock sysvar's timestamp is populated from the block footer.
+    /// The timestamp value on the block footer is used as an estimate for when the block *ended*.
+    /// This is applied at the end of execution on the bank for use in the child.
+    ///
+    /// However we still need to update the slot and epoch fields for the clock sysvar at the *start*
+    /// of the bank, as transactions executing in this bank need to be able to read these values.
+    /// This function updates the slot and epoch fields while preserving the timestamp fields from the parent
+    /// bank's footer.
+    fn update_clock_slot_for_alpenglow(&self) {
+        let clock = self.clock();
+        let clock = sysvar::clock::Clock {
+            slot: self.slot,
+            epoch: self.epoch_schedule().get_epoch(self.slot),
+            leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
+            epoch_start_timestamp: clock.epoch_start_timestamp,
+            unix_timestamp: clock.unix_timestamp,
+        };
+        self.update_sysvar_account(&sysvar::clock::id(), |account| {
+            create_account(
+                &clock,
+                self.inherit_specially_retained_account_fields(account),
+            )
+        });
+    }
+
     pub fn update_last_restart_slot(&self) {
         // First, see what the currently stored last restart slot is.
         let current_last_restart_slot = self
@@ -2477,9 +2535,8 @@ impl Bank {
         });
         // Simply force fill sysvar cache rather than checking which sysvar was
         // actually updated since tests don't need to be optimized for performance.
-        self.transaction_processor.reset_sysvar_cache();
         self.transaction_processor
-            .fill_missing_sysvar_cache_entries(self);
+            .reset_and_fill_sysvar_cache_entries(self);
     }
 
     fn update_slot_history(&self) {
@@ -2646,23 +2703,89 @@ impl Bank {
         }
         // if I'm the first Bank in an epoch, ensure stake_history is updated
         self.update_sysvar_account(&stake_history::id(), |account| {
-            create_account::<StakeHistory>(
+            create_stake_history_account(
                 self.stakes_cache.stakes().history(),
                 self.inherit_specially_retained_account_fields(account),
             )
         });
     }
 
+    /// Rebuilds cached slot params while preserving the supplied slot-0 baseline.
+    ///
+    /// The cache is not serialized into snapshots; it is reconstructed from
+    /// existing Bank fields during genesis and snapshot restore.
+    fn refresh_slot_params_with_baseline(&mut self, baseline_params: SlotParams) {
+        self.slot_params = SlotParamsArchive::new(&self.epoch_schedule, baseline_params);
+    }
+
+    /// Builds slot-0 params from the genesis config.
+    fn genesis_config_slot_params(
+        genesis_config: &GenesisConfig,
+        partitioned_rewards_stake_account_stores_per_block: u64,
+    ) -> SlotParams {
+        SlotParams::genesis_baseline(
+            genesis_config.ns_per_slot(),
+            genesis_config.slots_per_year(),
+            genesis_config.hashes_per_tick(),
+            partitioned_rewards_stake_account_stores_per_block,
+        )
+    }
+
+    /// Returns the slot params effective at `slot`.
+    fn slot_params_at_slot(&self, slot: Slot) -> SlotParams {
+        self.slot_params.params_at_slot(slot)
+    }
+
+    /// Returns the effective slot duration for `slot`.
+    pub fn ns_per_slot_at_slot(&self, slot: Slot) -> u128 {
+        self.slot_params_at_slot(slot).ns_per_slot()
+    }
+
+    /// Returns slots/year for the slot params active at `epoch` start.
+    fn slots_per_year_for_epoch(&self, epoch: Epoch) -> f64 {
+        let first_slot = self.epoch_schedule().get_first_slot_in_epoch(epoch);
+        self.slot_params_at_slot(first_slot).slots_per_year()
+    }
+
+    /// Returns the wall-clock duration in years for `[start_slot, end_slot)`.
+    fn slot_range_duration_in_years(&self, start_slot: Slot, end_slot: Slot) -> f64 {
+        if start_slot >= end_slot {
+            return 0.0;
+        }
+
+        let mut cursor = start_slot;
+        let mut params = self.slot_params.baseline_params();
+        let mut duration = 0.0;
+
+        for (effective_slot, effective_params) in self.slot_params.param_transitions() {
+            if effective_slot <= start_slot {
+                params = effective_params;
+                continue;
+            }
+            if effective_slot >= end_slot {
+                break;
+            }
+
+            duration += (effective_slot - cursor) as f64 / params.slots_per_year();
+            cursor = effective_slot;
+            params = effective_params;
+        }
+
+        duration + (end_slot - cursor) as f64 / params.slots_per_year()
+    }
+
+    /// Returns the exact wall-clock duration in nanoseconds for `start_slot..=end_slot`.
+    pub fn slot_range_duration_nanos(&self, start_slot: Slot, end_slot: Slot) -> u128 {
+        self.slot_params
+            .slot_range_duration_nanos(start_slot, end_slot)
+    }
+
     pub fn epoch_duration_in_years(&self, epoch: Epoch) -> f64 {
         // period: time that has passed as a fraction of a year, basically the length of
         //  an epoch as a fraction of a year
         //  calculated as: slots_elapsed / (slots / year)
-        self.epoch_schedule().get_slots_in_epoch(epoch) as f64 / self.slots_per_year
-    }
-
-    /// Returns the slot duration to use for `slot`.
-    pub fn ns_per_slot_at_slot(&self, _slot: Slot) -> u128 {
-        self.ns_per_slot
+        self.epoch_schedule().get_slots_in_epoch(epoch) as f64
+            / self.slots_per_year_for_epoch(epoch)
     }
 
     pub fn max_processing_age(&self) -> usize {
@@ -2689,22 +2812,27 @@ impl Bank {
         })
     }
 
+    /// Returns slots since inflation started, aligned to the first slot used for rewards accrual.
     fn get_inflation_num_slots(&self) -> u64 {
-        let inflation_activation_slot = self.get_inflation_start_slot();
-        // Normalize inflation_start to align with the start of rewards accrual.
-        let inflation_start_slot = self.epoch_schedule().get_first_slot_in_epoch(
-            self.epoch_schedule()
-                .get_epoch(inflation_activation_slot)
-                .saturating_sub(1),
-        );
+        let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
         self.epoch_schedule().get_first_slot_in_epoch(self.epoch()) - inflation_start_slot
     }
 
+    /// Returns the inflation rewards start slot aligned to an epoch boundary.
+    fn inflation_start_slot_aligned_to_rewards(&self) -> Slot {
+        let inflation_activation_slot = self.get_inflation_start_slot();
+        self.epoch_schedule().get_first_slot_in_epoch(
+            self.epoch_schedule()
+                .get_epoch(inflation_activation_slot)
+                .saturating_sub(1),
+        )
+    }
+
+    /// Returns elapsed inflation time in years for slots since inflation started.
     pub fn slot_in_year_for_inflation(&self) -> f64 {
         let num_slots = self.get_inflation_num_slots();
-
-        // calculated as: num_slots / (slots / year)
-        num_slots as f64 / self.slots_per_year
+        let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
+        self.slot_range_duration_in_years(inflation_start_slot, inflation_start_slot + num_slots)
     }
 
     /// For a given `capitalization` (total_supply in lamports) and `epoch`, returns the
@@ -2751,14 +2879,22 @@ impl Bank {
             (slot_delta <= slots_per_epoch)
                 .then_some((*pubkey, (last_timestamp.slot, last_timestamp.timestamp)))
         });
-        let slot_duration = Duration::from_nanos(self.ns_per_slot as u64);
+        let elapsed_slot_duration = |from_slot: Slot, to_slot: Slot| {
+            if from_slot >= to_slot {
+                Duration::ZERO
+            } else {
+                Duration::from_nanos_u128(
+                    self.slot_range_duration_nanos(from_slot.saturating_add(1), to_slot),
+                )
+            }
+        };
         let epoch = self.epoch_schedule().get_epoch(self.slot());
         let stakes = self.epoch_vote_accounts(epoch)?;
         let stake_weighted_timestamp = calculate_stake_weighted_timestamp(
             recent_timestamps,
             stakes,
             self.slot(),
-            slot_duration,
+            elapsed_slot_duration,
             epoch_start_timestamp,
             max_allowable_drift,
         );
@@ -2963,7 +3099,7 @@ impl Bank {
             genesis_config.fee_rate_governor.lamports_per_signature,
         );
 
-        self.hashes_per_tick = genesis_config.hashes_per_tick();
+        self.hashes_per_tick = RwLock::new(genesis_config.hashes_per_tick());
         self.ticks_per_slot = genesis_config.ticks_per_slot();
         self.ns_per_slot = genesis_config.ns_per_slot();
         self.genesis_creation_time = genesis_config.creation_time;
@@ -2971,6 +3107,10 @@ impl Bank {
         self.slots_per_year = genesis_config.slots_per_year();
 
         self.epoch_schedule = genesis_config.epoch_schedule.clone();
+        self.refresh_slot_params_with_baseline(Self::genesis_config_slot_params(
+            genesis_config,
+            self.partitioned_rewards_stake_account_stores_per_block,
+        ));
 
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
@@ -3034,8 +3174,8 @@ impl Bank {
         self.rent_collector.rent.burn_percent = burn_percent;
     }
 
-    pub fn set_hashes_per_tick(&mut self, hashes_per_tick: Option<u64>) {
-        self.hashes_per_tick = hashes_per_tick;
+    pub fn set_hashes_per_tick(&self, hashes_per_tick: Option<u64>) {
+        *self.hashes_per_tick.write().unwrap() = hashes_per_tick;
     }
 
     /// Return the last block hash registered.
@@ -3185,6 +3325,9 @@ impl Bank {
         alpenclock_acct.set_data_from_slice(&data);
 
         self.store_account_and_update_capitalization(&NANOSECOND_CLOCK_ACCOUNT, &alpenclock_acct);
+
+        self.transaction_processor
+            .reset_and_fill_sysvar_cache_entries(self);
     }
 
     /// Get the nanosecond clock value. Returns `None` if the nanosecond clock has not been
@@ -4443,7 +4586,6 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
                 self.stakes_cache.check_and_store(
@@ -4453,10 +4595,7 @@ impl Bank {
                 )
             })
         });
-        self.update_bank_hash_stats(&accounts);
-        self.rc
-            .accounts
-            .store_accounts_par(accounts, None, &self.ancestors);
+        self.store_accounts_without_stakes_cache(accounts);
         m.stop();
         self.rc
             .accounts
@@ -4872,16 +5011,16 @@ impl Bank {
     ///
     /// Limit changes are delayed by an epoch, so a root bank can derive the
     /// limit for any slot inside the shred intake window.
-    pub fn max_data_shreds_per_slot_for_slot(&self, _slot: Slot) -> u32 {
-        DEFAULT_MAX_DATA_SHREDS_PER_SLOT
+    pub fn max_data_shreds_per_slot_for_slot(&self, slot: Slot) -> u32 {
+        self.slot_params_at_slot(slot).max_data_shreds_per_slot()
     }
 
     /// Returns the code shred limit applicable to `slot`.
     ///
     /// Limit changes are delayed by an epoch, so a root bank can derive the
     /// limit for any slot inside the shred intake window.
-    pub fn max_code_shreds_per_slot_for_slot(&self, _slot: Slot) -> u32 {
-        DEFAULT_MAX_CODE_SHREDS_PER_SLOT
+    pub fn max_code_shreds_per_slot_for_slot(&self, slot: Slot) -> u32 {
+        self.slot_params_at_slot(slot).max_code_shreds_per_slot()
     }
 
     pub fn max_entry_bytes_per_slot(&self) -> u64 {
@@ -5341,8 +5480,8 @@ impl Bank {
     }
 
     /// Return the number of hashes per tick
-    pub fn hashes_per_tick(&self) -> &Option<u64> {
-        &self.hashes_per_tick
+    pub fn hashes_per_tick(&self) -> Option<u64> {
+        *self.hashes_per_tick.read().unwrap()
     }
 
     /// Return the number of ticks per slot
@@ -6307,6 +6446,46 @@ impl Bank {
             solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
         bank.set_block_id(Some(block_id));
     }
+
+    pub(crate) fn get_alpenglow_migration_slot(&self) -> Option<Slot> {
+        let genesis_cert = self.get_alpenglow_genesis_certificate()?;
+        debug_assert!(
+            genesis_cert.cert_type.is_genesis(),
+            "cert_type={:?}",
+            genesis_cert.cert_type
+        );
+        Some(genesis_cert.cert_type.slot())
+    }
+
+    /// Returns `AlpenglowEpochType` for the given `epoch`.
+    ///
+    /// Calling this function with an epoch >= `Bank::epoch` can return false information as it is
+    /// possible that we have not observed the genesis cert yet but will in the upcoming slots.
+    pub(crate) fn get_alpenglow_epoch_type(&self, epoch: Epoch) -> AlpenglowEpochType {
+        debug_assert!(epoch < self.epoch);
+        let Some(migration_slot) = self.get_alpenglow_migration_slot() else {
+            return AlpenglowEpochType::Tower;
+        };
+        let migration_epoch = self.epoch_schedule.get_epoch(migration_slot);
+        match migration_epoch.cmp(&epoch) {
+            Ordering::Less => AlpenglowEpochType::Alpenglow { migration_epoch },
+            Ordering::Greater => AlpenglowEpochType::Tower,
+            Ordering::Equal => {
+                let first_slot_in_epoch =
+                    self.epoch_schedule.get_first_slot_in_epoch(migration_epoch);
+                // + 1 because the migration_slot is still tower.
+                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
+                let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(migration_epoch);
+                let num_ag_slots = slots_in_epoch - num_tower_slots;
+                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
+                AlpenglowEpochType::MigrationEpoch {
+                    num_tower_slots,
+                    num_ag_slots,
+                    migration_epoch,
+                }
+            }
+        }
+    }
 }
 
 impl InvokeContextCallback for Bank {
@@ -6404,7 +6583,7 @@ impl Bank {
         bank.signature_count = AtomicU64::new(fields.signature_count);
         bank.capitalization = AtomicU64::new(fields.capitalization);
         bank.max_tick_height = fields.max_tick_height;
-        bank.hashes_per_tick = fields.hashes_per_tick;
+        bank.hashes_per_tick = RwLock::new(fields.hashes_per_tick);
         bank.ticks_per_slot = fields.ticks_per_slot;
         bank.ns_per_slot = fields.ns_per_slot;
         bank.genesis_creation_time = fields.genesis_creation_time;
@@ -6432,6 +6611,12 @@ impl Bank {
         bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(slot, epoch);
         bank.accounts_lt_hash = Mutex::new(fields.accounts_lt_hash);
         bank.bank_hash_stats = AtomicBankHashStats::new(&fields.bank_hash_stats);
+        bank.refresh_slot_params_with_baseline(SlotParams::genesis_baseline(
+            bank.ns_per_slot,
+            bank.slots_per_year,
+            bank.hashes_per_tick(),
+            bank.partitioned_rewards_stake_account_stores_per_block,
+        ));
 
         bank
     }

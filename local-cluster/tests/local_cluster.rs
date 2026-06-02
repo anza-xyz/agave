@@ -16,9 +16,7 @@ use {
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
-    solana_clock::{
-        self as clock, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot,
-    },
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
@@ -5858,7 +5856,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
             target_tick_duration: PohConfig::default().target_tick_duration,
-            hashes_per_tick: Some(clock::DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick: None,
             target_tick_count: None,
         },
         ..ClusterConfig::default()
@@ -6211,6 +6209,15 @@ fn test_alpenglow_migration(
         skip_warmup_slots: false,
         ..ClusterConfig::default()
     };
+    // Seed the feature account as pending activation. The runtime activates it at the next epoch
+    // boundary without needing the Alpenglow feature authority keypair.
+    cluster_config.additional_accounts.push((
+        agave_feature_set::alpenglow::id(),
+        solana_feature_gate_interface::create_account(
+            &solana_feature_gate_interface::Feature::default(),
+            1,
+        ),
+    ));
 
     // Create local cluster with alpenglow accounts but feature not activated
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
@@ -6221,35 +6228,10 @@ fn test_alpenglow_migration(
         .map(|v| v.info.keypair.clone())
         .collect();
 
-    // Send feature activation transaction
-    info!("Sending feature activation transaction");
     let client = RpcClient::new_socket_with_commitment(
         cluster.entry_point_info.rpc().unwrap(),
         CommitmentConfig::processed(),
     );
-    let faucet_keypair = &cluster.funding_keypair;
-    let feature_keypair = &*agave_feature_set::alpenglow::TEST_KEYPAIR;
-    let blockhash = client.get_latest_blockhash().unwrap();
-    let lamports = client
-        .get_minimum_balance_for_rent_exemption(solana_feature_gate_interface::Feature::size_of())
-        .unwrap();
-
-    let activation_message = solana_message::Message::new(
-        &solana_feature_gate_interface::activate_with_lamports(
-            &agave_feature_set::alpenglow::id(),
-            &faucet_keypair.pubkey(),
-            lamports,
-        ),
-        Some(&faucet_keypair.pubkey()),
-    );
-    let activation_tx = solana_transaction::Transaction::new(
-        &[&feature_keypair, &faucet_keypair],
-        activation_message,
-        blockhash,
-    );
-
-    client.send_and_confirm_transaction(&activation_tx).unwrap();
-    info!("Feature activation transaction confirmed");
 
     // Monitor for feature activation
     let activation_slot;

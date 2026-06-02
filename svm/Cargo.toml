@@ -7,7 +7,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -20,16 +20,17 @@ name = "solana_svm"
 default = ["metrics"]
 agave-unstable-api = []
 conformance = [
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dep:xxhash-rust",
     "dev-context-only-utils",
     "solana-instruction-error/serde",
     "solana-pubkey/default",
 ]
 dev-context-only-utils = [
-    "dep:agave-feature-set",
-    "dep:agave-precompiles",
     "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",
@@ -111,6 +112,7 @@ solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
+xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

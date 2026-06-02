@@ -19,7 +19,6 @@ use {
     solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
-    solana_metrics::inc_new_counter_debug,
     solana_perf::packet::{self, PacketBatch},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -497,15 +496,47 @@ impl ClusterInfoVoteListener {
         verified_packets_sender: BankingPacketSender,
         verified_vote_transactions_sender: VerifiedVoteTransactionsSender,
     ) -> Result<()> {
+        #[derive(Default)]
+        struct Stats {
+            received_count: usize,
+            banking_channel_max_len: usize,
+            banking_channel_eviction_drops: usize,
+        }
+        const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
         let mut cursor = Cursor::default();
+        let mut last_report = Instant::now();
+        let mut stats = Stats::default();
         while !exit.load(Ordering::Relaxed) {
             let votes = cluster_info.get_votes(&mut cursor);
-            inc_new_counter_debug!("cluster_info_vote_listener-recv_count", votes.len());
             if !votes.is_empty() {
+                stats.received_count += votes.len();
                 let (vote_txs, packets) =
                     Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
                 verified_vote_transactions_sender.send(vote_txs)?;
-                verified_packets_sender.send(BankingPacketBatch::new(packets))?;
+                // Sample backlog before the push.
+                stats.banking_channel_max_len = stats
+                    .banking_channel_max_len
+                    .max(verified_packets_sender.len());
+                stats.banking_channel_eviction_drops +=
+                    verified_packets_sender.send(BankingPacketBatch::new(packets))?;
+            }
+            if last_report.elapsed() >= STATS_REPORT_INTERVAL {
+                datapoint_info!(
+                    "cluster_info_vote_listener",
+                    ("received_count", stats.received_count as i64, i64),
+                    (
+                        "banking_channel_max_len",
+                        stats.banking_channel_max_len as i64,
+                        i64
+                    ),
+                    (
+                        "banking_channel_eviction_drops",
+                        stats.banking_channel_eviction_drops as i64,
+                        i64
+                    ),
+                );
+                stats = Stats::default();
+                last_report = Instant::now();
             }
             sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
         }

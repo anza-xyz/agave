@@ -81,7 +81,7 @@ solana-local-cluster = { workspace = true }
 solana-rent = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
-solana-test-validator = { workspace = true }
+solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-tps-client = { workspace = true, features = ["bank-client"] }
 tempfile = { workspace = true }
 

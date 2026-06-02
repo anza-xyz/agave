@@ -354,6 +354,7 @@ pub fn port_validator(port: String) -> Result<(), String> {
 
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
+        // The port range is half-open: [start, end)
         if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
@@ -655,8 +656,12 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .long("dynamic-port-range")
                 .value_name("MIN_PORT-MAX_PORT")
                 .takes_value(true)
+                .default_value(&default_args.dynamic_port_range)
                 .validator(port_range_validator)
-                .help("Range to use for dynamically assigned ports [default: 1024-65535]"),
+                .help(
+                    "Range to use for dynamically assigned ports. MIN_PORT-MAX_PORT yields the \
+                     range [MIN_PORT, MAX_PORT)",
+                ),
         )
         .arg(
             Arg::with_name("bind_address")
@@ -878,6 +883,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
 pub struct DefaultTestArgs {
     pub rpc_port: String,
     pub faucet_port: String,
+    pub dynamic_port_range: String,
     pub limit_ledger_size: String,
     pub faucet_sol: String,
     pub faucet_time_slice_secs: String,
@@ -888,6 +894,7 @@ impl DefaultTestArgs {
         DefaultTestArgs {
             rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
+            dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the
              * 40MB-150MB range when running `solana-test-validator`
