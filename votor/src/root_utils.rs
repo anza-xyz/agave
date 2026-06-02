@@ -42,7 +42,10 @@ pub(crate) fn set_root(
 ) {
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
-    *pending_blocks = pending_blocks.split_off(&new_root);
+    // Drop pending entries at the rooted slot itself: their `parent_block`
+    // sits at `new_root - 1`, and a subsequent `try_notar` would query
+    // `voted_notar(parent_slot)` and trip its `slot >= root` assertion.
+    *pending_blocks = pending_blocks.split_off(&new_root.saturating_add(1));
     *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
     *received_shred = received_shred.split_off(&new_root);
 
