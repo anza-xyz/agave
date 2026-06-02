@@ -220,8 +220,9 @@ impl FileCreator for IoUringFileCreator<'_> {
         mode: u32,
         parent_dir_handle: Arc<File>,
         contents: &mut dyn Read,
+        content_len: Option<FileSize>,
     ) -> io::Result<()> {
-        let file_key = self.open(path, mode, parent_dir_handle)?;
+        let file_key = self.open(path, mode, parent_dir_handle, content_len)?;
         self.schedule_all_writes(contents, file_key)
     }
 
@@ -246,8 +247,9 @@ impl IoUringFileCreator<'_> {
         path: PathBuf,
         mode: u32,
         dir_handle: Arc<File>,
+        content_len: Option<FileSize>,
     ) -> io::Result<usize> {
-        let file = PendingFile::from_path(path);
+        let file = PendingFile::from_path(path, content_len);
         let path_cstring = Pin::new(file.path_cstring());
 
         let file_key = self.wait_add_file(file)?;
@@ -313,10 +315,20 @@ impl IoUringFileCreator<'_> {
     ) -> io::Result<()> {
         let state = self.ring.context_mut();
         let file_state = state.files.get_mut(file_key).unwrap();
+        // With a known `content_len` the final size was set on file creation, the fallocate already
+        // accounted for and scheduled on open completion, so the final write must not redo that.
+        let size_known_upfront = file_state.size_on_eof.is_some();
         if is_final_write {
-            // Note: this marker allows file to be finalized once all completions run. It also
-            // drives the up-front `fallocate` of the now-known size.
-            file_state.size_on_eof = Some(file_offset + write_len as FileSize);
+            if !size_known_upfront {
+                // Note: this marker allows file to be finalized once all completions run. It also
+                // drives the up-front `fallocate` of the now-known size.
+                let final_size = file_offset + write_len as FileSize;
+                file_state.size_on_eof = Some(final_size);
+                if final_size > 0 {
+                    // Account for the fallocate op scheduled below (or on open completion).
+                    file_state.ops_started += 1;
+                }
+            }
 
             if self.write_with_direct_io {
                 let align_truncated_write_len =
@@ -338,8 +350,9 @@ impl IoUringFileCreator<'_> {
         if let Some(file) = &file_state.open_file {
             let fd = types::Fd(file.as_raw_fd());
 
-            if is_final_write {
-                // File size became known, allocate file size to streamline disk growth for writes.
+            // Initiate the up-front allocation before the final write or marking it as completed.
+            // With a known `content_len` it was already scheduled on open completion instead.
+            if is_final_write && !size_known_upfront {
                 FileCreatorState::schedule_fallocate(&mut self.ring, file_key, fd)?;
             }
 
@@ -467,17 +480,24 @@ impl<'a> FileCreatorState<'a> {
     /// writes with high concurrency; an explicit allocation also reduces fragmentation.
     ///
     /// No-op unless the final size is known and non-zero: an empty file has nothing to allocate,
-    /// and `fallocate` with zero length is invalid anyway.
+    /// and `fallocate` with zero length is invalid anyway. The op is accounted for in `ops_started`
+    /// by whoever first learns the size (file creation for a known `content_len`, otherwise the
+    /// final write), so the file isn't finalized before it completes.
     fn schedule_fallocate(
         ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
         file_key: usize,
         fd: types::Fd,
     ) -> io::Result<()> {
-        let file_state = ring.context_mut().files.get_mut(file_key).unwrap();
-        let Some(len) = file_state.size_on_eof.filter(|&size| size > 0) else {
+        let Some(len) = ring
+            .context_mut()
+            .files
+            .get_mut(file_key)
+            .unwrap()
+            .size_on_eof
+            .filter(|&size| size > 0)
+        else {
             return Ok(());
         };
-        file_state.ops_started += 1;
         ring.push(FileCreatorOp::Fallocate(FallocateOp { file_key, fd, len }))
     }
 
@@ -817,14 +837,18 @@ struct PendingFile {
 }
 
 impl PendingFile {
-    fn from_path(path: PathBuf) -> Self {
+    fn from_path(path: PathBuf, content_len: Option<FileSize>) -> Self {
+        // A known final size (`content_len`) lets the `fallocate` be scheduled as soon as the file
+        // opens, rather than once the final write is reached. Account for that op now (an empty
+        // file needs none); the final write detects the size being already set and won't redo it.
+        let ops_started = usize::from(content_len.is_some_and(|len| len > 0));
         Self {
             path,
             open_file: None,
             backlog: SmallVec::new(),
-            ops_started: 0,
+            ops_started,
             ops_completed: 0,
-            size_on_eof: None,
+            size_on_eof: content_len,
             file_uses_direct_io: false,
             non_dio_eof_write: None,
         }
@@ -950,7 +974,7 @@ mod tests {
         let dir = Arc::new(File::open(temp_dir.path()).unwrap());
         let file_path = temp_dir.path().join("test.txt");
         creator
-            .schedule_create_at_dir(file_path, 0o644, dir, &mut contents)
+            .schedule_create_at_dir(file_path, 0o644, dir, &mut contents, None)
             .unwrap();
         creator.drain().unwrap();
         drop(creator);
@@ -977,7 +1001,7 @@ mod tests {
         let file_size = 64 * 1024;
         let data = (0..).take(file_size).map(|v| v as u8).collect::<Vec<_>>();
         creator
-            .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data))
+            .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data), None)
             .unwrap();
         creator.drain().unwrap();
 
@@ -1009,12 +1033,55 @@ mod tests {
         let file_path = temp_dir.path().join("file.txt");
         let data: Vec<_> = (0..).take(file_size as usize).map(|v| v as u8).collect();
         creator
-            .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data))
+            .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data), None)
             .unwrap();
         creator.drain().unwrap();
 
         drop(creator);
         assert_eq!(file_size, read_data.len() as IoSize);
+        assert_eq!(data, read_data);
+    }
+
+    // Exercise the `content_len` path (final size known up-front), covering empty, buffer-multiple
+    // and non-aligned sizes, with and without direct IO.
+    #[test_case(0, false)]
+    #[test_case(7 * 1024, false)]
+    #[test_case(16 * 1024, false)]
+    #[test_case(4 * DIRECT_IO_WRITE_LEN_ALIGNMENT as FileSize, true)]
+    #[test_case(1000 + 3 * DIRECT_IO_WRITE_LEN_ALIGNMENT as FileSize, true)]
+    fn test_create_with_known_content_len(file_size: FileSize, direct_io: bool) {
+        let mut read_data = Vec::with_capacity(file_size as usize);
+        let callback = |mut fi: FileInfo| {
+            assert_eq!(fi.size, file_size);
+            assert_eq!(fi.file.metadata().unwrap().len(), file_size);
+            fi.file.read_to_end(&mut read_data).unwrap();
+            Some(fi.file)
+        };
+
+        let mut creator = IoUringFileCreatorBuilder::new()
+            .write_capacity(8 * 1024)
+            .use_registered_buffers(false)
+            .write_with_direct_io(direct_io)
+            .build(32 * 1024, callback)
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = Arc::new(File::open(temp_dir.path()).unwrap());
+        let file_path = temp_dir.path().join("file.txt");
+        let data: Vec<_> = (0..).take(file_size as usize).map(|v| v as u8).collect();
+        creator
+            .schedule_create_at_dir(
+                file_path,
+                0o600,
+                dir,
+                &mut Cursor::new(&data),
+                Some(file_size),
+            )
+            .unwrap();
+        creator.drain().unwrap();
+
+        drop(creator);
+        assert_eq!(file_size, read_data.len() as FileSize);
         assert_eq!(data, read_data);
     }
 }

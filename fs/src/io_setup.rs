@@ -69,6 +69,7 @@ mod tests {
     use {
         super::*,
         crate::{
+            FileSize,
             file_io::FileCreator,
             io_uring::{
                 file_creator::IoUringFileCreatorBuilder,
@@ -114,7 +115,13 @@ mod tests {
         for path in [file_path1, file_path2] {
             let dir_handle = dir_handle.clone();
             file_creator
-                .schedule_create_at_dir(path, 0o644, dir_handle, &mut Cursor::new(&write_bytes))
+                .schedule_create_at_dir(
+                    path,
+                    0o644,
+                    dir_handle,
+                    &mut Cursor::new(&write_bytes),
+                    Some(write_bytes.len() as FileSize),
+                )
                 .unwrap();
         }
         file_creator.drain().unwrap();
