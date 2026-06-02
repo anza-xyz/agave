@@ -26,7 +26,7 @@ pub enum Error {
     #[error("invalid identity from {0:?}")]
     InvalidIdentity(SocketAddr),
 
-    /// Peer pubkey is not in the admission allow-list.
+    /// Peer pubkey is not in the allowlist.
     #[error("peer {0} is not admitted (unstaked)")]
     NotAdmitted(Pubkey),
 

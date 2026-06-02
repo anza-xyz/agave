@@ -97,7 +97,7 @@ mod tests {
     use {
         crate::{
             BAN_DURATION_SHORT, BURST_DATAGRAMS_PER_SECOND_PER_PEER,
-            admission::AllowAll,
+            allowlist::AllowAll,
             endpoint::Datagram,
             testutils::{
                 clone_keypair, drain_matching, keypair_below, make_runtime, recv_until,

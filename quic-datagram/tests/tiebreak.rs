@@ -5,7 +5,7 @@ use {
     bytes::Bytes,
     common::{TestNode, make_runtime, spawn_node},
     solana_pubkey::Pubkey,
-    solana_quic_datagram::{admission::AllowAll, endpoint::Datagram},
+    solana_quic_datagram::{allowlist::AllowAll, endpoint::Datagram},
     std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration},
 };
 

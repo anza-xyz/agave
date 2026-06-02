@@ -16,7 +16,7 @@ use {
         spawn_node_with,
     },
     solana_net_utils::sockets::bind_to_localhost_unique,
-    solana_quic_datagram::{admission::AllowAll, endpoint::Datagram},
+    solana_quic_datagram::{allowlist::AllowAll, endpoint::Datagram},
     std::{sync::Arc, time::Duration},
 };
 

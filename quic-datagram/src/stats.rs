@@ -27,7 +27,7 @@ pub(crate) struct QuicDatagramStats {
     pub(crate) connection_error_version_mismatch: AtomicU64,
     pub(crate) connection_error_cids_exhausted: AtomicU64,
 
-    // Identity / admission
+    // Identity / allowlist
     pub(crate) invalid_identity: AtomicU64,
     pub(crate) handshake_rejected_not_admitted: AtomicU64,
     pub(crate) handshake_rejected_banned: AtomicU64,
@@ -64,10 +64,10 @@ pub(crate) struct QuicDatagramStats {
     /// burst; peers re-handshake against the new cert on their next send.
     pub(crate) connection_evicted_identity_rotated: AtomicU64,
     /// Cached connection closed at insert-cap time to make room for a
-    /// freshly-admitted peer. The displaced peer was no longer in the
-    /// admission set - typically an epoch-boundary unstaked-out validator
+    /// freshly-allowed peer. The displaced peer was no longer in the
+    /// allowlist - typically an epoch-boundary unstaked-out validator
     /// being displaced by a newly-staked one. Closed with `NOT_ADMITTED`.
-    pub(crate) connection_evicted_admission: AtomicU64,
+    pub(crate) connection_evicted_allowlist: AtomicU64,
     /// Lex-lower side evicted a cached outbound connection because the
     /// caller supplied a new socket addr for the same pubkey (e.g. gossip
     /// observed the peer moved). A re-dial to the new addr follows.
@@ -297,8 +297,8 @@ pub(crate) fn report(stats: &QuicDatagramStats) {
             i64
         ),
         (
-            "connection_evicted_admission",
-            swap!(stats.connection_evicted_admission),
+            "connection_evicted_allowlist",
+            swap!(stats.connection_evicted_allowlist),
             i64
         ),
         (

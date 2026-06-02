@@ -40,7 +40,7 @@ use {
     solana_keypair::{Keypair, Signer},
     solana_net_utils::sockets::{bind_to, unique_port_range_for_tests},
     solana_pubkey::Pubkey,
-    solana_quic_datagram::{Banlist, admission::AllowAll, endpoint::Datagram},
+    solana_quic_datagram::{Banlist, allowlist::AllowAll, endpoint::Datagram},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{

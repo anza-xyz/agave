@@ -8,7 +8,7 @@
 use {
     crate::{
         Banlist, EGRESS_CHANNEL_CAP,
-        admission::Admission,
+        allowlist::Allowlist,
         client::ClientConnection,
         close_codes,
         connection_table::{ConnectionTable, EgressDispatch},
@@ -69,16 +69,16 @@ impl QuicDatagramEndpoint {
     /// `ingress` via `try_send`; full ingress channel results in a drop
     /// (counted in `datagram_ingress_dropped_channel_full`).
     ///
-    /// `admission` is consulted once per new connection in either direction.
+    /// `allowlist` is consulted once per new connection in either direction.
     /// `banlist` is consulted on every send and at handshake.
     #[allow(clippy::too_many_arguments)]
-    pub fn new<A: Admission>(
+    pub fn new<A: Allowlist>(
         runtime: &tokio::runtime::Handle,
         keypair: &Keypair,
         socket: UdpSocket,
         alpn_protocol_id: &'static [u8],
         ingress: Sender<Datagram>,
-        admission: Arc<A>,
+        allowlist: Arc<A>,
         banlist: Arc<Banlist<Pubkey>>,
     ) -> Result<Self, Error> {
         let local_pubkey = keypair.pubkey();
@@ -111,7 +111,7 @@ impl QuicDatagramEndpoint {
             local_pubkey,
             egress_rx,
             ingress,
-            admission,
+            allowlist,
             banlist,
             identity_rx,
             connections: table,
@@ -138,12 +138,12 @@ impl QuicDatagramEndpoint {
     }
 }
 
-struct EndpointLoop<A: Admission> {
+struct EndpointLoop<A: Allowlist> {
     endpoint: Endpoint,
     local_pubkey: Pubkey,
     egress_rx: mpsc::Receiver<Datagram>,
     ingress: Sender<Datagram>,
-    admission: Arc<A>,
+    allowlist: Arc<A>,
     banlist: Arc<Banlist<Pubkey>>,
     identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     connections: Arc<ConnectionTable>,
@@ -153,7 +153,7 @@ struct EndpointLoop<A: Admission> {
     alpn: &'static [u8],
 }
 
-impl<A: Admission> EndpointLoop<A> {
+impl<A: Allowlist> EndpointLoop<A> {
     async fn run(mut self) {
         let subnet_limit = Arc::new(SubnetRateLimiter::new());
 
@@ -293,7 +293,7 @@ impl<A: Admission> EndpointLoop<A> {
             id_generation: generation,
             trigger: bytes,
             ingress: self.ingress.clone(),
-            admission: self.admission.clone(),
+            allowlist: self.allowlist.clone(),
             banlist: self.banlist.clone(),
             table: self.connections.clone(),
             stats: self.stats.clone(),
@@ -332,7 +332,7 @@ impl<A: Admission> EndpointLoop<A> {
             incoming,
             local_pubkey: self.local_pubkey,
             ingress: self.ingress.clone(),
-            admission: self.admission.clone(),
+            allowlist: self.allowlist.clone(),
             banlist: self.banlist.clone(),
             table: self.connections.clone(),
             stats: self.stats.clone(),
@@ -345,7 +345,7 @@ impl<A: Admission> EndpointLoop<A> {
 mod tests {
     use {
         crate::{
-            admission::AllowAll,
+            allowlist::AllowAll,
             testutils::{
                 clone_keypair, drain_matching, keypair_below, make_runtime, recv_until,
                 send_until_received, spawn_node, spawn_node_with,

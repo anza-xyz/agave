@@ -4,7 +4,7 @@
 use {
     crate::{
         Banlist,
-        admission::Admission,
+        allowlist::Allowlist,
         endpoint::{Datagram, QuicDatagramEndpoint},
     },
     bytes::Bytes,
@@ -40,16 +40,16 @@ pub fn make_runtime() -> Runtime {
         .expect("tokio multi-thread runtime")
 }
 
-/// Spawn an endpoint with `admission` policy and a fresh keypair.
-pub fn spawn_node<A: Admission>(rt: &Runtime, admission: Arc<A>) -> TestNode {
-    spawn_node_with(rt, admission, Keypair::new())
+/// Spawn an endpoint with `allowlist` policy and a fresh keypair.
+pub fn spawn_node<A: Allowlist>(rt: &Runtime, allowlist: Arc<A>) -> TestNode {
+    spawn_node_with(rt, allowlist, Keypair::new())
 }
 
-/// Spawn with caller-supplied keypair (lets the test write a server admit-set
+/// Spawn with caller-supplied keypair (lets the test write a server allowlist
 /// keyed on the same pubkey).
-pub fn spawn_node_with<A: Admission>(
+pub fn spawn_node_with<A: Allowlist>(
     rt: &Runtime,
-    admission: Arc<A>,
+    allowlist: Arc<A>,
     keypair: Keypair,
 ) -> TestNode {
     let socket = bind_to_localhost_unique().expect("bind UDP socket");
@@ -62,7 +62,7 @@ pub fn spawn_node_with<A: Admission>(
         socket,
         TEST_ALPN,
         ingress_tx,
-        admission,
+        allowlist,
         banlist.clone(),
     )
     .expect("QuicDatagramEndpoint::new");

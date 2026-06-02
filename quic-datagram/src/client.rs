@@ -3,7 +3,7 @@
 use {
     crate::{
         Banlist,
-        admission::Admission,
+        allowlist::Allowlist,
         close_codes,
         connection_table::{ConnectionTable, IdGeneration, InsertOutcome},
         endpoint::Datagram,
@@ -23,7 +23,7 @@ use {
 /// A client-side connection's full lifecycle: dial, validate identity,
 /// install in the table, run the read loop, reap on exit. Built by the
 /// control loop and dispatched via [`Self::spawn`].
-pub(crate) struct ClientConnection<A: Admission> {
+pub(crate) struct ClientConnection<A: Allowlist> {
     pub(crate) endpoint: Endpoint,
     pub(crate) peer: Pubkey,
     pub(crate) addr: SocketAddr,
@@ -34,13 +34,13 @@ pub(crate) struct ClientConnection<A: Admission> {
     /// reach the peer at all.
     pub(crate) trigger: Bytes,
     pub(crate) ingress: Sender<Datagram>,
-    pub(crate) admission: Arc<A>,
+    pub(crate) allowlist: Arc<A>,
     pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) table: Arc<ConnectionTable>,
     pub(crate) stats: Arc<QuicDatagramStats>,
 }
 
-impl<A: Admission> ClientConnection<A> {
+impl<A: Allowlist> ClientConnection<A> {
     /// Spawn a tokio task that drives this connection to completion.
     /// Returns immediately; the task logs and records any error before
     /// exiting.
@@ -81,7 +81,7 @@ impl<A: Admission> ClientConnection<A> {
                 self.peer,
                 connection.clone(),
                 id_generation,
-                |pk| self.admission.allow(pk),
+                |pk| self.allowlist.allow(pk),
                 &self.stats,
             ) {
                 InsertOutcome::Rejected => {

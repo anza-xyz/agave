@@ -3,7 +3,7 @@
 A QUIC-datagram transport designed for Solana's votor consensus traffic.
 Single [`quinn::Endpoint`] per node bound to one UDP socket, playing both
 client and server roles. Peer identity is the ed25519 pubkey embedded in
-a self-signed TLS cert; admission is gated by an `Admission` trait.
+a self-signed TLS cert; connections are gated by an `Allowlist` trait.
 Bidirectional and unidirectional streams are disabled at the transport
 level - only QUIC datagrams flow.
 
@@ -52,7 +52,7 @@ enum ConnectionTableEntry {
 ```
 
 This is needed to avoid having more than one connection to a given peer.
-The server-accept pipeline (TLS, identity validation, admission) lives
+The server-accept pipeline (TLS, identity validation, allowlist check) lives
 entirely in the spawned per-incoming task and only touches the table at
 the end via `insert_connection`. There's no useful in-flight server-side
 state worth modeling in the table.
@@ -136,8 +136,8 @@ accepted, addr argument ignored on cache hit.
    recoverable Solana ed25519 pubkey; client checks the attested pubkey
    matches the targeted one, server checks that client owns a staked
    identity.
-4. **Stake check** (`Admission` trait, default impl
-   `StakedNodesAdmission`). Peer must be in the current staked-set
+4. **Stake check** (`Allowlist` trait, default impl
+   `StakedNodesAllowlist`). Peer must be in the current staked-set
    snapshot.
 5. **External banlist** (`DatagramBanlist`). Application-level bans
    (e.g., BLS sigverify failures) are funneled through here; the
@@ -188,12 +188,12 @@ under the cap.
 
 ### Epoch boundary handling
 
-At the end of an epoch, we may experience churn in the admission control
-policy. Some peers will not be admissible anymore, while some new will be
-allowed in. We do not proactively break connections to peers which are not
-admitted anymore, instead they are evicted when we are inserting a new
-connection while out of room in the connection table. This keeps the logic
-simpler than the explicit notify during epoch change.
+At the end of an epoch, we may experience churn in the allowlist.
+Some peers will no longer be allowed, while some new ones will be
+admitted. We do not proactively break connections to peers which are
+no longer in the allowlist; instead they are evicted when we are
+inserting a new connection while out of room in the connection table.
+This keeps the logic simpler than the explicit notify during epoch change.
 
 ## What this crate is not
 

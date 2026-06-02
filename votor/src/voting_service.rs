@@ -122,7 +122,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
         egress: mpsc::Sender<Datagram>,
-        admission: Option<Arc<solana_quic_datagram::StakedNodesAdmission>>,
+        allowlist: Option<Arc<solana_quic_datagram::StakedNodesAllowlist>>,
         bank_forks: Arc<RwLock<BankForks>>,
         test_override: Option<VotingServiceOverride>,
     ) -> Self {
@@ -137,7 +137,7 @@ impl VotingService {
         // Additional-listener pubkeys are test-only sniffers / probes —
         // they aren't in the staked-nodes set but we still want to dial
         // them from this validator's client side. Union them into the
-        // admission set via the cache.
+        // allowlist via the cache.
         let extra_admit: HashSet<Pubkey> = additional_listeners.iter().map(|l| l.pubkey).collect();
 
         let thread_hdl = Builder::new()
@@ -149,7 +149,7 @@ impl VotingService {
                     STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET,
                     false,
                     alpenglow_port_override,
-                    admission,
+                    allowlist,
                     extra_admit,
                 );
 
@@ -321,10 +321,10 @@ mod tests {
     }
 
     /// Spin up an in-process quic-datagram endpoint with the given keypair
-    /// and admission. Returns (endpoint, ingress_rx, bound_addr, runtime).
-    fn spawn_endpoint<A: solana_quic_datagram::Admission>(
+    /// and allowlist. Returns (endpoint, ingress_rx, bound_addr, runtime).
+    fn spawn_endpoint<A: solana_quic_datagram::Allowlist>(
         keypair: Keypair,
-        admission: Arc<A>,
+        allowlist: Arc<A>,
     ) -> (
         QuicDatagramEndpoint,
         crossbeam_channel::Receiver<solana_quic_datagram::endpoint::Datagram>,
@@ -344,7 +344,7 @@ mod tests {
             &keypair,
             socket,
             ingress_tx,
-            admission,
+            allowlist,
             banlist,
         )
         .expect("datagram_endpoint::spawn");
@@ -380,7 +380,7 @@ mod tests {
                 Arc::new(cluster_info),
                 Arc::new(NullVoteHistoryStorage::default()),
                 egress,
-                None, // no admission gating in this unit test
+                None, // no allowlist gating in this unit test
                 bank_forks,
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],
@@ -420,19 +420,19 @@ mod tests {
 
         // Listener identity is generated first; the client (lower pubkey)
         // then dials it per the lex-pubkey direction rule. Use AllowAll
-        // admission for both ends — the test is exercising the egress
-        // path, not the admission policy.
+        // allowlist for both ends — the test is exercising the egress
+        // path, not the allowlist policy.
         let listener_kp = Keypair::new();
         let listener_pubkey = listener_kp.pubkey();
         let client_kp = keypair_below(&listener_pubkey);
         let (endpoint, ingress_rx, listener_addr, _rt) = spawn_endpoint(
             listener_kp,
-            Arc::new(solana_quic_datagram::admission::AllowAll),
+            Arc::new(solana_quic_datagram::allowlist::AllowAll),
         );
 
         let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) = spawn_endpoint(
             client_kp,
-            Arc::new(solana_quic_datagram::admission::AllowAll),
+            Arc::new(solana_quic_datagram::allowlist::AllowAll),
         );
         let egress = client_endpoint.egress.clone();
 

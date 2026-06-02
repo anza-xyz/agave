@@ -14,7 +14,7 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_quic_datagram::{
-        Admission, Banlist, Error, StakedNodesAdmission,
+        Allowlist, Banlist, Error, StakedNodesAllowlist,
         endpoint::{Datagram, QuicDatagramEndpoint},
     },
     solana_runtime::bank_forks::BankForks,
@@ -31,7 +31,7 @@ use {
 pub const ALPENGLOW_ALPN: &[u8] = b"alpenglow-v1";
 
 /// Construct a [`QuicDatagramEndpoint`] tuned for alpenglow consensus
-/// traffic. Caller owns admission, banlist, ingress and the banlist
+/// traffic. Caller owns allowlist, banlist, ingress and the banlist
 /// eviction receiver; the returned endpoint owns its control loop task.
 ///
 /// **Identity rotation** — register `endpoint.key_updater.clone()` with
@@ -41,12 +41,12 @@ pub const ALPENGLOW_ALPN: &[u8] = b"alpenglow-v1";
 /// the new identity. The primary observes its connections replaced with
 /// `HANDOVER` closes and soft-bans those peers to avoid double-voting.
 #[allow(clippy::too_many_arguments)]
-pub fn spawn<A: Admission>(
+pub fn spawn<A: Allowlist>(
     runtime: &tokio::runtime::Handle,
     keypair: &Keypair,
     socket: UdpSocket,
     ingress: Sender<Datagram>,
-    admission: Arc<A>,
+    allowlist: Arc<A>,
     banlist: Arc<Banlist<Pubkey>>,
 ) -> Result<QuicDatagramEndpoint, Error> {
     QuicDatagramEndpoint::new(
@@ -55,14 +55,14 @@ pub fn spawn<A: Admission>(
         socket,
         ALPENGLOW_ALPN,
         ingress,
-        admission,
+        allowlist,
         banlist,
     )
 }
 
-/// Build the admission map (pubkey → epoch stake) for validators with
+/// Build the allowlist map (pubkey → epoch stake) for validators with
 /// positive stake in the working bank's current epoch. This is the
-/// canonical admission set; callers seed `StakedNodesAdmission` from
+/// canonical allowlist; callers seed `StakedNodesAllowlist` from
 /// this at construction and then drive subsequent epoch-boundary
 /// refreshes from [`crate::staked_validators_cache::StakedValidatorsCache`].
 pub fn current_admit_set(bank_forks: &Arc<RwLock<BankForks>>) -> HashMap<Pubkey, u64> {
@@ -78,10 +78,10 @@ pub fn current_admit_set(bank_forks: &Arc<RwLock<BankForks>>) -> HashMap<Pubkey,
         .unwrap_or_default()
 }
 
-/// Build a fresh [`StakedNodesAdmission`] seeded with the current
+/// Build a fresh [`StakedNodesAllowlist`] seeded with the current
 /// epoch's staked-set. Hand the returned Arc both to
 /// [`spawn`] and to the [`StakedValidatorsCache`] that voting_service
 /// owns — the cache will call `.swap()` on epoch transitions.
-pub fn build_admission(bank_forks: &Arc<RwLock<BankForks>>) -> Arc<StakedNodesAdmission> {
-    Arc::new(StakedNodesAdmission::new(current_admit_set(bank_forks)))
+pub fn build_allowlist(bank_forks: &Arc<RwLock<BankForks>>) -> Arc<StakedNodesAllowlist> {
+    Arc::new(StakedNodesAllowlist::new(current_admit_set(bank_forks)))
 }

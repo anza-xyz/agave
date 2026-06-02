@@ -1,4 +1,4 @@
-//! Admission policy: decides whether the local endpoint will accept
+//! Allowlist policy: decides whether the local endpoint will accept
 //! a TLS-attested peer pubkey.
 
 use {
@@ -13,35 +13,35 @@ use {
 ///
 /// Implementations must be cheap - this is on the hot path of every new
 /// connection.
-pub trait Admission: Send + Sync + 'static {
+pub trait Allowlist: Send + Sync + 'static {
     fn allow(&self, peer: &Pubkey) -> bool;
 }
 
-/// Snapshot of the currently-admitted peer set with their epoch stake.
+/// Snapshot of the currently-allowed peer set with their epoch stake.
 /// Producers (typically the staked-validators cache) call
-/// [`StakedNodesAdmission::swap`] to publish a new generation; consumers
+/// [`StakedNodesAllowlist::swap`] to publish a new generation; consumers
 /// see it on the next `allow` call.
 ///
 /// Stake values are available for future use (e.g. weighted eviction).
 /// Peers inserted for test-only purposes (e.g. `extra_admit`) carry stake 0.
 #[derive(Default)]
-pub struct StakedNodesAdmission {
+pub struct StakedNodesAllowlist {
     inner: ArcSwap<HashMap<Pubkey, u64>>,
 }
 
-impl StakedNodesAdmission {
+impl StakedNodesAllowlist {
     pub fn new(initial: HashMap<Pubkey, u64>) -> Self {
         Self {
             inner: ArcSwap::new(Arc::new(initial)),
         }
     }
 
-    /// Publish a new admit-set. Atomic; no readers block.
+    /// Publish a new allowlist. Atomic; no readers block.
     pub fn swap(&self, next: HashMap<Pubkey, u64>) {
         self.inner.store(Arc::new(next));
     }
 
-    /// Number of admitted peers in the current generation.
+    /// Number of allowed peers in the current generation.
     pub fn len(&self) -> usize {
         self.inner.load().len()
     }
@@ -51,19 +51,19 @@ impl StakedNodesAdmission {
     }
 }
 
-impl Admission for StakedNodesAdmission {
+impl Allowlist for StakedNodesAllowlist {
     fn allow(&self, peer: &Pubkey) -> bool {
         self.inner.load().contains_key(peer)
     }
 }
 
-/// Admit every peer. **Test/bench use only** - gated behind
+/// Allow every peer. **Test/bench use only** - gated behind
 /// `dev-context-only-utils` so production binaries cannot accidentally use it.
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub struct AllowAll;
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-impl Admission for AllowAll {
+impl Allowlist for AllowAll {
     fn allow(&self, _: &Pubkey) -> bool {
         true
     }

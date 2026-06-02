@@ -182,13 +182,13 @@ pub struct AlpenglowInitializationState {
     // Votor QUIC datagram transport handles. Egress goes to the BLS
     // voting service; ingress feeds the BLS sigverifier; banlist is shared
     // with the sigverifier so external triggers (e.g. signature failure)
-    // can soft-ban peers cluster-wide. `votor_admission` is owned by the
+    // can soft-ban peers cluster-wide. `votor_allowlist` is owned by the
     // voting service's StakedValidatorsCache, which republishes the
     // staked-pubkey set on every epoch boundary.
     pub votor_egress: tokio::sync::mpsc::Sender<solana_quic_datagram::endpoint::Datagram>,
     pub votor_ingress: Receiver<Datagram>,
     pub votor_banlist: Arc<Banlist<Pubkey>>,
-    pub votor_admission: Option<Arc<solana_quic_datagram::StakedNodesAdmission>>,
+    pub votor_allowlist: Option<Arc<solana_quic_datagram::StakedNodesAllowlist>>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
 }
 
@@ -273,7 +273,7 @@ impl Tvu {
             votor_egress,
             votor_ingress,
             votor_banlist,
-            votor_admission,
+            votor_allowlist,
             voting_service_test_override,
             highest_finalized,
         } = votor_init;
@@ -570,7 +570,7 @@ impl Tvu {
             cluster_info.clone(),
             vote_history_storage,
             votor_egress,
-            votor_admission,
+            votor_allowlist,
             bank_forks.clone(),
             voting_service_test_override,
         );
@@ -873,7 +873,7 @@ pub mod tests {
                 votor_egress,
                 votor_ingress,
                 votor_banlist,
-                votor_admission: None,
+                votor_allowlist: None,
                 voting_service_test_override: None,
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,

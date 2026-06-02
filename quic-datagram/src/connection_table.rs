@@ -305,12 +305,12 @@ impl ConnectionTable {
         }
     }
 
-    /// Scan the table for an entry whose peer is no longer admitted by
-    /// `allow` and evict it. Used at insert-cap time to make room for a
-    /// freshly-admitted peer (typically across an epoch boundary where the
+    /// Scan the table for an entry whose peer is no longer in the allowlist
+    /// and evict it. Used at insert-cap time to make room for a
+    /// freshly-allowed peer (typically across an epoch boundary where the
     /// staked-set churn temporarily pushes the union past `MAX_PEERS`).
     /// Closes any displaced `Established` with `NOT_ADMITTED` and bumps
-    /// `connection_evicted_admission`. Returns `true` on a hit. Stops at
+    /// `connection_evicted_allowlist`. Returns `true` on a hit. Stops at
     /// the first eviction - one slot is enough for the caller's retry.
     pub(crate) fn evict_one_unadmitted<F: Fn(&Pubkey) -> bool>(
         &self,
@@ -334,7 +334,7 @@ impl ConnectionTable {
                 close_codes::NOT_ADMITTED.close(&conn);
             }
             stats
-                .connection_evicted_admission
+                .connection_evicted_allowlist
                 .fetch_add(1, Ordering::Relaxed);
             true
         } else {
@@ -425,7 +425,7 @@ mod tests {
         let stats = QuicDatagramStats::default();
         assert!(!table.evict_one_unadmitted(|_| true, &stats));
         assert_eq!(
-            stats.connection_evicted_admission.load(Ordering::Relaxed),
+            stats.connection_evicted_allowlist.load(Ordering::Relaxed),
             0
         );
     }
@@ -437,7 +437,7 @@ mod tests {
         assert!(!table.evict_one_unadmitted(|pk| admitted.contains(pk), &stats));
         assert_eq!(table.inner.len(), 50);
         assert_eq!(
-            stats.connection_evicted_admission.load(Ordering::Relaxed),
+            stats.connection_evicted_allowlist.load(Ordering::Relaxed),
             0
         );
     }
@@ -481,7 +481,7 @@ mod tests {
             );
         }
         assert_eq!(
-            stats.connection_evicted_admission.load(Ordering::Relaxed),
+            stats.connection_evicted_allowlist.load(Ordering::Relaxed),
             N as u64,
             "stat counter must match eviction count"
         );

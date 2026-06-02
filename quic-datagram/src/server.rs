@@ -3,7 +3,7 @@
 use {
     crate::{
         Banlist,
-        admission::Admission,
+        allowlist::Allowlist,
         close_codes,
         connection_table::{ConnectionTable, InsertOutcome},
         endpoint::Datagram,
@@ -20,17 +20,17 @@ use {
 };
 
 /// A server-side connection representation
-pub(crate) struct ServerConnection<A: Admission> {
+pub(crate) struct ServerConnection<A: Allowlist> {
     pub(crate) incoming: Incoming,
     pub(crate) local_pubkey: Pubkey,
     pub(crate) ingress: Sender<Datagram>,
-    pub(crate) admission: Arc<A>,
+    pub(crate) allowlist: Arc<A>,
     pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) table: Arc<ConnectionTable>,
     pub(crate) stats: Arc<QuicDatagramStats>,
 }
 
-impl<A: Admission> ServerConnection<A> {
+impl<A: Allowlist> ServerConnection<A> {
     /// Spawn a tokio task that drives this connection to completion.
     /// Returns immediately; the task logs and records any error before
     /// exiting.
@@ -45,7 +45,7 @@ impl<A: Admission> ServerConnection<A> {
         });
     }
 
-    /// post-RETRY accept, validate identity / banlist / admission,
+    /// post-RETRY accept, validate identity / banlist / allowlist,
     /// install in the table, run the read loop, reap on exit.
     async fn run(self) -> Result<(), Error> {
         // Snapshot the identity generation BEFORE the handshake starts.
@@ -74,7 +74,7 @@ impl<A: Admission> ServerConnection<A> {
             close_codes::BANNED.close(&connection);
             return Err(Error::Banned(peer));
         }
-        if !self.admission.allow(&peer) {
+        if !self.allowlist.allow(&peer) {
             close_codes::NOT_ADMITTED.close(&connection);
             return Err(Error::NotAdmitted(peer));
         }
@@ -86,7 +86,7 @@ impl<A: Admission> ServerConnection<A> {
             peer,
             connection.clone(),
             gen_at_start,
-            |pk| self.admission.allow(pk),
+            |pk| self.allowlist.allow(pk),
             &self.stats,
         ) {
             InsertOutcome::Rejected => {
@@ -123,7 +123,7 @@ impl<A: Admission> ServerConnection<A> {
 mod tests {
     use {
         crate::{
-            admission::{AllowAll, StakedNodesAdmission},
+            allowlist::{AllowAll, StakedNodesAllowlist},
             endpoint::Datagram,
             testutils::{
                 drain_matching, keypair_below, make_runtime, send_until_received, spawn_node_with,
@@ -147,14 +147,14 @@ mod tests {
         let admit_map: HashMap<_, _> = std::iter::once((a_pk, 100u64)).collect();
         let server = spawn_node_with(
             &rt,
-            Arc::new(StakedNodesAdmission::new(admit_map)),
+            Arc::new(StakedNodesAllowlist::new(admit_map)),
             server_kp,
         );
 
         // Client A - admitted (pubkey < server's, so handshake passes lex check).
         let client_a = spawn_node_with(&rt, Arc::new(AllowAll), a_kp);
         // Client B - not admitted. Pick below server so the rejection is by the
-        // admission check, not the lex check.
+        // allowlist check, not the lex check.
         let client_b = spawn_node_with(&rt, Arc::new(AllowAll), keypair_below(&server_pk));
 
         let payload_a = Bytes::from_static(b"hello-from-A");

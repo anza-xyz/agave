@@ -4,7 +4,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
-    solana_quic_datagram::StakedNodesAdmission,
+    solana_quic_datagram::StakedNodesAllowlist,
     solana_runtime::bank_forks::BankForks,
     std::{
         collections::{HashMap, HashSet},
@@ -51,22 +51,22 @@ pub struct StakedValidatorsCache {
     /// timestamp of the last alpenglow port override we read
     alpenglow_port_override_last_modified: Instant,
 
-    /// Admission allow-list for the votor datagram endpoint. The cache
+    /// Allowlist for the votor datagram endpoint. The cache
     /// owns the responsibility for keeping it current: on every refresh
-    /// where the bank's epoch differs from `last_admission_epoch`, the
+    /// where the bank's epoch differs from `last_allowlist_epoch`, the
     /// full staked-pubkey set for that epoch is published via
-    /// [`StakedNodesAdmission::swap`].
+    /// [`StakedNodesAllowlist::swap`].
     ///
     /// `None` ⇒ disabled (used by tests / paths that don't need
-    /// admission gating).
-    admission: Option<Arc<StakedNodesAdmission>>,
-    last_admission_epoch: Option<Epoch>,
+    /// allowlist gating).
+    allowlist: Option<Arc<StakedNodesAllowlist>>,
+    last_allowlist_epoch: Option<Epoch>,
 
-    /// Extra pubkeys that should always be admitted even when not in
+    /// Extra pubkeys that should always be allowed even when not in
     /// the staked-nodes set. Used by tests that add a sniffer / probe
     /// endpoint via [`crate::voting_service::AdditionalListener`] — the
     /// probe is not a real validator and has no stake, but the voting
-    /// service still needs to dial it. Unioned into the admission set
+    /// service still needs to dial it. Unioned into the allowlist
     /// on every refresh so the staked-set swap does not erase it.
     extra_admit: HashSet<Pubkey>,
 }
@@ -79,7 +79,7 @@ impl StakedValidatorsCache {
         target_cache_size: usize,
         include_self: bool,
         alpenglow_port_override: Option<AlpenglowPortOverride>,
-        admission: Option<Arc<StakedNodesAdmission>>,
+        allowlist: Option<Arc<StakedNodesAllowlist>>,
         extra_admit: HashSet<Pubkey>,
     ) -> Self {
         Self {
@@ -89,30 +89,30 @@ impl StakedValidatorsCache {
             include_self,
             alpenglow_port_override,
             alpenglow_port_override_last_modified: Instant::now(),
-            admission,
-            last_admission_epoch: None,
+            allowlist,
+            last_allowlist_epoch: None,
             extra_admit,
         }
     }
 
     /// Publish the current epoch's staked-pubkey map (union'd with
-    /// `extra_admit`) to the admission allow-list if (a) we hold an
-    /// admission handle and (b) the epoch has advanced since the last
+    /// `extra_admit`) to the allowlist if (a) we hold an
+    /// allowlist handle and (b) the epoch has advanced since the last
     /// publication. Stakes are stable within an epoch — calling this
     /// multiple times per epoch is a no-op after the first call.
-    fn maybe_refresh_admission(&mut self, epoch: Epoch) {
-        let Some(admission) = self.admission.as_ref() else {
+    fn maybe_refresh_allowlist(&mut self, epoch: Epoch) {
+        let Some(allowlist) = self.allowlist.as_ref() else {
             return;
         };
-        if self.last_admission_epoch == Some(epoch) {
+        if self.last_allowlist_epoch == Some(epoch) {
             return;
         }
         let mut map = datagram_endpoint::current_admit_set(&self.bank_forks);
         // extra_admit entries (test-only probes) carry stake 0 — they are
-        // admitted by key presence, not stake weight.
+        // allowed by key presence, not stake weight.
         map.extend(self.extra_admit.iter().map(|pk| (*pk, 0u64)));
-        admission.swap(map);
-        self.last_admission_epoch = Some(epoch);
+        allowlist.swap(map);
+        self.last_allowlist_epoch = Some(epoch);
     }
 
     #[inline]
@@ -131,9 +131,9 @@ impl StakedValidatorsCache {
         cluster_info: &ClusterInfo,
         update_time: Instant,
     ) {
-        // Drive the admission allow-list refresh from here — same epoch
+        // Drive the allowlist refresh from here — same epoch
         // signal, same Bank reads. Cheap on same-epoch (early-return).
-        self.maybe_refresh_admission(epoch);
+        self.maybe_refresh_allowlist(epoch);
 
         let banks = {
             let bank_forks = self.bank_forks.read().unwrap();

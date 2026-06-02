@@ -15,7 +15,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_net_utils::sockets::bind_to_localhost_unique,
-    solana_quic_datagram::{admission::AllowAll, endpoint::Datagram},
+    solana_quic_datagram::{allowlist::AllowAll, endpoint::Datagram},
     std::{net::UdpSocket, sync::Arc, time::Duration},
 };
 

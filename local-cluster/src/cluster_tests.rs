@@ -30,7 +30,7 @@ use {
     solana_pubkey::Pubkey,
     solana_quic_datagram::{
         Banlist,
-        admission::AllowAll,
+        allowlist::AllowAll,
         endpoint::{Datagram, QuicDatagramEndpoint},
     },
     solana_rpc_client::rpc_client::RpcClient,

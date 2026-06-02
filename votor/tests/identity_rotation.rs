@@ -14,7 +14,7 @@
 //! backup running with a throwaway keypair gets promoted by being
 //! handed the staked keypair already in use by the primary. After
 //! rotation:
-//!   - The new pubkey is already in every peer's admission set (it
+//!   - The new pubkey is already in every peer's allowlist (it
 //!     was staked the whole time — it's the primary's identity).
 //!   - Peers observe a second connection from the same staked pubkey
 //!     and replace the primary's connection via HANDOVER.
@@ -22,7 +22,7 @@
 //!     peers so it doesn't redial and disrupt consensus.
 //!
 //! This test uses two arbitrary keypairs (K1 → K2) with `AllowAll`
-//! admission on the server side; that exercises the rotation
+//! AllowAll allowlist on the server side; that exercises the rotation
 //! mechanics in isolation without modeling the staked-set realities
 //! of a real cluster.
 
@@ -34,7 +34,7 @@ use {
     solana_net_utils::sockets::bind_to_localhost_unique,
     solana_pubkey::Pubkey,
     solana_quic_datagram::{
-        Banlist, StakedNodesAdmission, admission::AllowAll, endpoint::Datagram,
+        Banlist, StakedNodesAllowlist, allowlist::AllowAll, endpoint::Datagram,
     },
     solana_tls_utils::NotifyKeyUpdate,
     std::{
@@ -96,8 +96,8 @@ fn send_until_received<T>(
 fn identity_rotation_via_votor_wrapper() {
     let rt = Runtime::new().expect("tokio runtime");
 
-    // Server endpoint with AllowAll admission so any client pubkey is
-    // accepted — we're testing the rotation path, not admission.
+    // Server endpoint with AllowAll allowlist so any client pubkey is
+    // accepted — we're testing the rotation path, not the allowlist.
     let server_kp = Keypair::new();
     let server_pubkey = server_kp.pubkey();
     let server_socket = bind_to_localhost_unique().expect("server bind");
@@ -121,8 +121,8 @@ fn identity_rotation_via_votor_wrapper() {
     let client_socket = bind_to_localhost_unique().expect("client bind");
     let (client_ingress_tx, _client_ingress_rx) = crossbeam_channel::bounded(4096);
     let client_banlist = Arc::new(Banlist::<Pubkey>::default());
-    // Client admission must include server_pubkey so its dial-side
-    // admission check passes. Use a StakedNodesAdmission populated
+    // Client allowlist must include server_pubkey so its dial-side
+    // allowlist check passes. Use a StakedNodesAllowlist populated
     // with the server's pubkey (mirrors how the cache would seed it
     // from BankForks's staked_nodes).
     let admit: HashMap<_, _> = std::iter::once((server_pubkey, 100u64)).collect();
@@ -131,7 +131,7 @@ fn identity_rotation_via_votor_wrapper() {
         &k1,
         client_socket,
         client_ingress_tx,
-        Arc::new(StakedNodesAdmission::new(admit)),
+        Arc::new(StakedNodesAllowlist::new(admit)),
         client_banlist,
     )
     .expect("client endpoint");

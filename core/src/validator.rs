@@ -1218,7 +1218,7 @@ impl Validator {
         } else {
             None
         };
-        let (votor_egress, votor_ingress, votor_banlist, votor_admission, _alpenglow_endpoint_task) =
+        let (votor_egress, votor_ingress, votor_banlist, votor_allowlist, _alpenglow_endpoint_task) =
             if let Some(socket) = alpenglow_socket {
                 let votor_rt_handle = tpu_client_next_runtime
                     .as_ref()
@@ -1227,12 +1227,12 @@ impl Validator {
                 let (ingress_tx, ingress_rx) =
                     crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
                 let banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
-                // Seed admission synchronously with the current epoch's
+                // Seed allowlist synchronously with the current epoch's
                 // staked-set so the endpoint never accepts handshakes
                 // against an empty allow-list. The StakedValidatorsCache
                 // owned by the voting service re-publishes on every epoch
                 // boundary going forward.
-                let admission = agave_votor::datagram_endpoint::build_admission(&bank_forks);
+                let allowlist = agave_votor::datagram_endpoint::build_allowlist(&bank_forks);
                 let solana_quic_datagram::QuicDatagramEndpoint {
                     endpoint: _quic_endpoint,
                     egress,
@@ -1243,7 +1243,7 @@ impl Validator {
                     &identity_keypair,
                     socket,
                     ingress_tx,
-                    admission.clone(),
+                    allowlist.clone(),
                     banlist.clone(),
                 )
                 .map_err(|e| ValidatorError::Other(format!("alpenglow endpoint: {e:?}")))?;
@@ -1251,7 +1251,7 @@ impl Validator {
                     .write()
                     .unwrap()
                     .add(KeyUpdaterType::VotorDatagram, key_updater);
-                (egress, ingress_rx, banlist, Some(admission), Some(task))
+                (egress, ingress_rx, banlist, Some(allowlist), Some(task))
             } else {
                 let (egress, _) = tokio::sync::mpsc::channel(1);
                 let (_, ingress) =
@@ -1686,7 +1686,7 @@ impl Validator {
                 votor_egress,
                 votor_ingress,
                 votor_banlist,
-                votor_admission,
+                votor_allowlist,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },

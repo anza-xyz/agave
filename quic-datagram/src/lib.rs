@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![cfg(feature = "agave-unstable-api")]
 
-pub mod admission;
+pub mod allowlist;
 pub mod error;
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -20,7 +20,7 @@ pub(crate) mod transport;
 
 use std::time::Duration;
 pub use {
-    admission::{Admission, StakedNodesAdmission},
+    allowlist::{Allowlist, StakedNodesAllowlist},
     endpoint::QuicDatagramEndpoint,
     error::Error,
     key_updater::KeyUpdater,

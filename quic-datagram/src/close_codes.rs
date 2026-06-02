@@ -37,7 +37,7 @@ pub(crate) const INVALID_IDENTITY: Spec = Spec {
     reason: b"INVALID_IDENTITY",
 };
 
-/// Peer's pubkey is not in the local [`crate::Admission`] allow-list
+/// Peer's pubkey is not in the local [`crate::Allowlist`] allow-list
 /// (typically: not in the current staked-nodes snapshot).
 pub(crate) const NOT_ADMITTED: Spec = Spec {
     code: VarInt::from_u32(3),

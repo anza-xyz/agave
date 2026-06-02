@@ -1,6 +1,6 @@
 [package]
 name = "solana-quic-datagram"
-description = "QUIC datagram endpoint with staked-only admission for Solana consensus traffic"
+description = "QUIC datagram endpoint with staked-only allowlist for Solana consensus traffic"
 documentation = "https://docs.rs/solana-quic-datagram"
 version = { workspace = true }
 authors = { workspace = true }
@@ -13,7 +13,7 @@ publish = false
 [lib]
 
 [features]
-# Exposes admission::AllowAll and other test-only helpers. Production binaries
+# Exposes allowlist::AllowAll and other test-only helpers. Production binaries
 # must NOT enable this feature.
 dev-context-only-utils = []
 agave-unstable-api = []
