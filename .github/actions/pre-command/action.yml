@@ -1,0 +1,66 @@
+name: pre-command
+description: >-
+  GitHub Actions equivalent of the Buildkite pre-command hook
+  (.buildkite/hooks/pre-command) plus the normalized CI_* vars from ci/env.sh.
+  Exports them to $GITHUB_ENV so later steps and ci/docker-run*.sh see them.
+  Run this after actions/checkout.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -e
+
+        # Ensure the pattern "+++ ..." never occurs when `set -x` is set.
+        export PS4="++"
+
+        # Normalized CI_* variables (ci/env.sh has a GitHub Actions branch).
+        # It's meant to be sourced (no shebang / not executable), so don't exec it.
+        # shellcheck disable=SC1091
+        source ci/env.sh >/dev/null
+
+        eval "$(ci/channel-info.sh)"
+
+        # Toolchain versions only. NO_INSTALL makes rust-version.sh return right
+        # after exporting rust_stable/rust_nightly, so it never runs rustup install.
+        # shellcheck disable=SC1091
+        NO_INSTALL=1 source ci/rust-version.sh
+
+        HOST_RUST_VERSION="$rust_stable"
+        pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+        if [[ ${HOST_RUST_VERSION} =~ ${pattern} ]]; then
+          HOST_RUST_VERSION="${rust_stable%.*}"
+        fi
+
+        # ci/platform-tools-info.sh is intentionally NOT run: it invokes
+        # `cargo-build-sbf --version`, which downloads platform-tools. The sccache
+        # key prefix therefore omits PLATFORM_TOOLS_VERSION.
+        SCCACHE_KEY_PREFIX="${rust_stable}_${rust_nightly}"
+
+        {
+          echo "PS4=++"
+
+          echo "CI=$CI"
+          echo "CI_BRANCH=$CI_BRANCH"
+          echo "CI_BASE_BRANCH=$CI_BASE_BRANCH"
+          echo "CI_BUILD_ID=$CI_BUILD_ID"
+          echo "CI_COMMIT=$CI_COMMIT"
+          echo "CI_JOB_ID=$CI_JOB_ID"
+          echo "CI_PULL_REQUEST=$CI_PULL_REQUEST"
+          echo "CI_REPO_SLUG=$CI_REPO_SLUG"
+          echo "CI_TAG=$CI_TAG"
+
+          echo "EDGE_CHANNEL=$EDGE_CHANNEL"
+          echo "BETA_CHANNEL=$BETA_CHANNEL"
+          echo "BETA_CHANNEL_LATEST_TAG=$BETA_CHANNEL_LATEST_TAG"
+          echo "STABLE_CHANNEL=$STABLE_CHANNEL"
+          echo "STABLE_CHANNEL_LATEST_TAG=$STABLE_CHANNEL_LATEST_TAG"
+          echo "CHANNEL=$CHANNEL"
+          echo "CHANNEL_LATEST_TAG=$CHANNEL_LATEST_TAG"
+
+          echo "HOST_RUST_VERSION=$HOST_RUST_VERSION"
+          echo "SCCACHE_KEY_PREFIX=$SCCACHE_KEY_PREFIX"
+          echo "SCCACHE_S3_KEY_PREFIX=$SCCACHE_KEY_PREFIX"
+          echo "SCCACHE_GCS_KEY_PREFIX=$SCCACHE_KEY_PREFIX"
+        } >> "$GITHUB_ENV"
