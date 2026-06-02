@@ -6139,7 +6139,7 @@ impl AccountsDb {
         // last_swept_full_snapshot_slot value must be less than or equal to it.
         assert!(
             self.latest_full_snapshot_slot()
-                .map_or(false, |latest| slot <= latest),
+                .is_some_and(|snapshot_slot| slot <= snapshot_slot),
             "last swept full snapshot slot {slot} cannot be greater than latest full snapshot \
              slot {:?}",
             self.latest_full_snapshot_slot()
