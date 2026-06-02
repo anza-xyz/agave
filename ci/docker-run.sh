@@ -43,6 +43,12 @@ ARGS=(
 
 if [[ -n $CI ]]; then
   if [[ -n $BUILDKITE ]]; then
+    ARGS+=(
+      --env BUILDKITE
+      --env BUILDKITE_AGENT_ACCESS_TOKEN
+      --env BUILDKITE_JOB_ID
+    )
+
     # I hate buildkite-esque echo is leaking into this generic shell wrapper.
     # but it's easiest to notify to users, and properly guarded under $BUILDKITE_ env
     # (2 is chosen for third time's the charm).
@@ -112,11 +118,6 @@ fi
 
 # Environment variables to propagate into the container
 ARGS+=(
-  --env BUILDKITE
-  --env BUILDKITE_AGENT_ACCESS_TOKEN
-  --env BUILDKITE_JOB_ID
-  --env BUILDKITE_PARALLEL_JOB
-  --env BUILDKITE_PARALLEL_JOB_COUNT
   --env CI
   --env CI_BRANCH
   --env CI_BASE_BRANCH
