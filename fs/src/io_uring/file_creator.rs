@@ -319,6 +319,9 @@ impl IoUringFileCreator<'_> {
         // accounted for and scheduled on open completion, so the final write must not redo that.
         let size_known_upfront = file_state.size_on_eof.is_some();
         if is_final_write {
+            // Source EOF reached, all writes are now scheduled: the file may be finalized once all
+            // ops complete. Set before any completion check below (e.g. the `write_len == 0` path).
+            file_state.reached_eof = true;
             if !size_known_upfront {
                 // Note: this marker allows file to be finalized once all completions run. It also
                 // drives the up-front `fallocate` of the now-known size.
@@ -827,6 +830,9 @@ struct PendingFile {
     open_file: Option<File>,
     backlog: BacklogVec,
     size_on_eof: Option<FileSize>,
+    /// Set once the final write is scheduled (source EOF reached), gating finalization. Distinct
+    /// from `size_on_eof`, which a known `content_len` sets before any writes are scheduled.
+    reached_eof: bool,
     file_uses_direct_io: bool,
     /// Extra write data populated for direct IO mode if there is non-aligned data at EOF
     non_dio_eof_write: Option<FinalNonDirectIoWrite>,
@@ -849,6 +855,7 @@ impl PendingFile {
             ops_started,
             ops_completed: 0,
             size_on_eof: content_len,
+            reached_eof: false,
             file_uses_direct_io: false,
             non_dio_eof_write: None,
         }
@@ -871,9 +878,12 @@ impl PendingFile {
     /// Return true if all contents to be written for this file are already read
     ///
     /// When this condition is satisfied, all write ops are known (either added to ring,
-    /// stored in `backlog` or in `non_dio_eof_write`)
+    /// stored in `backlog` or in `non_dio_eof_write`).
+    ///
+    /// Note: distinct from `size_on_eof.is_some()`, which a known `content_len` sets up-front
+    /// before the writes are scheduled; finalization must wait for the final write to be seen.
     fn source_fully_read(&self) -> bool {
-        self.size_on_eof.is_some()
+        self.reached_eof
     }
 
     /// Turn off direct IO if file is in this mode
