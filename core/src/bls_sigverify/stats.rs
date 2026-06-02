@@ -304,9 +304,11 @@ pub(super) struct SigVerifyVoteStats {
     pub(super) rewards_sent: u64,
     /// Number of times the channel to rewards was full.
     pub(super) rewards_channel_full: u64,
+    /// How many messages are outstanding on the channel.
+    pub(super) pool_outstanding_msgs: u64,
     /// Number of votes sent successfully over the channel to consensus pool.
     pub(super) pool_sent: u64,
-    /// Number of times the channel to consensus pool was full.
+    /// Number of times the channel to consensus pool was full and we resorted to blocking send.
     pub(super) pool_channel_full: u64,
     /// Number of votes sent successfully over the channel to repair.
     pub(super) repair_sent: u64,
@@ -337,6 +339,7 @@ impl SigVerifyVoteStats {
             rewards_channel_full,
             repair_sent,
             repair_channel_full,
+            pool_outstanding_msgs,
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_votes_stats,
@@ -354,6 +357,7 @@ impl SigVerifyVoteStats {
         self.rewards_channel_full += rewards_channel_full;
         self.repair_sent += repair_sent;
         self.repair_channel_full += repair_channel_full;
+        self.pool_outstanding_msgs += pool_outstanding_msgs;
         self.pool_sent += pool_sent;
         self.pool_channel_full += pool_channel_full;
         self.fn_verify_and_send_votes_stats
@@ -377,6 +381,7 @@ impl SigVerifyVoteStats {
             rewards_channel_full,
             repair_sent,
             repair_channel_full,
+            pool_outstanding_msgs,
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_votes_stats,
@@ -396,6 +401,7 @@ impl SigVerifyVoteStats {
             ("rewards_channel_full", *rewards_channel_full, i64),
             ("repair_sent", *repair_sent, i64),
             ("repair_channel_full", *repair_channel_full, i64),
+            ("pool_outstanding_msgs", *pool_outstanding_msgs, i64),
             ("pool_sent", *pool_sent, i64),
             ("pool_channel_full", *pool_channel_full, i64),
             (
