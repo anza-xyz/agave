@@ -8953,6 +8953,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-time-utils",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
  "solana-turbine",
@@ -8963,7 +8964,9 @@ dependencies = [
  "static_assertions",
  "strum",
  "tempfile",
+ "tokio",
  "tokio-util 0.7.18",
+ "wincode",
 ]
 
 [[package]]
