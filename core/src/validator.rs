@@ -144,7 +144,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, XdpSender as TurbineXdpSender, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
@@ -1560,7 +1560,7 @@ impl Validator {
                 let (transmitter, sender) = xdp_transmit_builder.build();
                 (
                     Some(transmitter),
-                    Some(XdpSender::new(sender.clone(), src_addr)),
+                    Some(TurbineXdpSender::new(sender.clone(), src_addr)),
                     Some((sender, *src_addr.ip())),
                 )
             } else {

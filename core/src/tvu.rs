@@ -77,7 +77,7 @@ use {
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
-    solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
+    solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
         net::UdpSocket,
@@ -143,7 +143,7 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
-    pub turbine_xdp_sender: Option<XdpSender>,
+    pub turbine_xdp_sender: Option<TurbineXdpSender>,
 }
 
 impl Default for TvuConfig {

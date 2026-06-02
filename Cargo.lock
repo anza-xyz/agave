@@ -9039,10 +9039,12 @@ name = "solana-net-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "agave-xdp",
  "anyhow",
  "bincode",
  "bytes",
  "cfg-if 1.0.4",
+ "crossbeam-channel",
  "dashmap",
  "hxdmp",
  "itertools 0.14.0",
@@ -11214,7 +11216,6 @@ dependencies = [
  "agave-logger",
  "agave-votor",
  "agave-votor-messages",
- "agave-xdp",
  "assert_matches",
  "bencher",
  "bs58",
