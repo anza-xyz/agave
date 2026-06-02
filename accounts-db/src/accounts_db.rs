@@ -993,7 +993,7 @@ pub struct AccountsDb {
 
     /// The full snapshot slot we last swept for zero-lamport-single-ref shrink
     /// eligibility.
-    last_swept_full_snapshot_slot: SeqLock<Option<Slot>>,
+    last_swept_full_snapshot_slot: AtomicU64,
 
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
@@ -1160,7 +1160,7 @@ impl AccountsDb {
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
-            last_swept_full_snapshot_slot: SeqLock::new(None),
+            last_swept_full_snapshot_slot: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
         };
 
@@ -1615,8 +1615,8 @@ impl AccountsDb {
         );
 
         // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
-        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and look
-        // for newly shrinkable storages.
+        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and
+        // search for newly shrinkable storages.
         if self
             .latest_full_snapshot_slot_advanced_since_clean
             .swap(false, Ordering::Acquire)
@@ -1632,32 +1632,28 @@ impl AccountsDb {
                         !is_candidate_for_clean
                     });
 
-                if let Some(prev) = self.last_swept_full_snapshot_slot.read() {
-                    let (added_to_shrink_count, sweep_us) =
-                        measure_us!(self.check_shrink_eligibility_after_snapshot(
-                            prev,
-                            latest_full_snapshot_slot
-                        ));
-                    timings.zero_lamport_single_ref_slots_added_to_shrink_count +=
-                        added_to_shrink_count;
-                    timings.zero_lamport_sweep_us += sweep_us;
-                } else {
-                    // First full snapshot we've observed (this will be the snapshot set on boot).
-                    // Initialize the last swept full snapshot slot to this snapshot since we know
-                    // all zero-lamport single ref accounts were checked during index generation
-                    *self.last_swept_full_snapshot_slot.lock_write() =
-                        Some(latest_full_snapshot_slot);
-                }
+                let last_swept_full_snapshot_slot =
+                    self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
+                let (added_to_shrink_count, sweep_us) =
+                    measure_us!(self.check_shrink_eligibility_after_snapshot(
+                        last_swept_full_snapshot_slot,
+                        latest_full_snapshot_slot
+                    ));
+                timings.zero_lamport_single_ref_slots_added_to_shrink_count +=
+                    added_to_shrink_count;
+                timings.zero_lamport_sweep_us += sweep_us;
             }
         }
 
         (candidates, min_dirty_slot)
     }
 
-    /// Loop through slots in `(prev_swept_exclusive, latest_full_snapshot_slot]` and check each
-    /// storage to determine if it is eligible for shrink, since zero-lamport single-ref accounts
-    /// become shrinkable after a full snapshot advances past their slot. Advances the
-    /// `last_swept_full_snapshot_slot` watermark to `latest_full_snapshot_slot` on completion.
+    /// Loop through slots in `(last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
+    /// check each storage to determine if it is eligible for shrink, since zero-lamport single-ref
+    /// accounts become shrinkable after a full snapshot advances past their slot. Advances the
+    /// `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    ///
+    /// Returns the count of storages that were added to the shrink candidates set
     fn check_shrink_eligibility_after_snapshot(
         &self,
         last_swept_full_snapshot_slot: Slot,
@@ -1682,7 +1678,8 @@ impl AccountsDb {
         }
         drop(shrink_candidates);
 
-        *self.last_swept_full_snapshot_slot.lock_write() = Some(latest_full_snapshot_slot);
+        self.last_swept_full_snapshot_slot
+            .store(latest_full_snapshot_slot, Ordering::Relaxed);
         added_to_shrink_count
     }
 
@@ -6134,6 +6131,21 @@ impl AccountsDb {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
         self.latest_full_snapshot_slot_advanced_since_clean
             .store(true, Ordering::Release);
+    }
+
+    /// Marks slots <= slot as already swept for zero-lamport-single-ref shrink eligibility
+    pub fn set_last_swept_full_snapshot_slot(&self, slot: Slot) {
+        // Prior to setting this, the latest full snapshot slot must be set, and
+        // last_swept_full_snapshot_slot value must be less than or equal to it.
+        assert!(
+            self.latest_full_snapshot_slot()
+                .map_or(false, |latest| slot <= latest),
+            "last swept full snapshot slot {slot} cannot be greater than latest full snapshot \
+             slot {:?}",
+            self.latest_full_snapshot_slot()
+        );
+        self.last_swept_full_snapshot_slot
+            .store(slot, Ordering::Relaxed);
     }
 
     fn generate_index_for_slot<'a>(

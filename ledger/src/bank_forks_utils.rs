@@ -267,6 +267,13 @@ pub fn try_load_bank_forks_from_snapshot(
             .accounts
             .accounts_db
             .set_latest_full_snapshot_slot(full_snapshot_archive_info.slot());
+        // Set the last swept slot so the first full snapshot only triggers
+        // cleaning of zero lamport single ref accounts between the previous
+        // full snapshot and the new full snapshot
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_last_swept_full_snapshot_slot(full_snapshot_archive_info.slot());
     } else {
         assert!(
             bank.rc
