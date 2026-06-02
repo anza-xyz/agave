@@ -2,6 +2,7 @@
 
 use {
     core::{alloc::Layout, ptr::null_mut, slice},
+    solana_pubkey::Pubkey,
     solana_transaction_context::{
         instruction::InstructionFrame,
         transaction::TransactionFrame,
@@ -25,6 +26,13 @@ fn set_buffer_length(base_address: u64, new_length: u64) -> u64 {
         let syscall: extern "C" fn(u64, u64, u64, u64, u64) -> u64 =
             core::mem::transmute(0x713026f5u64);
         syscall(base_address as u64, new_length, 0, 0, 0)
+    }
+}
+
+fn assign_owner(account_idx: u64, new_owner: *const Pubkey) {
+    unsafe {
+        let syscall: extern "C" fn(u64, *const Pubkey) = core::mem::transmute(4042720265u64);
+        syscall(account_idx, new_owner);
     }
 }
 
@@ -237,6 +245,41 @@ unsafe fn test_set_buffer_length_account(
     assert_eq!(account_data, expected_data);
 }
 
+unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSharedFields]) {
+    let ix_accounts = ix_ctx.instruction_accounts.deref();
+    let first_account_idx_in_tx = ix_accounts.get_unchecked(0).index_in_transaction as usize;
+    let second_account_idx_in_tx = ix_accounts.get_unchecked(1).index_in_transaction as usize;
+    let debug_str = format!(
+        "lamports: {}",
+        accounts.get_unchecked(first_account_idx_in_tx).lamports
+    );
+    sol_log(debug_str.as_bytes());
+
+    let first_account = accounts.get_unchecked(first_account_idx_in_tx);
+    let new_ower = Pubkey::new_from_array(first_account.payload.deref()[0..32].try_into().unwrap());
+    let write_to_account_afterwards = first_account.payload.deref()[32];
+
+    // Asserting old owner
+    let program_id = accounts
+        .get_unchecked(ix_ctx.program_account_index_in_tx as usize)
+        .key
+        .clone();
+    let second_account = accounts.get_unchecked_mut(second_account_idx_in_tx);
+    assert_eq!(program_id, second_account.owner);
+
+    assign_owner(second_account_idx_in_tx as u64, &new_ower);
+
+    // Checking new owner
+    let second_account = accounts.get_unchecked_mut(second_account_idx_in_tx);
+    assert_eq!(second_account.owner, new_ower);
+
+    // I cannot write to the account after changing its owner
+    // This write should fail
+    if write_to_account_afterwards == 1 {
+        *second_account.payload.deref_mut().get_unchecked_mut(0) = 9;
+    }
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint() -> u64 {
@@ -272,6 +315,7 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
         [0x06, ..] => test_set_buffer_length_account(1, tx_accounts_metadata),
         [0x07, ..] => test_set_buffer_length_account(3, tx_accounts_metadata),
         [0x08, ..] => test_set_buffer_length_account(2, tx_accounts_metadata),
+        [0x09, ..] => test_assign_owner(current_ix, tx_accounts_metadata),
         _ => panic!("unknown command"),
     }
     0

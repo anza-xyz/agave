@@ -45,7 +45,10 @@ use {
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
-    solana_transaction_context::vm_slice::VmSlice,
+    solana_transaction_context::{
+        vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, abiv2_region_index_from_vm_address},
+        vm_slice::VmSlice,
+    },
     std::{
         alloc::Layout,
         mem::{MaybeUninit, align_of, size_of},
@@ -573,6 +576,8 @@ pub fn create_program_runtime_environment(
         "sol_set_buffer_length",
         SyscallSetBufferLength
     )?;
+
+    register_feature_gated_function!(result, enable_abiv2, "sol_assign_owner", SyscallAssignOwner)?;
 
     Ok(ProgramRuntimeEnvironment::from(result))
 }
@@ -2807,6 +2812,64 @@ declare_builtin_function!(
             // operation, early exits out of this function aren't an unsoundness risk at least.
             memory_mapping.replace_region(idx, new_region)?;
         }
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    // Assign account owner for ABIv2
+    SyscallAssignOwner,
+    fn rust(
+        invoke_context: &mut InvokeContext<'_, '_>,
+        account_idx_in_tx: u64,
+        new_owner_ptr: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+    ) -> Result<u64, Error> {
+        let compute_units = invoke_context.get_execution_cost().abi_v2_assign_owner;
+        invoke_context
+            .compute_meter
+            .consume_checked(compute_units)?;
+
+        let is_check_aligned = invoke_context.get_check_aligned();
+        let translated_key = translate_type::<Pubkey>(
+            invoke_context.memory_contexts.memory_mapping()?,
+            new_owner_ptr,
+            is_check_aligned,
+        )?;
+
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()?;
+        let index_in_transaction =
+            u16::try_from(account_idx_in_tx).map_err(|_| InstructionError::MissingAccount)?;
+        let index_in_instruction =
+            instruction_context.get_index_of_account_in_instruction(index_in_transaction)?;
+        let mut borrowed_account =
+            instruction_context.try_borrow_instruction_account(index_in_instruction)?;
+
+        let old_owner = borrowed_account.get_owner();
+
+        // Changing the owner makes the account readonly.
+        if old_owner != translated_key {
+            borrowed_account.set_owner(translated_key.as_ref())?;
+            let account_region_index =
+                abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS)
+                    .saturating_add(account_idx_in_tx as usize);
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+            let mut region = memory_mapping
+                .get_regions()
+                .get(account_region_index)
+                .ok_or(InstructionError::MissingAccount)?
+                .clone();
+            region.writable = false;
+            region.access_violation_handler_payload = None;
+            unsafe {
+                memory_mapping.replace_region(account_region_index, region)?;
+            }
+        }
+
         Ok(0)
     }
 );
@@ -8118,5 +8181,83 @@ mod tests {
             let err = err.downcast::<SyscallError>().unwrap();
             assert_eq!(SyscallError::InvalidPointer, *err);
         }
+    }
+
+    #[test]
+    fn test_sol_assign_owner() {
+        let program_id = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (
+                program_id,
+                AccountSharedData::new(0, 2, &Pubkey::new_unique()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(0, 3, &program_id),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, 0, transaction_accounts);
+
+        let new_owner = Pubkey::new_unique();
+        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        *regions.get_mut(1).unwrap() =
+            MemoryRegion::new(&raw const new_owner.as_array()[..], 1u64 << 32);
+        let account_region_index =
+            abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS)
+                .saturating_add(1);
+        let acc_region = regions.get_mut(account_region_index).unwrap();
+        acc_region.writable = true;
+        acc_region.access_violation_handler_payload = Some(7);
+
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &Config::default(), SBPFVersion::V4).unwrap() };
+
+        invoke_context.compute_meter.mock_set_remaining(20);
+
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![
+                    InstructionAccount::new(0, false, false),
+                    InstructionAccount::new(1, false, true),
+                ],
+                Vec::new(),
+            )
+            .unwrap();
+
+        invoke_context.push().unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v2(memory_mapping);
+
+        // Happy path
+        let result = SyscallAssignOwner::rust(&mut invoke_context, 1, 1u64 << 32, 0, 0, 0);
+        assert!(result.is_ok());
+        {
+            let modified_account = invoke_context
+                .transaction_context
+                .accounts()
+                .try_borrow(1)
+                .unwrap();
+            assert_eq!(modified_account.owner(), &new_owner);
+        }
+        assert!(invoke_context.compute_meter.consume_checked(1).is_err());
+        let acc_region = invoke_context
+            .memory_contexts
+            .memory_mapping()
+            .unwrap()
+            .get_regions()
+            .get(account_region_index)
+            .unwrap();
+        assert!(!acc_region.writable);
+        assert!(acc_region.access_violation_handler_payload.is_none());
+
+        // Invalid u16
+        invoke_context.compute_meter.mock_set_remaining(20);
+        let result =
+            SyscallAssignOwner::rust(&mut invoke_context, u32::MAX as u64, 1u64 << 32, 0, 0, 0);
+        let error = result.unwrap_err().downcast::<InstructionError>().unwrap();
+        assert_eq!(*error, InstructionError::MissingAccount);
     }
 }
