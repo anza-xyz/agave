@@ -1155,14 +1155,14 @@ mod tests {
             acc.increase_calculated_data_size(data_size, &mut error_metrics)
                 .is_ok()
         );
-        assert_eq!(data_size as u32, acc.clone().into());
+        assert_eq!(data_size as u32, u32::from(acc.clone()));
 
         // OK - loaded data size meets limit
         assert!(
             acc.increase_calculated_data_size(1, &mut error_metrics)
                 .is_ok()
         );
-        assert_eq!(requested_data_size_limit, acc.clone().into());
+        assert_eq!(requested_data_size_limit, u32::from(acc.clone()));
 
         // fail - loading more data would exceed limit
         // data size helper reports the limit only
@@ -1170,7 +1170,7 @@ mod tests {
             acc.increase_calculated_data_size(1, &mut error_metrics),
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         );
-        assert_eq!(requested_data_size_limit, acc.into());
+        assert_eq!(requested_data_size_limit, u32::from(acc));
 
         let mut acc = LoadedTransactionDataSize::with_max_size(requested_data_size_limit);
 
@@ -1180,7 +1180,7 @@ mod tests {
             acc.increase_calculated_data_size(u32::MAX as usize + 1, &mut error_metrics),
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         );
-        assert_eq!(requested_data_size_limit, acc.into());
+        assert_eq!(requested_data_size_limit, u32::from(acc));
     }
 
     struct ValidateFeePayerTestParameter {
