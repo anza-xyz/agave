@@ -109,9 +109,20 @@ impl AlpenglowPortOverride {
     }
 }
 
+/// Test-only additional listener: the voting service will fan out every
+/// consensus message to this `(pubkey, addr)` peer alongside the live
+/// staked-validators list. The stream-mode sender only uses `addr`; the
+/// pubkey is carried here so the later datagram path can target authenticated
+/// peers without changing the fanout API again.
+#[derive(Clone, Debug)]
+pub struct AdditionalListener {
+    pub pubkey: Pubkey,
+    pub addr: SocketAddr,
+}
+
 #[derive(Clone)]
 pub struct VotingServiceOverride {
-    pub additional_listeners: Vec<SocketAddr>,
+    pub additional_listeners: Vec<AdditionalListener>,
     pub alpenglow_port_override: AlpenglowPortOverride,
 }
 
@@ -165,7 +176,7 @@ impl VotingService {
         cluster_info: &ClusterInfo,
         message: &ConsensusMessage,
         connection_cache: Arc<ConnectionCache>,
-        additional_listeners: &[SocketAddr],
+        additional_listeners: &[AdditionalListener],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
         let buf = match wincode::serialize(message) {
@@ -180,7 +191,12 @@ impl VotingService {
             .get_staked_validators_by_slot(slot, cluster_info, Instant::now());
         let sockets = additional_listeners
             .iter()
-            .chain(staked_validator_alpenglow_sockets.iter());
+            .map(|listener| &listener.addr)
+            .chain(
+                staked_validator_alpenglow_sockets
+                    .iter()
+                    .map(|(_, socket)| socket),
+            );
 
         // We use send_message in a loop right now because we worry that sending packets too fast
         // will cause a packet spike and overwhelm the network. If we later find out that this is
@@ -197,7 +213,7 @@ impl VotingService {
         vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
         connection_cache: Arc<ConnectionCache>,
-        additional_listeners: &[SocketAddr],
+        additional_listeners: &[AdditionalListener],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
         match bls_op {
@@ -272,17 +288,14 @@ mod tests {
             quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_weighted_qos_server},
             streamer::StakedNodes,
         },
-        std::{
-            net::SocketAddr,
-            sync::{Arc, RwLock},
-        },
+        std::sync::{Arc, RwLock},
         test_case::test_case,
         tokio_util::sync::CancellationToken,
     };
 
     fn create_voting_service(
         bls_receiver: Receiver<BLSOp>,
-        listener: SocketAddr,
+        listener: AdditionalListener,
     ) -> (VotingService, Vec<ValidatorVoteKeypairs>) {
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
@@ -354,9 +367,13 @@ mod tests {
         // Bind to a random UDP port
         let socket = bind_to_localhost_unique().unwrap();
         let listener_addr = socket.local_addr().unwrap();
+        let listener = AdditionalListener {
+            pubkey: Pubkey::new_unique(),
+            addr: listener_addr,
+        };
 
         // Create VotingService with the listener address
-        let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
+        let (_, validator_keypairs) = create_voting_service(bls_receiver, listener);
 
         // Send a BLS message via the VotingService
         assert!(bls_sender.send(bls_op).is_ok());
