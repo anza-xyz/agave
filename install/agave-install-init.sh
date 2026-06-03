@@ -28,14 +28,13 @@ agave-install-init
 initializes a new installation
 
 USAGE:
-    agave-install-init [FLAGS] [OPTIONS] --data_dir <PATH>
+    agave-install-init [FLAGS] [OPTIONS] <release>
 
 FLAGS:
+    -d, --data-dir <PATH>    Directory to store install data
     -h, --help              Prints help information
         --no-modify-path    Don't configure the PATH environment variable
 
-OPTIONS:
-    -d, --data-dir <PATH>    Directory to store install data
 EOF
 }
 

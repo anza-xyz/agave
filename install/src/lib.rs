@@ -94,6 +94,7 @@ pub fn main() -> Result<(), String> {
                         .value_name("release")
                         .index(1)
                         .validator(is_explicit_release)
+                        .required(true)
                         .help("The release version or channel to install"),
                 ),
         )

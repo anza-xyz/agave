@@ -13,7 +13,7 @@ use {
         fs::{self, File},
         io::{self, BufReader, Read},
         path::{Path, PathBuf},
-        time::Duration,
+        time::{Duration, Instant},
     },
     tempfile::TempDir,
     url::Url,
@@ -463,6 +463,8 @@ pub fn init(
         if current_config != config {
             config.save(config_file)?;
         }
+    } else {
+        config.save(config_file)?;
     }
 
     init_or_update(config_file, true, false)?;
@@ -966,6 +968,7 @@ pub fn run(
     }
 
     let mut child_option: Option<std::process::Child> = None;
+    let mut now = Instant::now();
 
     let (signal_sender, signal_receiver) = unbounded();
     ctrlc::set_handler(move || {
@@ -1002,6 +1005,24 @@ pub fn run(
                 }
             }
         };
+
+        if now.elapsed().as_secs() > config.update_poll_secs {
+            match update(config_file, false) {
+                Ok(true) => {
+                    // Update successful, kill current process so it will be restart
+                    if let Some(ref mut child) = child_option {
+                        stop_process(child).unwrap_or_else(|err| {
+                            eprintln!("Failed to stop child: {err:?}");
+                        });
+                    }
+                }
+                Ok(false) => {} // No update available
+                Err(err) => {
+                    eprintln!("Failed to apply update: {err:?}");
+                }
+            };
+            now = Instant::now();
+        }
 
         if let Ok(()) = signal_receiver.recv_timeout(Duration::from_secs(1)) {
             // Handle SIGTERM...

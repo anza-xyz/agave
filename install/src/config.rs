@@ -89,7 +89,7 @@ mod test {
         let config_name = "config.yaml";
         let config_path = format!("{root_dir}/{config_name}");
 
-        let config = Config::new(&root_dir, ExplicitRelease::Channel("".to_string()));
+        let config = Config::new(&root_dir, ExplicitRelease::Channel("stable".to_string()));
 
         assert_eq!(config.save(config_name), Ok(()));
         defer! {
@@ -101,7 +101,7 @@ mod test {
             format!(
                 "---
 update_poll_secs: 3600
-explicit_release: !Channel ''
+explicit_release: !Channel 'stable'
 releases_dir: {root_dir}/releases
 active_release_dir: {root_dir}/active_release
 "
