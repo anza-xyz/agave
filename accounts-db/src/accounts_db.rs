@@ -5007,6 +5007,21 @@ impl AccountsDb {
     ///
     /// Only intended to be called at startup by ledger-tool or tests.
     pub fn calculate_capitalization_at_startup_from_index(&self, ancestors: &Ancestors) -> u64 {
+        let stored_lamports = |pubkey: &Pubkey| {
+            self.accounts_index
+                .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
+                    (!account_info.is_zero_lamport()).then(|| {
+                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                            .get_loaded_account(|loaded_account| loaded_account.lamports())
+                            // SAFETY: The index said this pubkey exists, so
+                            // there must be an account to load.
+                            .unwrap()
+                    })
+                })
+                .flatten()
+                .unwrap_or(0)
+        };
+
         let storage_capitialization = self
             .accounts_index
             .account_maps
@@ -5015,24 +5030,7 @@ impl AccountsDb {
                 accounts_index_bin
                     .keys()
                     .into_iter()
-                    .map(|pubkey| {
-                        self.accounts_index
-                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
-                                (!account_info.is_zero_lamport()).then(|| {
-                                    self.get_account_accessor(
-                                        slot,
-                                        &pubkey,
-                                        &account_info.storage_location(),
-                                    )
-                                    .get_loaded_account(|loaded_account| loaded_account.lamports())
-                                    // SAFETY: The index said this pubkey exists, so
-                                    // there must be an account to load.
-                                    .unwrap()
-                                })
-                            })
-                            .flatten()
-                            .unwrap_or(0)
-                    })
+                    .map(|pubkey| stored_lamports(&pubkey))
                     .try_fold(0, u64::checked_add)
             })
             .try_reduce(|| 0, u64::checked_add)
@@ -5041,7 +5039,7 @@ impl AccountsDb {
         // Sum as i128 because there is potential (although unlikely) for the cache updates to
         // overflow i64::MAX. For example, if the cache has multiple transactions that transfer a
         // large amount of lamports from one account to another, it could sum all of the transfers
-        // from accounts first, overflow i128. Wrapping logic could also  handle this properly (ie.
+        // from accounts first, overflow i128. Wrapping logic could also handle this properly (ie.
         // come to the correct answer), but then detection of overflow would be broken.
         let cached_update = self
             .accounts_cache
@@ -5049,14 +5047,7 @@ impl AccountsDb {
             .iter()
             .map(|pubkey| {
                 // subtract out whatever older version the index walk produced (if any)
-                let stored_lamports = self
-                    .accounts_index
-                    .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
-                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
-                            .get_loaded_account(|loaded_account| loaded_account.lamports())
-                    })
-                    .flatten()
-                    .unwrap_or(0);
+                let stored_lamports = stored_lamports(pubkey);
 
                 // add in the cached amount of lamports
                 let cached_lamports = self
