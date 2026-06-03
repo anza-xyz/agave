@@ -107,7 +107,68 @@ pub struct StoreAccountsFrozenStats {
     pub last_report: AtomicInterval,
     pub flush_read_cache_us: AtomicU64,
     pub write_to_storage_us: AtomicU64,
+    pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
     pub update_index_us: AtomicU64,
+<<<<<<< HEAD
+=======
+    pub num_accounts_stored: AtomicU64,
+    pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
+}
+
+impl StoreAccountsForShrinkStats {
+    const REPORT_INTERVAL_MS: u64 = Duration::from_secs(1).as_millis() as u64;
+
+    pub fn report(&self) {
+        let should_report = self.last_report.should_update(Self::REPORT_INTERVAL_MS);
+        if !should_report {
+            return;
+        }
+
+        datapoint_info!(
+            "accounts_db_store_accounts_for_shrink",
+            (
+                "flush_read_cache_us",
+                self.flush_read_cache_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "write_to_storage_us",
+                self.write_to_storage_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "mark_zero_lamport_single_ref_accounts_us",
+                self.mark_zero_lamport_single_ref_accounts_us
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "update_index_us",
+                self.update_index_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_accounts_stored",
+                self.num_accounts_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_zero_lamport_single_ref_accounts_marked",
+                self.num_zero_lamport_single_ref_accounts_marked
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
+}
+
+/// Stats from storing accounts for flush (i.e. flushing the write cache to a storage file)
+#[derive(Debug, Default)]
+pub struct StoreAccountsForFlushStats {
+    pub last_report: AtomicInterval,
+    pub write_to_storage_us: AtomicU64,
+    pub update_index_us: AtomicU64,
+>>>>>>> dd3bfb3ab (Marks zero lamport single ref accounts in newly shrunk storages (#12912))
     pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
     pub handle_reclaims_us: AtomicU64,
     pub num_accounts_stored: AtomicU64,

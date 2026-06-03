@@ -258,4 +258,8 @@ impl AccountStorageEntry {
     pub(crate) fn obsolete_accounts(&self) -> &RwLock<ObsoleteAccounts> {
         &self.obsolete_accounts
     }
+
+    pub(crate) fn zero_lamport_single_ref_offsets(&self) -> &RwLock<IntSet<Offset>> {
+        &self.zero_lamport_single_ref_offsets
+    }
 }
