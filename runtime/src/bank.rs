@@ -6531,7 +6531,7 @@ impl Bank {
     /// Minimum balance a vote account must hold to survive SIMD-0357 filtering
     /// under the current feature set. When `alpenglow` is active the threshold
     /// also includes one epoch's worth of VAT burn.
-    fn minimum_vote_account_balance_for_vat(&self) -> u64 {
+    pub fn minimum_vote_account_balance_for_vat(&self) -> u64 {
         let vote_account_rent_exempt_minimum = self
             .rent_collector
             .rent
