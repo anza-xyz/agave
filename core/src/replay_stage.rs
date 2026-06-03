@@ -2549,7 +2549,7 @@ impl ReplayStage {
 
             let root_bank = w_bank_forks.root_bank();
             let (slots_to_purge, removed_banks) =
-                w_bank_forks.dump_slots(slots_to_clear.iter(), true);
+                w_bank_forks.dump_slots(slots_to_clear.iter(), false);
             (root_bank, slots_to_purge, removed_banks)
         };
 
