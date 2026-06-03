@@ -35,6 +35,12 @@ fn assign_owner(account_idx: u64, new_owner: *const Pubkey) {
         syscall(account_idx, new_owner);
     }
 }
+fn sol_transfer_lamports(to_account_tx_idx: u64, from_account_tx_idx: u64, lamports: u64) {
+    unsafe {
+        let syscall: extern "C" fn(u64, u64, u64) = core::mem::transmute(410538403u64);
+        syscall(to_account_tx_idx, from_account_tx_idx, lamports);
+    }
+}
 
 #[global_allocator]
 static A: BumpAllocator =
@@ -280,6 +286,35 @@ unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSh
     }
 }
 
+unsafe fn test_sol_transfer_lamports(
+    account_metadata: &mut [AccountSharedFields],
+    ix_frame: &InstructionFrame,
+) {
+    let instruction_accounts = ix_frame.instruction_accounts.deref();
+    let to_account_idx_tx = instruction_accounts.get_unchecked(0).index_in_transaction as usize;
+    let from_account_idx_tx = instruction_accounts.get_unchecked(1).index_in_transaction as usize;
+
+    assert_eq!(
+        account_metadata.get_unchecked(to_account_idx_tx).lamports,
+        10
+    );
+    assert_eq!(
+        account_metadata.get_unchecked(from_account_idx_tx).lamports,
+        40
+    );
+
+    sol_transfer_lamports(to_account_idx_tx as u64, from_account_idx_tx as u64, 10);
+
+    assert_eq!(
+        account_metadata.get_unchecked(to_account_idx_tx).lamports,
+        20
+    );
+    assert_eq!(
+        account_metadata.get_unchecked(from_account_idx_tx).lamports,
+        30
+    );
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint() -> u64 {
@@ -316,6 +351,7 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
         [0x07, ..] => test_set_buffer_length_account(3, tx_accounts_metadata),
         [0x08, ..] => test_set_buffer_length_account(2, tx_accounts_metadata),
         [0x09, ..] => test_assign_owner(current_ix, tx_accounts_metadata),
+        [0x0a, ..] => test_sol_transfer_lamports(tx_accounts_metadata, current_ix),
         _ => panic!("unknown command"),
     }
     0
