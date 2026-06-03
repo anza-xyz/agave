@@ -77,6 +77,9 @@ pub const MIGRATION_SLOT_OFFSET: Slot = 5000;
 #[cfg(feature = "dev-context-only-utils")]
 pub const MIGRATION_SLOT_OFFSET: Slot = 32;
 
+/// A marker for vote accounts' epoch credit to indicate migration from tower to alpenwlow
+pub const AG_MIGRATION_EPOCH_CREDIT: (Epoch, u64, u64) = (Epoch::MAX, u64::MAX, u64::MAX);
+
 /// We match Alpenglow's 20 + 20 model, by allowing a maximum of 20% malicious stake during the migration.
 pub const MIGRATION_MALICIOUS_THRESHOLD: f64 = 20.0 / 100.0;
 

@@ -136,7 +136,7 @@ impl std::fmt::Debug for NotificationEntry {
 fn check_commitment_and_notify<P, S, B, F, X, I>(
     params: &P,
     subscription: &SubscriptionInfo,
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: &RwLock<BankForks>,
     slot: Slot,
     bank_method: B,
     filter_results: F,
@@ -895,7 +895,7 @@ impl RpcSubscriptions {
     fn notify_watchers(
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         subscriptions: &HashMap<SubscriptionId, Arc<SubscriptionInfo>>,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: &RwLock<BankForks>,
         blockstore: &Blockstore,
         commitment_slots: &CommitmentSlots,
         notifier: &RpcNotifier,

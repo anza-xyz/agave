@@ -52,23 +52,34 @@ pub(super) fn send_votes_to_rewards(
     }
 }
 
+/// Sends the `votes` to the consensus pool.  If the channel is full, then does a
+/// blocking send.
 pub(super) fn send_votes_to_pool(
     votes: Vec<ConsensusMessage>,
     channel: &Sender<Vec<ConsensusMessage>>,
     stats: &mut SigVerifyVoteStats,
 ) -> Result<(), SigVerifyVoteError> {
-    let len = votes.len();
-    if len == 0 {
+    if votes.is_empty() {
         return Ok(());
     }
+    let len = votes.len();
     match channel.try_send(votes) {
         Ok(()) => {
             stats.pool_sent += len as u64;
+            stats.pool_outstanding_msgs = channel.len() as u64;
             Ok(())
         }
-        Err(TrySendError::Full(_)) => {
+        Err(TrySendError::Full(msgs)) => {
             stats.pool_channel_full += 1;
-            Ok(())
+            error!("votes channel to consensus pool is full.  Doing a blocking send.");
+            match channel.send(msgs) {
+                Ok(()) => {
+                    info!("votes channel to consensus pool has space again");
+                    stats.pool_sent += len as u64;
+                    Ok(())
+                }
+                Err(_) => Err(SigVerifyVoteError::ConsensusPoolChannelDisconnected),
+            }
         }
         Err(TrySendError::Disconnected(_)) => {
             Err(SigVerifyVoteError::ConsensusPoolChannelDisconnected)
@@ -120,6 +131,7 @@ pub(super) fn send_certs_to_pool(
             match channel_to_pool.send(msgs) {
                 Ok(()) => {
                     info!("certs channel to consensus pool has space again");
+                    stats.pool_sent += len as u64;
                     Ok(())
                 }
                 Err(_) => Err(SigVerifyCertError::ConsensusPoolChannelDisconnected),

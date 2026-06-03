@@ -168,51 +168,179 @@ async fn get_changed_files(pr_number: u64) -> Result<Vec<String>> {
     Ok(changed_files)
 }
 
+struct PullRequestPipelineFlags {
+    shellcheck: bool,
+    checks: bool,
+    feature_check: bool,
+    miri: bool,
+    frozen_abi: bool,
+    stable: bool,
+    local_cluster: bool,
+    docs: bool,
+    localnet: bool,
+    stable_sbf: bool,
+    shuttle: bool,
+    coverage: bool,
+}
+
+impl PullRequestPipelineFlags {
+    fn from_changed_files(changed_files: &[String]) -> Self {
+        let trigger_all = changed_files.iter().any(|file| {
+            file.starts_with("ci/xtask/")
+                || file.ends_with("ci/rust-version.sh")
+                || file.ends_with("rust-toolchain.toml")
+                || file.ends_with("ci/docker-run-default-image.sh")
+                || file.ends_with("ci/docker-run.sh")
+                || file.ends_with("ci/docker/Dockerfile")
+                || file.ends_with("ci/docker/env.sh")
+        });
+
+        let rust_changed = changed_files.iter().any(|file| {
+            file.ends_with("Cargo.toml") || file.ends_with("Cargo.lock") || file.ends_with(".rs")
+        });
+
+        Self {
+            shellcheck: changed_files.iter().any(|file| file.ends_with(".sh")),
+            checks: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/test-checks.sh")
+                        || file.ends_with("scripts/cargo-for-all-lock-files.sh")
+                        || file.ends_with("scripts/check-dev-context-only-utils.sh")
+                        || file.ends_with("scripts/agave-build-lists.sh")
+                        || file.ends_with("ci/order-crates-for-publishing.py")
+                        || file.ends_with("scripts/cargo-clippy.sh")
+                        || file.ends_with("ci/do-audit.sh")
+                        || file.ends_with("ci/check-install-all.sh")
+                        || file.ends_with("scripts/spl-token-cli-version.sh")
+                        || file.ends_with("scripts/cargo-build-sbf-version.sh")
+                }),
+            feature_check: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.starts_with("ci/feature-check/")),
+            miri: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.ends_with("ci/test-miri.sh")),
+            frozen_abi: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.ends_with("ci/test-frozen-abi.sh")),
+            stable: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/stable/run-partition.sh")
+                        || file.ends_with("ci/stable/common.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                        || file.ends_with("ci/common/limit-threads.sh")
+                }),
+            local_cluster: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/stable/run-local-cluster-partially.sh")
+                        || file.ends_with("ci/stable/common.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                }),
+            docs: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/test-docs.sh")
+                        || file.ends_with("ci/test-stable.sh")
+                        || file.ends_with("scripts/ulimit-n.sh")
+                        || file.ends_with("ci/common/limit-threads.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                }),
+            localnet: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/stable/run-localnet.sh")
+                        || file.ends_with("ci/localnet-sanity.sh")
+                        || file.ends_with("ci/run-sanity.sh")
+                        || file.ends_with("scripts/wallet-sanity.sh")
+                        || file.ends_with("ci/upload-ci-artifact.sh")
+                        || file.ends_with("scripts/configure-metrics.sh")
+                        || file.ends_with("scripts/run.sh")
+                }),
+            stable_sbf: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/test-stable-sbf.sh")
+                        || file.ends_with("ci/test-stable.sh")
+                        || file.ends_with("scripts/ulimit-n.sh")
+                        || file.ends_with("ci/common/limit-threads.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                        || file.ends_with("programs/sbf/install.sh")
+                }),
+            shuttle: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.ends_with("ci/test-shuttle.sh")),
+            coverage: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("scripts/coverage.sh")
+                        || file.ends_with("ci/test-coverage.sh")
+                        || file.starts_with("ci/coverage/")
+                }),
+        }
+    }
+}
+
 pub async fn generate_pull_request_pipeline(pr_number: u64) -> Result<buildkite::Pipeline> {
     let changed_files = get_changed_files(pr_number).await?;
+    let flags = PullRequestPipelineFlags::from_changed_files(&changed_files);
 
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    if changed_files.iter().any(|file| file.ends_with(".sh")) {
+    if flags.shellcheck {
         pipeline.add_step(default_shellcheck_step());
     }
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    let rust_changed = changed_files.iter().any(|file| {
-        file.ends_with("Cargo.toml")
-            || file.ends_with("Cargo.lock")
-            || file.ends_with(".rs")
-            || file.ends_with("rust-toolchain.toml")
-            || file.ends_with("ci/rust-version.sh")
-            || file.ends_with("ci/docker/Dockerfile")
-    });
-    let coverage_scripts_changed = changed_files.iter().any(|file| {
-        file.ends_with("scripts/coverage.sh")
-            || file.ends_with("ci/test-coverage.sh")
-            || file.starts_with("ci/coverage/")
-    });
-
-    if rust_changed {
+    if flags.checks {
         pipeline.add_step(default_checks_step());
+    }
+    if flags.feature_check {
         pipeline.add_step(default_feature_check_step(5));
+    }
+    if flags.miri {
         pipeline.add_step(default_miri_step());
+    }
+    if flags.frozen_abi {
         pipeline.add_step(default_frozen_abi_step());
+    }
 
-        pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
+    if flags.stable {
         pipeline.add_step(default_stable_step(3));
+    }
+    if flags.local_cluster {
         pipeline.add_step(default_local_cluster_step(10));
+    }
+    if flags.docs {
         pipeline.add_step(default_docs_check_step());
+    }
+    if flags.localnet {
         pipeline.add_step(default_localnet_step());
+    }
 
-        pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
+    if flags.stable_sbf {
         pipeline.add_step(default_stable_sbf_step());
+    }
+    if flags.shuttle {
         pipeline.add_step(default_shuttle_step());
-        pipeline.add_step(default_coverage_step(3));
-    } else if coverage_scripts_changed {
+    }
+    if flags.coverage {
         pipeline.add_step(default_coverage_step(3));
     }
 

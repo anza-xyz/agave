@@ -1356,7 +1356,7 @@ impl Validator {
 
             let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history {
                 Some(SamplePerformanceService::new(
-                    &bank_forks,
+                    bank_forks.clone(),
                     blockstore.clone(),
                     exit.clone(),
                 ))
@@ -1579,7 +1579,7 @@ impl Validator {
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
-            &bank_forks,
+            bank_forks.clone(),
             &cluster_info,
             TvuSockets {
                 repair: node.sockets.repair.try_clone().unwrap(),
@@ -2030,23 +2030,24 @@ pub fn should_require_vote_history_file(
 
 fn restore_vote_history(
     config: &ValidatorConfig,
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: &RwLock<BankForks>,
     identity: &Pubkey,
     vote_account: &Pubkey,
-) -> VoteHistory {
+) -> Result<VoteHistory, String> {
     match VoteHistory::restore(config.vote_history_storage.as_ref(), identity) {
-        Ok(vote_history) => vote_history,
+        Ok(vote_history) => Ok(vote_history),
         Err(err) => {
             let should_require_vote_history = {
                 let bank_forks = bank_forks.read().unwrap();
                 should_require_vote_history_file(&bank_forks.working_bank(), vote_account, identity)
             };
             if config.require_vote_history && should_require_vote_history {
-                panic!(
+                return Err(format!(
                     "Unable to retrieve vote history for identity {identity}. The vote account \
                      {vote_account} has prior Alpenglow votes. If this is intentional, use \
                      --do-not-require-vote-history: {err:?}"
-                );
+                )
+                .to_string());
             }
             if err.is_file_missing() && !should_require_vote_history {
                 info!(
@@ -2056,7 +2057,7 @@ fn restore_vote_history(
             } else {
                 warn!("Unable to retrieve vote history: {err:?} creating default vote history...");
             }
-            VoteHistory::new(*identity, 0)
+            Ok(VoteHistory::new(*identity, 0))
         }
     }
 }
@@ -2561,7 +2562,7 @@ impl<'a> ProcessBlockStore<'a> {
         // Load and post process vote history
         let vote_history = {
             let vote_history =
-                restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account);
+                restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account)?;
             // reconciliation attempt 1 of 2 with vote history
             reconcile_blockstore_roots_with_external_source(
                 ExternalRootSource::VoteHistory(vote_history.root()),

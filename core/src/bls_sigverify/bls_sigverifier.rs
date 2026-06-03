@@ -655,16 +655,33 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg1)))
             .unwrap();
+
+        // The cap-1 channel is now full.  The second send hits Full and falls
+        // back to a blocking send (see `send_votes_to_pool`); drain in a
+        // background thread so the blocking send can complete.
+        let pool_receiver = ctx.pool_receiver.clone();
+        let drain = std::thread::spawn(move || {
+            let m1 = pool_receiver.recv().expect("recv msg1");
+            let m2 = pool_receiver.recv().expect("recv msg2");
+            // No leftover messages on the channel after both deliveries.
+            assert!(matches!(
+                pool_receiver.try_recv(),
+                Err(crossbeam_channel::TryRecvError::Empty)
+            ));
+            (m1, m2)
+        });
+
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&[msg2]))
+            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg2)))
             .unwrap();
 
-        // We failed to send the second message because the channel is full.
-        let msgs = ctx.pool_receiver.try_iter().flatten().collect::<Vec<_>>();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs, vec![msg1]);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_channel_full, 1);
+        let (m1_recv, m2_recv) = drain.join().expect("drain joined");
+        // Both messages were eventually delivered (no silent drop).
+        assert_eq!(m1_recv, vec![msg1]);
+        assert_eq!(m2_recv, vec![msg2]);
+        // pool_sent counts every message that made it onto the channel,
+        // whether via try_send or the blocking fallback.
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 2);
     }
 
     #[test]

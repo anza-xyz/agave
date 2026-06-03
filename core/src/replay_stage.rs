@@ -1783,7 +1783,7 @@ impl ReplayStage {
         tower_storage: &dyn TowerStorage,
         node_pubkey: &Pubkey,
         vote_account: &Pubkey,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: &RwLock<BankForks>,
     ) -> Result<Tower, TowerError> {
         let tower = Tower::restore(tower_storage, node_pubkey).and_then(|restored_tower| {
             let root_bank = bank_forks.read().unwrap().root_bank();
@@ -2826,7 +2826,7 @@ impl ReplayStage {
     #[allow(clippy::too_many_arguments)]
     fn maybe_start_leader(
         my_pubkey: &Pubkey,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: &RwLock<BankForks>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         poh_controller: &mut PohController,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
@@ -3006,7 +3006,7 @@ impl ReplayStage {
     fn handle_votable_bank(
         bank: &Arc<Bank>,
         switch_fork_decision: &SwitchForkDecision,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: &RwLock<BankForks>,
         tower: &mut Tower,
         progress: &mut ProgressMap,
         vote_account_pubkey: &Pubkey,
@@ -5313,7 +5313,7 @@ impl ReplayStage {
 
     fn log_heaviest_fork_failures(
         heaviest_fork_failures: &Vec<HeaviestForkFailures>,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: &RwLock<BankForks>,
         tower: &Tower,
         progress: &ProgressMap,
         ancestors: &HashMap<Slot, HashSet<Slot>>,

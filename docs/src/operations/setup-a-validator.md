@@ -158,6 +158,10 @@ solana create-vote-account -ut \
 > cli properly above but they are useful to ensure you're using the intended
 > cluster and keypair.
 
+After SIMD-0387 has been activated on your cluster, set the BLS public key for
+your vote account before starting the validator. Follow the
+[BLS public key instructions](./guides/vote-accounts.md#set-the-bls-public-key).
+
 ## Save the Withdrawer Keypair Securely
 
 Make sure your `authorized-withdrawer-keypair.json` is stored in a safe place.

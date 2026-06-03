@@ -916,7 +916,7 @@ impl AdminRpcImpl {
                 let should_require_vote_history = {
                     let bank_forks = post_init.bank_forks.read().unwrap();
                     should_require_vote_history_file(
-                        &bank_forks.root_bank(),
+                        &bank_forks.working_bank(),
                         &post_init.vote_account,
                         &identity_keypair.pubkey(),
                     )
