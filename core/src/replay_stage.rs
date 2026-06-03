@@ -2395,14 +2395,19 @@ impl ReplayStage {
             .filter(|(slot, _)| *slot > root)
         {
             // Overwrite the pending switch, later switches take precedence
-            if Some(slot) >= pending_switch.map(|(slot, _)| slot) {
-                if let Some(prev_switch_request) = pending_switch.replace((slot, block_id)) {
-                    trace!(
-                        "{my_pubkey}: Overwriting previous switch request {prev_switch_request:?} \
-                         with ({slot}, {block_id})"
-                    );
-                } else {
-                    trace!("{my_pubkey}: Received switch request in {slot} to {block_id}");
+            match pending_switch {
+                None => {
+                    trace!("{my_pubkey}: Setting empty pending_switch to ({slot}, {block_id})");
+                    *pending_switch = Some((slot, block_id));
+                }
+                Some(pending_switch_block) => {
+                    if slot >= pending_switch_block.0 {
+                        trace!(
+                            "{my_pubkey}: Overwriting previous switch request \
+                             {pending_switch_block:?} with ({slot}, {block_id})"
+                        );
+                        *pending_switch_block = (slot, block_id);
+                    }
                 }
             }
         };
