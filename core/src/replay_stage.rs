@@ -3913,12 +3913,12 @@ impl ReplayStage {
                 );
 
                 if let Err((expected_hash, computed_hash)) = verify_result {
-                    error!(
-                        "Bank hash mismatch for slot {bank_slot} expected: {expected_hash} \
-                         computed: {computed_hash}",
+                    warn!(
+                        "For slot {bank_slot} the leader said the bank hash should be: \
+                         {expected_hash} however we computed: {computed_hash}",
                     );
 
-                    datapoint_error!(
+                    datapoint_warn!(
                         "bank_hash_mismatch",
                         ("slot", bank_slot, i64),
                         ("expected", expected_hash.to_string(), String),
