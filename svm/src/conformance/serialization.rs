@@ -16,11 +16,18 @@ use {
         VmSerializationEffects as ProtoVmSerializationEffects,
         VmSerializedAccountMetadata as ProtoVmSerializedAccountMetadata,
     },
+    solana_instruction::error::InstructionError,
+    solana_message::SanitizedMessage,
     solana_program_runtime::{
-        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
-        memory_context::SerializedAccountMetadata, serialization::serialize_parameters,
-        solana_sbpf::memory_region::MemoryRegion,
+        invoke_context::InvokeContext,
+        loaded_programs::ProgramCacheForTxBatch,
+        memory_context::SerializedAccountMetadata,
+        serialization::serialize_parameters,
+        solana_sbpf::{
+            aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, memory_region::MemoryRegion,
+        },
     },
+    solana_svm_feature_set::SVMFeatureSet,
     std::ffi::c_int,
 };
 
@@ -28,9 +35,6 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
     let instr_context = InstrContext::from(input);
 
     let feature_set = instr_context.feature_set;
-    let virtual_address_space_adjustments = feature_set.virtual_address_space_adjustments;
-    let direct_mapping = feature_set.account_data_direct_mapping;
-    let direct_account_pointers = feature_set.direct_account_pointers_in_program_input;
 
     let compute_budget = compute_budget(&feature_set);
     // No CU limit for this harness.
@@ -74,29 +78,18 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
         execution_cost,
     );
 
-    invoke_context
-        .prepare_top_level_instructions(&sanitized_message)
-        .unwrap();
-    invoke_context.push().unwrap();
-
-    let instruction_context = invoke_context
-        .transaction_context
-        .get_current_instruction_context()
-        .unwrap();
-
-    match serialize_parameters(
-        &instruction_context,
-        virtual_address_space_adjustments,
-        direct_mapping,
-        direct_account_pointers,
-    ) {
-        Ok((aligned_memory, input_memory_regions, account_metadatas, _instruction_data_offset)) => {
+    match push_and_serialize_parameters(&mut invoke_context, &sanitized_message, &feature_set) {
+        Ok(SerializedParameters {
+            aligned_memory,
+            input_memory_regions,
+            account_metadata,
+        }) => {
             let serialized_memory_hash = fd_hash(0, aligned_memory.as_slice());
             let vm_input_memory_regions = input_memory_regions
                 .iter()
                 .map(memory_region_to_proto)
                 .collect();
-            let serialized_account_metadata = account_metadatas
+            let serialized_account_metadata = account_metadata
                 .iter()
                 .map(serialized_acct_meta_to_proto)
                 .collect();
@@ -112,6 +105,49 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
             ..Default::default()
         },
     }
+}
+
+/// The product of serializing a program's input parameters into VM memory: the
+/// serialized region itself plus the metadata needed to map accounts back out.
+pub(crate) struct SerializedParameters {
+    pub(crate) aligned_memory: AlignedMemory<HOST_ALIGN>,
+    pub(crate) input_memory_regions: Vec<MemoryRegion>,
+    pub(crate) account_metadata: Vec<SerializedAccountMetadata>,
+}
+
+/// Push the message's single top-level instruction onto `invoke_context`, then
+/// serialize that instruction's program input parameters into VM memory.
+pub(crate) fn push_and_serialize_parameters<'ix_data>(
+    invoke_context: &mut InvokeContext<'_, 'ix_data>,
+    sanitized_message: &'ix_data SanitizedMessage,
+    feature_set: &SVMFeatureSet,
+) -> Result<SerializedParameters, InstructionError> {
+    invoke_context
+        .prepare_top_level_instructions(sanitized_message)
+        .expect("failed to prepare top-level instructions");
+    invoke_context
+        .push()
+        .expect("failed to push instruction context");
+
+    let instruction_context = invoke_context
+        .transaction_context
+        .get_current_instruction_context()
+        .unwrap();
+    serialize_parameters(
+        &instruction_context,
+        feature_set.virtual_address_space_adjustments,
+        feature_set.account_data_direct_mapping,
+        feature_set.direct_account_pointers_in_program_input,
+    )
+    .map(
+        |(aligned_memory, input_memory_regions, account_metadata, _instruction_data_offset)| {
+            SerializedParameters {
+                aligned_memory,
+                input_memory_regions,
+                account_metadata,
+            }
+        },
+    )
 }
 
 fn memory_region_to_proto(region: &MemoryRegion) -> ProtoVmInputMemoryRegion {
