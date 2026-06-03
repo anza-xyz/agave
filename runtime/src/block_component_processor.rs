@@ -20,7 +20,7 @@ use {
     log::*,
     solana_clock::Slot,
     solana_entry::block_component::{
-        BlockFooterV1, BlockMarkerV1, GenesisCertificate, VersionedBlockFooter,
+        BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
         VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
     },
     solana_hash::Hash,
@@ -197,10 +197,14 @@ impl BlockComponentProcessor {
             BlockMarkerV1::BlockHeader(header) if markers_fully_enabled || in_migration => {
                 self.on_header(header.inner(), bank.parent_slot())
             }
-            BlockMarkerV1::GenesisCertificate(genesis_cert)
+            BlockMarkerV1::GenesisCertificate(genesis_cert_block_marker)
                 if markers_fully_enabled || in_migration =>
             {
-                self.on_genesis_certificate(bank, genesis_cert.into_inner(), migration_status)
+                self.on_genesis_cert_block_marker(
+                    bank,
+                    genesis_cert_block_marker.into_inner(),
+                    migration_status,
+                )
             }
 
             // Everything else is only valid once migration is complete
@@ -220,10 +224,10 @@ impl BlockComponentProcessor {
         }
     }
 
-    pub fn on_genesis_certificate(
+    pub fn on_genesis_cert_block_marker(
         &self,
         bank: Arc<Bank>,
-        genesis_cert: GenesisCertificate,
+        genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         // Genesis Certificate is only allowed for direct child of genesis
@@ -234,7 +238,9 @@ impl BlockComponentProcessor {
         let parent_block_id = bank
             .parent_block_id()
             .expect("Block id is populated for all slots > 0");
-        if (bank.parent_slot(), parent_block_id) != (genesis_cert.slot, genesis_cert.block_id) {
+        if (bank.parent_slot(), parent_block_id)
+            != (genesis_block_marker.slot, genesis_block_marker.block_id)
+        {
             return Err(BlockComponentProcessorError::GenesisCertificateOnNonChild);
         }
 
@@ -242,7 +248,7 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated);
         }
 
-        let genesis_cert = Certificate::from(genesis_cert);
+        let genesis_cert = Certificate::from(genesis_block_marker);
         Self::verify_genesis_certificate(&bank, &genesis_cert)?;
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
         bank.set_hashes_per_tick(None);
@@ -326,7 +332,7 @@ impl BlockComponentProcessor {
             bank_hash,
             block_producer_time_nanos,
             block_user_agent: _,
-            final_cert,
+            block_final_cert,
             skip_reward_cert,
             notar_reward_cert,
         } = footer;
@@ -335,7 +341,7 @@ impl BlockComponentProcessor {
             ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert)?;
         let block_producer_time_nanos =
             Self::block_producer_time_nanos_as_i64(block_producer_time_nanos)?;
-        let final_cert = final_cert
+        let final_cert = block_final_cert
             .map(|final_cert| {
                 ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)
                     .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
@@ -637,7 +643,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -676,7 +682,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -724,7 +730,7 @@ mod tests {
     fn test_on_marker_processes_header() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
-        let marker = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+        let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
             parent_block_id: Hash::default(),
         });
@@ -742,7 +748,7 @@ mod tests {
     fn test_on_marker_rejects_header_parent_slot_mismatch() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
-        let marker = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+        let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 7, // mismatches bank.parent_slot() below (0)
             parent_block_id: Hash::default(),
         });
@@ -775,11 +781,11 @@ mod tests {
         let footer_time_nanos = parent_time_nanos + 300_000_000; // parent + 300ms
         let expected_time_secs = footer_time_nanos / 1_000_000_000;
 
-        let marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -820,7 +826,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -844,7 +850,7 @@ mod tests {
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Try to process a block header marker pre-migration - should fail
-        let marker = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+        let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
             parent_block_id: Hash::default(),
         });
@@ -863,11 +869,11 @@ mod tests {
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
-        let footer_marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let footer_marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: (parent_time_nanos + 500_000_000) as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -885,7 +891,7 @@ mod tests {
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
         ));
 
-        let update_parent_marker = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+        let update_parent_marker = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
             new_parent_slot: 0,
             new_parent_block_id: Hash::default(),
         });
@@ -926,7 +932,7 @@ mod tests {
         let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Process header marker
-        let header_marker = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+        let header_marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
             parent_block_id: Hash::default(),
         });
@@ -950,11 +956,11 @@ mod tests {
         let expected_time_secs = footer_time_nanos / 1_000_000_000;
 
         // Process footer marker
-        let footer_marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let footer_marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -987,7 +993,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 1_000_000_000,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1016,11 +1022,11 @@ mod tests {
         let expected_time_secs = footer_time_nanos / 1_000_000_000;
 
         // Process footer marker
-        let footer_marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let footer_marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1101,7 +1107,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1148,7 +1154,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1219,7 +1225,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: u64::MAX,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1421,7 +1427,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: (parent_time_nanos + 100_000_000) as u64,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });

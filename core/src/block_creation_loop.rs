@@ -22,7 +22,7 @@ use {
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
     solana_entry::block_component::{
-        BlockFooterV1, GenesisCertificate, UpdateParentV1, VersionedBlockMarker,
+        BlockFooterV1, GenesisCertBlockMarker, UpdateParentV1, VersionedBlockMarker,
     },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -167,7 +167,7 @@ struct LeaderContext {
     slot_metrics: SlotMetrics,
 
     // Migration information
-    genesis_cert: GenesisCertificate,
+    genesis_cert_block_marker: GenesisCertBlockMarker,
 }
 
 #[derive(Default)]
@@ -266,7 +266,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         .migration_status()
         .genesis_certificate()
         .expect("Migration complete, genesis certificate must exist");
-    let genesis_cert = GenesisCertificate::try_from((*genesis_cert).clone())
+    let genesis_cert_block_marker = GenesisCertBlockMarker::try_from((*genesis_cert).clone())
         .expect("Genesis certificate must be valid");
 
     info!("{my_pubkey}: PohService has shutdown, BlockCreationLoop is enabled");
@@ -292,7 +292,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
         highest_finalized,
-        genesis_cert,
+        genesis_cert_block_marker,
     };
 
     // Setup poh
@@ -533,13 +533,14 @@ fn produce_block_footer(
     }
 
     // Convert finalization certs into block marker
-    let final_cert = highest_finalized.map(ValidatedBlockFinalizationCert::to_final_certificate);
+    let block_final_cert =
+        highest_finalized.map(ValidatedBlockFinalizationCert::to_block_final_cert);
 
     BlockFooterV1 {
         bank_hash: Hash::default(),
         block_producer_time_nanos: block_producer_time_nanos as u64,
         block_user_agent: format!("agave/{}", version!()).into_bytes(),
-        final_cert,
+        block_final_cert,
         skip_reward_cert,
         notar_reward_cert,
     }
@@ -874,7 +875,7 @@ fn send_update_parent(
         new_parent_slot,
         new_parent_block_id,
     };
-    let marker = VersionedBlockMarker::new_update_parent(update_parent);
+    let marker = VersionedBlockMarker::from_update_parent(update_parent);
     poh_recorder.write().unwrap().send_marker(marker)?;
     Ok(())
 }
@@ -1268,7 +1269,7 @@ fn create_and_insert_leader_bank(
     // If this is the first alpenglow block, set PoH to low power mode.
     // This is persisted in the recorder when we set bank.
     // Replayers will update hashes_per_tick when they process the genesis certificate block marker.
-    if should_include_genesis_certificate(parent_slot, &ctx.genesis_cert) {
+    if should_include_genesis_certificate(parent_slot, &ctx.genesis_cert_block_marker) {
         tpu_bank.set_hashes_per_tick(None);
     }
 
@@ -1305,22 +1306,23 @@ fn maybe_include_genesis_certificate(
     parent_slot: Slot,
     ctx: &LeaderContext,
 ) -> Result<(), PohRecorderError> {
-    if !should_include_genesis_certificate(parent_slot, &ctx.genesis_cert) {
+    if !should_include_genesis_certificate(parent_slot, &ctx.genesis_cert_block_marker) {
         return Ok(());
     }
 
     // Send the genesis certificate
-    let genesis_marker = VersionedBlockMarker::new_genesis_certificate(ctx.genesis_cert.clone());
+    let block_marker =
+        VersionedBlockMarker::from_genesis_cert_block_marker(ctx.genesis_cert_block_marker.clone());
     let mut poh_recorder = ctx.poh_recorder.write().unwrap();
-    poh_recorder.send_marker(genesis_marker)?;
+    poh_recorder.send_marker(block_marker)?;
 
     // Process the genesis certificate
     let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
     let processor = bank.block_component_processor.read().unwrap();
     processor
-        .on_genesis_certificate(
+        .on_genesis_cert_block_marker(
             bank.clone(),
-            ctx.genesis_cert.clone(),
+            ctx.genesis_cert_block_marker.clone(),
             &ctx.bank_forks.read().unwrap().migration_status(),
         )
         .expect("Recording genesis certificate should not fail");
@@ -1329,9 +1331,9 @@ fn maybe_include_genesis_certificate(
 
 fn should_include_genesis_certificate(
     parent_slot: Slot,
-    genesis_cert: &GenesisCertificate,
+    genesis_cert_block_marker: &GenesisCertBlockMarker,
 ) -> bool {
-    parent_slot == genesis_cert.slot && parent_slot != 0
+    parent_slot == genesis_cert_block_marker.slot && parent_slot != 0
 }
 
 #[cfg(test)]
@@ -1369,8 +1371,8 @@ mod tests {
         ))
     }
 
-    fn test_genesis_certificate() -> GenesisCertificate {
-        GenesisCertificate {
+    fn test_genesis_cert_block_marker() -> GenesisCertBlockMarker {
+        GenesisCertBlockMarker {
             slot: Slot::MAX,
             block_id: Hash::default(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
@@ -1557,7 +1559,7 @@ mod tests {
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
-            genesis_cert: test_genesis_certificate(),
+            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         create_and_insert_leader_bank(1, root_bank.clone(), &mut ctx).unwrap();
@@ -1643,8 +1645,8 @@ mod tests {
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
-        let mut genesis_cert = test_genesis_certificate();
-        genesis_cert.slot = parent_bank.slot();
+        let mut genesis_cert_block_marker = test_genesis_cert_block_marker();
+        genesis_cert_block_marker.slot = parent_bank.slot();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
 
@@ -1669,7 +1671,7 @@ mod tests {
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
-            genesis_cert,
+            genesis_cert_block_marker,
         };
 
         let err = create_and_insert_leader_bank(2, parent_bank, &mut ctx).unwrap_err();
@@ -1738,7 +1740,7 @@ mod tests {
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
-            genesis_cert: test_genesis_certificate(),
+            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         create_and_insert_leader_bank(1, root_bank, &mut ctx).unwrap();
@@ -1841,7 +1843,7 @@ mod tests {
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             slot_metrics: SlotMetrics::default(),
-            genesis_cert: test_genesis_certificate(),
+            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         let leader_slot = 4;
