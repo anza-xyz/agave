@@ -12,7 +12,7 @@ use {
 };
 
 #[derive(Copy, Clone, Debug)]
-pub struct FrameOffset(pub(crate) usize);
+pub struct FrameOffset(pub usize);
 
 pub trait Frame {
     fn offset(&self) -> FrameOffset;

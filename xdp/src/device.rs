@@ -24,6 +24,7 @@ use {
 #[derive(Copy, Clone, Debug)]
 pub struct QueueId(pub u64);
 
+#[derive(Debug, Clone)]
 pub struct NetworkDevice {
     if_index: u32,
     if_name: String,
@@ -348,14 +349,18 @@ impl RingProducer {
         }
         self.cached_consumer = unsafe { (*self.consumer).load(Ordering::Acquire) };
     }
+
+    pub fn size(&self) -> u32 {
+        self.size
+    }
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
-pub(crate) struct XdpDesc {
-    pub(crate) addr: u64,
-    pub(crate) len: u32,
-    pub(crate) options: u32,
+#[derive(Debug, Copy, Clone)]
+pub struct XdpDesc {
+    pub addr: u64,
+    pub len: u32,
+    pub options: u32,
 }
 
 pub struct TxCompletionRing {
@@ -386,6 +391,10 @@ impl TxCompletionRing {
 
     pub fn sync(&mut self, commit: bool) {
         self.consumer.sync(commit);
+    }
+
+    pub fn size(&self) -> u32 {
+        self.size
     }
 }
 
@@ -429,6 +438,10 @@ impl<F: Frame> RxFillRing<F> {
 
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
+    }
+
+    pub fn available(&self) -> usize {
+        self.producer.available() as usize
     }
 }
 
