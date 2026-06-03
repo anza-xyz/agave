@@ -2962,7 +2962,6 @@ pub mod tests {
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::{
             block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
             entry::{create_ticks, next_entry, next_entry_mut},
@@ -6267,9 +6266,7 @@ pub mod tests {
         let mut tx_cost = CostModel::calculate_cost(&tx, &bank.feature_set);
         let actual_execution_cu = 1;
         let actual_loaded_accounts_data_size = 64 * 1024;
-        let TransactionCost::Transaction(ref mut usage_cost_details) = tx_cost else {
-            unreachable!("test tx is non-vote tx");
-        };
+        let usage_cost_details = tx_cost.usage_cost_details_mut();
         usage_cost_details.programs_execution_cost = actual_execution_cu;
         usage_cost_details.loaded_accounts_data_size_cost =
             CostModel::calculate_loaded_accounts_data_size_cost(
@@ -6280,7 +6277,7 @@ pub mod tests {
         let block_limit = tx_cost.sum();
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(u64::MAX, block_limit, u64::MAX, u64::MAX);
+            .set_limits(u64::MAX, block_limit, u64::MAX);
 
         let tx_costs = vec![None, Some(tx_cost), None];
         // The transaction will fit when added the first time

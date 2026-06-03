@@ -64,14 +64,12 @@ impl QosService {
                 pre_result.map(|()| {
                     let mut reserving_cost = CostModel::calculate_cost(tx, feature_set);
 
-                    if let TransactionCost::Transaction(ref mut usage_cost_details) = reserving_cost
-                    {
-                        // To maintain cost tracking consistency, reserve at least one page for
-                        // loading the fee payer account in fee-only fallback scenarios.
-                        usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
-                            .loaded_accounts_data_size_cost
-                            .max(CostModel::calculate_pages_cost(1));
-                    }
+                    let usage_cost_details = reserving_cost.usage_cost_details_mut();
+                    // To maintain cost tracking consistency, reserve at least one page for
+                    // loading the fee payer account in fee-only fallback scenarios.
+                    usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
+                        .loaded_accounts_data_size_cost
+                        .max(CostModel::calculate_pages_cost(1));
 
                     reserving_cost
                 })
@@ -302,7 +300,7 @@ mod tests {
         let cost_limit = transfer_tx_cost + vote_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(cost_limit, cost_limit, cost_limit, 0);
+            .set_limits(cost_limit, cost_limit, 0);
         let (results, num_selected) =
             QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);
@@ -561,9 +559,7 @@ mod tests {
             .expect("one tx cost")
             .expect("tx cost should be computed");
 
-        let TransactionCost::Transaction(usage_cost_details) = tx_cost else {
-            panic!("expected TransactionCost::Transaction");
-        };
+        let usage_cost_details = tx_cost.usage_cost_details();
 
         assert_eq!(
             usage_cost_details.loaded_accounts_data_size_cost,

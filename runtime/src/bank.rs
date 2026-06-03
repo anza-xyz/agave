@@ -4684,12 +4684,10 @@ impl Bank {
             cost_tracker.get_block_limit()
         };
         let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
-        let vote_cost_limit = cost_tracker.get_vote_limit();
         let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
         cost_tracker.set_limits(
             account_cost_limit,
             block_cost_limit,
-            vote_cost_limit,
             allocated_data_size_limit,
         );
     }
