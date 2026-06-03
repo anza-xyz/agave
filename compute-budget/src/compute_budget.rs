@@ -143,6 +143,8 @@ pub struct ComputeBudget {
     pub set_buffer_length_base_cost: u64,
     /// Cost for sol_assign_owner available in ABIv2
     pub abi_v2_assign_owner: u64,
+    /// Cost for ABIv2 sol transfer lamports
+    pub sol_transfer_lamports_cost: u64,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -227,6 +229,7 @@ impl ComputeBudget {
             bls12_381_additional_pair_cost: cost.bls12_381_additional_pair_cost,
             set_buffer_length_base_cost: cost.set_buffer_length_base_cost,
             abi_v2_assign_owner: cost.abi_v2_assign_owner,
+            sol_transfer_lamports_cost: cost.sol_transfer_lamports_cost,
         }
     }
 
@@ -296,6 +299,7 @@ impl ComputeBudget {
             bls12_381_additional_pair_cost: self.bls12_381_additional_pair_cost,
             set_buffer_length_base_cost: self.set_buffer_length_base_cost,
             abi_v2_assign_owner: self.abi_v2_assign_owner,
+            sol_transfer_lamports_cost: self.sol_transfer_lamports_cost,
         }
     }
 
