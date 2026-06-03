@@ -97,7 +97,9 @@ impl<A: Allowlist> ServerConnection<A> {
                 close_codes::IDENTITY_ROTATED.close(&connection);
                 return Err(Error::IdentityRotated(peer));
             }
-            InsertOutcome::Inserted | InsertOutcome::Replaced => {}
+            InsertOutcome::Inserted | InsertOutcome::Replaced => {
+                self.stats.record_connection_count(self.table.len());
+            }
         }
 
         // We're already on the per-incoming task; run the read loop

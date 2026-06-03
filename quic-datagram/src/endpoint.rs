@@ -207,7 +207,7 @@ impl<A: Allowlist> EndpointLoop<A> {
                 // when idle we can take care of bookkeeping. If these are delayed
                 // it is usually not a problem.
                 _ = prune.tick() => self.banlist.prune(),
-                _ = metrics.tick() => stats::report(&self.stats),
+                _ = metrics.tick() => stats::report(&self.stats, self.connections.len()),
             }
         }
     }
@@ -324,7 +324,7 @@ impl<A: Allowlist> EndpointLoop<A> {
         // large IP pool can complete RETRY on each address but is bounded
         // by the per-/24 burst budget (100 attempts, refilling 1/min).
         if !subnet_limit.admit(remote_addr.ip()) {
-            add(&self.stats.handshake_rejected_subnet_flood);
+            add(&self.stats.handshake_rejected_overload);
             incoming.refuse();
             return;
         }

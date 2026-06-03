@@ -2,7 +2,7 @@ use {
     crate::{
         MAX_PEERS, close_codes,
         error::Error,
-        stats::{QuicDatagramStats, record_error},
+        stats::{QuicDatagramStats, add, record_error},
     },
     bytes::Bytes,
     dashmap::{DashMap, mapref::entry::Entry},
@@ -103,6 +103,16 @@ impl ConnectionTable {
             inner: DashMap::new(),
             generation: AtomicU64::new(0),
         }
+    }
+
+    /// Current number of entries (both `Dialing` and `Established`). Sampled
+    /// by the control loop for the live-connection gauge and by the
+    /// establishment paths to update the peak high-water mark.
+    ///
+    /// MUST NOT be called while holding a DashMap entry guard - `len()`
+    /// iterates every shard and would deadlock on the pinned shard's lock.
+    pub(crate) fn len(&self) -> u64 {
+        self.inner.len() as u64
     }
 
     /// Snapshot the current [`IdGeneration`]. Server-accept and dial
@@ -206,9 +216,8 @@ impl ConnectionTable {
     /// Returns `true` iff a cached `Established` was found and the send was
     /// attempted; `false` if the slot is empty. The lex-higher side never
     /// installs `Dialing` placeholders, so that arm is impossible by
-    /// construction and trips a `debug_assert` if hit. Per-error counters
-    /// (`send_datagram_error_*`) are bumped via `record_error` on quinn-level
-    /// send failures.
+    /// construction and trips a `debug_assert` if hit. Successful sends bump
+    /// `datagrams_sent`; send failures are recorded via `record_error`.
     pub(crate) fn send_over_inbound_connection(
         &self,
         peer: &Pubkey,
@@ -220,8 +229,9 @@ impl ConnectionTable {
         };
         match entry.value() {
             ConnectionTableEntry::Established(conn) => {
-                if let Err(e) = conn.send_datagram(bytes.clone()) {
-                    record_error(&Error::from(e), stats);
+                match conn.send_datagram(bytes.clone()) {
+                    Ok(()) => add(&stats.datagrams_sent),
+                    Err(e) => record_error(&Error::from(e), stats),
                 }
                 true
             }
@@ -266,8 +276,9 @@ impl ConnectionTable {
                     EgressDispatch::Dialing
                 }
                 ConnectionTableEntry::Established(conn) if conn.remote_address() == addr => {
-                    if let Err(e) = conn.send_datagram(bytes.clone()) {
-                        record_error(&Error::from(e), stats);
+                    match conn.send_datagram(bytes.clone()) {
+                        Ok(()) => add(&stats.datagrams_sent),
+                        Err(e) => record_error(&Error::from(e), stats),
                     }
                     EgressDispatch::Sent
                 }

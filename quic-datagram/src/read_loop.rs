@@ -60,7 +60,9 @@ pub(crate) async fn read_datagram_loop(
                     peer_address: remote_addr,
                     message: bytes,
                 }) {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        stats.datagrams_received.fetch_add(1, Ordering::Relaxed);
+                    }
                     Err(TrySendError::Full(_)) => {
                         stats
                             .datagram_ingress_dropped_channel_full

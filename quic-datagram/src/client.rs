@@ -9,7 +9,7 @@ use {
         endpoint::Datagram,
         error::Error,
         read_loop::read_datagram_loop,
-        stats::{QuicDatagramStats, record_error},
+        stats::{QuicDatagramStats, add, record_error},
     },
     bytes::Bytes,
     crossbeam_channel::Sender,
@@ -92,14 +92,17 @@ impl<A: Allowlist> ClientConnection<A> {
                     close_codes::IDENTITY_ROTATED.close(&connection);
                     return Err(Error::IdentityRotated(self.peer));
                 }
-                InsertOutcome::Inserted | InsertOutcome::Replaced => {}
+                InsertOutcome::Inserted | InsertOutcome::Replaced => {
+                    self.stats.record_connection_count(self.table.len());
+                }
             }
 
             // Send the trigger packet that started this dial. Quinn-level
             // failures are recorded but not propagated - the connection
             // itself is healthy and the read loop should still run.
-            if let Err(e) = connection.send_datagram(self.trigger) {
-                record_error(&Error::from(e), &self.stats);
+            match connection.send_datagram(self.trigger) {
+                Ok(()) => add(&self.stats.datagrams_sent),
+                Err(e) => record_error(&Error::from(e), &self.stats),
             }
 
             // Drive the read loop inline.
