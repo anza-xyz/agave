@@ -637,6 +637,7 @@ fn test_flush_slots_with_reclaim_old_slots() {
         &storage,
         UpsertReclaim::ReclaimOldSlots,
         UpdateIndexThreadSelection::Inline,
+        false,
     );
 
     // Remove the flushed slot from the cache
@@ -1249,6 +1250,7 @@ fn test_shrink_marks_zero_lamport_single_ref_account_in_new_storage() {
         10,
         DEFAULT_FILE_SIZE,
         AccountsFileProvider::AppendVec,
+        StorageAccess::File,
     ));
     // store an obsolete account; it should not be marked ZLSR
     append_single_account_with_default_hash(

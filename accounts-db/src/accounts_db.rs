@@ -2896,10 +2896,12 @@ impl AccountsDb {
         // mutating rooted slots; There should be no writers to them.
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
-        stats_sub.store_accounts_timing = self.store_accounts_frozen(
+        stats_sub.store_accounts_timing = self._store_accounts_frozen(
             storable_accounts,
             shrink_in_progress.new_storage(),
+            UpsertReclaim::IgnoreReclaims,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            true,
         );
 
         rewrite_elapsed.stop();
@@ -4722,6 +4724,7 @@ impl AccountsDb {
                     &flushed_store,
                     reclaim_method,
                     UpdateIndexThreadSelection::PoolWithThreshold,
+                    false,
                 ));
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
             flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
@@ -5088,57 +5091,6 @@ impl AccountsDb {
         }
     }
 
-<<<<<<< HEAD
-=======
-    /// Updates the accounts index for the shrink path: each account at `accounts.slot(i)` has
-    /// its existing index entry replaced to point at the rewritten storage at `target_slot`.
-    ///
-    /// Unlike `update_index_stored_accounts` this does not collect reclaims — the caller is
-    /// responsible for the source storage's alive-bytes accounting. Secondary indexes are also
-    /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
-    fn update_index_for_shrink<'a>(
-        &self,
-        infos: &[AccountInfo],
-        accounts: &impl StorableAccounts<'a>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
-        thread_pool: &ThreadPool,
-    ) {
-        let target_slot = accounts.target_slot();
-        let len = std::cmp::min(accounts.len(), infos.len());
-
-        let update = |start, end| {
-            (start..end).for_each(|i| {
-                let info: AccountInfo = infos[i];
-                debug_assert!(!info.is_cached());
-                accounts.account(i, |account| {
-                    let old_slot = accounts.slot(i);
-                    self.accounts_index
-                        .replace(target_slot, old_slot, account.pubkey(), info);
-                });
-            });
-        };
-
-        let threshold = 1;
-        if matches!(
-            update_index_thread_selection,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-        ) && len > threshold
-        {
-            let chunk_size = len.div_ceil(thread_pool.current_num_threads());
-            let batches = 1 + len / chunk_size;
-            thread_pool.install(|| {
-                (0..batches).into_par_iter().for_each(|batch| {
-                    let start = batch * chunk_size;
-                    let end = std::cmp::min(start + chunk_size, len);
-                    update(start, end)
-                })
-            });
-        } else {
-            update(0, len);
-        }
-    }
-
->>>>>>> dd3bfb3ab (Marks zero lamport single ref accounts in newly shrunk storages (#12912))
     fn should_not_shrink(alive_bytes: u64, total_bytes: u64) -> bool {
         alive_bytes >= total_bytes
     }
@@ -5542,6 +5494,7 @@ impl AccountsDb {
             storage,
             UpsertReclaim::IgnoreReclaims,
             update_index_thread_selection,
+            false,
         )
     }
 
@@ -5554,6 +5507,7 @@ impl AccountsDb {
         storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        should_mark_zero_lamport_single_ref_for_shrink: bool,
     ) -> StoreAccountsTiming {
         let slot = accounts.target_slot();
         let num_accounts_stored = accounts.len();
@@ -5576,77 +5530,13 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
-<<<<<<< HEAD
-=======
-        let mark_zero_lamport_single_ref_time = Measure::start("mark_zero_lamport_single_ref");
-        let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts_for_shrink(&infos, &accounts, storage);
-        let mark_zero_lamport_single_ref_us = mark_zero_lamport_single_ref_time.end_as_us();
-
-        let update_index_time = Measure::start("update_index");
-        self.update_index_for_shrink(
-            &infos,
-            &accounts,
-            update_index_thread_selection,
-            &self.thread_pool_background,
-        );
-        let update_index_us = update_index_time.end_as_us();
-
-        stats
-            .flush_read_cache_us
-            .fetch_add(flush_read_cache_us, Ordering::Relaxed);
-        stats
-            .write_to_storage_us
-            .fetch_add(write_accounts_us, Ordering::Relaxed);
-        stats
-            .mark_zero_lamport_single_ref_accounts_us
-            .fetch_add(mark_zero_lamport_single_ref_us, Ordering::Relaxed);
-        stats
-            .update_index_us
-            .fetch_add(update_index_us, Ordering::Relaxed);
-        stats
-            .num_accounts_stored
-            .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
-        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
-            num_zero_lamport_single_ref_accounts_marked,
-            Ordering::Relaxed,
-        );
-        stats.report();
-
-        StoreAccountsTiming {
-            store_accounts_elapsed: write_accounts_us,
-            update_index_elapsed: update_index_us,
-            handle_reclaims_elapsed: 0,
-        }
-    }
-
-    /// Stores accounts in the storage and updates the index.
-    /// This function is intended for accounts that are being flushed (moving from the cache to storage)
-    /// - `UpsertReclaims` determines whether to reclaim old slots. If `ReclaimOldSlots` is used, all
-    ///   old versions of the account are reclaimed. If `IgnoreReclaims` is used, old versions of the
-    ///   account are not reclaimed and must be cleaned later.
-    fn store_accounts_for_flush<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        storage: &AccountStorageEntry,
-        reclaim_handling: UpsertReclaim,
-        update_index_thread_selection: UpdateIndexThreadSelection,
-    ) -> StoreAccountsTiming {
-        let slot = accounts.target_slot();
-        let num_accounts_stored = accounts.len();
-        let stats = &self.store_accounts_for_flush_stats;
-
-        debug_assert!(self.accounts_index.is_alive_root(slot));
-
-        // Write the accounts to storage
-        let write_accounts_time = Measure::start("write_accounts");
-        let infos = self.write_accounts_to_storage(slot, storage, &accounts);
-        let write_accounts_us = write_accounts_time.end_as_us();
-
->>>>>>> dd3bfb3ab (Marks zero lamport single ref accounts in newly shrunk storages (#12912))
         let mark_zero_lamport_time = Measure::start("mark_zero_lamport");
         let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling);
+            if should_mark_zero_lamport_single_ref_for_shrink {
+                self.mark_zero_lamport_single_ref_accounts_for_shrink(&infos, &accounts, storage)
+            } else {
+                self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling)
+            };
         let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
 
         // If the cache was flushed, then because `update_index` occurs
