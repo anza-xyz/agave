@@ -1089,6 +1089,15 @@ fn verify_ticks(
     }
 
     if migration_status.should_have_alpenglow_ticks(bank.slot()) {
+        // When alpenglow is active, PoH MUST be in low power mode.
+        // We require that each block only has 1 tick at the very end
+        if entries.iter().any(|entry| entry.num_hashes != 1) {
+            warn!(
+                "Alpenglow entry with invalid num_hashes found in slot: {}",
+                bank.slot()
+            );
+            return Err(BlockError::InvalidTickHashCount);
+        }
         return Ok(());
     }
 
