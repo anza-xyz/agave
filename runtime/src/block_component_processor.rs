@@ -524,7 +524,12 @@ impl BlockComponentProcessor {
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     ) -> Result<(), BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
-        calc_vote_rewards_update_vote_states(bank, reward_cert, final_cert_input)?;
+        calc_vote_rewards_update_vote_states(
+            bank,
+            reward_cert,
+            final_cert_input,
+            block_producer_time_nanos,
+        )?;
 
         if let Some(hash) = bank_hash {
             // Record expected bank hash from footer for later verification when the bank is frozen.
