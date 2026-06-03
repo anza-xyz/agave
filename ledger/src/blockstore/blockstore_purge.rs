@@ -445,9 +445,9 @@ impl Blockstore {
         // Deleting data newer than the latest root is likely to interfere
         // with replay so save any callers from themself
         let max_root = self.max_root();
-        if max_slot_to_delete > max_root {
+        if max_slot_to_delete >= max_root {
             return Err(BlockstoreError::ManualPurge(
-                BlockstoreManualPurgeError::SlotNewerThanRoot {
+                BlockstoreManualPurgeError::SlotGreaterThanOrEqualToRoot {
                     request_slot: max_slot_to_delete,
                     max_root,
                 },
