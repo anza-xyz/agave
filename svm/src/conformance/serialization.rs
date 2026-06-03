@@ -6,8 +6,8 @@ use {
         fd_hash::fd_hash,
         instr::context::InstrContext,
         setup::{
-            compile_transaction_context, program_runtime_environments, recent_blockhash,
-            sysvar_cache_from_accounts,
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+            program_runtime_environments, sysvar_cache_from_accounts,
         },
     },
     prost::Message,
@@ -16,32 +16,26 @@ use {
         VmSerializationEffects as ProtoVmSerializationEffects,
         VmSerializedAccountMetadata as ProtoVmSerializedAccountMetadata,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
-        memory_context::SerializedAccountMetadata,
-        serialization::serialize_parameters,
+        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
+        memory_context::SerializedAccountMetadata, serialization::serialize_parameters,
         solana_sbpf::memory_region::MemoryRegion,
     },
-    solana_svm_log_collector::LogCollector,
     std::ffi::c_int,
 };
 
 pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEffects {
     let instr_context = InstrContext::from(input);
 
-    let log_collector = LogCollector::new_ref();
     let feature_set = instr_context.feature_set;
     let virtual_address_space_adjustments = feature_set.virtual_address_space_adjustments;
     let direct_mapping = feature_set.account_data_direct_mapping;
     let direct_account_pointers = feature_set.direct_account_pointers_in_program_input;
 
-    let compute_budget = ComputeBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8);
+    let compute_budget = compute_budget(&feature_set);
     // No CU limit for this harness.
 
     let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
-    let rent = sysvar_cache.get_rent().unwrap();
     let program_id = instr_context.instruction.program_id;
     let loader_key = instr_context
         .accounts
@@ -50,28 +44,25 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
         .map(|(_, account)| account.owner)
         .expect("program not found in accounts");
 
-    let (sanitized_message, mut transaction_context) = compile_transaction_context(
-        &instr_context.instruction,
-        &instr_context.accounts,
-        &program_id,
-        &loader_key,
-        &compute_budget,
-        (*rent).clone(),
-    );
+    let program_runtime_environments = program_runtime_environments(&feature_set, &compute_budget);
 
     // We're only testing the parameter serialization, so use an empty cache.
     let mut program_cache = ProgramCacheForTxBatch::default();
 
-    let runtime_environments = program_runtime_environments(&feature_set, &compute_budget);
-    let (blockhash, lamports_per_signature) = recent_blockhash(&sysvar_cache);
-    let environment_config = EnvironmentConfig::new(
-        blockhash,
-        lamports_per_signature,
-        false,
+    let InvokeContextFields {
+        sanitized_message,
+        mut transaction_context,
+        environment_config,
+        log_collector,
+        execution_budget,
+        execution_cost,
+    } = prepare_invoke_context_fields(
+        &instr_context,
         &DefaultCallback,
-        &feature_set,
-        &runtime_environments,
+        &loader_key,
         &sysvar_cache,
+        &compute_budget,
+        &program_runtime_environments,
     );
 
     let mut invoke_context = InvokeContext::new(
@@ -79,8 +70,8 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
         &mut program_cache,
         environment_config,
         Some(log_collector.clone()),
-        compute_budget.to_budget(),
-        compute_budget.to_cost(),
+        execution_budget,
+        execution_cost,
     );
 
     invoke_context

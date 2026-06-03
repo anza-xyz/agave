@@ -5,20 +5,20 @@ use {
     crate::{
         conformance::{
             callback::DefaultCallback,
-            setup::{compile_transaction_context, program_runtime_environments, recent_blockhash},
+            setup::{
+                InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+                program_runtime_environments,
+            },
         },
         message_processor::process_message,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
-    solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_error::TransactionError,
     std::rc::Rc,
@@ -55,52 +55,43 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
-    let log_collector = LogCollector::new_ref();
-    let feature_set = input.feature_set;
-    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-
-    let mut compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+    let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let rent = sysvar_cache.get_rent().unwrap();
-    let program_id = &input.instruction.program_id;
     let loader_key = program_cache
-        .find(program_id)
+        .find(&input.instruction.program_id)
         .expect("program not loaded in cache")
         .account_owner();
 
-    let (sanitized_message, mut transaction_context) = compile_transaction_context(
-        &input.instruction,
-        &input.accounts,
-        program_id,
+    let program_runtime_environments =
+        program_runtime_environments(&input.feature_set, &compute_budget);
+
+    let InvokeContextFields {
+        sanitized_message,
+        mut transaction_context,
+        environment_config,
+        log_collector,
+        execution_budget,
+        execution_cost,
+    } = prepare_invoke_context_fields(
+        input,
+        callback,
         &loader_key,
+        sysvar_cache,
         &compute_budget,
-        (*rent).clone(),
+        &program_runtime_environments,
     );
 
-    let runtime_environments = program_runtime_environments(&input.feature_set, &compute_budget);
-
     let result = {
-        let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
-
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            blockhash_lamports_per_signature,
-            false,
-            callback,
-            &feature_set,
-            &runtime_environments,
-            sysvar_cache,
-        );
-
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             environment_config,
             Some(log_collector.clone()),
-            compute_budget.to_budget(),
-            compute_budget.to_cost(),
+            execution_budget,
+            execution_cost,
         );
+
         match process_message(
             &sanitized_message,
             &mut invoke_context,
@@ -165,8 +156,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let mut program_cache = {
         let slot = sysvar_cache.get_clock().unwrap().slot;
         let feature_set = &instr_context.feature_set;
-        let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-        let compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+        let compute_budget = compute_budget(feature_set);
         let environments = program_runtime_environments(feature_set, &compute_budget);
 
         let mut cache = new_program_cache_with_builtins(slot);
