@@ -1,11 +1,8 @@
 //! Information about points calculation based on stake state.
 
 use {
-    crate::{
-        alpenglow_epoch_type::AlpenglowEpochType,
-        block_component_processor::vote_reward::AG_MIGRATION_EPOCH_CREDIT,
-        epoch_stakes::VersionedEpochStakes,
-    },
+    crate::{alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes},
+    agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     log::{error, trace},
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,

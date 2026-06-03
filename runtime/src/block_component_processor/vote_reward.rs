@@ -1,5 +1,6 @@
 use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
+    agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -15,10 +16,8 @@ use {
     thiserror::Error,
 };
 
-pub mod epoch_inflation_account_state;
+pub(crate) mod epoch_inflation_account_state;
 mod migration_test;
-
-pub(crate) const AG_MIGRATION_EPOCH_CREDIT: (Epoch, u64, u64) = (Epoch::MAX, u64::MAX, u64::MAX);
 
 /// Different types of errors that can happen when calculating and paying voting reward.
 ///
