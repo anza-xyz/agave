@@ -39,8 +39,8 @@ after SIMD-0387, BLS pubkey management, is active on the target cluster. The
 Solana CLI will not set the BLS public key before the feature is active.
 
 > **IMPORTANT** As of June 2026, SIMD-0387 is active only on testnet. Setting
-> the BLS public key is a prerequisite for SIMD-0357. Beginning with Agave v4.2,
-> a voting validator will fail to start if its BLS public key has not been set.
+> the BLS public key is a prerequisite for SIMD-0357. If the BLS public key is
+> not set, the vote account will behave as unstaked once SIMD-0357 is active.
 
 For almost all validators, the authorized voter is the validator identity. If
 you are unsure which keypair is the current authorized voter, run:
@@ -49,8 +49,7 @@ you are unsure which keypair is the current authorized voter, run:
 solana vote-account <VOTE_ACCOUNT> | grep "Vote Authority"
 ```
 
-Then set the BLS public key by running the following command. For almost all
-validators, `<AUTHORIZED_VOTER_KEYPAIR>` should be the identity keypair:
+Then set the BLS public key by running the following command.
 
 ```bash
 solana vote-authorize-voter-checked <VOTE_ACCOUNT> <AUTHORIZED_VOTER_KEYPAIR> <AUTHORIZED_VOTER_KEYPAIR>
