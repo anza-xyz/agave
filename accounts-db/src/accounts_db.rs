@@ -5797,7 +5797,7 @@ impl AccountsDb {
 
         let mark_zero_lamport_time = Measure::start("mark_zero_lamport");
         let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling);
+            self.mark_zero_lamport_single_ref_accounts_for_flush(&infos, storage, reclaim_handling);
         let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
@@ -6007,7 +6007,7 @@ impl AccountsDb {
     /// Marks zero lamport single reference accounts in the storage during store_accounts_for_flush
     ///
     /// Returns the number of accounts marked.
-    fn mark_zero_lamport_single_ref_accounts(
+    fn mark_zero_lamport_single_ref_accounts_for_flush(
         &self,
         account_infos: &[AccountInfo],
         storage: &AccountStorageEntry,
