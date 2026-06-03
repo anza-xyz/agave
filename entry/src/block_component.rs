@@ -472,6 +472,7 @@ pub enum BlockComponent {
 impl BlockComponent {
     const MAX_ENTRIES: usize = u32::MAX as usize;
     const ENTRY_COUNT_SIZE: usize = 8;
+    const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
     pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
         if entries.is_empty() {
@@ -516,6 +517,13 @@ impl BlockComponent {
 
     pub fn infer_is_block_marker(data: &[u8]) -> Option<bool> {
         Self::infer_is_entry_batch(data).map(|is_entry_batch| !is_entry_batch)
+    }
+
+    /// In Alpenglow an empty entry batch will fail to deserialize
+    /// Leader's should only use an empty entry batch to indicate that they
+    /// are aborting the block
+    pub fn infer_is_empty_entry_batch(data: &[u8]) -> bool {
+        *data == Self::EMPTY_ENTRY_BATCH
     }
 }
 
