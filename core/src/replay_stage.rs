@@ -113,6 +113,8 @@ use {
 mod dead_slots;
 mod update_parent;
 
+#[cfg(test)]
+use solana_svm_timings::ExecuteTimings;
 use {
     dead_slots::{
         DeadSlotContext, DeadSlotDuplicateContext, DeadSlotNotifications, mark_replay_dead_slot,
@@ -122,9 +124,6 @@ use {
         handle_update_parent_interrupts, process_soft_dead_slots,
     },
 };
-
-#[cfg(test)]
-use solana_svm_timings::ExecuteTimings;
 
 pub const MAX_ENTRY_RECV_PER_ITER: usize = 512;
 pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
