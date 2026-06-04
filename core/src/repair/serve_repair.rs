@@ -17,7 +17,6 @@ use {
         },
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
-    bincode::{Options, serialize},
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lazy_lru::LruCache,
     rand::{
@@ -71,6 +70,7 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite, serialize},
 };
 
 /// the number of slots to respond with when responding to `Orphan` requests
@@ -189,7 +189,7 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
     Ping(Ping),
@@ -235,7 +235,7 @@ impl BlockIdRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum BlockIdRepairResponse {
     ParentFecSetCount {
         fec_set_count: u32,
@@ -371,7 +371,7 @@ struct ServeRepairStats {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi))]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
     sender: Pubkey,
@@ -428,7 +428,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c"
     )
 )]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum RepairProtocol {
     LegacyWindowIndex,
     LegacyHighestWindowIndex,
@@ -534,6 +534,7 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
 
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
+type RepairRequestConfig = wincode::config::Configuration<true, PACKET_DATA_SIZE>;
 
 fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStats) -> bool {
     let well_formed = packet
@@ -545,7 +546,7 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
     well_formed
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
 }
@@ -1868,7 +1869,7 @@ impl ServeRepair {
                 packet.meta_mut().set_discard(true);
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = bincode::serialize(&pong) {
+                if let Ok(pong) = wincode::serialize(&pong) {
                     let from_addr = packet.meta().socket_addr();
                     pending_pongs.push((pong, from_addr));
                 }
@@ -1923,15 +1924,11 @@ impl ServeRepair {
 
 pub(crate) fn deserialize_request<T>(
     request: &BytesPacket,
-) -> std::result::Result<T, bincode::Error>
+) -> std::result::Result<T, wincode::ReadError>
 where
-    T: serde::de::DeserializeOwned,
+    T: for<'de> SchemaRead<'de, RepairRequestConfig, Dst = T>,
 {
-    bincode::options()
-        .with_limit(request.buffer().len() as u64)
-        .with_fixint_encoding()
-        .reject_trailing_bytes()
-        .deserialize(request.buffer())
+    wincode::config::deserialize_exact(request.buffer(), RepairRequestConfig::new())
 }
 
 #[cfg(test)]
@@ -2055,6 +2052,120 @@ mod tests {
 
     fn make_remote_request(packet: &Packet) -> BytesPacket {
         PacketRef::from(packet).to_bytes_packet()
+    }
+
+    fn bincode_fixint_serialize<T: serde::Serialize + ?Sized>(value: &T) -> Vec<u8> {
+        use bincode::Options as _;
+        bincode::options()
+            .with_fixint_encoding()
+            .serialize(value)
+            .unwrap()
+    }
+
+    fn bincode_fixint_reject_trailing_deserialize<T: serde::de::DeserializeOwned>(
+        bytes: &[u8],
+    ) -> bincode::Result<T> {
+        use bincode::Options as _;
+        bincode::options()
+            .with_limit(bytes.len() as u64)
+            .with_fixint_encoding()
+            .reject_trailing_bytes()
+            .deserialize(bytes)
+    }
+
+    fn bytes_packet_from_data(data: &[u8]) -> BytesPacket {
+        let mut packet = Packet::default();
+        packet.buffer_mut()[..data.len()].copy_from_slice(data);
+        packet.meta_mut().size = data.len();
+        PacketRef::from(&packet).to_bytes_packet()
+    }
+
+    #[test]
+    fn test_repair_request_wincode_matches_bincode_options() {
+        let keypair = Keypair::new();
+        let ping = Ping::new([7; 32], &keypair);
+        let requests = [
+            RepairProtocol::Pong(Pong::new(&ping, &keypair)),
+            RepairProtocol::WindowIndex {
+                header: RepairRequestHeader {
+                    nonce: 1,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 10,
+                shred_index: 20,
+            },
+            RepairProtocol::HighestWindowIndex {
+                header: RepairRequestHeader {
+                    nonce: 2,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 11,
+                shred_index: 21,
+            },
+            RepairProtocol::Orphan {
+                header: RepairRequestHeader {
+                    nonce: 3,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 12,
+            },
+            RepairProtocol::AncestorHashes {
+                header: RepairRequestHeader {
+                    nonce: 4,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 13,
+            },
+            RepairProtocol::ParentAndFecSetCount {
+                header: RepairRequestHeader {
+                    nonce: 5,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 14,
+                block_id: Hash::new_from_array([1; HASH_BYTES]),
+            },
+            RepairProtocol::FecSetRoot {
+                header: RepairRequestHeader {
+                    nonce: 6,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 15,
+                block_id: Hash::new_from_array([2; HASH_BYTES]),
+                fec_set_index: 16,
+            },
+            RepairProtocol::WindowIndexForBlockId {
+                header: RepairRequestHeader {
+                    nonce: 7,
+                    ..repair_request_header_for_tests()
+                },
+                slot: 17,
+                shred_index: 18,
+                block_id: Hash::new_from_array([3; HASH_BYTES]),
+            },
+        ];
+
+        for request in requests {
+            let bincode_bytes = bincode_fixint_serialize(&request);
+            let wincode_bytes = wincode::serialize(&request).unwrap();
+            assert_eq!(bincode_bytes, wincode_bytes);
+
+            let bincode_decoded: RepairProtocol =
+                bincode_fixint_reject_trailing_deserialize(&wincode_bytes).unwrap();
+            assert_eq!(bincode_fixint_serialize(&bincode_decoded), wincode_bytes);
+
+            let remote_request = bytes_packet_from_data(&bincode_bytes);
+            let wincode_decoded: RepairProtocol = deserialize_request(&remote_request).unwrap();
+            assert_eq!(wincode::serialize(&wincode_decoded).unwrap(), bincode_bytes);
+
+            let mut trailing = bincode_bytes;
+            trailing.push(0);
+            assert!(
+                bincode_fixint_reject_trailing_deserialize::<RepairProtocol>(&trailing).is_err()
+            );
+            assert!(
+                deserialize_request::<RepairProtocol>(&bytes_packet_from_data(&trailing)).is_err()
+            );
+        }
     }
 
     #[test]

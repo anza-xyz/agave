@@ -453,7 +453,7 @@ impl AncestorHashesService {
                 }
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = bincode::serialize(&pong) {
+                if let Ok(pong) = wincode::serialize(&pong) {
                     let _ = ancestor_socket.send_to(&pong, from_addr);
                 }
                 None
