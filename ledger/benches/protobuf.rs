@@ -3,11 +3,11 @@
 extern crate test;
 
 use {
-    bincode::{deserialize, serialize},
     prost::Message,
     solana_runtime::bank::RewardType,
     solana_transaction_status::{Reward, Rewards},
     test::Bencher,
+    wincode::{deserialize, serialize},
 };
 
 fn create_rewards() -> Rewards {
@@ -23,7 +23,7 @@ fn create_rewards() -> Rewards {
         .collect()
 }
 
-fn bincode_serialize_rewards(rewards: Rewards) -> Vec<u8> {
+fn wincode_serialize_rewards(rewards: Rewards) -> Vec<u8> {
     serialize(&rewards).unwrap()
 }
 
@@ -34,7 +34,7 @@ fn protobuf_serialize_rewards(rewards: Rewards) -> Vec<u8> {
     buffer
 }
 
-fn bincode_deserialize_rewards(bytes: &[u8]) -> Rewards {
+fn wincode_deserialize_rewards(bytes: &[u8]) -> Rewards {
     deserialize(bytes).unwrap()
 }
 
@@ -67,8 +67,8 @@ where
 }
 
 #[bench]
-fn bench_serialize_bincode(bencher: &mut Bencher) {
-    bench_serialize_rewards(bencher, bincode_serialize_rewards);
+fn bench_serialize_wincode(bencher: &mut Bencher) {
+    bench_serialize_rewards(bencher, wincode_serialize_rewards);
 }
 
 #[bench]
@@ -77,11 +77,11 @@ fn bench_serialize_protobuf(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn bench_deserialize_bincode(bencher: &mut Bencher) {
+fn bench_deserialize_wincode(bencher: &mut Bencher) {
     bench_deserialize_rewards(
         bencher,
-        bincode_serialize_rewards,
-        bincode_deserialize_rewards,
+        wincode_serialize_rewards,
+        wincode_deserialize_rewards,
     );
 }
 

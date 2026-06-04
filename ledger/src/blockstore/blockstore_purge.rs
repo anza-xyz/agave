@@ -476,13 +476,13 @@ pub mod tests {
         crate::{
             blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path_auto_delete,
         },
-        bincode::serialize,
         solana_entry::entry::next_entry_mut,
         solana_hash::Hash,
         solana_message::Message,
         solana_sha256_hasher::hash,
         solana_transaction::Transaction,
         test_case::test_case,
+        wincode::serialize,
     };
 
     #[test]
