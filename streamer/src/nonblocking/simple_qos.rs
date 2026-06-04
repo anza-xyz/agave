@@ -54,11 +54,8 @@ pub struct SimpleQosBanlist {
     eviction_receiver: std::sync::Mutex<Option<Receiver<Pubkey>>>,
 }
 
-/// Construct over an externally-owned [`Banlist`]. The legacy QUIC-stream
-/// server and the new QUIC-datagram endpoint share a single banlist primitive,
-/// so a ban applied by the BLS sigverifier (which holds the same
-/// `Arc<Banlist<Pubkey>>`) is honored on connection admission by both
-/// transports. Pass `Arc::default()` for a private, unshared banlist.
+/// Construct over an externally-owned [`Banlist`].
+/// Pass `Arc::default()` for a private, unshared banlist.
 ///
 /// Note: bans applied directly through the shared `Banlist` (rather than
 /// through [`SimpleQosBanlist::ban`]) do not push an eviction request, so an

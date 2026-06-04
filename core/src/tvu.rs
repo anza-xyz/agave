@@ -193,27 +193,15 @@ pub struct AlpenglowInitializationState {
     // Votor dual-stack transport handles (legacy QUIC-stream + new
     // QUIC-datagram). During the migration window both transports are active.
     //
-    // Send side: every vote/cert is fanned out over BOTH the legacy
-    // `bls_connection_cache` (stream) and the datagram `votor_egress`.
     //
-    // Receive side: tvu builds a merged `IngressMessage` channel. The
-    // datagram endpoint's raw `Datagram` output (`votor_datagram_ingress`,
-    // constructed in validator.rs) is forwarded into it tagged
-    // `VotorTransport::Datagram`, and the legacy QUIC-stream server (spawned
-    // here) is forwarded in tagged `VotorTransport::Stream`. The BLS
-    // sigverifier consumes the merged channel and records per-transport
-    // metrics. `votor_datagram_ingress` is `None` when the datagram endpoint
-    // was not constructed (non-Testnet/Development clusters).
-    //
-    // `votor_banlist` is shared by both transports and the sigverifier so a
-    // signature-failure ban applies cluster-wide on either path.
-    // `votor_allowlist` is owned by the voting service's
-    // StakedValidatorsCache, which republishes the staked-pubkey set on every
-    // epoch boundary.
     pub bls_connection_cache: Arc<ConnectionCache>,
     pub votor_egress: tokio::sync::mpsc::Sender<solana_quic_datagram::endpoint::Datagram>,
     pub votor_datagram_ingress: Option<Receiver<Datagram>>,
+    /// Banlist shared between QUIC transport and the sigverifier so a
+    /// signature-failure ban applies
     pub votor_banlist: Arc<Banlist<Pubkey>>,
+    /// Votor allowlist is owned by the voting service's StakedValidatorsCache,
+    /// which publishes the staked-pubkey set on every epoch boundary.
     pub votor_allowlist: Option<Arc<solana_quic_datagram::StakedNodesAllowlist>>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
 }
@@ -312,19 +300,6 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
-        // Dual-stack receive: the sigverifier consumes two ingress channels,
-        // one per transport, and tags each message with its source.
-        //
-        // - Datagram: the QUIC-datagram endpoint (constructed in validator.rs)
-        //   produces `Datagram`s directly; its receiver is `votor_datagram_ingress`.
-        // - Stream: here we spawn the legacy QUIC-stream server on the
-        //   SOCKET_TAG_ALPENGLOW socket (`bls_socket`) plus an adapter thread
-        //   that converts its `PacketBatch`es into `Datagram`s on a dedicated
-        //   channel.
-        //
-        // Both transports gate admission on the shared `votor_banlist`. Either
-        // channel may be absent (the corresponding transport not constructed);
-        // the sigverifier tolerates a missing/closed channel.
         let mut bls_threads = Vec::new();
         let stream_ingress = if let Some(bls_socket) = bls_socket {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);

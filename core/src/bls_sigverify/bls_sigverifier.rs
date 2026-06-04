@@ -55,8 +55,7 @@ pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 ///
 /// PLACEHOLDER: a fixed-size LRU keyed by a hash of the raw message bytes.
 /// During the dual-stack migration the same consensus message arrives over
-/// both transports; this drops the second copy before sigverify. To be
-/// refined in a follow-up (e.g. time-bounded eviction, content-aware keying).
+/// both transports; this drops the second copy before sigverify.
 const DEDUP_CACHE_CAPACITY: usize = 1 << 16;
 
 /// How long the sigverifier blocks waiting for inbound messages before waking.

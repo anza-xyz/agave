@@ -1233,19 +1233,7 @@ impl Validator {
         });
 
         // Votor QUIC datagram endpoint (new transport). Binds the
-        // SOCKET_TAG_ALPENGLOW_DATAGRAM socket; multiplexes outbound
-        // votes/certs (egress) and inbound consensus messages (ingress) per
-        // the lex-pubkey direction rule. During the dual-stack migration this
-        // runs alongside the legacy QUIC-stream server (spawned in tvu on the
-        // SOCKET_TAG_ALPENGLOW socket). The endpoint produces inbound
-        // `Datagram`s on its own ingress channel; the receiver is handed to
-        // the BLS sigverifier as the datagram-transport ingress (the legacy
-        // server provides the second, stream-transport ingress). Both gate
-        // admission on the same shared `votor_banlist`.
-        //
-        // Only constructed on Testnet/Development clusters; absent → the
-        // datagram ingress is `None` and the sigverifier listens on the legacy
-        // transport only (or nothing).
+        // SOCKET_TAG_ALPENGLOW_DATAGRAM socket;
         let alpenglow_datagram_socket = if matches!(
             genesis_config.cluster_type,
             ClusterType::Testnet | ClusterType::Development,
@@ -1254,10 +1242,7 @@ impl Validator {
         } else {
             None
         };
-        // Shared banlist primitive for both transports. A ban applied by the
-        // BLS sigverifier (which holds this same handle) is honored on
-        // connection admission by both the datagram endpoint and the legacy
-        // QUIC-stream server.
+        // Shared votor banlist primitive.
         let votor_banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
         let (votor_egress, votor_datagram_ingress, votor_allowlist, _alpenglow_endpoint_task) =
             if let Some(socket) = alpenglow_datagram_socket {
