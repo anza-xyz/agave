@@ -50,10 +50,10 @@ mod transaction {
     pub use solana_transaction_error::TransactionResult as Result;
 }
 
-// This vote batch size was selected to balance the following two things:
-// 1. Amortize execution overhead (Larger is better)
-// 2. Constrain max entry size for FEC set packing (Smaller is better)
-pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
+// Process vote packets one at a time to avoid over reserving block CUs during packing,
+// also keep each recorded vote batch as small as possible, which favors entry/FEC-set
+// packing.
+pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 1;
 
 pub struct VoteWorker {
     exit: Arc<AtomicBool>,
@@ -501,8 +501,8 @@ impl VoteWorker {
             .collect()
     }
 
-    fn extract_retryable(
-        vote_packets: &mut ArrayVec<RuntimeTransactionView, 16>,
+    fn extract_retryable<const N: usize>(
+        vote_packets: &mut ArrayVec<RuntimeTransactionView, N>,
         retryable_vote_indices: Vec<usize>,
     ) -> impl Iterator<Item = RuntimeTransactionView> + '_ {
         debug_assert!(retryable_vote_indices.is_sorted());
@@ -659,11 +659,9 @@ mod tests {
     #[test]
     fn extract_retryable_one_all_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter([to_runtime_transaction_view(packet_from_slots(
-            vec![(1, 1)],
-            &keypair_a,
-            None,
-        ))]);
+        let mut packets: ArrayVec<_, 1> = ArrayVec::from_iter([to_runtime_transaction_view(
+            packet_from_slots(vec![(1, 1)], &keypair_a, None),
+        )]);
         let retryable_indices = vec![0];
 
         // Assert - Able to extract exactly one packet.
@@ -676,11 +674,9 @@ mod tests {
     #[test]
     fn extract_retryable_one_none_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter([to_runtime_transaction_view(packet_from_slots(
-            vec![(1, 1)],
-            &keypair_a,
-            None,
-        ))]);
+        let mut packets: ArrayVec<_, 1> = ArrayVec::from_iter([to_runtime_transaction_view(
+            packet_from_slots(vec![(1, 1)], &keypair_a, None),
+        )]);
         let retryable_indices = vec![];
 
         // Assert - Able to extract exactly zero packets.
@@ -691,7 +687,7 @@ mod tests {
     #[test]
     fn extract_retryable_three_last_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter(
+        let mut packets: ArrayVec<_, 3> = ArrayVec::from_iter(
             [
                 packet_from_slots(vec![(5, 3)], &keypair_a, None),
                 packet_from_slots(vec![(6, 2)], &keypair_a, None),
@@ -712,7 +708,7 @@ mod tests {
     #[test]
     fn extract_retryable_three_first_last_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter(
+        let mut packets: ArrayVec<_, 3> = ArrayVec::from_iter(
             [
                 packet_from_slots(vec![(5, 3)], &keypair_a, None),
                 packet_from_slots(vec![(6, 2)], &keypair_a, None),
