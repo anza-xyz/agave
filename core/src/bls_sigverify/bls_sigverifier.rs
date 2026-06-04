@@ -525,6 +525,39 @@ mod tests {
     }
 
     #[test]
+    fn test_blssigverifier_cross_transport_dedup() {
+        // The same (sender, message) reaching us over both transports must be
+        // verified once: the second copy is dropped before sigverify.
+        let mut ctx = TestContext::new();
+
+        let sender = Pubkey::new_unique();
+        let vote_message =
+            create_signed_vote_message(&ctx.validator_keypairs, Vote::new_finalization_vote(5), 2);
+        let msg = ConsensusMessage::Vote(vote_message);
+        // Two identical datagrams from the same sender (one per transport).
+        let items = vec![message_to_item(&msg, sender), message_to_item(&msg, sender)];
+
+        ctx.verifier.verify_and_send_batches(items).unwrap();
+
+        assert_eq!(ctx.verifier.stats.num_dedup_dropped, 1);
+        assert_eq!(
+            ctx.pool_receiver.try_iter().flatten().count(),
+            1,
+            "duplicate must not be forwarded twice"
+        );
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+
+        // A distinct sender broadcasting identical bytes is NOT collapsed here.
+        let other_sender = Pubkey::new_unique();
+        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier
+            .verify_and_send_batches(vec![message_to_item(&msg, other_sender)])
+            .unwrap();
+        assert_eq!(ctx.verifier.stats.num_dedup_dropped, 0);
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+    }
+
+    #[test]
     fn test_blssigverifier_send_packets() {
         let mut ctx = TestContext::new();
 

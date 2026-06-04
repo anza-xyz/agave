@@ -345,6 +345,16 @@ mod tests {
                             ))
                             .is_ok()
                     );
+                    // Advertise the datagram transport on a distinct port so
+                    // the dual-address resolution can be asserted.
+                    assert!(
+                        contact_info
+                            .set_alpenglow_datagram((
+                                Ipv4Addr::LOCALHOST,
+                                9080_u16.saturating_add(node_ix as u16)
+                            ))
+                            .is_ok()
+                    );
 
                     contact_info
                 });
@@ -655,6 +665,11 @@ mod tests {
         let (peers, _) = svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
         assert_eq!(peers.len(), num_nodes);
         assert!(peers.iter().any(|p| p.stream_addr == my_socket_addr));
+        // Both transport addresses resolve, and they are distinct ports.
+        for p in peers {
+            let datagram_addr = p.datagram_addr.expect("datagram addr should resolve");
+            assert_ne!(p.stream_addr.port(), datagram_addr.port());
+        }
 
         // Create our staked validators cache - set include_self to false
         let mut svc = StakedValidatorsCache::new(
