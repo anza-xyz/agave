@@ -17,12 +17,8 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
-<<<<<<< HEAD
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-=======
         io,
-        net::{IpAddr, SocketAddr, SocketAddrV4},
->>>>>>> 2c7d1fa05 (xdp: propagate error from TxLoopBuilder instead of panic on socket creation (#12504))
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         thread,
         time::Duration,
     },
