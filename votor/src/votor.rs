@@ -240,7 +240,6 @@ impl Votor {
             consensus_message_receiver,
             bls_sender,
             event_sender,
-            commitment_sender,
             repair_event_sender,
             highest_finalized,
         };

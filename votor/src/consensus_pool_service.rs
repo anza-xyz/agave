@@ -5,7 +5,6 @@ mod stats;
 
 use {
     crate::{
-        commitment::{CommitmentAggregationData, CommitmentType, update_commitment_cache},
         common::DELTA_STANDSTILL,
         consensus_pool::{
             AddVoteError, ConsensusPool,
@@ -59,7 +58,6 @@ pub(crate) struct ConsensusPoolContext {
 
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
-    pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
     pub(crate) repair_event_sender: RepairEventSender,
 
     /// Used to communicate the highest finalization cert the pool has observed to the block creation loop.
@@ -189,17 +187,15 @@ impl ConsensusPoolService {
             }
         }
         let root_bank = ctx.sharable_banks.root();
-        let (new_finalized_slot, new_certificates_to_send) =
-            Self::add_message_and_maybe_update_commitment(
-                &root_bank,
-                &ctx.cluster_info.id(),
-                &ctx.my_vote_pubkey,
-                message,
-                consensus_pool,
-                events,
-                &ctx.commitment_sender,
-                stats,
-            )?;
+        let (new_finalized_slot, new_certificates_to_send) = Self::add_message(
+            &root_bank,
+            &ctx.cluster_info.id(),
+            &ctx.my_vote_pubkey,
+            message,
+            consensus_pool,
+            events,
+            stats,
+        )?;
         Self::maybe_update_root_and_send_new_certificates(
             consensus_pool,
             &ctx.sharable_banks,
@@ -419,17 +415,16 @@ impl ConsensusPoolService {
         Ok(())
     }
 
-    /// Adds a vote to the certificate pool and updates the commitment cache if necessary
+    /// Adds a vote to the certificate pool.
     ///
     /// If a new finalization slot was recognized, returns the slot
-    fn add_message_and_maybe_update_commitment(
+    fn add_message(
         root_bank: &Bank,
         my_pubkey: &Pubkey,
         my_vote_pubkey: &Pubkey,
         message: ConsensusMessage,
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
-        commitment_sender: &Sender<CommitmentAggregationData>,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let (new_finalized_slot, new_certificates_to_send) =
@@ -438,11 +433,7 @@ impl ConsensusPoolService {
             return Ok((None, new_certificates_to_send));
         };
         trace!("{my_pubkey}: new finalization certificate for {new_finalized_slot}");
-        update_commitment_cache(
-            CommitmentType::Finalized,
-            new_finalized_slot,
-            commitment_sender,
-        )?;
+        // RPC-facing finalized commitment is updated after votor selects a root.
         stats.standstill = false;
         Ok((Some(new_finalized_slot), new_certificates_to_send))
     }
@@ -646,8 +637,6 @@ mod tests {
         consensus_pool: ConsensusPool,
         bls_sender: Sender<BLSOp>,
         bls_receiver: Receiver<BLSOp>,
-        commitment_sender: Sender<CommitmentAggregationData>,
-        commitment_receiver: Receiver<CommitmentAggregationData>,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         sharable_banks: SharableBanks,
@@ -662,8 +651,6 @@ mod tests {
     impl Default for TestContext {
         fn default() -> Self {
             let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
-            let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
-
             // Create 10 node validatorvotekeypairs vec
             let validator_keypairs = (0..10)
                 .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -706,8 +693,6 @@ mod tests {
                 consensus_pool,
                 bls_sender,
                 bls_receiver,
-                commitment_sender,
-                commitment_receiver,
                 validator_keypairs,
                 leader_schedule_cache,
                 sharable_banks,
@@ -724,8 +709,7 @@ mod tests {
     /// Test the full consensus message flow:
     /// 1. Validators 0-7 send notarize votes for slot 2. After processing all
     ///    votes, we expect a notarize/finalize certificate to be produced and
-    ///    forwarded via the BLS channel, a finalized event to be emitted, and a
-    ///    commitment update to be sent.
+    ///    forwarded via the BLS channel and a finalized event to be emitted.
     /// 2. A skip certificate is then sent for slot 3 and we verify it is
     ///    immediately forwarded via the BLS channel.
     #[test]
@@ -754,14 +738,13 @@ mod tests {
             });
 
             let mut stats = ConsensusPoolServiceStats::new();
-            let result = ConsensusPoolService::add_message_and_maybe_update_commitment(
+            let result = ConsensusPoolService::add_message(
                 &root_bank,
                 &ctx.my_pubkey,
                 &ctx.my_vote_pubkey,
                 message,
                 &mut ctx.consensus_pool,
                 &mut events,
-                &ctx.commitment_sender,
                 &mut stats,
             );
             assert!(result.is_ok());
@@ -817,17 +800,6 @@ mod tests {
             "Should have received a finalized event"
         );
 
-        // Verify that we received a commitment update
-        let commitment = ctx.commitment_receiver.try_recv();
-        assert!(commitment.is_ok());
-        let CommitmentAggregationData {
-            commitment_type,
-            slot,
-            ..
-        } = commitment.unwrap();
-        assert_eq!(commitment_type, CommitmentType::Finalized);
-        assert_eq!(slot, target_slot);
-
         // Now send a Skip certificate on slot 3, should be forwarded immediately
         let target_slot = 3;
         let skip_certificate = Certificate {
@@ -838,14 +810,13 @@ mod tests {
         events.clear();
 
         let mut stats = ConsensusPoolServiceStats::new();
-        let result = ConsensusPoolService::add_message_and_maybe_update_commitment(
+        let result = ConsensusPoolService::add_message(
             &root_bank,
             &ctx.my_pubkey,
             &ctx.my_vote_pubkey,
             ConsensusMessage::Certificate(skip_certificate),
             &mut ctx.consensus_pool,
             &mut events,
-            &ctx.commitment_sender,
             &mut stats,
         );
         assert!(result.is_ok());
@@ -902,14 +873,13 @@ mod tests {
                 bitmap: vec![],
             };
 
-            let result = ConsensusPoolService::add_message_and_maybe_update_commitment(
+            let result = ConsensusPoolService::add_message(
                 &root_bank,
                 &ctx.my_pubkey,
                 &ctx.my_vote_pubkey,
                 ConsensusMessage::Certificate(skip_certificate),
                 &mut ctx.consensus_pool,
                 &mut events,
-                &ctx.commitment_sender,
                 &mut stats,
             );
             assert!(result.is_ok());
@@ -930,7 +900,6 @@ mod tests {
             consensus_message_receiver: crossbeam_channel::unbounded().1,
             bls_sender: ctx.bls_sender.clone(),
             event_sender: crossbeam_channel::unbounded().0,
-            commitment_sender: ctx.commitment_sender.clone(),
             highest_finalized: ctx.highest_finalized.clone(),
             repair_event_sender,
         };
@@ -995,7 +964,6 @@ mod tests {
             consensus_message_receiver,
             bls_sender: ctx.bls_sender.clone(),
             event_sender,
-            commitment_sender: ctx.commitment_sender.clone(),
             highest_finalized: ctx.highest_finalized.clone(),
             repair_event_sender,
         };

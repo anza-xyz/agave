@@ -1,5 +1,10 @@
 use {
-    crate::{event_handler::PendingBlocks, voting_utils::VotingContext, votor::SharedContext},
+    crate::{
+        commitment::{CommitmentType, update_commitment_cache},
+        event_handler::PendingBlocks,
+        voting_utils::VotingContext,
+        votor::SharedContext,
+    },
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::Sender,
     solana_clock::Slot,
@@ -59,6 +64,12 @@ pub(crate) fn set_root(
             "failed to record optimistic slot in blockstore: slot={}: {:?}",
             new_root, &e
         );
+    }
+
+    if let Err(err) =
+        update_commitment_cache(CommitmentType::Rooted, new_root, &vctx.commitment_sender)
+    {
+        warn!("failed to update Alpenglow rooted commitment for root {new_root}: {err}");
     }
 
     // It is critical to send the OC notification in order to keep compatibility with

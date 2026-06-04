@@ -14,8 +14,8 @@ pub enum CommitmentError {
 pub enum CommitmentType {
     /// Our node has voted notarize for the slot
     Notarize,
-    /// We have observed a finalization certificate for the slot
-    Finalized,
+    /// Votor has selected the slot as root
+    Rooted,
 }
 
 #[derive(Debug, PartialEq)]
@@ -65,7 +65,7 @@ mod tests {
             }
         );
         let slot = 5;
-        let commitment_type = CommitmentType::Finalized;
+        let commitment_type = CommitmentType::Rooted;
         update_commitment_cache(commitment_type, slot, &commitment_sender)
             .expect("Failed to send commitment data");
         let received_data = commitment_receiver
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(
             received_data,
             CommitmentAggregationData {
-                commitment_type: CommitmentType::Finalized,
+                commitment_type: CommitmentType::Rooted,
                 slot,
             }
         );
