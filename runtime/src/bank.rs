@@ -5615,7 +5615,7 @@ impl Bank {
             .epoch_stakes_from_slot(slot)
             .ok_or(CertVerifyError::MissingRankMap)?;
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        let total_stake = epoch_stakes.total_stake();
+        let total_stake = key_to_rank_map.total_stake();
 
         let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
             key_to_rank_map
