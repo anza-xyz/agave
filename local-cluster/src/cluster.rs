@@ -6,13 +6,9 @@ use {
     solana_ledger::shred::Shred,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
-    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::rpc_client::RpcClient,
-    solana_tpu_client::tpu_client::TpuClient,
     std::{io::Result, path::PathBuf, sync::Arc},
 };
-
-pub type QuicTpuClient = TpuClient<QuicPool, QuicConnectionManager, QuicConfig>;
 
 pub struct ValidatorInfo {
     pub keypair: Arc<Keypair>,
@@ -43,12 +39,6 @@ impl ClusterValidatorInfo {
 
 pub trait Cluster {
     fn get_node_pubkeys(&self) -> Vec<Pubkey>;
-    fn build_validator_tpu_quic_client(&self, pubkey: &Pubkey) -> Result<QuicTpuClient>;
-    fn build_validator_tpu_quic_client_with_commitment(
-        &self,
-        pubkey: &Pubkey,
-        commitment_config: CommitmentConfig,
-    ) -> Result<QuicTpuClient>;
     /// Build an RPC client connected to the validator identified by `pubkey`.
     fn build_rpc_client(&self, pubkey: &Pubkey) -> Result<Arc<RpcClient>>;
     /// Build an RPC client with a specific commitment for the validator identified by `pubkey`.
