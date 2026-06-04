@@ -417,6 +417,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
+                deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
@@ -574,6 +575,9 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
+        // Disable slot time reduction features as they will override the custom
+        // stores per block provided in this test helper.
+        let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
         let validator_keypairs = (0..stakes.len())
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -582,6 +586,7 @@ mod tests {
             mut genesis_config, ..
         } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =
