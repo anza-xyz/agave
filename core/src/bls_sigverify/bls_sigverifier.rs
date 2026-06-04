@@ -19,7 +19,7 @@ use {
         consensus_message::{ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
+    crossbeam_channel::{Receiver, Select, Sender, TryRecvError},
     lazy_lru::LruCache,
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
@@ -59,6 +59,10 @@ pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 /// refined in a follow-up (e.g. time-bounded eviction, content-aware keying).
 const DEDUP_CACHE_CAPACITY: usize = 1 << 16;
 
+/// How long the sigverifier blocks waiting for inbound messages before waking.
+/// Also the idle cadence at which it reports stats (~one slot).
+const INGRESS_RECV_TIMEOUT: Duration = Duration::from_millis(400);
+
 pub(crate) struct SigVerifierContext {
     pub(crate) migration_status: Arc<MigrationStatus>,
     pub(crate) banlist: Arc<Banlist<Pubkey>>,
@@ -69,8 +73,34 @@ pub(crate) struct SigVerifierContext {
     pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
 }
 
+/// Which transport delivered an inbound consensus message. Tracked during the
+/// dual-stack migration to measure per-transport volume and which transport
+/// delivers each message first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VotorTransport {
+    /// New QUIC-datagram transport.
+    Datagram,
+    /// Legacy QUIC-stream transport.
+    Stream,
+}
+
+/// A consensus-message [`Datagram`] tagged with the transport that delivered
+/// it. The tag is attached at read time based on which channel the message
+/// arrived on; it carries the transport into [`SigVerifier::extract_and_filter_msgs`]
+/// for the per-transport metrics.
+struct IngressMessage {
+    transport: VotorTransport,
+    datagram: Datagram,
+}
+
 pub(crate) struct SigVerifierChannels {
-    pub(crate) packet_receiver: Receiver<Datagram>,
+    /// Inbound consensus messages from the QUIC-datagram endpoint. `None` when
+    /// that transport was not constructed (non-Testnet/Development clusters).
+    pub(crate) datagram_receiver: Option<Receiver<Datagram>>,
+    /// Inbound consensus messages from the legacy QUIC-stream server (after the
+    /// PacketBatch->Datagram adapter). `None` when the legacy server was not
+    /// spawned.
+    pub(crate) stream_receiver: Option<Receiver<Datagram>>,
     pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
     pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
@@ -151,28 +181,39 @@ impl SigVerifier {
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok(batches) = recv_batches(&self.channels.packet_receiver, SOFT_RECEIVE_CAP) else {
-                error!("packet_receiver disconnected:  Exiting.");
+            let Ok(batches) = self.recv_batches(SOFT_RECEIVE_CAP) else {
+                error!("all votor ingress channels disconnected: Exiting.");
                 break;
             };
-            if batches.is_empty() || self.migration_status.is_pre_feature_activation() {
+            if self.migration_status.is_pre_feature_activation() {
+                // No votor traffic before activation; skip work and reporting
+                // to avoid emitting empty datapoints on non-alpenglow nodes.
                 continue;
             }
 
-            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
-            self.stats
-                .verify_and_send_batch_us
-                .add_sample(verify_time_us);
-            if let Err(e) = verify_res {
-                error!("verify_and_send_batch() failed with {e}. Exiting.");
-                break;
+            if !batches.is_empty() {
+                let (verify_res, verify_time_us) =
+                    measure_us!(self.verify_and_send_batches(batches));
+                self.stats
+                    .verify_and_send_batch_us
+                    .add_sample(verify_time_us);
+                if let Err(e) = verify_res {
+                    error!("verify_and_send_batch() failed with {e}. Exiting.");
+                    break;
+                }
             }
+            // Report once per slot (~400ms). Driven every loop iteration —
+            // including idle ones, since `recv_batches` wakes at least every
+            // 400ms — so the cadence holds with or without traffic.
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
         self.stats.do_report(self.sharable_banks.root().slot());
     }
 
-    fn verify_and_send_batches(&mut self, items: Vec<Datagram>) -> Result<(), SigVerifyError> {
+    fn verify_and_send_batches(
+        &mut self,
+        items: Vec<IngressMessage>,
+    ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(root_bank.slot());
 
@@ -223,20 +264,30 @@ impl SigVerifier {
 
     fn extract_and_filter_msgs(
         &mut self,
-        items: Vec<Datagram>,
+        items: Vec<IngressMessage>,
         root_bank: &Bank,
     ) -> (Vec<CertPayload>, Vec<VotePayload>) {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes = Vec::new();
         let mut num_pkts = 0u64;
-        for Datagram {
-            peer_pubkey: remote_pubkey,
-            message: bytes,
-            ..
+        for IngressMessage {
+            transport,
+            datagram:
+                Datagram {
+                    peer_pubkey: remote_pubkey,
+                    message: bytes,
+                    ..
+                },
         } in items
         {
             num_pkts = num_pkts.saturating_add(1);
+            // Per-transport receive volume (counts every arrival, including
+            // copies later dropped as duplicates).
+            match transport {
+                VotorTransport::Datagram => self.stats.num_recv_datagram += 1,
+                VotorTransport::Stream => self.stats.num_recv_stream += 1,
+            }
             // Cross-transport dedup (placeholder): the same message from the
             // same sender reaches us over both the legacy QUIC-stream and the
             // new QUIC-datagram transport during migration. Drop the second
@@ -252,6 +303,12 @@ impl SigVerifier {
                 continue;
             }
             self.recent_msgs.put(digest, ());
+            // This is the first copy of this message we've seen — record which
+            // transport delivered it first (won the race).
+            match transport {
+                VotorTransport::Datagram => self.stats.num_first_datagram += 1,
+                VotorTransport::Stream => self.stats.num_first_stream += 1,
+            }
             let Ok(msg) = wincode::deserialize::<ConsensusMessage>(&bytes) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
@@ -319,40 +376,85 @@ impl SigVerifier {
         self.stats.num_old_votes_received += 1;
         None
     }
-}
 
-/// Receives a batch of [`Datagram`]s from the `receiver` up to the `soft_receive_cap` limit.
-///
-/// Returns `Err(())` if the channel disconnected.
-fn recv_batches(
-    receiver: &Receiver<Datagram>,
-    soft_receive_cap: usize,
-) -> Result<Vec<Datagram>, ()> {
-    let first = match receiver.recv_timeout(Duration::from_secs(1)) {
-        Ok(item) => item,
-        Err(e) => match e {
-            RecvTimeoutError::Timeout => {
-                return Ok(vec![]);
-            }
-            RecvTimeoutError::Disconnected => {
+    /// Receive up to `soft_receive_cap` consensus messages across the two
+    /// transport ingress channels, tagging each with the channel it arrived on
+    /// (the datagram endpoint vs. the legacy stream server). Blocks up to
+    /// [`INGRESS_RECV_TIMEOUT`] — which also bounds how long the run loop
+    /// sleeps before its per-slot stats report while idle.
+    ///
+    /// A channel that disconnects is dropped from the set; returns `Err(())`
+    /// only once *both* channels are gone.
+    fn recv_batches(&mut self, soft_receive_cap: usize) -> Result<Vec<IngressMessage>, ()> {
+        // Block until at least one live channel is ready (data or disconnect),
+        // or the idle timeout fires.
+        {
+            let mut sel = Select::new();
+            let dg = self
+                .channels
+                .datagram_receiver
+                .as_ref()
+                .map(|rx| sel.recv(rx));
+            let st = self
+                .channels
+                .stream_receiver
+                .as_ref()
+                .map(|rx| sel.recv(rx));
+            if dg.is_none() && st.is_none() {
                 return Err(());
             }
-        },
-    };
-    let mut items = Vec::with_capacity(soft_receive_cap);
-    items.push(first);
-    while items.len() < soft_receive_cap {
-        match receiver.try_recv() {
-            Ok(item) => {
-                items.push(item);
+            if sel.ready_timeout(INGRESS_RECV_TIMEOUT).is_err() {
+                return Ok(Vec::new()); // idle — no traffic this interval
             }
-            Err(e) => match e {
-                TryRecvError::Empty => return Ok(items),
-                TryRecvError::Disconnected => return Err(()),
-            },
         }
+        // Drain both channels, tagging by source. A channel found disconnected
+        // is dropped from the set so the next `Select` won't spin on it.
+        let mut items = Vec::with_capacity(soft_receive_cap);
+        let dg_alive = Self::drain_channel(
+            &mut self.channels.datagram_receiver,
+            VotorTransport::Datagram,
+            &mut items,
+            soft_receive_cap,
+        );
+        let st_alive = Self::drain_channel(
+            &mut self.channels.stream_receiver,
+            VotorTransport::Stream,
+            &mut items,
+            soft_receive_cap,
+        );
+        if !dg_alive && !st_alive {
+            return Err(());
+        }
+        Ok(items)
     }
-    Ok(items)
+
+    /// Drain queued datagrams from `slot` (if present) into `out` up to `cap`,
+    /// tagging each with `transport`. On disconnect, sets `*slot = None`.
+    /// Returns whether the channel is still live afterwards.
+    fn drain_channel(
+        slot: &mut Option<Receiver<Datagram>>,
+        transport: VotorTransport,
+        out: &mut Vec<IngressMessage>,
+        cap: usize,
+    ) -> bool {
+        let Some(rx) = slot.as_ref() else {
+            return false;
+        };
+        while out.len() < cap {
+            match rx.try_recv() {
+                Ok(datagram) => out.push(IngressMessage {
+                    transport,
+                    datagram,
+                }),
+                Err(TryRecvError::Empty) => return true,
+                Err(TryRecvError::Disconnected) => {
+                    *slot = None;
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -460,7 +562,8 @@ mod tests {
                     generated_cert_types: generated_cert_types.clone(),
                 },
                 SigVerifierChannels {
-                    packet_receiver,
+                    datagram_receiver: Some(packet_receiver),
+                    stream_receiver: None,
                     channel_to_repair,
                     channel_to_reward,
                     channel_to_pool,
@@ -534,8 +637,11 @@ mod tests {
         let vote_message =
             create_signed_vote_message(&ctx.validator_keypairs, Vote::new_finalization_vote(5), 2);
         let msg = ConsensusMessage::Vote(vote_message);
-        // Two identical datagrams from the same sender (one per transport).
-        let items = vec![message_to_item(&msg, sender), message_to_item(&msg, sender)];
+        // Same message from the same sender, datagram first then stream.
+        let items = vec![
+            message_to_item_with_transport(&msg, sender, VotorTransport::Datagram),
+            message_to_item_with_transport(&msg, sender, VotorTransport::Stream),
+        ];
 
         ctx.verifier.verify_and_send_batches(items).unwrap();
 
@@ -546,15 +652,28 @@ mod tests {
             "duplicate must not be forwarded twice"
         );
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+        // Both arrivals counted per transport; datagram won the race.
+        assert_eq!(ctx.verifier.stats.num_recv_datagram, 1);
+        assert_eq!(ctx.verifier.stats.num_recv_stream, 1);
+        assert_eq!(ctx.verifier.stats.num_first_datagram, 1);
+        assert_eq!(ctx.verifier.stats.num_first_stream, 0);
 
         // A distinct sender broadcasting identical bytes is NOT collapsed here.
+        // Deliver it stream-first to exercise the other win counter.
         let other_sender = Pubkey::new_unique();
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(vec![message_to_item(&msg, other_sender)])
+            .verify_and_send_batches(vec![message_to_item_with_transport(
+                &msg,
+                other_sender,
+                VotorTransport::Stream,
+            )])
             .unwrap();
         assert_eq!(ctx.verifier.stats.num_dedup_dropped, 0);
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.verifier.stats.num_recv_stream, 1);
+        assert_eq!(ctx.verifier.stats.num_first_stream, 1);
+        assert_eq!(ctx.verifier.stats.num_first_datagram, 0);
     }
 
     #[test]
@@ -645,10 +764,13 @@ mod tests {
 
         // An empty payload won't deserialize as ConsensusMessage; the
         // sigverifier should count it as malformed.
-        let items: Vec<Datagram> = vec![Datagram {
-            peer_pubkey: Pubkey::new_unique(),
-            peer_address: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
-            message: bytes::Bytes::new(),
+        let items = vec![IngressMessage {
+            transport: VotorTransport::Datagram,
+            datagram: Datagram {
+                peer_pubkey: Pubkey::new_unique(),
+                peer_address: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+                message: bytes::Bytes::new(),
+            },
         }];
         ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
@@ -778,7 +900,7 @@ mod tests {
             packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
-        let items: Vec<Datagram> = packets;
+        let items: Vec<IngressMessage> = packets;
         ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
@@ -832,7 +954,7 @@ mod tests {
             packets.push(message_to_item(&msg, Pubkey::new_unique()));
         }
 
-        let items: Vec<Datagram> = packets;
+        let items: Vec<IngressMessage> = packets;
         ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
@@ -894,7 +1016,7 @@ mod tests {
             packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
-        let items: Vec<Datagram> = packets;
+        let items: Vec<IngressMessage> = packets;
         ctx.verifier.verify_and_send_batches(items).unwrap();
         let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
         assert_eq!(
@@ -946,7 +1068,7 @@ mod tests {
             packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
-        let items: Vec<Datagram> = packets;
+        let items: Vec<IngressMessage> = packets;
         ctx.verifier.verify_and_send_batches(items).unwrap();
         let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
         assert_eq!(
@@ -1238,7 +1360,7 @@ mod tests {
             Pubkey::new_unique(),
         ));
 
-        let items: Vec<Datagram> = packets;
+        let items: Vec<IngressMessage> = packets;
         ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
@@ -1316,7 +1438,8 @@ mod tests {
                 generated_cert_types: Arc::new(GeneratedCertTypes::default()),
             },
             SigVerifierChannels {
-                packet_receiver,
+                datagram_receiver: Some(packet_receiver),
+                stream_receiver: None,
                 channel_to_repair: votes_for_repair_sender,
                 channel_to_reward: reward_votes_sender,
                 channel_to_pool: message_sender,
@@ -1560,7 +1683,7 @@ mod tests {
         assert_eq!(ctx.verifier.stats.vote_stats.too_far_in_future, 1);
     }
 
-    fn messages_to_items(messages: &[ConsensusMessage]) -> Vec<Datagram> {
+    fn messages_to_items(messages: &[ConsensusMessage]) -> Vec<IngressMessage> {
         let messages_with_remote_pubkeys: Vec<_> = messages
             .iter()
             .cloned()
@@ -1571,21 +1694,34 @@ mod tests {
 
     fn messages_to_items_with_remote_pubkeys(
         messages: &[(ConsensusMessage, Pubkey)],
-    ) -> Vec<Datagram> {
+    ) -> Vec<IngressMessage> {
         messages
             .iter()
             .map(|(message, remote_pubkey)| message_to_item(message, *remote_pubkey))
             .collect()
     }
 
-    fn message_to_item(message: &ConsensusMessage, remote_pubkey: Pubkey) -> Datagram {
+    /// Defaults to the datagram transport; tests that exercise the
+    /// per-transport metrics use [`message_to_item_with_transport`].
+    fn message_to_item(message: &ConsensusMessage, remote_pubkey: Pubkey) -> IngressMessage {
+        message_to_item_with_transport(message, remote_pubkey, VotorTransport::Datagram)
+    }
+
+    fn message_to_item_with_transport(
+        message: &ConsensusMessage,
+        remote_pubkey: Pubkey,
+        transport: VotorTransport,
+    ) -> IngressMessage {
         let bytes =
             bytes::Bytes::from(wincode::serialize(message).expect("serialize ConsensusMessage"));
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
-        Datagram {
-            peer_pubkey: remote_pubkey,
-            peer_address: addr,
-            message: bytes,
+        IngressMessage {
+            transport,
+            datagram: Datagram {
+                peer_pubkey: remote_pubkey,
+                peer_address: addr,
+                message: bytes,
+            },
         }
     }
 }

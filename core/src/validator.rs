@@ -1237,14 +1237,15 @@ impl Validator {
         // votes/certs (egress) and inbound consensus messages (ingress) per
         // the lex-pubkey direction rule. During the dual-stack migration this
         // runs alongside the legacy QUIC-stream server (spawned in tvu on the
-        // SOCKET_TAG_ALPENGLOW socket). Both feed the same merged ingress
-        // channel — `votor_ingress_sender` is handed to tvu's legacy adapter,
-        // the matching receiver to the BLS sigverifier — and both gate
+        // SOCKET_TAG_ALPENGLOW socket). The endpoint produces inbound
+        // `Datagram`s on its own ingress channel; the receiver is handed to
+        // the BLS sigverifier as the datagram-transport ingress (the legacy
+        // server provides the second, stream-transport ingress). Both gate
         // admission on the same shared `votor_banlist`.
         //
-        // Only constructed on Testnet/Development clusters; absent → stub
-        // channels are installed downstream so the BLS sigverifier task spawns
-        // but never receives anything.
+        // Only constructed on Testnet/Development clusters; absent → the
+        // datagram ingress is `None` and the sigverifier listens on the legacy
+        // transport only (or nothing).
         let alpenglow_datagram_socket = if matches!(
             genesis_config.cluster_type,
             ClusterType::Testnet | ClusterType::Development,
@@ -1258,16 +1259,14 @@ impl Validator {
         // connection admission by both the datagram endpoint and the legacy
         // QUIC-stream server.
         let votor_banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
-        // Merged ingress: datagram endpoint + legacy stream adapter both
-        // produce into this channel; the sigverifier consumes it.
-        let (votor_ingress_sender, votor_ingress) =
-            crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
-        let (votor_egress, votor_allowlist, _alpenglow_endpoint_task) =
+        let (votor_egress, votor_datagram_ingress, votor_allowlist, _alpenglow_endpoint_task) =
             if let Some(socket) = alpenglow_datagram_socket {
                 let votor_rt_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
                     .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                let (ingress_sender, ingress_receiver) =
+                    crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
                 // Seed allowlist synchronously with the current epoch's
                 // staked-set so the endpoint never accepts handshakes
                 // against an empty allow-list. The StakedValidatorsCache
@@ -1283,7 +1282,7 @@ impl Validator {
                     votor_rt_handle,
                     &identity_keypair,
                     socket,
-                    votor_ingress_sender.clone(),
+                    ingress_sender,
                     allowlist.clone(),
                     votor_banlist.clone(),
                 )
@@ -1292,10 +1291,10 @@ impl Validator {
                     .write()
                     .unwrap()
                     .add(KeyUpdaterType::VotorDatagram, key_updater);
-                (egress, Some(allowlist), Some(task))
+                (egress, Some(ingress_receiver), Some(allowlist), Some(task))
             } else {
                 let (egress, _) = tokio::sync::mpsc::channel(1);
-                (egress, None, None)
+                (egress, None, None, None)
             };
 
         let rpc_override_health_check =
@@ -1723,8 +1722,7 @@ impl Validator {
                 key_notifiers: key_notifiers.clone(),
                 bls_connection_cache,
                 votor_egress,
-                votor_ingress,
-                votor_ingress_sender,
+                votor_datagram_ingress,
                 votor_banlist,
                 votor_allowlist,
                 voting_service_test_override: config.voting_service_test_override.clone(),
