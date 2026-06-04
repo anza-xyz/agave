@@ -256,11 +256,15 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 mod tests {
     use {
         super::*,
+        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
+        solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{AddressLookupTableAccount, SimpleAddressLoader, v0},
+        solana_sdk_ids::vote,
         solana_signature::Signature,
+        solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
     };
@@ -302,6 +306,56 @@ mod tests {
 
         assert_eq!(hash, *dynamic_runtime_transaction.message_hash());
         assert!(!dynamic_runtime_transaction.is_simple_vote_transaction());
+    }
+
+    #[test]
+    fn test_simple_vote_transaction_configuration_uses_vote_default_compute_unit_limit() {
+        let block_hash = Hash::new_unique();
+        let vote_keypair = Keypair::new();
+        let node_keypair = Keypair::new();
+        let auth_keypair = Keypair::new();
+        let vote_ix = Instruction::new_with_bytes(
+            vote::id(),
+            &[],
+            vec![
+                AccountMeta::new(vote_keypair.pubkey(), false),
+                AccountMeta::new_readonly(auth_keypair.pubkey(), true),
+            ],
+        );
+        let mut vote_tx = solana_transaction::Transaction::new_with_payer(
+            &[vote_ix],
+            Some(&node_keypair.pubkey()),
+        );
+        vote_tx.partial_sign(&[&node_keypair], block_hash);
+        vote_tx.partial_sign(&[&auth_keypair], block_hash);
+
+        let serialized_transaction =
+            wincode::serialize(&VersionedTransaction::from(vote_tx)).unwrap();
+        let transaction =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            transaction,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        assert!(runtime_transaction.is_simple_vote_transaction());
+
+        let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            runtime_transaction,
+            None,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+        let config = runtime_transaction
+            .transaction_configuration(&FeatureSet::all_enabled())
+            .unwrap();
+
+        assert_eq!(
+            config.compute_unit_limit,
+            u32::try_from(solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS).unwrap()
+        );
     }
 
     #[test]

@@ -59,9 +59,16 @@ impl<T> TransactionMeta for RuntimeTransaction<T> {
         &self,
         feature_set: &FeatureSet,
     ) -> Result<TransactionConfiguration, TransactionError> {
-        self.meta
+        let mut config = self
+            .meta
             .versioned_transaction_config
-            .try_into_config(feature_set)
+            .try_into_config(feature_set)?;
+        if self.meta.is_simple_vote_transaction {
+            config.compute_unit_limit =
+                u32::try_from(solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS)
+                    .expect("vote default compute units fit in u32");
+        }
+        Ok(config)
     }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
