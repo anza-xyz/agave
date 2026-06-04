@@ -32,7 +32,7 @@ use {
     },
     stats::ConsensusPoolServiceStats,
     std::{
-        collections::HashSet,
+        collections::HashMap,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -41,6 +41,14 @@ use {
         time::{Duration, Instant},
     },
 };
+
+/// Interval after which a still-pending safe-to-notar entry will re-emit a
+/// `RepairEvent::FetchBlock`. `BlockIdRepairService` caps its in-memory queue
+/// and silently drops the highest-slot event on overflow, so the consensus
+/// side cannot assume a successful `try_send` means the repair will happen.
+/// Picked to be well above the repair service's per-request retry interval so
+/// healthy in-flight repairs aren't duplicated.
+const REPAIR_REDISPATCH_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Inputs for the certificate pool thread
 pub(crate) struct ConsensusPoolContext {
@@ -291,8 +299,10 @@ impl ConsensusPoolService {
         // Kick off parent ready
         let mut kick_off_parent_ready = false;
 
-        // Track pending safe-to-notar blocks for intrawindow slots.
-        let mut pending_safe_to_notar = HashSet::new();
+        // Track pending safe-to-notar blocks for intrawindow slots, keyed by
+        // the timestamp of the most recent `RepairEvent::FetchBlock` dispatch
+        // so we can re-dispatch if the repair service silently drops the event.
+        let mut pending_safe_to_notar: HashMap<Block, Instant> = HashMap::new();
 
         // Ingest votes into certificate pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
@@ -531,16 +541,21 @@ impl ConsensusPoolService {
     /// 3. Check if the block has been received in blockstore
     /// 4. If received, verify the parent has a NotarizeFallback certificate
     /// 5. If verified, emit SafeToNotar event and remove from pending
+    /// 6. Otherwise, re-dispatch the repair event if [`REPAIR_REDISPATCH_INTERVAL`]
+    ///    has elapsed since the last dispatch — defends against the repair
+    ///    service silently dropping entries when its bounded queue overflows.
     fn process_pending_safe_to_notar(
         ctx: &ConsensusPoolContext,
         consensus_pool: &mut ConsensusPool,
-        pending_safe_to_notar: &mut HashSet<Block>,
+        pending_safe_to_notar: &mut HashMap<Block, Instant>,
         events: &mut Vec<VotorEvent>,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
+        let now = Instant::now();
+
         // First, collect new pending blocks from the consensus pool and send them for repair
         for block @ (slot, block_id) in consensus_pool.take_pending_safe_to_notar() {
-            if pending_safe_to_notar.contains(&block) {
+            if pending_safe_to_notar.contains_key(&block) {
                 continue;
             }
             match ctx
@@ -549,7 +564,7 @@ impl ConsensusPoolService {
             {
                 Ok(()) => {
                     stats.pending_safe_to_notar_repair_sent += 1;
-                    pending_safe_to_notar.insert(block);
+                    pending_safe_to_notar.insert(block, now);
                 }
                 Err(TrySendError::Full(event)) => {
                     error!(
@@ -563,8 +578,9 @@ impl ConsensusPoolService {
         }
 
         let highest_finalized = consensus_pool.highest_finalized_slot().unwrap_or(0);
+        let mut disconnected = false;
 
-        pending_safe_to_notar.retain(|&(slot, block_id)| {
+        pending_safe_to_notar.retain(|&(slot, block_id), last_dispatched| {
             // Discard if slot is at or below highest finalized
             if slot <= highest_finalized {
                 return false;
@@ -576,7 +592,26 @@ impl ConsensusPoolService {
                 .get_block_location(slot, block_id)
                 .expect("Blockstore operations must succeed")
             else {
-                // Block not yet received, keep waiting
+                // Block not yet received. Re-dispatch the repair event if the
+                // last attempt has been outstanding longer than the redispatch
+                // interval and the channel has capacity.
+                if !disconnected
+                    && now.duration_since(*last_dispatched) >= REPAIR_REDISPATCH_INTERVAL
+                {
+                    match ctx
+                        .repair_event_sender
+                        .try_send(RepairEvent::FetchBlock { slot, block_id })
+                    {
+                        Ok(()) => {
+                            stats.pending_safe_to_notar_repair_redispatched += 1;
+                            *last_dispatched = now;
+                        }
+                        Err(TrySendError::Full(_)) => {
+                            // Channel full, try again on the next iteration.
+                        }
+                        Err(TrySendError::Disconnected(_)) => disconnected = true,
+                    }
+                }
                 return true;
             };
 
@@ -605,6 +640,10 @@ impl ConsensusPoolService {
             // Parent doesn't have the certificate yet, keep waiting
             true
         });
+
+        if disconnected {
+            return Err(());
+        }
 
         Ok(())
     }
@@ -1190,5 +1229,110 @@ mod tests {
         // Verify certificate was sent
         let received = ctx.bls_receiver.try_recv();
         assert!(received.is_ok());
+    }
+
+    fn make_pool_ctx(
+        ctx: &TestContext,
+        repair_event_sender: RepairEventSender,
+    ) -> ConsensusPoolContext {
+        ConsensusPoolContext {
+            exit: ctx.exit.clone(),
+            migration_status: Arc::new(MigrationStatus::post_migration_status()),
+            generated_cert_types: Arc::new(GeneratedCertTypes::default()),
+            cluster_info: ctx.cluster_info.clone(),
+            my_vote_pubkey: ctx.my_vote_pubkey,
+            blockstore: ctx.blockstore.clone(),
+            sharable_banks: ctx.sharable_banks.clone(),
+            leader_schedule_cache: ctx.leader_schedule_cache.clone(),
+            consensus_message_receiver: unbounded().1,
+            bls_sender: ctx.bls_sender.clone(),
+            event_sender: unbounded().0,
+            commitment_sender: ctx.commitment_sender.clone(),
+            highest_finalized: ctx.highest_finalized.clone(),
+            repair_event_sender,
+        }
+    }
+
+    #[test]
+    fn test_pending_safe_to_notar_redispatch_on_timeout() {
+        let mut ctx = TestContext::default();
+        let (repair_event_sender, repair_event_receiver) = crossbeam_channel::bounded(8);
+        let pool_ctx = make_pool_ctx(&ctx, repair_event_sender);
+
+        let slot = 42u64;
+        let block_id = Hash::new_unique();
+        let block = (slot, block_id);
+
+        // Seed pending_safe_to_notar with a stale entry — last dispatch older
+        // than the redispatch interval. The block is not present in blockstore
+        // so the retain path will hit the redispatch branch.
+        let mut pending_safe_to_notar: HashMap<Block, Instant> = HashMap::new();
+        let stale = Instant::now()
+            .checked_sub(REPAIR_REDISPATCH_INTERVAL * 2)
+            .expect("instant arithmetic");
+        pending_safe_to_notar.insert(block, stale);
+
+        let mut events = vec![];
+        let mut stats = ConsensusPoolServiceStats::new();
+
+        ConsensusPoolService::process_pending_safe_to_notar(
+            &pool_ctx,
+            &mut ctx.consensus_pool,
+            &mut pending_safe_to_notar,
+            &mut events,
+            &mut stats,
+        )
+        .unwrap();
+
+        // The entry should still be pending (block isn't in blockstore yet).
+        assert_eq!(pending_safe_to_notar.len(), 1);
+        // Its timestamp should have been refreshed.
+        assert!(
+            pending_safe_to_notar[&block].duration_since(stale) >= REPAIR_REDISPATCH_INTERVAL,
+            "timestamp should have been refreshed"
+        );
+
+        // A repair event for this block should have been re-sent.
+        let received = repair_event_receiver.try_recv().unwrap();
+        assert_eq!(received, RepairEvent::FetchBlock { slot, block_id });
+        assert_eq!(stats.pending_safe_to_notar_repair_redispatched.0, 1);
+
+        // No additional events queued.
+        assert!(repair_event_receiver.try_recv().is_err());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_pending_safe_to_notar_no_redispatch_when_fresh() {
+        let mut ctx = TestContext::default();
+        let (repair_event_sender, repair_event_receiver) = crossbeam_channel::bounded(8);
+        let pool_ctx = make_pool_ctx(&ctx, repair_event_sender);
+
+        let slot = 42u64;
+        let block_id = Hash::new_unique();
+        let block = (slot, block_id);
+
+        // Seed with a fresh dispatch — well within the redispatch interval.
+        let mut pending_safe_to_notar: HashMap<Block, Instant> = HashMap::new();
+        let fresh = Instant::now();
+        pending_safe_to_notar.insert(block, fresh);
+
+        let mut events = vec![];
+        let mut stats = ConsensusPoolServiceStats::new();
+
+        ConsensusPoolService::process_pending_safe_to_notar(
+            &pool_ctx,
+            &mut ctx.consensus_pool,
+            &mut pending_safe_to_notar,
+            &mut events,
+            &mut stats,
+        )
+        .unwrap();
+
+        // Entry retained but no redispatch.
+        assert_eq!(pending_safe_to_notar.len(), 1);
+        assert_eq!(pending_safe_to_notar[&block], fresh);
+        assert!(repair_event_receiver.try_recv().is_err());
+        assert_eq!(stats.pending_safe_to_notar_repair_redispatched.0, 0);
     }
 }
