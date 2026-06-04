@@ -7,6 +7,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
+    solana_rpc_client::rpc_client::RpcClient,
     solana_tpu_client::tpu_client::TpuClient,
     std::{io::Result, path::PathBuf, sync::Arc},
 };
@@ -48,6 +49,14 @@ pub trait Cluster {
         pubkey: &Pubkey,
         commitment_config: CommitmentConfig,
     ) -> Result<QuicTpuClient>;
+    /// Build an RPC client connected to the validator identified by `pubkey`.
+    fn build_rpc_client(&self, pubkey: &Pubkey) -> Result<Arc<RpcClient>>;
+    /// Build an RPC client with a specific commitment for the validator identified by `pubkey`.
+    fn build_rpc_client_with_commitment(
+        &self,
+        pubkey: &Pubkey,
+        commitment_config: CommitmentConfig,
+    ) -> Result<Arc<RpcClient>>;
     fn get_contact_info(&self, pubkey: &Pubkey) -> Option<&ContactInfo>;
     fn exit_node(&mut self, pubkey: &Pubkey) -> ClusterValidatorInfo;
     fn restart_node(

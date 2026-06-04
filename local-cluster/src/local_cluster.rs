@@ -1305,6 +1305,29 @@ impl Cluster for LocalCluster {
         self.build_tpu_client(rpc_client, contact_info.rpc_pubsub().unwrap())
     }
 
+    fn build_rpc_client(&self, pubkey: &Pubkey) -> Result<Arc<RpcClient>> {
+        let contact_info = self
+            .get_contact_info(pubkey)
+            .ok_or_else(|| Error::other(format!("validator {pubkey} not found")))?;
+        let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
+        Ok(Arc::new(RpcClient::new(rpc_url)))
+    }
+
+    fn build_rpc_client_with_commitment(
+        &self,
+        pubkey: &Pubkey,
+        commitment_config: CommitmentConfig,
+    ) -> Result<Arc<RpcClient>> {
+        let contact_info = self
+            .get_contact_info(pubkey)
+            .ok_or_else(|| Error::other(format!("validator {pubkey} not found")))?;
+        let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
+        Ok(Arc::new(RpcClient::new_with_commitment(
+            rpc_url,
+            commitment_config,
+        )))
+    }
+
     fn exit_node(&mut self, pubkey: &Pubkey) -> ClusterValidatorInfo {
         let mut node = self.validators.remove(pubkey).unwrap();
 
