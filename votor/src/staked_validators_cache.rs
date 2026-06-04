@@ -14,12 +14,26 @@ use {
     },
 };
 
+/// A staked validator we send consensus messages to, with both transport
+/// addresses resolved from its gossip contact-info. During the dual-stack
+/// migration window every vote/cert is fanned out over both transports.
+#[derive(Clone, Copy, Debug)]
+pub struct AlpenglowPeer {
+    /// Node identity pubkey (signs the TLS cert on the datagram endpoint).
+    pub pubkey: Pubkey,
+    /// Legacy QUIC-stream transport address (SOCKET_TAG_ALPENGLOW). May be
+    /// overridden via `AlpenglowPortOverride` if a test override matches the
+    /// pubkey.
+    pub stream_addr: SocketAddr,
+    /// New QUIC-datagram transport address (SOCKET_TAG_ALPENGLOW_DATAGRAM).
+    /// `None` if the peer does not advertise it (pre-migration nodes) — such
+    /// peers are reachable on the legacy transport only.
+    pub datagram_addr: Option<SocketAddr>,
+}
+
 struct StakedValidatorsCacheEntry {
-    /// (Pubkey, Alpenglow socket) pairs for the staked validators. The pubkey
-    /// is the validator's node identity (same one signing TLS certs on the
-    /// alpenglow datagram endpoint). The socket is overridden via
-    /// `AlpenglowPortOverride` if a test override matches the pubkey.
-    peers: Vec<(Pubkey, SocketAddr)>,
+    /// Resolved transport addresses for the staked validators.
+    peers: Vec<AlpenglowPeer>,
 
     /// The time at which this entry was created
     creation_time: Instant,
@@ -155,6 +169,7 @@ impl StakedValidatorsCache {
             pubkey: Pubkey,
             stake: u64,
             alpenglow_socket: SocketAddr,
+            alpenglow_datagram_socket: Option<SocketAddr>,
         }
 
         let mut nodes: Vec<_> = epoch_staked_nodes
@@ -171,6 +186,7 @@ impl StakedValidatorsCache {
                         pubkey: *pubkey,
                         stake: *stake,
                         alpenglow_socket,
+                        alpenglow_datagram_socket: node.alpenglow_datagram(),
                     })
                 })?
             })
@@ -186,8 +202,10 @@ impl StakedValidatorsCache {
             .map(|x| x.get_override_map());
         for node in nodes {
             let alpenglow_socket = node.alpenglow_socket;
-            let socket = if let Some(override_map) = &override_map {
-                // If we have an override, use it.
+            // The override only redirects the legacy stream transport, to
+            // preserve master semantics; datagram probes go through
+            // `AdditionalListener` instead.
+            let stream_addr = if let Some(override_map) = &override_map {
                 override_map
                     .get(&node.pubkey)
                     .cloned()
@@ -195,7 +213,11 @@ impl StakedValidatorsCache {
             } else {
                 alpenglow_socket
             };
-            peers.push((node.pubkey, socket));
+            peers.push(AlpenglowPeer {
+                pubkey: node.pubkey,
+                stream_addr,
+                datagram_addr: node.alpenglow_datagram_socket,
+            });
         }
         self.cache.put(
             epoch,
@@ -211,7 +233,7 @@ impl StakedValidatorsCache {
         slot: Slot,
         cluster_info: &ClusterInfo,
         access_time: Instant,
-    ) -> (&[(Pubkey, SocketAddr)], bool) {
+    ) -> (&[AlpenglowPeer], bool) {
         // Check if self.alpenglow_port_override has a different last_modified.
         // Immediately refresh the cache if it does.
         if let Some(alpenglow_port_override) = &self.alpenglow_port_override {
@@ -236,7 +258,7 @@ impl StakedValidatorsCache {
         epoch: Epoch,
         cluster_info: &ClusterInfo,
         access_time: Instant,
-    ) -> (&[(Pubkey, SocketAddr)], bool) {
+    ) -> (&[AlpenglowPeer], bool) {
         // For a given epoch, if we either:
         //
         // (1) have a cache entry that has expired
@@ -632,7 +654,7 @@ mod tests {
 
         let (peers, _) = svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
         assert_eq!(peers.len(), num_nodes);
-        assert!(peers.iter().any(|(_, s)| s == &my_socket_addr));
+        assert!(peers.iter().any(|p| p.stream_addr == my_socket_addr));
 
         // Create our staked validators cache - set include_self to false
         let mut svc = StakedValidatorsCache::new(
@@ -648,7 +670,7 @@ mod tests {
         let (peers, _) = svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
         // We should have num_nodes - 1 sockets, since we exclude our own socket address.
         assert_eq!(peers.len(), num_nodes.checked_sub(1).unwrap());
-        assert!(!peers.iter().any(|(_, s)| s == &my_socket_addr));
+        assert!(!peers.iter().any(|p| p.stream_addr == my_socket_addr));
     }
 
     #[test]
@@ -673,14 +695,14 @@ mod tests {
         // Nothing in the override, so we should get the original socket addresses.
         let (peers, _) = svc.get_staked_validators_by_slot(0, &cluster_info, Instant::now());
         assert_eq!(peers.len(), 2);
-        assert!(!peers.iter().any(|(_, s)| s == &blackhole_addr));
+        assert!(!peers.iter().any(|p| p.stream_addr == blackhole_addr));
 
         // Add an override for pubkey_B, and check that we get the overridden socket address.
         alpenglow_port_override.update_override(HashMap::from([(pubkey_b, blackhole_addr)]));
         let (peers, _) = svc.get_staked_validators_by_slot(0, &cluster_info, Instant::now());
         assert_eq!(peers.len(), 2);
         // Sort peers by socket to ensure the blackhole address is at index 0.
-        let mut sockets: Vec<SocketAddr> = peers.iter().map(|(_, s)| *s).collect();
+        let mut sockets: Vec<SocketAddr> = peers.iter().map(|p| p.stream_addr).collect();
         sockets.sort();
         assert_eq!(sockets[0], blackhole_addr);
         assert_ne!(sockets[1], blackhole_addr);
@@ -689,6 +711,6 @@ mod tests {
         alpenglow_port_override.clear();
         let (peers, _) = svc.get_staked_validators_by_slot(0, &cluster_info, Instant::now());
         assert_eq!(peers.len(), 2);
-        assert!(!peers.iter().any(|(_, s)| s == &blackhole_addr));
+        assert!(!peers.iter().any(|p| p.stream_addr == blackhole_addr));
     }
 }

@@ -6,12 +6,15 @@ use {
     agave_votor_messages::{certificate::Certificate, consensus_message::ConsensusMessage},
     bytes::Bytes,
     crossbeam_channel::Receiver,
+    solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
+    solana_connection_cache::client_connection::ClientConnection,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_quic_datagram::endpoint::Datagram,
     solana_runtime::bank_forks::BankForks,
+    solana_transaction_error::TransportError,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -21,6 +24,18 @@ use {
     },
     tokio::sync::mpsc,
 };
+
+/// Send a serialized consensus message over the legacy QUIC-stream transport
+/// via the shared connection cache. Used alongside the QUIC-datagram egress
+/// during the dual-stack migration window.
+fn send_message_legacy(
+    buf: Arc<Vec<u8>>,
+    socket: &SocketAddr,
+    connection_cache: &Arc<ConnectionCache>,
+) -> Result<(), TransportError> {
+    let client = connection_cache.get_connection(socket);
+    client.send_data_async(buf)
+}
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
 /// Target number of epochs to keep in the staked validators cache. Due to lazy-lru eviction
@@ -121,6 +136,7 @@ impl VotingService {
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
+        connection_cache: Arc<ConnectionCache>,
         egress: mpsc::Sender<Datagram>,
         allowlist: Option<Arc<solana_quic_datagram::StakedNodesAllowlist>>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -159,6 +175,7 @@ impl VotingService {
                         &cluster_info,
                         vote_history_storage.as_ref(),
                         bls_op,
+                        &connection_cache,
                         &egress,
                         &additional_listeners,
                         &mut staked_validators_cache,
@@ -174,6 +191,7 @@ impl VotingService {
         slot: Slot,
         cluster_info: &ClusterInfo,
         message: &ConsensusMessage,
+        connection_cache: &Arc<ConnectionCache>,
         egress: &mpsc::Sender<Datagram>,
         additional_listeners: &[AdditionalListener],
         staked_validators_cache: &mut StakedValidatorsCache,
@@ -185,35 +203,65 @@ impl VotingService {
                 return;
             }
         };
-        let buf = Bytes::from(buf);
+        // Legacy transport takes an `Arc<Vec<u8>>`; datagram transport takes
+        // `Bytes`. Build both views once and clone the cheap handles per peer.
+        let buf_datagram = Bytes::from(buf.clone());
+        let buf_legacy = Arc::new(buf);
 
         let (staked_peers, _) = staked_validators_cache.get_staked_validators_by_slot(
             slot,
             cluster_info,
             Instant::now(),
         );
-        let peers = additional_listeners
-            .iter()
-            .map(|listener| (listener.pubkey, listener.addr))
-            .chain(staked_peers.iter().copied());
 
-        // Drop on full / closed — votor consensus tolerates loss; we
-        // never want to backpressure into vote production.
-        for (pubkey, addr) in peers {
-            let result = egress.try_send(Datagram {
-                peer_pubkey: pubkey,
-                peer_address: addr,
-                message: buf.clone(),
-            });
-            match result {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    warn!("alpenglow egress channel full; dropping vote/cert");
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    warn!("alpenglow egress channel closed; endpoint shutting down");
-                    return;
-                }
+        // Dual-stack fan-out during the migration window: every staked peer
+        // receives the message over BOTH transports — the legacy QUIC-stream
+        // path (ConnectionCache, keyed by `stream_addr`) and the new
+        // QUIC-datagram path (egress, keyed by `(pubkey, datagram_addr)`).
+        // A peer that does not yet advertise a datagram address is reached on
+        // the legacy transport only.
+        for peer in staked_peers.iter() {
+            if let Err(e) =
+                send_message_legacy(buf_legacy.clone(), &peer.stream_addr, connection_cache)
+            {
+                warn!(
+                    "Failed to send alpenglow message to {} over legacy transport: {e:?}",
+                    peer.stream_addr
+                );
+            }
+            if let Some(datagram_addr) = peer.datagram_addr {
+                Self::try_send_datagram(egress, peer.pubkey, datagram_addr, &buf_datagram);
+            }
+        }
+
+        // Additional listeners are test-only datagram probes (sniffers) — they
+        // run a QUIC-datagram endpoint, so they are reached on the datagram
+        // transport only.
+        for listener in additional_listeners {
+            Self::try_send_datagram(egress, listener.pubkey, listener.addr, &buf_datagram);
+        }
+    }
+
+    /// Push one datagram onto the egress channel. Drop on full / closed —
+    /// votor consensus tolerates loss; we never want to backpressure into
+    /// vote production.
+    fn try_send_datagram(
+        egress: &mpsc::Sender<Datagram>,
+        peer_pubkey: Pubkey,
+        peer_address: SocketAddr,
+        message: &Bytes,
+    ) {
+        match egress.try_send(Datagram {
+            peer_pubkey,
+            peer_address,
+            message: message.clone(),
+        }) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("alpenglow egress channel full; dropping vote/cert");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!("alpenglow egress channel closed; endpoint shutting down");
             }
         }
     }
@@ -222,6 +270,7 @@ impl VotingService {
         cluster_info: &ClusterInfo,
         vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
+        connection_cache: &Arc<ConnectionCache>,
         egress: &mpsc::Sender<Datagram>,
         additional_listeners: &[AdditionalListener],
         staked_validators_cache: &mut StakedValidatorsCache,
@@ -244,6 +293,7 @@ impl VotingService {
                     slot,
                     cluster_info,
                     &message,
+                    connection_cache,
                     egress,
                     additional_listeners,
                     staked_validators_cache,
@@ -256,6 +306,7 @@ impl VotingService {
                     vote_slot,
                     cluster_info,
                     &message,
+                    connection_cache,
                     egress,
                     additional_listeners,
                     staked_validators_cache,
@@ -356,6 +407,12 @@ mod tests {
         listener: AdditionalListener,
         egress: mpsc::Sender<Datagram>,
     ) -> (VotingService, Vec<ValidatorVoteKeypairs>) {
+        // The staked validators in this fixture aren't published in gossip,
+        // so the legacy ConnectionCache path resolves no peers; only the
+        // datagram additional-listener path fires. A throwaway cache satisfies
+        // the constructor.
+        let connection_cache =
+            Arc::new(ConnectionCache::new_quic("TestAlpenglowConnectionCache", 1));
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -379,6 +436,7 @@ mod tests {
                 bls_receiver,
                 Arc::new(cluster_info),
                 Arc::new(NullVoteHistoryStorage::default()),
+                connection_cache,
                 egress,
                 None, // no allowlist gating in this unit test
                 bank_forks,
