@@ -72,6 +72,7 @@ solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-turbine = { workspace = true }

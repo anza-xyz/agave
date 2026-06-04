@@ -915,6 +915,12 @@ impl LocalCluster {
         listener_keypair: Keypair,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        let validator_keys: Vec<Arc<Keypair>> = self
+            .validators
+            .values()
+            .map(|v| v.info.keypair.clone())
+            .collect();
+        let node_stakes = vec![1u64; validator_keys.len()];
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
             num_new_notarized_votes,
@@ -922,6 +928,8 @@ impl LocalCluster {
             test_name,
             vote_listener_socket,
             listener_keypair,
+            &validator_keys,
+            &node_stakes,
         );
         info!("{test_name} done waiting for notarized votes");
     }
@@ -958,14 +966,14 @@ impl LocalCluster {
     /// Ok(Some(())) if the transaction was processed successfully. Return
     /// Ok(None) if the transaction was not processed.
     pub fn poll_for_successfully_processed_transaction(
-        client: &QuicTpuClient,
+        client: &RpcClient,
         transaction: &Transaction,
     ) -> std::result::Result<Option<()>, TransportError> {
         loop {
             // Some local cluster tests create conditions where confirmation
             // is unable to be reached. So rather than checking for confirmation,
             // check for the transaction being processed.
-            let status = client.rpc_client().get_signature_status_with_commitment(
+            let status = client.get_signature_status_with_commitment(
                 &transaction.signatures[0],
                 CommitmentConfig::processed(),
             )?;
@@ -979,7 +987,7 @@ impl LocalCluster {
                 }
             }
 
-            if !client.rpc_client().is_blockhash_valid(
+            if !client.is_blockhash_valid(
                 &transaction.message.recent_blockhash,
                 CommitmentConfig::processed(),
             )? {
@@ -1007,7 +1015,9 @@ impl LocalCluster {
         // in LocalCluster integration tests
         for attempt in 1..=attempts {
             client.send_transaction_to_upcoming_leaders(transaction)?;
-            if Self::poll_for_successfully_processed_transaction(client, transaction)?.is_some() {
+            if Self::poll_for_successfully_processed_transaction(client.rpc_client(), transaction)?
+                .is_some()
+            {
                 return Ok(());
             }
 

@@ -189,14 +189,15 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
             .tpu(Protocol::QUIC)
             .expect("ingress_node has no QUIC TPU address");
         tpu_sender.with_connection(tpu_addr, |sender| {
-            tpu_sender.send_and_confirm_transaction(
-                sender,
-                &rpc_client,
-                &[funding_keypair],
-                &mut transaction,
-                10,
-            )
-            .unwrap();
+            tpu_sender
+                .send_and_confirm_transaction(
+                    sender,
+                    &rpc_client,
+                    &[funding_keypair],
+                    &mut transaction,
+                    10,
+                )
+                .unwrap();
         });
         for validator in &cluster_nodes {
             if ignore_nodes.contains(validator.pubkey()) {
@@ -265,14 +266,15 @@ pub fn send_many_transactions(
                 transfer_amount,
                 blockhash,
             );
-            tpu_sender.send_and_confirm_transaction(
-                sender,
-                &rpc_client,
-                &[funding_keypair],
-                &mut transaction,
-                5,
-            )
-            .unwrap();
+            tpu_sender
+                .send_and_confirm_transaction(
+                    sender,
+                    &rpc_client,
+                    &[funding_keypair],
+                    &mut transaction,
+                    5,
+                )
+                .unwrap();
             expected_balances.insert(random_keypair.pubkey(), transfer_amount);
         }
         expected_balances
@@ -534,6 +536,7 @@ pub fn check_for_new_processed(
 /// Returns a cancellation token, the server thread handle, and a receiver for packet batches.
 pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     vote_listener_socket: UdpSocket,
+    listener_keypair: Keypair,
     validator_keys: &[Arc<Keypair>],
     node_stakes: &[u64],
 ) -> (
@@ -556,7 +559,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
         "solAlpenglowTest",
         "alpenglow_local_cluster_test",
         [vote_listener_socket.into()],
-        &Keypair::new(),
+        &listener_keypair,
         sender,
         staked_nodes,
         QuicStreamerConfig::default(),
@@ -573,6 +576,7 @@ pub fn check_for_new_notarized_votes(
     contact_infos: &[ContactInfo],
     test_name: &str,
     vote_listener_socket: UdpSocket,
+    listener_keypair: Keypair,
     validator_keys: &[Arc<Keypair>],
     node_stakes: &[u64],
 ) {
@@ -597,6 +601,7 @@ pub fn check_for_new_notarized_votes(
 
     let (cancel, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
         vote_listener_socket,
+        listener_keypair,
         validator_keys,
         node_stakes,
     );
