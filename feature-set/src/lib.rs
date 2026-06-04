@@ -88,6 +88,7 @@ pub struct FeatureSnapshot {
     pub relax_post_exec_min_balance_check: bool,
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
+    pub validate_chained_block_id_2: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -204,6 +205,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
+            validate_chained_block_id_2: is_active(&validate_chained_block_id_2::ID),
         }
     }
 }
@@ -1511,6 +1513,10 @@ pub mod validate_chained_block_id {
     solana_pubkey::declare_id!("vcmrbYbiMVKaq1snKP6eCacNDcr6qZvpCNUjmk6gxvZ");
 }
 
+pub mod validate_chained_block_id_2 {
+    solana_pubkey::declare_id!("vcmrw431aNM8ngQ46derkZXipoTGQdbHkEygBDh12dA");
+}
+
 pub mod validator_admission_ticket {
     solana_pubkey::declare_id!("VAT9huvhPjRN9cyrPytq9rwvEJ3J4ADtjdncgZRyANJ");
 }
@@ -2605,6 +2611,17 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             define_ltds_fee_only_semantics::id(),
             "SIMD-0186 Amendment: Define fee-only semantics",
         ),
+<<<<<<< HEAD
+=======
+        (
+            set_lamports_per_byte_to_6960::id(),
+            "SIMD-0438: Reset lamports per byte to legacy value of 6960",
+        ),
+        (
+            validate_chained_block_id_2::id(),
+            "SIMD-340: Encompassing check for validate chained block ID",
+        ),
+>>>>>>> a49541ffc (blockstore: add secondary feature flag for SIMD-0340 (#12854))
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]
