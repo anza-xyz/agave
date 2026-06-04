@@ -7319,6 +7319,7 @@ name = "solana-clap-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
  "assert_matches",
+ "bs58",
  "chrono",
  "clap 2.33.3",
  "rpassword",
@@ -8332,6 +8333,7 @@ dependencies = [
  "agave-snapshots",
  "base64 0.22.1",
  "bincode",
+ "bs58",
  "clap 2.33.3",
  "itertools 0.14.0",
  "serde",

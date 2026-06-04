@@ -19,6 +19,7 @@ name = "solana_clap_utils"
 agave-unstable-api = []
 
 [dependencies]
+bs58 = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["default"] }
 clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
 rpassword = { workspace = true }
