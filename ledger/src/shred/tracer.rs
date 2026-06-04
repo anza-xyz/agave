@@ -11,11 +11,11 @@ use {
     },
 };
 
-// A signature prefix mask keeps sampling stable across all nodes observing the
-// same shred. Fourteen prefix bits samples roughly 1/16k shreds.
-const SHRED_TRACER_SIGNATURE_MASK_BITS: u32 = 14;
-const SHRED_TRACER_SIGNATURE_MASK_SHIFT: u32 = u32::BITS - SHRED_TRACER_SIGNATURE_MASK_BITS;
-const SHRED_TRACER_SIGNATURE_MASK: u32 = u32::MAX << SHRED_TRACER_SIGNATURE_MASK_SHIFT;
+// A stable shred-key mask keeps sampling consistent across all nodes observing
+// the same shred. Fourteen mask bits samples roughly 1/16k shreds.
+const SHRED_TRACER_SAMPLE_MASK_BITS: u32 = 14;
+const SHRED_TRACER_SAMPLE_MASK_SHIFT: u32 = u32::BITS - SHRED_TRACER_SAMPLE_MASK_BITS;
+const SHRED_TRACER_SAMPLE_MASK: u32 = u32::MAX << SHRED_TRACER_SAMPLE_MASK_SHIFT;
 
 static EARLY_TRACE_CACHE: LazyLock<Mutex<EarlyTraceCache>> =
     LazyLock::new(|| Mutex::new(EarlyTraceCache::default()));
@@ -259,11 +259,11 @@ fn trace_source(source: &Meta) -> TraceSource {
 
 fn trace_key(shred: &[u8], shred_id: Option<ShredId>) -> Option<TraceKey> {
     let signature_prefix = signature_prefix(shred)?;
-    if !matches_signature_mask(signature_prefix) {
+    let shred_id = shred_id.or_else(|| shred::layout::get_shred_id(shred))?;
+    if !matches_sample_mask(sample_key(signature_prefix, shred_id)) {
         return None;
     }
     let signature = shred::layout::get_signature(shred)?;
-    let shred_id = shred_id.or_else(|| shred::layout::get_shred_id(shred))?;
     Some(TraceKey {
         signature,
         shred_id,
@@ -277,8 +277,25 @@ fn signature_prefix(shred: &[u8]) -> Option<u32> {
 }
 
 #[inline]
-fn matches_signature_mask(signature_prefix: u32) -> bool {
-    signature_prefix & SHRED_TRACER_SIGNATURE_MASK == 0
+fn sample_key(signature_prefix: u32, shred_id: ShredId) -> u32 {
+    let slot = shred_id.slot();
+    let mut key = signature_prefix
+        ^ (slot as u32).wrapping_mul(0x9e37_79b9)
+        ^ ((slot >> 32) as u32).wrapping_mul(0x85eb_ca6b)
+        ^ shred_id.index().wrapping_mul(0xc2b2_ae35)
+        ^ u32::from(u8::from(shred_id.shred_type()));
+    // Mix the shred identity before masking so a sampled leader signature does
+    // not turn into a sampled burst of adjacent shred indexes.
+    key ^= key >> 16;
+    key = key.wrapping_mul(0x7feb_352d);
+    key ^= key >> 15;
+    key = key.wrapping_mul(0x846c_a68b);
+    key ^ (key >> 16)
+}
+
+#[inline]
+fn matches_sample_mask(sample_key: u32) -> bool {
+    sample_key & SHRED_TRACER_SAMPLE_MASK == 0
 }
 
 fn timestamp_us() -> i64 {
@@ -328,14 +345,42 @@ mod tests {
     use {super::*, solana_signature::SIGNATURE_BYTES};
 
     #[test]
-    fn test_matches_signature_mask() {
-        assert!(matches_signature_mask(0));
-        assert!(matches_signature_mask(
-            (1u32 << SHRED_TRACER_SIGNATURE_MASK_SHIFT) - 1
+    fn test_matches_sample_mask() {
+        assert!(matches_sample_mask(0));
+        assert!(matches_sample_mask(
+            (1u32 << SHRED_TRACER_SAMPLE_MASK_SHIFT) - 1
         ));
-        assert!(!matches_signature_mask(
-            1u32 << SHRED_TRACER_SIGNATURE_MASK_SHIFT
-        ));
+        assert!(!matches_sample_mask(1u32 << SHRED_TRACER_SAMPLE_MASK_SHIFT));
+    }
+
+    #[test]
+    fn test_sample_key_includes_shred_id() {
+        let signature_prefix = 0;
+        let shred_id = ShredId::new(7, 9, ShredType::Data);
+
+        assert_ne!(
+            sample_key(signature_prefix, shred_id),
+            sample_key(signature_prefix, ShredId::new(7, 10, ShredType::Data))
+        );
+        assert_ne!(
+            sample_key(signature_prefix, shred_id),
+            sample_key(signature_prefix, ShredId::new(8, 9, ShredType::Data))
+        );
+        assert_ne!(
+            sample_key(signature_prefix, shred_id),
+            sample_key(signature_prefix, ShredId::new(7, 9, ShredType::Code))
+        );
+    }
+
+    #[test]
+    fn test_sampling_does_not_trace_whole_signature_burst() {
+        let sampled = (0..64)
+            .filter(|index| {
+                matches_sample_mask(sample_key(0, ShredId::new(7, *index, ShredType::Data)))
+            })
+            .count();
+
+        assert!(sampled < 64);
     }
 
     #[test]
