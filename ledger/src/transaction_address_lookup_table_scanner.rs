@@ -1,12 +1,12 @@
 use {
     agave_reserved_account_keys::ReservedAccountKeys,
-    bincode::deserialize,
     solana_address_lookup_table_interface::{
         self as address_lookup_table, instruction::ProgramInstruction,
     },
     solana_pubkey::Pubkey,
     solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::collections::HashSet,
+    wincode::deserialize,
 };
 
 static RESERVED_IDS_SET: std::sync::LazyLock<HashSet<Pubkey>> =
