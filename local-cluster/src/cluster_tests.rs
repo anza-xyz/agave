@@ -67,6 +67,7 @@ use {
 
 /// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing
 /// a synchronous interface for sending transactions in local-cluster tests.
+#[derive(Clone)]
 pub struct TpuSender {
     runtime: Arc<tokio::runtime::Runtime>,
 }
@@ -115,7 +116,8 @@ impl TpuSender {
         result
     }
 
-    fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+    /// Send a pre-serialized transaction wire frame through an open `sender`.
+    pub fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
         self.runtime
             .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
             .expect("TpuSender: should send transactions in batch");
@@ -146,6 +148,29 @@ impl TpuSender {
             warn!("send_and_confirm_transaction: attempt {attempt} failed, retrying");
         }
         Err(std::io::Error::other("failed to confirm transaction after max retries").into())
+    }
+
+    /// Open a QUIC connection to `tpu_addr` and send-and-confirm `transaction` with retries.
+    ///
+    /// Uses `rpc_client` to poll for confirmation and refresh the blockhash between attempts.
+    pub fn send_transaction_with_retries<T: solana_signer::signers::Signers + ?Sized>(
+        &self,
+        tpu_addr: SocketAddr,
+        rpc_client: &RpcClient,
+        signers: &T,
+        transaction: &mut Transaction,
+        attempts: usize,
+    ) -> Result<(), TransportError> {
+        let sender_clone = self.clone();
+        self.with_connection(tpu_addr, move |sender| {
+            sender_clone.send_and_confirm_transaction(
+                sender,
+                rpc_client,
+                signers,
+                transaction,
+                attempts,
+            )
+        })
     }
 }
 
