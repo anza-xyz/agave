@@ -195,7 +195,26 @@ impl BlockstoreCleanupService {
         };
 
         // Ensure we don't cleanup anything past the last root we saw
-        let lowest_cleanup_slot = std::cmp::min(lowest_slot + num_slots_to_clean - 1, root);
+        let mut lowest_cleanup_slot = std::cmp::min(lowest_slot + num_slots_to_clean - 1, root);
+
+        // Safety floor: guarantee at least DEFAULT_CLEANUP_SLOT_INTERVAL
+        // slots of recent block history are retained after each cleanup.
+        //
+        // After purge_slots() with PurgeType::CompactionFilter, RocksDB SST
+        // files may retain stale num_entries counts (entries are logically
+        // deleted but not physically removed until compaction). On low-
+        // throughput validators where compaction rarely triggers, this
+        // inflates num_shreds and mean_shreds_per_slot, causing the cleanup
+        // algorithm to over-purge. The floor prevents near-zero retention
+        // regardless of the shred counting accuracy.
+        //
+        // Only applied when root > DEFAULT_CLEANUP_SLOT_INTERVAL to avoid
+        // interfering with early validator operation or unit tests that use
+        // small root values with fresh (accurate) SST metadata.
+        if root > DEFAULT_CLEANUP_SLOT_INTERVAL {
+            let max_purge_slot = root - DEFAULT_CLEANUP_SLOT_INTERVAL;
+            lowest_cleanup_slot = std::cmp::min(lowest_cleanup_slot, max_purge_slot);
+        }
 
         match cleanup_request_sender.try_send(lowest_cleanup_slot) {
             Ok(()) => {}
