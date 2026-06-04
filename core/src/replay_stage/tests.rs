@@ -185,11 +185,11 @@ fn insert_update_parent_slot(
     update_parent_block_id: Hash,
     replay_fec_set_index: u32,
 ) {
-    let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+    let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: block_header_parent_slot,
         parent_block_id: Hash::new_unique(),
     });
-    let update_parent = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: update_parent_slot,
         new_parent_block_id: update_parent_block_id,
     });
@@ -2895,16 +2895,16 @@ fn test_headerless_update_parent() {
     let migration_status = post_migration_status_for_tests();
 
     let footer_marker = || {
-        VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 0,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         })
     };
-    let update_parent = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
         new_parent_block_id: Hash::default(),
     });
@@ -3220,11 +3220,11 @@ fn test_before_update_soft_dead() {
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
     let bank = bank_forks.write().unwrap().insert(bank);
-    let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+    let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
         parent_block_id: Hash::default(),
     });
-    let update_parent = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
         new_parent_block_id: Hash::default(),
     });

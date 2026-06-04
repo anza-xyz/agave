@@ -1264,7 +1264,7 @@ mod test {
 
         let new_parent_slot = 7;
         let new_parent_block_id = Hash::new_unique();
-        let component = BlockComponent::new_block_marker(VersionedBlockMarker::new_update_parent(
+        let component = BlockComponent::new_block_marker(VersionedBlockMarker::from_update_parent(
             solana_entry::block_component::UpdateParentV1 {
                 new_parent_slot,
                 new_parent_block_id,

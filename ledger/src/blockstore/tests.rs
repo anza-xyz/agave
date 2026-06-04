@@ -77,7 +77,7 @@ fn create_update_parent_shreds_with_shred_parent(
     is_last_in_slot: bool,
 ) -> Vec<Shred> {
     use solana_entry::block_component::UpdateParentV1;
-    let component = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let component = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: parent_slot,
         new_parent_block_id: parent_block_id,
     });
@@ -109,7 +109,7 @@ fn create_block_header_shreds_with_shred_parent(
     parent_block_id: Hash,
 ) -> Vec<Shred> {
     use solana_entry::block_component::BlockHeaderV1;
-    let component = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+    let component = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot,
         parent_block_id,
     });
@@ -166,11 +166,11 @@ fn create_block_footer_shreds_with_last(
         bank_hash: Hash::new_unique(),
         block_producer_time_nanos: 0,
         block_user_agent: vec![],
-        final_cert: None,
+        block_final_cert: None,
         skip_reward_cert: None,
         notar_reward_cert: None,
     };
-    let component = VersionedBlockMarker::new_block_footer(footer);
+    let component = VersionedBlockMarker::from_block_footer(footer);
     let component = BlockComponent::new_block_marker(component);
 
     Shredder::new(slot, parent_slot, 0, 0)

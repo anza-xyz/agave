@@ -627,7 +627,7 @@ impl PohRecorder {
         // Send out the block footer - we now have the bank hash
         footer.bank_hash = working_bank.bank.hash();
 
-        let footer = VersionedBlockMarker::new_block_footer(footer);
+        let footer = VersionedBlockMarker::from_block_footer(footer);
         let footer_entry_marker = (
             EntryOrMarker::Marker(footer),
             working_bank.max_tick_height - 1,
@@ -1389,11 +1389,11 @@ mod tests {
         poh_recorder.set_bank_for_test(bank);
         drop(entry_receiver);
 
-        let marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 0,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1406,7 +1406,7 @@ mod tests {
             bank_hash: Hash::default(),
             block_producer_time_nanos: 0,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         }

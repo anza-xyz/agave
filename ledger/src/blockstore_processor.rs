@@ -1089,6 +1089,15 @@ fn verify_ticks(
     }
 
     if migration_status.should_have_alpenglow_ticks(bank.slot()) {
+        // When alpenglow is active, PoH MUST be in low power mode.
+        // We require that each block only has 1 tick at the very end
+        if entries.iter().any(|entry| entry.num_hashes != 1) {
+            warn!(
+                "Alpenglow entry with invalid num_hashes found in slot: {}",
+                bank.slot()
+            );
+            return Err(BlockError::InvalidTickHashCount);
+        }
         return Ok(());
     }
 
@@ -6096,17 +6105,17 @@ pub mod tests {
         let keypair = Arc::new(Keypair::new());
         let reed_solomon_cache = ReedSolomonCache::default();
 
-        let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+        let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
             parent_block_id: Hash::default(),
         });
         let header_component = BlockComponent::new_block_marker(header);
 
-        let footer = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let footer = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 1_000_000_000,
             block_user_agent: b"test".to_vec(),
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });

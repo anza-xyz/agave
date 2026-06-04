@@ -49,7 +49,7 @@ solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { version = "=3.4.0", default-features = false }
 solana-signer = "=3.0.0"
-solana-transaction = { version = "=4.1.1", features = ["wincode"] }
+solana-transaction = { version = "=4.1.2", features = ["wincode"] }
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

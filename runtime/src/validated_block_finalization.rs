@@ -13,7 +13,7 @@ use {
     log::warn,
     solana_bls_signatures::BlsError,
     solana_clock::Slot,
-    solana_entry::block_component::{FinalCertificate, VotesAggregate},
+    solana_entry::block_component::{BlockFinalizationCert, VotesAggregate},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_signer_store::{DecodeError, Decoded, decode},
@@ -92,12 +92,12 @@ impl ValidatedBlockFinalizationCert {
     /// - Certificate signature verification fails
     /// - The certificates don't meet the required stake thresholds
     pub fn try_from_footer(
-        final_cert: FinalCertificate,
+        block_final_cert: BlockFinalizationCert,
         bank: &Bank,
     ) -> Result<Self, BlockFinalizationCertError> {
-        let (slot, block_id) = (final_cert.slot, final_cert.block_id);
+        let (slot, block_id) = (block_final_cert.slot, block_final_cert.block_id);
 
-        if let Some(notar_aggregate) = final_cert.notar_aggregate {
+        if let Some(notar_aggregate) = block_final_cert.notar_aggregate {
             // Slow finalization
             let notarize_cert_type = CertificateType::Notarize(slot, block_id);
             let finalize_cert_type = CertificateType::Finalize(slot);
@@ -111,11 +111,11 @@ impl ValidatedBlockFinalizationCert {
             };
             let finalize_cert = Certificate {
                 cert_type: finalize_cert_type,
-                signature: final_cert
+                signature: block_final_cert
                     .final_aggregate
                     .uncompress_signature()
                     .map_err(|e| BlockFinalizationCertError::BlsError(finalize_cert_type, e))?,
-                bitmap: final_cert.final_aggregate.into_bitmap(),
+                bitmap: block_final_cert.final_aggregate.into_bitmap(),
             };
 
             // Verify both certificates
@@ -171,13 +171,13 @@ impl ValidatedBlockFinalizationCert {
 
             let fast_finalize_cert = Certificate {
                 cert_type: fast_finalize_cert_type,
-                signature: final_cert
+                signature: block_final_cert
                     .final_aggregate
                     .uncompress_signature()
                     .map_err(|e| {
                         BlockFinalizationCertError::BlsError(fast_finalize_cert_type, e)
                     })?,
-                bitmap: final_cert.final_aggregate.into_bitmap(),
+                bitmap: block_final_cert.final_aggregate.into_bitmap(),
             };
 
             let (finalize_stake, total_stake) =
@@ -321,8 +321,8 @@ impl ValidatedBlockFinalizationCert {
         (signers, final_cert, notar_cert)
     }
 
-    /// Converts this validated certificate into a [`FinalCertificate`] for inclusion in a block footer.
-    pub fn to_final_certificate(&self) -> FinalCertificate {
+    /// Converts this validated certificate into a [`BlockFinalizationCert`] for inclusion in a block footer.
+    pub fn to_block_final_cert(&self) -> BlockFinalizationCert {
         match &self.kind {
             ValidatedBlockFinalizationCertKind::Finalize {
                 finalize_cert,
@@ -334,7 +334,7 @@ impl ValidatedBlockFinalizationCert {
                     .to_block()
                     .expect("notarize certificates correspond to blocks")
                     .1;
-                FinalCertificate {
+                BlockFinalizationCert {
                     slot,
                     block_id,
                     final_aggregate: VotesAggregate::from_certificate(finalize_cert),
@@ -346,7 +346,7 @@ impl ValidatedBlockFinalizationCert {
                     .cert_type
                     .to_block()
                     .expect("fast finalizations correspond to blocks");
-                FinalCertificate {
+                BlockFinalizationCert {
                     slot,
                     block_id,
                     final_aggregate: VotesAggregate::from_certificate(cert),
@@ -487,14 +487,14 @@ mod tests {
             let fast_finalize_cert =
                 build_certificate_manual(cert_type, vote, &signing_ranks, &validator_keypairs);
 
-            let final_cert = FinalCertificate {
+            let block_final_cert = BlockFinalizationCert {
                 slot,
                 block_id,
                 final_aggregate: VotesAggregate::from_certificate(&fast_finalize_cert),
                 notar_aggregate: None,
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank);
+            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
             assert!(
                 result.is_ok(),
                 "Valid fast finalize certificate should pass verification: {result:?}"
@@ -524,14 +524,14 @@ mod tests {
                 &validator_keypairs,
             );
 
-            let final_cert = FinalCertificate {
+            let block_final_cert = BlockFinalizationCert {
                 slot,
                 block_id,
                 final_aggregate: VotesAggregate::from_certificate(&finalize_cert),
                 notar_aggregate: Some(VotesAggregate::from_certificate(&notarize_cert)),
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank);
+            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
             assert!(
                 result.is_ok(),
                 "Valid slow finalize certificate should pass verification: {result:?}"
@@ -561,14 +561,14 @@ mod tests {
             let fast_finalize_cert =
                 build_certificate_manual(cert_type, vote, &signing_ranks, &validator_keypairs);
 
-            let final_cert = FinalCertificate {
+            let block_final_cert = BlockFinalizationCert {
                 slot,
                 block_id,
                 final_aggregate: VotesAggregate::from_certificate(&fast_finalize_cert),
                 notar_aggregate: None,
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank);
+            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
             assert!(
                 matches!(
                     result,
@@ -602,14 +602,14 @@ mod tests {
                 &validator_keypairs,
             );
 
-            let final_cert = FinalCertificate {
+            let block_final_cert = BlockFinalizationCert {
                 slot,
                 block_id,
                 final_aggregate: VotesAggregate::from_certificate(&finalize_cert),
                 notar_aggregate: Some(VotesAggregate::from_certificate(&notarize_cert)),
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank);
+            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
             assert!(
                 matches!(
                     result,
@@ -645,14 +645,14 @@ mod tests {
                 &validator_keypairs,
             );
 
-            let final_cert = FinalCertificate {
+            let block_final_cert = BlockFinalizationCert {
                 slot,
                 block_id,
                 final_aggregate: VotesAggregate::from_certificate(&finalize_cert),
                 notar_aggregate: Some(VotesAggregate::from_certificate(&notarize_cert)),
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank);
+            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
             assert!(
                 matches!(
                     result,

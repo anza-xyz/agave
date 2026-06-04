@@ -283,13 +283,13 @@ impl VoteStateHandler {
         }
     }
 
-    pub(crate) fn last_timestamp(&self) -> &BlockTimestamp {
+    pub fn last_timestamp(&self) -> &BlockTimestamp {
         match &self.target_state {
             TargetVoteState::V4(v4) => &v4.last_timestamp,
         }
     }
 
-    pub(crate) fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
+    pub fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
             TargetVoteState::V4(v4) => v4.last_timestamp = timestamp,
         }

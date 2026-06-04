@@ -55,6 +55,18 @@ static SVM_BUILTINS: &[SvmBuiltinPrototype] = &[
         name: "compute_budget_program",
         register_fn: solana_compute_budget_program::Entrypoint::register,
     },
+    #[cfg(feature = "conformance")]
+    SvmBuiltinPrototype {
+        program_id: solana_vote_program::id(),
+        name: "vote_program",
+        register_fn: solana_vote_program::vote_processor::Entrypoint::register,
+    },
+    #[cfg(feature = "conformance")]
+    SvmBuiltinPrototype {
+        program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
+        name: "zk_elgamal_proof_program",
+        register_fn: solana_zk_elgamal_proof_program::Entrypoint::register,
+    },
 ];
 
 fn create_keyed_account_for_builtin_program(program_id: &Pubkey, name: &str) -> (Pubkey, Account) {

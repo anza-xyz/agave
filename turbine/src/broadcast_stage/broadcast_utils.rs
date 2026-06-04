@@ -444,7 +444,7 @@ mod tests {
                 .unwrap();
         }
 
-        let marker = solana_entry::block_component::VersionedBlockMarker::new_block_header(
+        let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 0,
                 parent_block_id: Hash::default(),
@@ -480,7 +480,7 @@ mod tests {
         s.send((bank1.clone(), (EntryOrMarker::Entry(entry1.clone()), 1)))
             .unwrap();
 
-        let marker = solana_entry::block_component::VersionedBlockMarker::new_block_header(
+        let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 0,
                 parent_block_id: Hash::default(),
@@ -546,7 +546,7 @@ mod tests {
         // Bank changes to bank2, but the next item is a marker with tick_height=3 — this should
         // leave entries empty after the clear. The stale last_tick_height (5, from bank1) must not
         // leak into subsequent results.
-        let marker = solana_entry::block_component::VersionedBlockMarker::new_block_header(
+        let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 1,
                 parent_block_id: Hash::default(),

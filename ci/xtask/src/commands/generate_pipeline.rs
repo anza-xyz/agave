@@ -762,4 +762,92 @@ mod tests {
         assert!(changed_files.contains(&String::from("rbpf/tests/elfs/syscall_static.so")));
         assert!(changed_files.contains(&String::from("rbpf/tests/elfs/syscalls.rs")));
     }
+
+    fn flags(files: &[&str]) -> PullRequestPipelineFlags {
+        let owned: Vec<String> = files.iter().map(|s| s.to_string()).collect();
+        PullRequestPipelineFlags::from_changed_files(&owned)
+    }
+
+    #[test]
+    fn test_readme_triggers_nothing() {
+        let f = flags(&["README.md"]);
+        assert!(!f.shellcheck);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.docs);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
+    }
+
+    #[test]
+    fn test_docker_change_triggers_all() {
+        let f = flags(&["ci/docker/Dockerfile"]);
+        assert!(f.checks);
+        assert!(f.feature_check);
+        assert!(f.miri);
+        assert!(f.frozen_abi);
+        assert!(f.stable);
+        assert!(f.local_cluster);
+        assert!(f.docs);
+        assert!(f.localnet);
+        assert!(f.stable_sbf);
+        assert!(f.shuttle);
+        assert!(f.coverage);
+    }
+
+    #[test]
+    fn test_rust_change_triggers_all() {
+        let f = flags(&["core/src/lib.rs"]);
+        assert!(f.checks);
+        assert!(f.feature_check);
+        assert!(f.miri);
+        assert!(f.frozen_abi);
+        assert!(f.stable);
+        assert!(f.local_cluster);
+        assert!(f.docs);
+        assert!(f.localnet);
+        assert!(f.stable_sbf);
+        assert!(f.shuttle);
+        assert!(f.coverage);
+    }
+
+    #[test]
+    fn test_unimportant_shell_triggers_shellcheck_only() {
+        let f = flags(&["some/random/script.sh"]);
+        assert!(f.shellcheck);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.docs);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
+    }
+
+    #[test]
+    fn test_test_docs_sh_triggers_docs_only() {
+        let f = flags(&["ci/test-docs.sh"]);
+        assert!(f.shellcheck);
+        assert!(f.docs);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
+    }
 }

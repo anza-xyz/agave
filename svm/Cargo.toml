@@ -25,6 +25,8 @@ conformance = [
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dep:solana-vote-program",
+    "dep:solana-zk-elgamal-proof-program",
     "dep:xxhash-rust",
     "dev-context-only-utils",
     "solana-instruction-error/serde",
@@ -110,6 +112,8 @@ solana-system-program = { workspace = true, optional = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-vote-program = { workspace = true, optional = true }
+solana-zk-elgamal-proof-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
