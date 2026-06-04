@@ -1598,7 +1598,7 @@ fn test_optimistic_confirmation_violation_detection() {
     }
 
     info!("exiting node");
-    drop(client);
+    drop(rpc_client);
     let mut exited_validator_info = cluster.exit_node(&node_to_restart);
     info!("exiting node success");
 
