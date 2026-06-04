@@ -2,7 +2,7 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo, ValidatorInfo},
         cluster_tests,
-        integration_tests::{DEFAULT_NODE_STAKE, ValidatorKeys},
+        integration_tests::ValidatorKeys,
         validator_configs::*,
     },
     agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
@@ -30,7 +30,7 @@ use {
     solana_ledger::{create_new_tmp_ledger, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
