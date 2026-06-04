@@ -123,7 +123,7 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
-        let validate_chained_block_id_2 = shred::filter::check_feature_activation_from_bank(
+        let validate_chained_block_id_2 = cluster_nodes::check_feature_activation(
             &feature_set::validate_chained_block_id_2::id(),
             shred_slot,
             &root_bank,

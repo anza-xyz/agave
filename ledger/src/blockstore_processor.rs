@@ -2394,20 +2394,13 @@ fn supermajority_root_from_vote_accounts(
 /// - `Mismatch`: definitive mismatch between child's chained merkle root
 ///   and parent's block ID
 /// - `Unavailable`: data shred 0 not received yet, cannot validate
-<<<<<<< HEAD
 pub fn check_chained_block_id(blockstore: &Blockstore, bank: &Bank) -> ChainedBlockIdCheck {
-    if !bank
+    if !(bank
         .feature_set
         .is_active(&agave_feature_set::validate_chained_block_id::id())
-=======
-pub fn check_chained_block_id(
-    blockstore: &Blockstore,
-    bank: &Bank,
-    migration_status: &MigrationStatus,
-) -> ChainedBlockIdCheck {
-    let feature_snapshot = bank.feature_set.snapshot();
-    if !(feature_snapshot.validate_chained_block_id || feature_snapshot.validate_chained_block_id_2)
->>>>>>> a49541ffc (blockstore: add secondary feature flag for SIMD-0340 (#12854))
+        || bank
+            .feature_set
+            .is_active(&agave_feature_set::validate_chained_block_id_2::id()))
     {
         return ChainedBlockIdCheck::Inactive;
     }
@@ -5854,70 +5847,28 @@ pub mod tests {
             ChainedBlockIdCheck::Mismatch
         ));
 
-<<<<<<< HEAD
-        // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
-=======
         // Case 3a: With only the replacement feature active, replay should
         // still run the existing inter-slot SIMD-0340 check.
         insert_shreds_with_chained_merkle_root(14, 0, Hash::new_unique());
-        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
+        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 14);
         child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
         child_bank.activate_feature(&agave_feature_set::validate_chained_block_id_2::id());
         assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Mismatch
         ));
 
         // Case 3b: With both feature gates inactive, replay should not run the
         // chained block ID check.
-        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
+        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 14);
         child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
         child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id_2::id());
         assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Inactive
         ));
 
-        // Case 4: UpdateParent metadata does not bypass Tower validation.
-        insert_shreds_with_chained_merkle_root(16, 0, Hash::new_unique());
-        let mut meta = blockstore.meta(16).unwrap().unwrap();
-        meta.replay_fec_set_index = 32;
-        blockstore.put_meta(16, &meta).unwrap();
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 16);
-        assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
-            ChainedBlockIdCheck::Mismatch
-        ));
-
-        // Case 5: Alpenglow UpdateParent slots skip shred-0 chained block ID
-        // validation because replay starts at the UpdateParent FEC set.
-        assert!(matches!(
-            check_chained_block_id(
-                &blockstore,
-                &child_bank,
-                &MigrationStatus::post_migration_status()
-            ),
-            ChainedBlockIdCheck::Pass
-        ));
-
-        // Case 6: Non-first-window UpdateParent metadata does not bypass
-        // chained block ID validation.
-        insert_shreds_with_chained_merkle_root(13, 0, Hash::new_unique());
-        let mut meta = blockstore.meta(13).unwrap().unwrap();
-        meta.replay_fec_set_index = 32;
-        blockstore.put_meta(13, &meta).unwrap();
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 13);
-        assert!(matches!(
-            check_chained_block_id(
-                &blockstore,
-                &child_bank,
-                &MigrationStatus::post_migration_status()
-            ),
-            ChainedBlockIdCheck::Mismatch
-        ));
-
-        // Case 7: Parent has no shreds (get_block_merkle_root returns Err) —
->>>>>>> a49541ffc (blockstore: add secondary feature flag for SIMD-0340 (#12854))
+        // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
         // should return Pass regardless of chained merkle root.
         let no_shreds_parent_bank =
             Arc::new(Bank::new_from_parent(parent_bank, &Pubkey::default(), 20));
