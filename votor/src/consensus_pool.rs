@@ -29,7 +29,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
-    std::{cmp::Ordering, collections::BTreeMap, num::NonZeroU64, sync::Arc},
+    std::{cmp::Ordering, collections::BTreeMap, num::NonZero, sync::Arc},
     thiserror::Error,
 };
 
@@ -76,7 +76,7 @@ fn get_key_and_stakes(
     root_bank: &Bank,
     slot: Slot,
     rank: u16,
-) -> Result<(Pubkey, Stake, Stake), AddVoteError> {
+) -> Result<(Pubkey, NonZero<Stake>, NonZero<Stake>), AddVoteError> {
     let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).ok_or_else(|| {
         AddVoteError::EpochStakesNotFound(root_bank.epoch_schedule().get_epoch(slot))
     })?;
@@ -86,17 +86,15 @@ fn get_key_and_stakes(
     else {
         return Err(AddVoteError::InvalidRank(rank));
     };
-    if entry.stake == 0 {
-        // Since we have a valid rank, this should never happen, there is no rank for zero stake.
-        panic!(
-            "Validator stake is zero for pubkey: {}",
-            entry.vote_account_pubkey
-        );
-    }
     Ok((
         entry.vote_account_pubkey,
-        entry.stake,
-        epoch_stakes.total_stake(),
+        NonZero::new(entry.stake).unwrap_or_else(|| {
+            panic!(
+                "Validator stake is zero for pubkey: {}",
+                entry.vote_account_pubkey,
+            )
+        }),
+        NonZero::new(epoch_stakes.total_stake()).expect("expect total stakes to not be 0"),
     ))
 }
 
@@ -176,7 +174,7 @@ impl ConsensusPool {
         &mut self,
         vote: VoteMessage,
         validator_vote_key: Pubkey,
-        validator_stake: Stake,
+        validator_stake: NonZero<Stake>,
     ) -> Option<Stake> {
         let vote_type = vote.vote.get_type();
         let pool = self
@@ -206,7 +204,7 @@ impl ConsensusPool {
         vote: &Vote,
         block_id: Option<Hash>,
         events: &mut Vec<VotorEvent>,
-        total_stake: Stake,
+        total_stake: NonZero<Stake>,
     ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
         let slot = vote.slot();
         let mut new_certificates_to_send = Vec::new();
@@ -233,7 +231,6 @@ impl ConsensusPool {
                     })
                 })
                 .sum::<Stake>();
-            let total_stake = NonZeroU64::new(total_stake).unwrap();
             if Fraction::new(accumulated_stake, total_stake) < limit {
                 continue;
             }
@@ -413,12 +410,6 @@ impl ConsensusPool {
         let vote_slot = vote.slot();
         let (validator_vote_key, validator_stake, total_stake) =
             get_key_and_stakes(root_bank, vote_slot, rank)?;
-
-        // Since we have a valid rank, this should never happen, there is no rank for zero stake.
-        assert_ne!(
-            validator_stake, 0,
-            "Validator stake is zero for pubkey: {validator_vote_key}"
-        );
 
         self.stats.incoming_votes = self.stats.incoming_votes.saturating_add(1);
         if vote_slot < root_bank.slot() {

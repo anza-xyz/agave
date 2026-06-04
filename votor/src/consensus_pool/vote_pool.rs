@@ -3,7 +3,10 @@ use {
     agave_votor_messages::consensus_message::VoteMessage,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::collections::{BTreeMap, BTreeSet},
+    std::{
+        collections::{BTreeMap, BTreeSet},
+        num::NonZero,
+    },
 };
 
 /// There are two types of vote pools:
@@ -27,14 +30,14 @@ impl SimpleVotePool {
     pub(super) fn add_vote(
         &mut self,
         validator_vote_key: Pubkey,
-        validator_stake: Stake,
+        validator_stake: NonZero<Stake>,
         vote: VoteMessage,
     ) -> Option<Stake> {
         if !self.prev_voted_validators.insert(validator_vote_key) {
             return None;
         }
         self.votes.push(vote);
-        self.total_stake = self.total_stake.saturating_add(validator_stake);
+        self.total_stake = self.total_stake.saturating_add(validator_stake.get());
         Some(self.total_stake)
     }
 
@@ -75,7 +78,7 @@ impl DuplicateBlockVotePool {
     pub(super) fn add_vote(
         &mut self,
         validator_vote_key: Pubkey,
-        validator_stake: Stake,
+        validator_stake: NonZero<Stake>,
         vote: VoteMessage,
     ) -> Option<Stake> {
         let block_id = *vote.vote.block_id().unwrap();
@@ -96,7 +99,7 @@ impl DuplicateBlockVotePool {
         vote_entry.votes.push(vote);
         vote_entry.total_stake_by_key = vote_entry
             .total_stake_by_key
-            .saturating_add(validator_stake);
+            .saturating_add(validator_stake.get());
         Some(vote_entry.total_stake_by_key)
     }
 
@@ -146,16 +149,25 @@ mod test {
         };
         let my_pubkey = Pubkey::new_unique();
 
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote_message), Some(10));
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote_message),
+            Some(10)
+        );
         assert_eq!(vote_pool.total_stake(), 10);
 
         // Adding the same key again should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote_message), None);
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote_message),
+            None
+        );
         assert_eq!(vote_pool.total_stake(), 10);
 
         // Adding a different key should succeed
         let new_pubkey = Pubkey::new_unique();
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote_message), Some(70));
+        assert_eq!(
+            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote_message),
+            Some(70)
+        );
         assert_eq!(vote_pool.total_stake(), 70);
     }
 
@@ -170,18 +182,30 @@ mod test {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
         };
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), Some(10));
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote),
+            Some(10)
+        );
         assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 10);
 
         // Adding the same key again should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), None);
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote),
+            None
+        );
 
         // Adding a different bankhash should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), None);
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote),
+            None
+        );
 
         // Adding a different key should succeed
         let new_pubkey = Pubkey::new_unique();
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote), Some(70));
+        assert_eq!(
+            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote),
+            Some(70)
+        );
         assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 70);
     }
 
@@ -204,14 +228,20 @@ mod test {
 
         // Adding the first 3 votes should succeed, but total_stake should remain at 10
         for vote in votes.iter().take(3).cloned() {
-            assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), Some(10));
+            assert_eq!(
+                vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote),
+                Some(10)
+            );
             assert_eq!(
                 vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
                 10
             );
         }
         // Adding the 4th vote should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, votes[3]), None);
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), votes[3]),
+            None
+        );
         assert_eq!(
             vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
             0
@@ -220,7 +250,10 @@ mod test {
         // Adding a different key should succeed
         let new_pubkey = Pubkey::new_unique();
         for vote in votes.iter().skip(1).take(2).cloned() {
-            assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote), Some(70));
+            assert_eq!(
+                vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote),
+                Some(70)
+            );
             assert_eq!(
                 vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
                 70
@@ -228,13 +261,19 @@ mod test {
         }
 
         // The new key only added 2 votes, so adding block_ids[3] should succeed
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, votes[3]), Some(60));
+        assert_eq!(
+            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), votes[3]),
+            Some(60)
+        );
         assert_eq!(
             vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
             60
         );
 
         // Now if adding the same key again, it should fail
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, votes[0]), None);
+        assert_eq!(
+            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), votes[0]),
+            None
+        );
     }
 }
