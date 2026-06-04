@@ -57,7 +57,6 @@ solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
-solana-quic-datagram = { workspace = true, features = ["dev-context-only-utils"] }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
