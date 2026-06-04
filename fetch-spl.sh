@@ -39,7 +39,7 @@ add_spl_program_to_fetch() {
   programs+=("$name $version $address $loader $download_url")
 }
 
-add_spl_program_to_fetch token 1.0.0-rc.1 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoaderUpgradeab1e11111111111111111111111  p-token
+add_spl_program_to_fetch token 1.0.0 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoaderUpgradeab1e11111111111111111111111 p-token
 add_spl_program_to_fetch token-2022 10.0.0 TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb BPFLoaderUpgradeab1e11111111111111111111111
 add_spl_program_to_fetch memo  1.0.0 Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111
 add_spl_program_to_fetch memo  3.0.0 MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111
