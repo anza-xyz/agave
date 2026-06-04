@@ -28,8 +28,9 @@ use {
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
-    solana_quic_datagram::{Banlist, endpoint::Datagram},
+    solana_quic_datagram::endpoint::Datagram,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::{
         collections::HashSet,
         sync::{
@@ -64,7 +65,7 @@ const INGRESS_RECV_TIMEOUT: Duration = Duration::from_millis(400);
 
 pub(crate) struct SigVerifierContext {
     pub(crate) migration_status: Arc<MigrationStatus>,
-    pub(crate) banlist: Arc<Banlist<Pubkey>>,
+    pub(crate) banlist: Arc<SimpleQosBanlist>,
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
@@ -122,7 +123,7 @@ pub(crate) fn spawn_service(
 
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
-    banlist: Arc<Banlist<Pubkey>>,
+    banlist: Arc<SimpleQosBanlist>,
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
@@ -490,14 +491,14 @@ mod tests {
         solana_signer_store::encode_base2,
     };
 
-    fn new_test_banlist() -> Arc<Banlist<Pubkey>> {
-        Arc::new(Banlist::<Pubkey>::default())
+    fn new_test_banlist() -> Arc<SimpleQosBanlist> {
+        Arc::new(SimpleQosBanlist::from(Arc::default()))
     }
 
     struct TestContext {
         verifier: SigVerifier,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        banlist: Arc<Banlist<Pubkey>>,
+        banlist: Arc<SimpleQosBanlist>,
 
         _packet_sender: Sender<Datagram>,
         repair_receiver: VerifiedVoterSlotsReceiver,

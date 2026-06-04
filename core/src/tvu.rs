@@ -75,7 +75,7 @@ use {
     },
     solana_streamer::{
         evicting_sender::EvictingSender,
-        nonblocking::simple_qos::SimpleQosConfig,
+        nonblocking::simple_qos::{SimpleQosBanlist, SimpleQosConfig},
         packet::PacketBatch,
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
@@ -301,7 +301,15 @@ impl Tvu {
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
         let mut bls_threads = Vec::new();
-        let stream_ingress = if let Some(bls_socket) = bls_socket {
+        // `sigverify_banlist` is the handle the sigverifier bans through. When
+        // the legacy QUIC-stream server is running we hand it that server's
+        // SimpleQosBanlist so a signature-failure ban also force-evicts the
+        // peer's open stream connection (the SimpleQos evictor drains it);
+        // banning the underlying shared Banlist is what the datagram endpoint
+        // observes on its per-read check. Without a stream server we wrap the
+        // shared Banlist in a standalone SimpleQosBanlist (no evictor — there
+        // are no stream connections to evict) so the datagram path still bans.
+        let (stream_ingress, sigverify_banlist) = if let Some(bls_socket) = bls_socket {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
             let (stream_ingress_sender, stream_ingress_receiver) =
                 bounded(MAX_ALPENGLOW_PACKET_NUM);
@@ -323,7 +331,7 @@ impl Tvu {
                     thread: bls_streamer_t,
                     key_updater: bls_key_updater,
                 },
-                _legacy_banlist,
+                legacy_banlist,
             ) = spawn_simple_qos_server(
                 "solQuicBLS",
                 "quic_streamer_bls",
@@ -351,11 +359,14 @@ impl Tvu {
                 })
                 .unwrap();
             bls_threads.push(adapter_t);
-            Some(stream_ingress_receiver)
+            (Some(stream_ingress_receiver), legacy_banlist)
         } else {
             drop(staked_nodes);
             drop(cancel);
-            None
+            (
+                None,
+                Arc::new(SimpleQosBanlist::from(votor_banlist.clone())),
+            )
         };
 
         {
@@ -364,7 +375,7 @@ impl Tvu {
                 exit.clone(),
                 SigVerifierContext {
                     migration_status: migration_status.clone(),
-                    banlist: votor_banlist,
+                    banlist: sigverify_banlist,
                     sharable_banks,
                     cluster_info: cluster_info.clone(),
                     leader_schedule: leader_schedule_cache.clone(),
