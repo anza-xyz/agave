@@ -966,14 +966,14 @@ impl LocalCluster {
     /// Ok(Some(())) if the transaction was processed successfully. Return
     /// Ok(None) if the transaction was not processed.
     pub fn poll_for_successfully_processed_transaction(
-        client: &RpcClient,
+        client: &QuicTpuClient,
         transaction: &Transaction,
     ) -> std::result::Result<Option<()>, TransportError> {
         loop {
             // Some local cluster tests create conditions where confirmation
             // is unable to be reached. So rather than checking for confirmation,
             // check for the transaction being processed.
-            let status = client.get_signature_status_with_commitment(
+            let status = client.rpc_client().get_signature_status_with_commitment(
                 &transaction.signatures[0],
                 CommitmentConfig::processed(),
             )?;
@@ -987,7 +987,7 @@ impl LocalCluster {
                 }
             }
 
-            if !client.is_blockhash_valid(
+            if !client.rpc_client().is_blockhash_valid(
                 &transaction.message.recent_blockhash,
                 CommitmentConfig::processed(),
             )? {
@@ -1015,9 +1015,7 @@ impl LocalCluster {
         // in LocalCluster integration tests
         for attempt in 1..=attempts {
             client.send_transaction_to_upcoming_leaders(transaction)?;
-            if Self::poll_for_successfully_processed_transaction(client.rpc_client(), transaction)?
-                .is_some()
-            {
+            if Self::poll_for_successfully_processed_transaction(client, transaction)?.is_some() {
                 return Ok(());
             }
 

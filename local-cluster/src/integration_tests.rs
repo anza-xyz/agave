@@ -434,7 +434,7 @@ pub fn run_cluster_partition<C>(
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster_tests::TpuSender::new(),
+        &cluster.connection_cache,
     );
 
     let cluster_nodes = discover_validators(
