@@ -53,10 +53,24 @@ pub struct SimpleQosBanlist {
 
 impl SimpleQosBanlist {
     pub fn new() -> (Self, Receiver<Pubkey>) {
+        Self::new_with_banlist(Arc::new(Banlist::default()))
+    }
+
+    /// Construct over an externally-owned [`Banlist`]. Used during the votor
+    /// dual-stack migration so the legacy QUIC-stream server and the new
+    /// QUIC-datagram endpoint share a single banlist primitive: a ban applied
+    /// by the BLS sigverifier (which holds the same `Arc<Banlist<Pubkey>>`) is
+    /// honored on connection admission by both transports.
+    ///
+    /// Note: bans applied directly through the shared `Banlist` (rather than
+    /// through [`SimpleQosBanlist::ban`]) do not push an eviction request, so
+    /// an already-open legacy connection from a freshly-banned peer is dropped
+    /// only when it next closes; new connections are rejected immediately.
+    pub fn new_with_banlist(banlist: Arc<Banlist<Pubkey>>) -> (Self, Receiver<Pubkey>) {
         let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
         (
             Self {
-                banlist: Arc::new(Banlist::default()),
+                banlist,
                 eviction_sender,
             },
             eviction_receiver,
@@ -164,7 +178,26 @@ impl SimpleQos {
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
-        let (banlist, banlist_eviction_receiver) = SimpleQosBanlist::new();
+        Self::new_with_banlist(
+            config,
+            stats,
+            staked_nodes,
+            cancel,
+            Arc::new(Banlist::default()),
+        )
+    }
+
+    /// Like [`SimpleQos::new`] but over an externally-owned [`Banlist`]. See
+    /// [`SimpleQosBanlist::new_with_banlist`] for the migration rationale.
+    pub fn new_with_banlist(
+        config: SimpleQosConfig,
+        stats: Arc<StreamerStats>,
+        staked_nodes: Arc<RwLock<StakedNodes>>,
+        cancel: CancellationToken,
+        shared_banlist: Arc<Banlist<Pubkey>>,
+    ) -> Self {
+        let (banlist, banlist_eviction_receiver) =
+            SimpleQosBanlist::new_with_banlist(shared_banlist);
         let banlist = Arc::new(banlist);
         Self {
             config,

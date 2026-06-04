@@ -687,16 +687,48 @@ pub fn spawn_simple_qos_server(
     qos_config: SimpleQosConfig,
     cancel: CancellationToken,
 ) -> Result<(SpawnServerResult, Arc<SimpleQosBanlist>), QuicServerError> {
+    spawn_simple_qos_server_with_banlist(
+        thread_name,
+        metrics_name,
+        sockets,
+        keypair,
+        packet_sender,
+        staked_nodes,
+        quic_server_params,
+        qos_config,
+        cancel,
+        Arc::new(solana_net_utils::banlist::Banlist::default()),
+    )
+}
+
+/// Like [`spawn_simple_qos_server`] but the QoS layer bans on an
+/// externally-owned [`Banlist`](solana_net_utils::banlist::Banlist). Used by
+/// the votor dual-stack migration so the legacy QUIC-stream server shares one
+/// banlist with the new QUIC-datagram endpoint.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_simple_qos_server_with_banlist(
+    thread_name: &'static str,
+    metrics_name: &'static str,
+    sockets: impl IntoIterator<Item = QuicSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SimpleQosConfig,
+    cancel: CancellationToken,
+    shared_banlist: Arc<solana_net_utils::banlist::Banlist<solana_pubkey::Pubkey>>,
+) -> Result<(SpawnServerResult, Arc<SimpleQosBanlist>), QuicServerError> {
     let server_params = SimpleQosQuicStreamerConfig {
         quic_streamer_config: quic_server_params,
         qos_config,
     };
     let stats = Arc::<StreamerStats>::default();
-    let simple_qos = SimpleQos::new(
+    let simple_qos = SimpleQos::new_with_banlist(
         server_params.qos_config,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
+        shared_banlist,
     );
     let banlist = simple_qos.banlist.clone();
 

@@ -30,6 +30,10 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
+    /// Legacy votor QUIC-stream server (inbound consensus messages).
+    Bls,
+    /// Legacy votor QUIC-stream connection cache (outbound votes/certs).
+    BlsConnectionCache,
     /// Votor QUIC datagram endpoint key updater (single endpoint multiplexes
     /// inbound consensus messages and outbound votes/certs).
     VotorDatagram,

@@ -20,6 +20,7 @@ use {
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
+    lazy_lru::LruCache,
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     solana_clock::Slot,
@@ -49,6 +50,14 @@ pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 /// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
 /// We ban the sender for 2 days which roughly corresponds to an epoch
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
+
+/// Capacity of the cross-transport dedup cache.
+///
+/// PLACEHOLDER: a fixed-size LRU keyed by a hash of the raw message bytes.
+/// During the dual-stack migration the same consensus message arrives over
+/// both transports; this drops the second copy before sigverify. To be
+/// refined in a follow-up (e.g. time-bounded eviction, content-aware keying).
+const DEDUP_CACHE_CAPACITY: usize = 1 << 16;
 
 pub(crate) struct SigVerifierContext {
     pub(crate) migration_status: Arc<MigrationStatus>,
@@ -98,6 +107,11 @@ struct SigVerifier {
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
+    /// Cross-transport dedup cache (placeholder). Keyed by a hash of the raw
+    /// message bytes; value unused. See [`DEDUP_CACHE_CAPACITY`].
+    recent_msgs: LruCache<u64, ()>,
+    /// Hasher state for the dedup cache.
+    dedup_hasher: ahash::RandomState,
 }
 
 impl SigVerifier {
@@ -129,6 +143,8 @@ impl SigVerifier {
             leader_schedule,
             thread_pool,
             generated_cert_types,
+            recent_msgs: LruCache::new(DEDUP_CACHE_CAPACITY),
+            dedup_hasher: ahash::RandomState::new(),
         }
     }
 
@@ -221,6 +237,21 @@ impl SigVerifier {
         } in items
         {
             num_pkts = num_pkts.saturating_add(1);
+            // Cross-transport dedup (placeholder): the same message from the
+            // same sender reaches us over both the legacy QUIC-stream and the
+            // new QUIC-datagram transport during migration. Drop the second
+            // copy before the (expensive) deserialize + sigverify. Keyed on
+            // (sender, raw bytes) so that distinct senders broadcasting an
+            // identical payload (e.g. the same certificate) are not collapsed
+            // here — cert dedup is handled separately via `verified_certs`.
+            let digest = self
+                .dedup_hasher
+                .hash_one((remote_pubkey.as_ref(), bytes.as_ref()));
+            if self.recent_msgs.get(&digest).is_some() {
+                self.stats.num_dedup_dropped += 1;
+                continue;
+            }
+            self.recent_msgs.put(digest, ());
             let Ok(msg) = wincode::deserialize::<ConsensusMessage>(&bytes) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;

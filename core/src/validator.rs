@@ -1189,6 +1189,34 @@ impl Validator {
 
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
 
+        // Legacy QUIC-stream transport client for votor consensus messages.
+        // During the dual-stack migration every vote/cert is also sent over
+        // this ConnectionCache (keyed by peers' SOCKET_TAG_ALPENGLOW address)
+        // alongside the new QUIC-datagram egress.
+        let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
+            "connection_cache_bls_quic",
+            // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
+            // we wouldn't expect more than a 100 PPS. 1 connection is enough.
+            1, /* connection_pool_size */
+            Some(node.sockets.quic_alpenglow_client),
+            Some((
+                &identity_keypair,
+                node.info
+                    .alpenglow()
+                    .ok_or_else(|| {
+                        ValidatorError::Other(String::from(
+                            "Invalid QUIC address for Alpenglow BLS",
+                        ))
+                    })?
+                    .ip(),
+            )),
+            Some((&staked_nodes, &identity_keypair.pubkey())),
+        ));
+        key_notifiers.write().unwrap().add(
+            KeyUpdaterType::BlsConnectionCache,
+            bls_connection_cache.clone(),
+        );
+
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
         // runtime will cause panic at drop. Outside test-validator crate, we
@@ -1204,29 +1232,42 @@ impl Validator {
                 .unwrap()
         });
 
-        // Votor QUIC datagram endpoint. One UDP socket multiplexes
-        // outbound votes/certs (egress) and inbound consensus messages
-        // (ingress) per the lex-pubkey direction rule. Only constructed
-        // on Testnet/Development clusters; absent → stub channels are
-        // installed downstream so the BLS sigverifier task spawns but
-        // never receives anything.
-        let alpenglow_socket = if matches!(
+        // Votor QUIC datagram endpoint (new transport). Binds the
+        // SOCKET_TAG_ALPENGLOW_DATAGRAM socket; multiplexes outbound
+        // votes/certs (egress) and inbound consensus messages (ingress) per
+        // the lex-pubkey direction rule. During the dual-stack migration this
+        // runs alongside the legacy QUIC-stream server (spawned in tvu on the
+        // SOCKET_TAG_ALPENGLOW socket). Both feed the same merged ingress
+        // channel — `votor_ingress_sender` is handed to tvu's legacy adapter,
+        // the matching receiver to the BLS sigverifier — and both gate
+        // admission on the same shared `votor_banlist`.
+        //
+        // Only constructed on Testnet/Development clusters; absent → stub
+        // channels are installed downstream so the BLS sigverifier task spawns
+        // but never receives anything.
+        let alpenglow_datagram_socket = if matches!(
             genesis_config.cluster_type,
             ClusterType::Testnet | ClusterType::Development,
         ) {
-            node.sockets.alpenglow.take()
+            node.sockets.alpenglow_datagram.take()
         } else {
             None
         };
-        let (votor_egress, votor_ingress, votor_banlist, votor_allowlist, _alpenglow_endpoint_task) =
-            if let Some(socket) = alpenglow_socket {
+        // Shared banlist primitive for both transports. A ban applied by the
+        // BLS sigverifier (which holds this same handle) is honored on
+        // connection admission by both the datagram endpoint and the legacy
+        // QUIC-stream server.
+        let votor_banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
+        // Merged ingress: datagram endpoint + legacy stream adapter both
+        // produce into this channel; the sigverifier consumes it.
+        let (votor_ingress_sender, votor_ingress) =
+            crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
+        let (votor_egress, votor_allowlist, _alpenglow_endpoint_task) =
+            if let Some(socket) = alpenglow_datagram_socket {
                 let votor_rt_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
                     .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-                let (ingress_tx, ingress_rx) =
-                    crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
-                let banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
                 // Seed allowlist synchronously with the current epoch's
                 // staked-set so the endpoint never accepts handshakes
                 // against an empty allow-list. The StakedValidatorsCache
@@ -1242,22 +1283,19 @@ impl Validator {
                     votor_rt_handle,
                     &identity_keypair,
                     socket,
-                    ingress_tx,
+                    votor_ingress_sender.clone(),
                     allowlist.clone(),
-                    banlist.clone(),
+                    votor_banlist.clone(),
                 )
                 .map_err(|e| ValidatorError::Other(format!("alpenglow endpoint: {e:?}")))?;
                 key_notifiers
                     .write()
                     .unwrap()
                     .add(KeyUpdaterType::VotorDatagram, key_updater);
-                (egress, ingress_rx, banlist, Some(allowlist), Some(task))
+                (egress, Some(allowlist), Some(task))
             } else {
                 let (egress, _) = tokio::sync::mpsc::channel(1);
-                let (_, ingress) =
-                    crossbeam_channel::bounded::<solana_quic_datagram::endpoint::Datagram>(1);
-                let banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
-                (egress, ingress, banlist, None, None)
+                (egress, None, None)
             };
 
         let rpc_override_health_check =
@@ -1683,8 +1721,10 @@ impl Validator {
                 cancel: cancel.clone(),
                 staked_nodes: staked_nodes.clone(),
                 key_notifiers: key_notifiers.clone(),
+                bls_connection_cache,
                 votor_egress,
                 votor_ingress,
+                votor_ingress_sender,
                 votor_banlist,
                 votor_allowlist,
                 voting_service_test_override: config.voting_service_test_override.clone(),

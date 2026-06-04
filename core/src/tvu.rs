@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        admin_rpc_post_init::KeyUpdaters,
+        admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
         block_creation_loop::{ReplayHighestFrozen, rewards::msg_types::AddVoteMessage},
         bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
@@ -37,6 +37,7 @@ use {
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
+    bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -63,6 +64,7 @@ use {
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
+        bank::MAX_ALPENGLOW_VOTE_ACCOUNTS,
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommandReceiver, BankForksController},
         commitment::BlockCommitmentCache,
@@ -71,7 +73,13 @@ use {
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_streamer::{evicting_sender::EvictingSender, streamer::StakedNodes},
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        nonblocking::simple_qos::SimpleQosConfig,
+        packet::PacketBatch,
+        quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server_with_banlist},
+        streamer::StakedNodes,
+    },
     solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
@@ -112,7 +120,10 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads: Option<JoinHandle<()>>,
+    /// Votor dual-stack receive threads: legacy QUIC-stream server, the
+    /// PacketBatch->Datagram adapter, and the BLS sigverifier. Empty on
+    /// clusters where the alpenglow transports are not constructed.
+    bls_threads: Vec<JoinHandle<()>>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -179,14 +190,26 @@ pub struct AlpenglowInitializationState {
     pub staked_nodes: Arc<RwLock<StakedNodes>>,
     pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
 
-    // Votor QUIC datagram transport handles. Egress goes to the BLS
-    // voting service; ingress feeds the BLS sigverifier; banlist is shared
-    // with the sigverifier so external triggers (e.g. signature failure)
-    // can soft-ban peers cluster-wide. `votor_allowlist` is owned by the
-    // voting service's StakedValidatorsCache, which republishes the
-    // staked-pubkey set on every epoch boundary.
+    // Votor dual-stack transport handles (legacy QUIC-stream + new
+    // QUIC-datagram). During the migration window both transports are active.
+    //
+    // Send side: every vote/cert is fanned out over BOTH the legacy
+    // `bls_connection_cache` (stream) and the datagram `votor_egress`.
+    //
+    // Receive side: the datagram endpoint (in validator.rs) and the legacy
+    // QUIC-stream server (spawned here in tvu) both produce into the merged
+    // ingress channel — `votor_ingress_sender` feeds the legacy adapter, and
+    // `votor_ingress` is consumed by the BLS sigverifier.
+    //
+    // `votor_banlist` is shared by both transports and the sigverifier so a
+    // signature-failure ban applies cluster-wide on either path.
+    // `votor_allowlist` is owned by the voting service's
+    // StakedValidatorsCache, which republishes the staked-pubkey set on every
+    // epoch boundary.
+    pub bls_connection_cache: Arc<ConnectionCache>,
     pub votor_egress: tokio::sync::mpsc::Sender<solana_quic_datagram::endpoint::Datagram>,
     pub votor_ingress: Receiver<Datagram>,
+    pub votor_ingress_sender: Sender<Datagram>,
     pub votor_banlist: Arc<Banlist<Pubkey>>,
     pub votor_allowlist: Option<Arc<solana_quic_datagram::StakedNodesAllowlist>>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
@@ -269,9 +292,11 @@ impl Tvu {
             votor_event_receiver,
             cancel,
             staked_nodes,
-            key_notifiers: _key_notifiers,
+            key_notifiers,
+            bls_connection_cache,
             votor_egress,
             votor_ingress,
+            votor_ingress_sender,
             votor_banlist,
             votor_allowlist,
             voting_service_test_override,
@@ -285,19 +310,75 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
-        // BLS sigverifier — fed by the quic-datagram endpoint constructed
-        // in validator.rs. The endpoint task itself runs there; here we
-        // only consume its ingress + banlist.
+        // Dual-stack receive. The new QUIC-datagram endpoint (constructed in
+        // validator.rs) already feeds the merged `votor_ingress` channel. Here
+        // we additionally spawn the legacy QUIC-stream server on the
+        // SOCKET_TAG_ALPENGLOW socket (`bls_socket`) and an adapter that
+        // converts its `PacketBatch`es into `Datagram`s, forwarding them into
+        // the same merged channel via `votor_ingress_sender`. Both transports
+        // gate admission on the shared `votor_banlist`.
         //
-        // The bls_socket is currently only available on Testnet and
-        // Development clusters; outside that window the endpoint is not
-        // constructed and ingress will simply never fire. The `_` on
-        // bls_socket below is intentional — we don't actually need it
-        // here anymore (validator.rs already consumed it).
-        let _ = bls_socket;
-        let _ = cancel;
-        let _ = staked_nodes;
-        let bls_sigverify_threads = {
+        // `bls_socket` is only present on Testnet/Development clusters; absent
+        // → no legacy server, and the datagram endpoint was likewise not
+        // constructed, so `votor_ingress` simply never fires.
+        let mut bls_threads = Vec::new();
+        if let Some(bls_socket) = bls_socket {
+            let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
+
+            let quic_server_params = QuicStreamerConfig {
+                num_threads: NonZeroUsize::new(4.min(num_cpus::get())).unwrap(),
+                ..Default::default()
+            };
+            let qos_config = SimpleQosConfig {
+                max_streams_per_second: 30,
+                // Cap by # of active validators (some overhead for epoch boundaries)
+                max_staked_connections: MAX_ALPENGLOW_VOTE_ACCOUNTS * 2,
+                // Two staked connection per validator to account for hotspares
+                max_connections_per_peer: 2,
+            };
+            let (
+                SpawnServerResult {
+                    endpoints: _,
+                    thread: bls_streamer_t,
+                    key_updater: bls_key_updater,
+                },
+                _legacy_banlist,
+            ) = spawn_simple_qos_server_with_banlist(
+                "solQuicBLS",
+                "quic_streamer_bls",
+                vec![bls_socket.into()],
+                &cluster_info.keypair(),
+                bls_packet_sender,
+                staked_nodes,
+                quic_server_params,
+                qos_config,
+                cancel,
+                votor_banlist.clone(),
+            )
+            .unwrap();
+            key_notifiers
+                .write()
+                .unwrap()
+                .add(KeyUpdaterType::Bls, bls_key_updater);
+            bls_threads.push(bls_streamer_t);
+
+            // Adapter: legacy PacketBatch -> Datagram into the merged ingress.
+            let adapter_t = thread::Builder::new()
+                .name("solBlsLegacyAdpt".to_string())
+                .spawn(move || {
+                    Self::run_legacy_ingress_adapter(bls_packet_receiver, votor_ingress_sender)
+                })
+                .unwrap();
+            bls_threads.push(adapter_t);
+        } else {
+            // No legacy transport: drop the unused merged-ingress sender so the
+            // adapter's absence does not keep the channel open.
+            drop(votor_ingress_sender);
+            drop(staked_nodes);
+            drop(cancel);
+        }
+
+        {
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let bls_sigverifier_t = bls_sigverifier::spawn_service(
                 exit.clone(),
@@ -318,8 +399,8 @@ impl Tvu {
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
             );
-            Some(bls_sigverifier_t)
-        };
+            bls_threads.push(bls_sigverifier_t);
+        }
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
 
@@ -569,6 +650,7 @@ impl Tvu {
             bls_receiver,
             cluster_info.clone(),
             vote_history_storage,
+            bls_connection_cache,
             votor_egress,
             votor_allowlist,
             bank_forks.clone(),
@@ -624,10 +706,48 @@ impl Tvu {
             warm_quic_cache_service,
             drop_bank_service,
             duplicate_shred_listener,
-            bls_sigverify_threads,
+            bls_threads,
             votor,
             commitment_service,
         })
+    }
+
+    /// Drain the legacy QUIC-stream server's `PacketBatch`es, converting each
+    /// packet into a [`Datagram`] and forwarding it into the merged votor
+    /// ingress channel consumed by the BLS sigverifier. Runs until the legacy
+    /// packet channel disconnects (server shutdown) or the merged ingress is
+    /// closed (sigverifier gone). Loss-tolerant: a full ingress drops the
+    /// packet rather than backpressuring the streamer.
+    fn run_legacy_ingress_adapter(
+        packet_receiver: Receiver<PacketBatch>,
+        ingress: Sender<Datagram>,
+    ) {
+        while let Ok(batch) = packet_receiver.recv() {
+            for packet in batch.iter() {
+                if packet.meta().discard() {
+                    continue;
+                }
+                let Some(peer_pubkey) = packet.meta().remote_pubkey() else {
+                    // Staked QoS server always stamps the pubkey; skip if absent.
+                    continue;
+                };
+                let Some(data) = packet.data(..) else {
+                    continue;
+                };
+                let datagram = Datagram {
+                    peer_pubkey,
+                    peer_address: packet.meta().socket_addr(),
+                    message: Bytes::copy_from_slice(data),
+                };
+                match ingress.try_send(datagram) {
+                    Ok(()) => {}
+                    Err(crossbeam_channel::TrySendError::Full(_)) => {
+                        // Loss-tolerant: votor consensus handles drops.
+                    }
+                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
+                }
+            }
+        }
     }
 
     pub fn join(self) -> thread::Result<()> {
@@ -646,8 +766,8 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let Some(sigverifier) = self.bls_sigverify_threads {
-            sigverifier.join()?;
+        for handle in self.bls_threads {
+            handle.join()?;
         }
         self.votor.join()?;
         self.commitment_service.join()?;
@@ -772,11 +892,17 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
-        // Stub the votor datagram channels — the test runs without an
-        // actual alpenglow endpoint. The egress sink and ingress source
-        // are never connected to each other; ingress simply never fires.
+        // Stub the votor transport channels — the test runs without actual
+        // alpenglow transports. The egress sink and ingress source are never
+        // connected to each other; ingress simply never fires. `bls_socket`
+        // is None in this fixture so the legacy server / adapter aren't
+        // spawned and `votor_ingress_sender` is dropped immediately.
+        let bls_connection_cache_for_votor = Arc::new(ConnectionCache::new_quic_for_tests(
+            "connection_cache_bls_quic",
+            DEFAULT_TPU_CONNECTION_POOL_SIZE,
+        ));
         let (votor_egress, _votor_egress_rx) = tokio::sync::mpsc::channel(1024);
-        let (_votor_ingress_tx, votor_ingress) = bounded(1024);
+        let (votor_ingress_sender, votor_ingress) = bounded(1024);
         let votor_banlist = Arc::new(Banlist::<Pubkey>::default());
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
@@ -870,8 +996,10 @@ pub mod tests {
                 cancel,
                 staked_nodes,
                 key_notifiers,
+                bls_connection_cache: bls_connection_cache_for_votor,
                 votor_egress,
                 votor_ingress,
+                votor_ingress_sender,
                 votor_banlist,
                 votor_allowlist: None,
                 voting_service_test_override: None,
