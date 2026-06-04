@@ -27,6 +27,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch},
     solana_pubkey::Pubkey,
     solana_quic_datagram::endpoint::Datagram,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
@@ -84,23 +85,24 @@ pub(crate) enum VotorTransport {
     Stream,
 }
 
-/// A consensus-message [`Datagram`] tagged with the transport that delivered
-/// it. The tag is attached at read time based on which channel the message
-/// arrived on; it carries the transport into [`SigVerifier::extract_and_filter_msgs`]
-/// for the per-transport metrics.
+/// A [`PacketBatch`] tagged with the transport that delivered it. The tag is
+/// attached at read time based on which channel the messages arrived on; it
+/// carries the transport into [`SigVerifier::extract_and_filter_msgs`] for the
+/// per-transport metrics. Datagram-transport messages are wrapped into
+/// single-packet batches (see [`datagram_to_batch`]); stream-transport batches
+/// come straight from the legacy QUIC-stream server.
 struct IngressMessage {
     transport: VotorTransport,
-    datagram: Datagram,
+    batch: PacketBatch,
 }
 
 pub(crate) struct SigVerifierChannels {
     /// Inbound consensus messages from the QUIC-datagram endpoint. `None` when
     /// that transport was not constructed (non-Testnet/Development clusters).
     pub(crate) datagram_receiver: Option<Receiver<Datagram>>,
-    /// Inbound consensus messages from the legacy QUIC-stream server (after the
-    /// PacketBatch->Datagram adapter). `None` when the legacy server was not
-    /// spawned.
-    pub(crate) stream_receiver: Option<Receiver<Datagram>>,
+    /// Inbound `PacketBatch`es straight from the legacy QUIC-stream server.
+    /// `None` when the legacy server was not spawned.
+    pub(crate) stream_receiver: Option<Receiver<PacketBatch>>,
     pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
     pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
@@ -271,77 +273,87 @@ impl SigVerifier {
         let mut certs = Vec::new();
         let mut votes = Vec::new();
         let mut num_pkts = 0u64;
-        for IngressMessage {
-            transport,
-            datagram:
-                Datagram {
-                    peer_pubkey: remote_pubkey,
-                    message: bytes,
-                    ..
-                },
-        } in items
-        {
-            num_pkts = num_pkts.saturating_add(1);
-            // Per-transport receive volume (counts every arrival, including
-            // copies later dropped as duplicates).
-            match transport {
-                VotorTransport::Datagram => self.stats.num_recv_datagram += 1,
-                VotorTransport::Stream => self.stats.num_recv_stream += 1,
-            }
-            // Cross-transport dedup (placeholder): the same message from the
-            // same sender reaches us over both the legacy QUIC-stream and the
-            // new QUIC-datagram transport during migration. Drop the second
-            // copy before the (expensive) deserialize + sigverify. Keyed on
-            // (sender, raw bytes) so that distinct senders broadcasting an
-            // identical payload (e.g. the same certificate) are not collapsed
-            // here — cert dedup is handled separately via `verified_certs`.
-            let digest = self
-                .dedup_hasher
-                .hash_one((remote_pubkey.as_ref(), bytes.as_ref()));
-            if self.recent_msgs.get(&digest).is_some() {
-                self.stats.num_dedup_dropped += 1;
-                continue;
-            }
-            self.recent_msgs.put(digest, ());
-            // This is the first copy of this message we've seen — record which
-            // transport delivered it first (won the race).
-            match transport {
-                VotorTransport::Datagram => self.stats.num_first_datagram += 1,
-                VotorTransport::Stream => self.stats.num_first_stream += 1,
-            }
-            let Ok(msg) = wincode::deserialize::<ConsensusMessage>(&bytes) else {
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
-            match msg {
-                ConsensusMessage::Vote(vote) => {
-                    if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
-                        votes.push(VotePayload {
-                            vote_message: vote,
-                            bls_pubkey,
-                            pubkey,
+        for IngressMessage { transport, batch } in items {
+            for packet in batch.iter() {
+                num_pkts = num_pkts.saturating_add(1);
+                // Per-transport receive volume (counts every arrival, including
+                // copies later dropped as duplicates).
+                match transport {
+                    VotorTransport::Datagram => self.stats.num_recv_datagram += 1,
+                    VotorTransport::Stream => self.stats.num_recv_stream += 1,
+                }
+                if packet.meta().discard() {
+                    self.stats.num_discarded_pkts += 1;
+                    continue;
+                }
+                let Some(remote_pubkey) = packet.meta().remote_pubkey() else {
+                    debug_assert!(
+                        false,
+                        "votor packet missing QUIC-authenticated remote pubkey"
+                    );
+                    self.stats.num_malformed_pkts += 1;
+                    continue;
+                };
+                let Some(payload) = packet.data(..) else {
+                    self.stats.num_malformed_pkts += 1;
+                    continue;
+                };
+                // Cross-transport dedup (placeholder): the same message from the
+                // same sender reaches us over both the legacy QUIC-stream and
+                // the new QUIC-datagram transport during migration. Drop the
+                // second copy before the (expensive) deserialize + sigverify.
+                // Keyed on (sender, raw bytes) so that distinct senders
+                // broadcasting an identical payload (e.g. the same certificate)
+                // are not collapsed here — cert dedup is handled separately via
+                // `verified_certs`.
+                let digest = self
+                    .dedup_hasher
+                    .hash_one((remote_pubkey.as_ref(), payload));
+                if self.recent_msgs.get(&digest).is_some() {
+                    self.stats.num_dedup_dropped += 1;
+                    continue;
+                }
+                self.recent_msgs.put(digest, ());
+                // This is the first copy of this message we've seen — record
+                // which transport delivered it first (won the race).
+                match transport {
+                    VotorTransport::Datagram => self.stats.num_first_datagram += 1,
+                    VotorTransport::Stream => self.stats.num_first_stream += 1,
+                }
+                let Ok(msg) = packet.deserialize_slice::<ConsensusMessage, _>(..) else {
+                    self.stats.num_malformed_pkts += 1;
+                    continue;
+                };
+                match msg {
+                    ConsensusMessage::Vote(vote) => {
+                        if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
+                            votes.push(VotePayload {
+                                vote_message: vote,
+                                bls_pubkey,
+                                pubkey,
+                                remote_pubkey,
+                                prepared_payload: None,
+                            });
+                        }
+                    }
+                    ConsensusMessage::Certificate(cert) => {
+                        if cert.cert_type.slot() < root_slot {
+                            self.stats.num_old_certs_received += 1;
+                            continue;
+                        }
+                        if self.verified_certs.contains(&cert.cert_type) {
+                            self.stats.num_verified_certs_received += 1;
+                            continue;
+                        }
+                        if self.generated_cert_types.has_cert(&cert.cert_type) {
+                            self.stats.num_generated_certs_received += 1;
+                            continue;
+                        }
+                        certs.push(CertPayload {
+                            cert,
                             remote_pubkey,
-                            prepared_payload: None,
                         });
                     }
-                }
-                ConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() < root_slot {
-                        self.stats.num_old_certs_received += 1;
-                        continue;
-                    }
-                    if self.verified_certs.contains(&cert.cert_type) {
-                        self.stats.num_verified_certs_received += 1;
-                        continue;
-                    }
-                    if self.generated_cert_types.has_cert(&cert.cert_type) {
-                        self.stats.num_generated_certs_received += 1;
-                        continue;
-                    }
-                    certs.push(CertPayload {
-                        cert,
-                        remote_pubkey,
-                    });
                 }
             }
         }
@@ -410,17 +422,21 @@ impl SigVerifier {
         // Drain both channels, tagging by source. A channel found disconnected
         // is dropped from the set so the next `Select` won't spin on it.
         let mut items = Vec::with_capacity(soft_receive_cap);
+        // Datagram-transport messages are wrapped into single-packet batches;
+        // stream-transport batches pass through unchanged.
         let dg_alive = Self::drain_channel(
             &mut self.channels.datagram_receiver,
             VotorTransport::Datagram,
             &mut items,
             soft_receive_cap,
+            datagram_to_batch,
         );
         let st_alive = Self::drain_channel(
             &mut self.channels.stream_receiver,
             VotorTransport::Stream,
             &mut items,
             soft_receive_cap,
+            |batch| batch,
         );
         if !dg_alive && !st_alive {
             return Err(());
@@ -428,23 +444,25 @@ impl SigVerifier {
         Ok(items)
     }
 
-    /// Drain queued datagrams from `slot` (if present) into `out` up to `cap`,
-    /// tagging each with `transport`. On disconnect, sets `*slot = None`.
-    /// Returns whether the channel is still live afterwards.
-    fn drain_channel(
-        slot: &mut Option<Receiver<Datagram>>,
+    /// Drain queued items from `slot` (if present) into `out` up to `cap`,
+    /// mapping each through `to_batch` and tagging it with `transport`. On
+    /// disconnect, sets `*slot = None`. Returns whether the channel is still
+    /// live afterwards.
+    fn drain_channel<T>(
+        slot: &mut Option<Receiver<T>>,
         transport: VotorTransport,
         out: &mut Vec<IngressMessage>,
         cap: usize,
+        to_batch: impl Fn(T) -> PacketBatch,
     ) -> bool {
         let Some(rx) = slot.as_ref() else {
             return false;
         };
         while out.len() < cap {
             match rx.try_recv() {
-                Ok(datagram) => out.push(IngressMessage {
+                Ok(item) => out.push(IngressMessage {
                     transport,
-                    datagram,
+                    batch: to_batch(item),
                 }),
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
@@ -455,6 +473,23 @@ impl SigVerifier {
         }
         true
     }
+}
+
+/// Wraps a single inbound [`Datagram`] as a one-packet [`PacketBatch`] so the
+/// rest of the sigverifier can operate on the `PacketBatch` abstraction. The
+/// QUIC-authenticated sender pubkey is stored in the packet meta, where the
+/// extract step reads it back via [`Meta::remote_pubkey`].
+fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
+    let Datagram {
+        peer_pubkey,
+        peer_address,
+        message,
+    } = datagram;
+    let mut meta = Meta::default();
+    meta.size = message.len();
+    meta.set_socket_addr(&peer_address);
+    meta.set_remote_pubkey(peer_pubkey);
+    PacketBatch::Single(BytesPacket::new(message, meta))
 }
 
 #[cfg(test)]
@@ -766,11 +801,11 @@ mod tests {
         // sigverifier should count it as malformed.
         let items = vec![IngressMessage {
             transport: VotorTransport::Datagram,
-            datagram: Datagram {
+            batch: datagram_to_batch(Datagram {
                 peer_pubkey: Pubkey::new_unique(),
                 peer_address: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
                 message: bytes::Bytes::new(),
-            },
+            }),
         }];
         ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
@@ -1717,11 +1752,11 @@ mod tests {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
         IngressMessage {
             transport,
-            datagram: Datagram {
+            batch: datagram_to_batch(Datagram {
                 peer_pubkey: remote_pubkey,
                 peer_address: addr,
                 message: bytes,
-            },
+            }),
         }
     }
 }

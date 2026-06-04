@@ -37,7 +37,6 @@ use {
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
-    bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -76,7 +75,6 @@ use {
     solana_streamer::{
         evicting_sender::EvictingSender,
         nonblocking::simple_qos::{SimpleQosBanlist, SimpleQosConfig},
-        packet::PacketBatch,
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
@@ -311,8 +309,6 @@ impl Tvu {
         // are no stream connections to evict) so the datagram path still bans.
         let (stream_ingress, sigverify_banlist) = if let Some(bls_socket) = bls_socket {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
-            let (stream_ingress_sender, stream_ingress_receiver) =
-                bounded(MAX_ALPENGLOW_PACKET_NUM);
 
             let quic_server_params = QuicStreamerConfig {
                 num_threads: NonZeroUsize::new(4.min(num_cpus::get())).unwrap(),
@@ -351,15 +347,12 @@ impl Tvu {
                 .add(KeyUpdaterType::Bls, bls_key_updater);
             bls_threads.push(bls_streamer_t);
 
-            // Adapter: legacy PacketBatch -> Datagram onto the stream ingress.
-            let adapter_t = thread::Builder::new()
-                .name("solBlsLegacyAdpt".to_string())
-                .spawn(move || {
-                    Self::run_legacy_ingress_adapter(bls_packet_receiver, stream_ingress_sender)
-                })
-                .unwrap();
-            bls_threads.push(adapter_t);
-            (Some(stream_ingress_receiver), legacy_banlist)
+            // The sigverifier consumes the legacy server's PacketBatches
+            // directly; no PacketBatch->Datagram adapter is needed since the
+            // sigverifier operates on the PacketBatch abstraction (the
+            // datagram transport's messages are wrapped into single-packet
+            // batches at read time).
+            (Some(bls_packet_receiver), legacy_banlist)
         } else {
             drop(staked_nodes);
             drop(cancel);
@@ -702,44 +695,6 @@ impl Tvu {
             votor,
             commitment_service,
         })
-    }
-
-    /// Drain the legacy QUIC-stream server's `PacketBatch`es, converting each
-    /// packet into a [`Datagram`] and forwarding it into the merged votor
-    /// ingress channel consumed by the BLS sigverifier. Runs until the legacy
-    /// packet channel disconnects (server shutdown) or the merged ingress is
-    /// closed (sigverifier gone). Loss-tolerant: a full ingress drops the
-    /// packet rather than backpressuring the streamer.
-    fn run_legacy_ingress_adapter(
-        packet_receiver: Receiver<PacketBatch>,
-        ingress: Sender<Datagram>,
-    ) {
-        while let Ok(batch) = packet_receiver.recv() {
-            for packet in batch.iter() {
-                if packet.meta().discard() {
-                    continue;
-                }
-                let Some(peer_pubkey) = packet.meta().remote_pubkey() else {
-                    // Staked QoS server always stamps the pubkey; skip if absent.
-                    continue;
-                };
-                let Some(data) = packet.data(..) else {
-                    continue;
-                };
-                let datagram = Datagram {
-                    peer_pubkey,
-                    peer_address: packet.meta().socket_addr(),
-                    message: Bytes::copy_from_slice(data),
-                };
-                match ingress.try_send(datagram) {
-                    Ok(()) => {}
-                    Err(crossbeam_channel::TrySendError::Full(_)) => {
-                        // Loss-tolerant: votor consensus handles drops.
-                    }
-                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
-                }
-            }
-        }
     }
 
     pub fn join(self) -> thread::Result<()> {
