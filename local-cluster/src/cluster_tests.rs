@@ -123,6 +123,18 @@ impl TpuSender {
             .expect("TpuSender: should send transactions in batch");
     }
 
+    /// Send a pre-serialized wire frame, logging any error rather than panicking.
+    ///
+    /// Use this in tests that tolerate transient send failures (e.g. partition tests).
+    pub fn try_send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+        if let Err(e) = self
+            .runtime
+            .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
+        {
+            debug!("TpuSender: send_wire_transaction failed: {e:?}");
+        }
+    }
+
     /// Send and confirm `transaction` with retries via `sender`, using `rpc_client` for
     /// confirmation and blockhash refresh.
     fn send_and_confirm_transaction<T: solana_signer::signers::Signers + ?Sized>(

@@ -34,7 +34,9 @@ use {
     solana_entry::entry::create_ticks,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_genesis_utils::open_genesis_config,
-    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
+    solana_gossip::{
+        contact_info::Protocol, crds_data::MAX_VOTES, gossip_service::discover_validators,
+    },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::{Keypair, keypair_from_seed},
@@ -53,7 +55,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
-        cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient},
+        cluster::{Cluster, ClusterValidatorInfo},
         cluster_tests,
         integration_tests::{
             AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, RUST_LOG_FILTER, SnapshotValidatorConfig,
@@ -98,6 +100,7 @@ use {
         fs,
         io::Read,
         iter,
+        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
@@ -108,6 +111,7 @@ use {
         time::{Duration, Instant},
     },
     strum::{EnumCount, IntoEnumIterator},
+    wincode,
 };
 
 fn create_test_validator_keys(keypairs: &[&str]) -> Vec<(ValidatorKeys, bool)> {
@@ -186,12 +190,11 @@ fn test_local_cluster_signature_subscribe() {
         .unwrap();
     let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
 
-    let tx_client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
 
-    let (blockhash, _) = tx_client
-        .rpc_client()
+    let (blockhash, _) = rpc_client
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
 
@@ -212,13 +215,32 @@ fn test_local_cluster_signature_subscribe() {
     )
     .unwrap();
 
-    LocalCluster::send_transaction_with_retries(
-        &tx_client,
-        &[&cluster.funding_keypair],
-        &mut transaction,
-        5,
-    )
-    .unwrap();
+    let tpu_sender = cluster_tests::TpuSender::new();
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("test_bad_handshake: get_slot_leader");
+    let tpu_addr = rpc_client
+        .get_cluster_nodes()
+        .expect("test_bad_handshake: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)
+        .or_else(|| {
+            cluster
+                .get_contact_info(cluster.entry_point_info.pubkey())
+                .unwrap()
+                .tpu(Protocol::QUIC)
+        })
+        .expect("test_bad_handshake: leader has no QUIC TPU address");
+    tpu_sender
+        .send_transaction_with_retries(
+            tpu_addr,
+            &rpc_client,
+            &[&cluster.funding_keypair],
+            &mut transaction,
+            5,
+        )
+        .unwrap();
 
     let mut got_received_notification = false;
     loop {
@@ -2518,14 +2540,30 @@ fn test_run_test_load_program_accounts_partition_root() {
     );
 
     let on_partition_start = |cluster: &mut LocalCluster, _: &mut ()| {
-        let update_client = cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        let rpc_client = cluster
+            .build_rpc_client(cluster.entry_point_info.pubkey())
             .unwrap();
-        update_client_sender.send(update_client).unwrap();
-        let scan_client = cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        let leader_pubkey = rpc_client
+            .get_slot_leader()
+            .expect("on_partition_start: get_slot_leader");
+        let tpu_addr = rpc_client
+            .get_cluster_nodes()
+            .expect("on_partition_start: get_cluster_nodes")
+            .into_iter()
+            .find(|n| n.pubkey == leader_pubkey.to_string())
+            .and_then(|n| n.tpu_quic)
+            .or_else(|| {
+                cluster
+                    .get_contact_info(cluster.entry_point_info.pubkey())
+                    .unwrap()
+                    .tpu(Protocol::QUIC)
+            })
+            .expect("on_partition_start: leader has no QUIC TPU address");
+        update_client_sender.send((rpc_client, tpu_addr)).unwrap();
+        let scan_rpc_client = cluster
+            .build_rpc_client(cluster.entry_point_info.pubkey())
             .unwrap();
-        scan_client_sender.send(scan_client).unwrap();
+        scan_client_sender.send(scan_rpc_client).unwrap();
     };
 
     let on_partition_before_resolved = |_: &mut LocalCluster, _: &mut ()| {};
@@ -2611,9 +2649,15 @@ fn test_oc_bad_signatures() {
     );
 
     // 3) Start up a spy to listen for and push votes to leader TPU
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
+    let tpu_addr = cluster
+        .get_contact_info(cluster.entry_point_info.pubkey())
+        .unwrap()
+        .tpu(Protocol::QUIC)
+        .expect("test_oc_bad_signatures: entry point has no QUIC TPU address");
+    let tpu_sender = cluster_tests::TpuSender::new();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2657,8 +2701,9 @@ fn test_oc_bad_signatures() {
 
                 // Send the bad vote and expect transaction error.
                 assert_matches!(
-                    LocalCluster::send_transaction_with_retries(
-                        &client,
+                    tpu_sender.send_transaction_with_retries(
+                        tpu_addr,
+                        &rpc_client,
                         &[&node_keypair, &bad_authorized_signer_keypair],
                         &mut vote_tx,
                         5,
@@ -2820,8 +2865,8 @@ fn setup_transfer_scan_threads(
     num_starting_accounts: usize,
     exit: Arc<AtomicBool>,
     scan_commitment: CommitmentConfig,
-    update_client_receiver: Receiver<QuicTpuClient>,
-    scan_client_receiver: Receiver<QuicTpuClient>,
+    update_client_receiver: Receiver<(Arc<RpcClient>, SocketAddr)>,
+    scan_client_receiver: Receiver<Arc<RpcClient>>,
 ) -> (
     JoinHandle<()>,
     JoinHandle<()>,
@@ -2853,38 +2898,45 @@ fn setup_transfer_scan_threads(
     let t_update = Builder::new()
         .name("update".to_string())
         .spawn(move || {
-            let client = update_client_receiver.recv().unwrap();
-            loop {
-                if exit_.load(Ordering::Relaxed) {
-                    return;
-                }
-                let (blockhash, _) = client
-                    .rpc_client()
-                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                    .unwrap();
-                for i in 0..starting_keypairs_.len() {
-                    let result = client.async_transfer(
-                        1,
-                        &starting_keypairs_[i],
-                        &target_keypairs_[i].pubkey(),
-                        blockhash,
-                    );
-                    if result.is_err() {
-                        debug!("Failed in transfer for starting keypair: {result:?}");
+            let (rpc_client, tpu_addr) = update_client_receiver.recv().unwrap();
+            let tpu_sender = cluster_tests::TpuSender::new();
+            let tpu_sender_inner = tpu_sender.clone();
+            tpu_sender.with_connection(tpu_addr, move |sender| {
+                loop {
+                    if exit_.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let (blockhash, _) = rpc_client
+                        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                        .unwrap();
+                    for i in 0..starting_keypairs_.len() {
+                        let tx = system_transaction::transfer(
+                            &starting_keypairs_[i],
+                            &target_keypairs_[i].pubkey(),
+                            1,
+                            blockhash,
+                        );
+                        tpu_sender_inner.try_send_wire_transaction(
+                            sender,
+                            wincode::serialize(&tx)
+                                .expect("setup_transfer_scan_threads: serialize"),
+                        );
+                    }
+                    for i in 0..starting_keypairs_.len() {
+                        let tx = system_transaction::transfer(
+                            &target_keypairs_[i],
+                            &starting_keypairs_[i].pubkey(),
+                            1,
+                            blockhash,
+                        );
+                        tpu_sender_inner.try_send_wire_transaction(
+                            sender,
+                            wincode::serialize(&tx)
+                                .expect("setup_transfer_scan_threads: serialize"),
+                        );
                     }
                 }
-                for i in 0..starting_keypairs_.len() {
-                    let result = client.async_transfer(
-                        1,
-                        &target_keypairs_[i],
-                        &starting_keypairs_[i].pubkey(),
-                        blockhash,
-                    );
-                    if result.is_err() {
-                        debug!("Failed in transfer for starting keypair: {result:?}");
-                    }
-                }
-            }
+            });
         })
         .unwrap();
 
@@ -2900,13 +2952,12 @@ fn setup_transfer_scan_threads(
     let t_scan = Builder::new()
         .name("scan".to_string())
         .spawn(move || {
-            let client = scan_client_receiver.recv().unwrap();
+            let rpc_client = scan_client_receiver.recv().unwrap();
             loop {
                 if exit.load(Ordering::Relaxed) {
                     return;
                 }
-                if let Some(total_scan_balance) = client
-                    .rpc_client()
+                if let Some(total_scan_balance) = rpc_client
                     .get_program_ui_accounts_with_config(
                         &system_program::id(),
                         scan_commitment_config.clone(),
@@ -2979,14 +3030,28 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
-    update_client_sender.send(client).unwrap();
-    let scan_client = cluster
-        .build_validator_tpu_quic_client(&other_validator_id)
-        .unwrap();
-    scan_client_sender.send(scan_client).unwrap();
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("run_test_load_program_accounts: get_slot_leader");
+    let tpu_addr = rpc_client
+        .get_cluster_nodes()
+        .expect("run_test_load_program_accounts: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)
+        .or_else(|| {
+            cluster
+                .get_contact_info(cluster.entry_point_info.pubkey())
+                .unwrap()
+                .tpu(Protocol::QUIC)
+        })
+        .expect("run_test_load_program_accounts: leader has no QUIC TPU address");
+    update_client_sender.send((rpc_client, tpu_addr)).unwrap();
+    let scan_rpc_client = cluster.build_rpc_client(&other_validator_id).unwrap();
+    scan_client_sender.send(scan_rpc_client).unwrap();
 
     // Wait for some roots to pass
     cluster.check_for_new_roots(
