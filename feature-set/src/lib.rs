@@ -1525,22 +1525,6 @@ pub mod set_lamports_per_byte_to_6960 {
     pub const LAMPORTS_PER_BYTE: u64 = 6960;
 }
 
-pub mod reduce_slot_time_to_350ms {
-    solana_pubkey::declare_id!("iBRL2iJvhLssJveF1utbmmQGmjonmNYZALcJFEHTbUF");
-}
-
-pub mod reduce_slot_time_to_300ms {
-    solana_pubkey::declare_id!("iBRLA3zvd6x9445cK1vS7xt8n6Y7DS3otfRcDdW8JRW");
-}
-
-pub mod reduce_slot_time_to_250ms {
-    solana_pubkey::declare_id!("iBRLR6nG3fDi8YD4mpPTUVTgo5NaiYfZgrzokCfADP2");
-}
-
-pub mod reduce_slot_time_to_200ms {
-    solana_pubkey::declare_id!("iBRLypKvvj9VEvwoTeRpbLhbW55NFR4T3GE9BUR8A16");
-}
-
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2430,22 +2414,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alpenglow::id(),
             "SIMD-0326: Alpenglow: new consensus algorithm",
-        ),
-        (
-            reduce_slot_time_to_350ms::id(),
-            "SIMD-0525: Reduce slot time to 350ms",
-        ),
-        (
-            reduce_slot_time_to_300ms::id(),
-            "SIMD-0525: Reduce slot time to 300ms",
-        ),
-        (
-            reduce_slot_time_to_250ms::id(),
-            "SIMD-0525: Reduce slot time to 250ms",
-        ),
-        (
-            reduce_slot_time_to_200ms::id(),
-            "SIMD-0525: Reduce slot time to 200ms",
         ),
         (
             disable_zk_elgamal_proof_program::id(),

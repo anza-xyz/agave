@@ -595,10 +595,7 @@ mod tests {
         itertools::Itertools,
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{Packet, PacketFlags},
-        solana_runtime::{
-            bank::Bank,
-            slot_params::{slot_time_feature_gates, slot_time_feature_ids},
-        },
+        solana_runtime::bank::Bank,
         std::{
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
@@ -621,26 +618,6 @@ mod tests {
         } else {
             Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), slot)
         }
-    }
-
-    fn deactivate_slot_time_features(bank: &mut Bank) {
-        for feature_id in slot_time_feature_ids() {
-            bank.deactivate_feature(&feature_id);
-        }
-    }
-
-    fn shred_filter_for_tests(
-        feature_ids: impl IntoIterator<Item = Pubkey>,
-    ) -> (ShredFilterContext, Slot) {
-        let genesis_config = create_genesis_config(1).genesis_config;
-        let mut root_bank = Bank::new_for_tests(&genesis_config);
-        deactivate_slot_time_features(&mut root_bank);
-        for feature_id in feature_ids {
-            root_bank.activate_feature(&feature_id);
-        }
-        let first_epoch_slot = root_bank.epoch_schedule().get_first_slot_in_epoch(1);
-        let (root_bank, _) = root_bank.wrap_with_bank_forks_for_tests();
-        (ShredFilterContext::new(root_bank, 0), first_epoch_slot)
     }
 
     #[test_case(true ; "last_in_slot")]
@@ -1067,36 +1044,6 @@ mod tests {
             );
             assert_eq!(shred_filter_context.stats.index_out_of_bounds, 1);
         }
-    }
-
-    #[test]
-    fn test_shred_limit_for_slot_times() {
-        for (features, shred_limits) in std::iter::once((vec![], ShredLimits::DEFAULT)).chain(
-            slot_time_feature_gates().map(|(feature_id, params)| {
-                (
-                    vec![feature_id],
-                    ShredLimits::new(
-                        params.max_data_shreds_per_slot(),
-                        params.max_code_shreds_per_slot(),
-                    ),
-                )
-            }),
-        ) {
-            let (shred_filter, effective_slot) = shred_filter_for_tests(features);
-            assert_eq!(
-                shred_filter.shred_limits(effective_slot.saturating_sub(1)),
-                ShredLimits::DEFAULT
-            );
-            assert_eq!(shred_filter.shred_limits(effective_slot), shred_limits);
-        }
-
-        let [reduce_to_350ms, _, _, reduce_to_200ms] = slot_time_feature_ids();
-        let (shred_filter, effective_slot) =
-            shred_filter_for_tests([reduce_to_350ms, reduce_to_200ms]);
-        assert_eq!(
-            shred_filter.shred_limits(effective_slot),
-            ShredLimits::new(16_384, 16_384)
-        );
     }
 
     #[test]

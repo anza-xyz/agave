@@ -155,11 +155,9 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
-                create_genesis_config_with_alpenglow_vote_accounts, deactivate_features,
+                create_genesis_config_with_alpenglow_vote_accounts,
             },
-            slot_params::slot_time_feature_ids,
         },
-        agave_feature_set as feature_set,
         rand::Rng,
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::GenesisConfig,
@@ -233,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn new_epoch_update_account_uses_current_epoch_rewards() {
+    fn new_epoch_update_account_use_current_reward_budget() {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(1_000_000_000);
@@ -241,71 +239,46 @@ mod tests {
         // Warmup is necessary here to give epoch 0 and epoch 1 different reward
         // budgets.
         genesis_config.epoch_schedule = EpochSchedule::custom(64, 64, true);
-        deactivate_features(&mut genesis_config, &slot_time_feature_ids().to_vec());
 
-        for (case, genesis_config, activate_slot_time_feature) in [
-            ("current reward budget", genesis_config, false),
-            (
-                "current epoch slot params",
-                GenesisConfig {
-                    inflation: Inflation::full(),
-                    ..GenesisConfig::default()
-                },
-                true,
-            ),
-        ] {
-            let mut bank_epoch_0 = Bank::new_for_tests(&genesis_config);
-            if activate_slot_time_feature {
-                bank_epoch_0.activate_feature(&feature_set::reduce_slot_time_to_350ms::id());
-            }
-            let bank_forks = BankForks::new_rw_arc(bank_epoch_0);
-            let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
-            let epoch_1_first_slot = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
-            let bank_epoch_1 = Bank::new_from_parent_with_bank_forks(
-                bank_forks.as_ref(),
-                bank_epoch_0.clone(),
-                SlotLeader::new_unique(),
-                epoch_1_first_slot,
-            );
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
+        let epoch_1_first_slot = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
+        let bank_epoch_1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank_epoch_0.clone(),
+            SlotLeader::new_unique(),
+            epoch_1_first_slot,
+        );
 
-            assert_eq!(bank_epoch_0.epoch(), 0, "{case}");
-            assert_eq!(bank_epoch_1.epoch(), 1, "{case}");
-            if activate_slot_time_feature {
-                assert_ne!(bank_epoch_0.ns_per_slot, bank_epoch_1.ns_per_slot, "{case}");
-            } else {
-                assert_ne!(
-                    bank_epoch_1.epoch_schedule().get_slots_in_epoch(0),
-                    bank_epoch_1.epoch_schedule().get_slots_in_epoch(1),
-                    "{case}",
-                );
-            }
+        assert_eq!(bank_epoch_0.epoch(), 0);
+        assert_eq!(bank_epoch_1.epoch(), 1);
+        assert_ne!(
+            bank_epoch_1.epoch_schedule().get_slots_in_epoch(0),
+            bank_epoch_1.epoch_schedule().get_slots_in_epoch(1)
+        );
 
-            let epoch_start_capitalization = bank_epoch_0.capitalization();
-            let expected_current_epoch_rewards = bank_epoch_1.calculate_epoch_inflation_rewards(
+        let epoch_start_capitalization = bank_epoch_0.capitalization();
+        let expected_current_epoch_rewards = bank_epoch_1
+            .calculate_epoch_inflation_rewards(epoch_start_capitalization, bank_epoch_1.epoch());
+        assert_ne!(
+            expected_current_epoch_rewards,
+            bank_epoch_1.calculate_epoch_inflation_rewards(
                 epoch_start_capitalization,
-                bank_epoch_1.epoch(),
-            );
-            assert_ne!(
-                expected_current_epoch_rewards,
-                bank_epoch_1.calculate_epoch_inflation_rewards(
-                    epoch_start_capitalization,
-                    bank_epoch_0.epoch()
-                ),
-                "{case}",
-            );
+                bank_epoch_0.epoch()
+            )
+        );
 
-            EpochInflationAccountState::new_epoch_update_account(
-                &bank_epoch_1,
-                epoch_start_capitalization,
-                0,
-            );
-            let state = EpochInflationAccountState::new_from_bank(&bank_epoch_1).unwrap();
-            assert_eq!(state.current.epoch, bank_epoch_1.epoch(), "{case}");
-            assert_eq!(
-                state.current.max_possible_validator_reward, expected_current_epoch_rewards,
-                "{case}",
-            );
-        }
+        EpochInflationAccountState::new_epoch_update_account(
+            &bank_epoch_1,
+            epoch_start_capitalization,
+            0,
+        );
+        let state = EpochInflationAccountState::new_from_bank(&bank_epoch_1).unwrap();
+        assert_eq!(state.current.epoch, bank_epoch_1.epoch());
+        assert_eq!(
+            state.current.max_possible_validator_reward,
+            expected_current_epoch_rewards
+        );
     }
 
     #[test]

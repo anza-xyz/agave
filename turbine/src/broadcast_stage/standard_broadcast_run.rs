@@ -676,12 +676,7 @@ mod test {
             shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank::{Bank, SlotLeader},
-            genesis_utils::{activate_feature, deactivate_features},
-            slot_params::{slot_time_feature_gates, slot_time_feature_ids},
-        },
+        solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
         test_case::test_case,
@@ -743,65 +738,6 @@ mod test {
 
     fn test_leader_schedule_cache(bank: &Bank) -> Arc<LeaderScheduleCache> {
         Arc::new(LeaderScheduleCache::new_from_bank(bank))
-    }
-
-    fn broadcast_shred_limits_for_slot_time_features(
-        feature_ids: impl IntoIterator<Item = Pubkey>,
-    ) -> (u32, u32) {
-        let ledger_path = get_tmp_ledger_path!();
-        let blockstore = Arc::new(
-            Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger"),
-        );
-        let mut genesis_config = create_genesis_config(10_000).genesis_config;
-        let slot_time_features = slot_time_feature_ids().to_vec();
-        deactivate_features(&mut genesis_config, &slot_time_features);
-        for feature_id in feature_ids {
-            activate_feature(&mut genesis_config, feature_id);
-        }
-
-        let (parent_bank, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        parent_bank.set_tick_height(parent_bank.max_tick_height());
-        Bank::calculate_and_set_block_id_for_dcou(&parent_bank);
-
-        let effective_slot = parent_bank.epoch_schedule().get_first_slot_in_epoch(1);
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            parent_bank,
-            SlotLeader::default(),
-            effective_slot,
-        );
-        let ticks = create_ticks(1, 0, genesis_config.hash());
-        let receive_results = ReceiveResults {
-            component: BlockComponent::EntryBatch(ticks.clone()),
-            bank: bank.clone(),
-            last_tick_height: bank.tick_height() + ticks.len() as u64,
-        };
-        let (socket_sender, _socket_receiver) = unbounded();
-        let (blockstore_sender, _blockstore_receiver) = unbounded();
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
-
-        standard_broadcast_run
-            .process_receive_results(
-                &Keypair::new(),
-                &blockstore,
-                &socket_sender,
-                &blockstore_sender,
-                receive_results,
-                &mut ProcessShredsStats::default(),
-            )
-            .unwrap();
-
-        (
-            standard_broadcast_run.max_data_shreds_per_slot,
-            standard_broadcast_run.max_code_shreds_per_slot,
-        )
     }
 
     #[test]
@@ -1222,28 +1158,52 @@ mod test {
 
     #[test]
     fn test_update_shred_limits_from_bank() {
-        assert_eq!(
-            broadcast_shred_limits_for_slot_time_features(std::iter::empty()),
-            (
-                DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
-                DEFAULT_MAX_CODE_SHREDS_PER_SLOT
-            )
+        agave_logger::setup();
+        let num_shreds_per_slot = 2;
+        let (
+            blockstore,
+            genesis_config,
+            cluster_info,
+            parent_bank,
+            leader_keypair,
+            socket,
+            bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks),
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + 1,
+        };
+
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
         );
+        standard_broadcast_run.max_data_shreds_per_slot = 1;
+        standard_broadcast_run.max_code_shreds_per_slot = 1;
+        standard_broadcast_run
+            .test_process_receive_results(
+                &leader_keypair,
+                &cluster_info,
+                &socket,
+                &blockstore,
+                receive_results,
+                &bank_forks,
+            )
+            .unwrap();
 
-        for ((feature_id, _), expected_shreds_per_slot) in slot_time_feature_gates()
-            .into_iter()
-            .zip([28_672, 24_576, 20_480, 16_384])
-        {
-            assert_eq!(
-                broadcast_shred_limits_for_slot_time_features([feature_id]),
-                (expected_shreds_per_slot, expected_shreds_per_slot)
-            );
-        }
-
-        let [reduce_to_350ms, _, _, reduce_to_200ms] = slot_time_feature_ids();
         assert_eq!(
-            broadcast_shred_limits_for_slot_time_features([reduce_to_350ms, reduce_to_200ms]),
-            (16_384, 16_384)
+            standard_broadcast_run.max_data_shreds_per_slot,
+            bank.max_data_shreds_per_slot()
+        );
+        assert_eq!(
+            standard_broadcast_run.max_code_shreds_per_slot,
+            bank.max_code_shreds_per_slot()
         );
     }
 

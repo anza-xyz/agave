@@ -112,7 +112,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::cost_tracker::CostTracker,
+    solana_cost_model::{block_cost_limits::simd_0286_block_limit, cost_tracker::CostTracker},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -179,6 +179,7 @@ use {
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, SysvarSerialize, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
+    solana_time_utils::years_as_slots,
     solana_transaction::{
         Transaction, TransactionVerificationMode,
         sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
@@ -2179,7 +2180,20 @@ impl Bank {
              snapshot and genesis.bin might pertain to different clusters"
         );
         assert_eq!(bank.ticks_per_slot, genesis_config.ticks_per_slot);
+        assert_eq!(
+            bank.ns_per_slot,
+            genesis_config.poh_config.target_tick_duration.as_nanos()
+                * genesis_config.ticks_per_slot as u128
+        );
         assert_eq!(bank.max_tick_height, (bank.slot + 1) * bank.ticks_per_slot);
+        assert_eq!(
+            bank.slots_per_year,
+            years_as_slots(
+                1.0,
+                &genesis_config.poh_config.target_tick_duration,
+                bank.ticks_per_slot,
+            )
+        );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
         bank.refresh_slot_params_with_baseline(Self::genesis_config_slot_params(
@@ -2696,18 +2710,12 @@ impl Bank {
         });
     }
 
-    /// Rebuilds slot-param state from the current feature set.
-    fn refresh_slot_params(&mut self) {
-        self.refresh_slot_params_with_baseline(self.slot_params.baseline_params());
-    }
-
     /// Rebuilds cached slot params while preserving the supplied slot-0 baseline.
     ///
     /// The cache is not serialized into snapshots; it is reconstructed from
     /// existing Bank fields during genesis and snapshot restore.
     fn refresh_slot_params_with_baseline(&mut self, baseline_params: SlotParams) {
-        self.slot_params =
-            SlotParamsArchive::new(&self.feature_set, &self.epoch_schedule, baseline_params);
+        self.slot_params = SlotParamsArchive::new(&self.epoch_schedule, baseline_params);
     }
 
     /// Builds slot-0 params from the genesis config.
@@ -2726,11 +2734,6 @@ impl Bank {
     /// Returns the slot params effective at `slot`.
     fn slot_params_at_slot(&self, slot: Slot) -> SlotParams {
         self.slot_params.params_at_slot(slot)
-    }
-
-    /// Returns the slot params that should be effective for this bank's slot.
-    fn current_slot_params(&self) -> SlotParams {
-        self.slot_params_at_slot(self.slot)
     }
 
     /// Returns the effective slot duration for `slot`.
@@ -4673,81 +4676,22 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
-    /// Recomputes cost tracker limits from active feature state.
     fn apply_cost_tracker_limits_for_active_features(&mut self) {
-        let params = self.current_slot_params();
-        let (account_cost_limit, block_cost_limit, vote_cost_limit, data_size_limit) =
-            params.cost_limits(self.feature_set.snapshot().raise_block_limits_to_100m);
-
         let mut cost_tracker = self.write_cost_tracker().unwrap();
+        let block_cost_limit = if self.feature_set.snapshot().raise_block_limits_to_100m {
+            simd_0286_block_limit()
+        } else {
+            cost_tracker.get_block_limit()
+        };
+        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
+        let vote_cost_limit = cost_tracker.get_vote_limit();
+        let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
         cost_tracker.set_limits(
             account_cost_limit,
             block_cost_limit,
             vote_cost_limit,
-            data_size_limit,
+            allocated_data_size_limit,
         );
-    }
-
-    /// Recomputes this bank's effective partitioned-reward write budget.
-    fn apply_partitioned_epoch_rewards_config_for_active_features(&mut self) {
-        self.partitioned_rewards_stake_account_stores_per_block = self
-            .current_slot_params()
-            .partitioned_epoch_rewards_stake_account_stores_per_block();
-    }
-
-    /// Applies slot-time changes for fields serialized into snapshots.
-    fn apply_slot_time_persistent_changes(&mut self) {
-        let params = self.current_slot_params();
-        self.ns_per_slot = params.ns_per_slot();
-        self.slots_per_year = params.slots_per_year();
-        self.rent_collector.slots_per_year = params.slots_per_year();
-        if !self.feature_set.is_active(&feature_set::alpenglow::id())
-            && self.hashes_per_tick().is_some()
-        {
-            self.set_hashes_per_tick(params.hashes_per_tick());
-        }
-    }
-
-    /// Verifies bank fields are consistent with current slot params.
-    fn assert_bank_matches_slot_params(&self) {
-        let params = self.current_slot_params();
-        assert_eq!(
-            self.ns_per_slot,
-            params.ns_per_slot(),
-            "snapshot slot-time ns_per_slot mismatch"
-        );
-        assert_eq!(
-            self.slots_per_year.to_bits(),
-            params.slots_per_year().to_bits(),
-            "snapshot slot-time slots_per_year mismatch"
-        );
-        assert_eq!(
-            self.rent_collector.slots_per_year.to_bits(),
-            params.slots_per_year().to_bits(),
-            "snapshot slot-time rent_collector.slots_per_year mismatch"
-        );
-        let hashes_per_tick = self.hashes_per_tick();
-        if !self.feature_set.is_active(&feature_set::alpenglow::id()) && hashes_per_tick.is_some() {
-            assert_eq!(
-                hashes_per_tick,
-                params.hashes_per_tick(),
-                "snapshot slot-time hashes_per_tick mismatch"
-            );
-        }
-        assert_eq!(
-            self.entry_bytes_budget().slot_limit(),
-            params.max_entry_bytes_per_slot(),
-            "snapshot slot-time entry byte budget mismatch"
-        );
-    }
-
-    /// Applies slot-time changes for runtime-only fields. This function is
-    /// expected to be idempotent.
-    fn apply_slot_time_runtime_changes(&mut self) {
-        self.entry_bytes_consumed =
-            EntryBytesBudget::new(self.current_slot_params().max_entry_bytes_per_slot());
-        self.apply_cost_tracker_limits_for_active_features();
-        self.apply_partitioned_epoch_rewards_config_for_active_features();
     }
 
     fn apply_simd_0339_invoke_cost_changes(&mut self) {
@@ -4771,10 +4715,11 @@ impl Bank {
             Arc::new(reserved_keys)
         };
 
-        // Many fields are not serialized in snapshot or any configs. Rebuild
-        // them from the feature set so the initial bank state is consistent.
-        self.refresh_slot_params();
-        self.apply_slot_time_runtime_changes();
+        // Cost-Tracker is not serialized in snapshot or any configs.
+        // We must apply previously activated features related to limits here
+        // so that the initial bank state is consistent with the feature set.
+        // Cost-tracker limits are propagated through children banks.
+        self.apply_cost_tracker_limits_for_active_features();
         self.apply_simd_0339_invoke_cost_changes();
 
         let program_runtime_environment =
@@ -5869,14 +5814,12 @@ impl Bank {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
         feature_set.deactivate(id);
         self.feature_set = Arc::new(feature_set);
-        self.refresh_slot_params();
     }
 
     pub fn activate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
         feature_set.activate(id, 0);
         self.feature_set = Arc::new(feature_set);
-        self.refresh_slot_params();
     }
 
     pub fn fill_bank_with_ticks_for_tests(&self) {
@@ -5952,7 +5895,6 @@ impl Bank {
         self.feature_set = Arc::new(feature_set);
 
         self.apply_activated_features();
-        self.assert_bank_matches_slot_params();
     }
 
     /// This is called from each epoch boundary
@@ -5961,7 +5903,6 @@ impl Bank {
         let (feature_set, new_feature_activations) =
             self.compute_active_feature_set(include_pending);
         self.feature_set = Arc::new(feature_set);
-        self.refresh_slot_params();
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
@@ -6044,11 +5985,10 @@ impl Bank {
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
-        // Apply unconditionally: this is relatively cheap and idempotent.
-        self.apply_slot_time_persistent_changes();
-        self.apply_slot_time_runtime_changes();
-
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
+            self.apply_cost_tracker_limits_for_active_features();
+        }
 
         if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
             if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
@@ -7002,11 +6942,6 @@ impl Bank {
             .for_each(|(pubkey, _)| {
                 minimized_account_set.insert(*pubkey);
             });
-    }
-
-    /// Returns true when this bank is using slot params beyond its genesis baseline.
-    pub fn slot_time_reduction_active(&self) -> bool {
-        self.ns_per_slot != self.slot_params.baseline_params().ns_per_slot()
     }
 }
 
