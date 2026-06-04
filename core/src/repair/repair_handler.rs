@@ -10,7 +10,6 @@ use {
         serve_repair::{AncestorHashesResponse, BlockIdRepairResponse, MAX_ANCESTOR_RESPONSES},
     },
     agave_votor_messages::migration::MigrationStatus,
-    bincode::serialize,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -30,16 +29,20 @@ use {
         net::SocketAddr,
         sync::{Arc, RwLock},
     },
+    wincode::{SchemaWrite, serialize},
 };
 
 /// Helper function to create a PacketBatch from a serializable response
-fn create_response_packet_batch<T: serde::Serialize>(
+fn create_response_packet_batch<T>(
     recycler: &PacketBatchRecycler,
     response: &T,
     from_addr: &SocketAddr,
     nonce: Nonce,
     debug_label: &'static str,
-) -> Option<PacketBatch> {
+) -> Option<PacketBatch>
+where
+    T: SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+{
     let serialized_response = serialize(response).ok()?;
     let packet =
         repair_response::repair_response_packet_from_bytes(serialized_response, from_addr, nonce)?;
@@ -421,7 +424,7 @@ mod tests {
 
             let packet = packet_batch.iter().next().unwrap();
             let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-                bincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+                wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
 
             assert_eq!(response_nonce, nonce);
             match response {
@@ -488,7 +491,7 @@ mod tests {
 
         let packet = packet_batch.iter().next().unwrap();
         let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-            bincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+            wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
 
         assert_eq!(response_nonce, nonce);
         match response {
