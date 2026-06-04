@@ -565,6 +565,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
         QuicStreamerConfig::default(),
         SimpleQosConfig::default(),
         cancel.clone(),
+        Arc::default(),
     )
     .unwrap();
     (cancel, result.thread, receiver)

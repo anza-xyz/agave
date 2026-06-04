@@ -49,34 +49,33 @@ const MAX_IN_FLIGHT_EVICTIONS: usize = 2_000;
 pub struct SimpleQosBanlist {
     banlist: Arc<Banlist<Pubkey>>,
     eviction_sender: Sender<Pubkey>,
+    /// Receiver half of the eviction channel, consumed once by
+    /// [`SimpleQosBanlist::spawn_connection_evictor`] when the server starts.
+    eviction_receiver: std::sync::Mutex<Option<Receiver<Pubkey>>>,
+}
+
+/// Construct over an externally-owned [`Banlist`]. The legacy QUIC-stream
+/// server and the new QUIC-datagram endpoint share a single banlist primitive,
+/// so a ban applied by the BLS sigverifier (which holds the same
+/// `Arc<Banlist<Pubkey>>`) is honored on connection admission by both
+/// transports. Pass `Arc::default()` for a private, unshared banlist.
+///
+/// Note: bans applied directly through the shared `Banlist` (rather than
+/// through [`SimpleQosBanlist::ban`]) do not push an eviction request, so an
+/// already-open legacy connection from a freshly-banned peer is dropped only
+/// when it next closes; new connections are rejected immediately.
+impl From<Arc<Banlist<Pubkey>>> for SimpleQosBanlist {
+    fn from(banlist: Arc<Banlist<Pubkey>>) -> Self {
+        let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
+        Self {
+            banlist,
+            eviction_sender,
+            eviction_receiver: std::sync::Mutex::new(Some(eviction_receiver)),
+        }
+    }
 }
 
 impl SimpleQosBanlist {
-    pub fn new() -> (Self, Receiver<Pubkey>) {
-        Self::new_with_banlist(Arc::new(Banlist::default()))
-    }
-
-    /// Construct over an externally-owned [`Banlist`]. Used during the votor
-    /// dual-stack migration so the legacy QUIC-stream server and the new
-    /// QUIC-datagram endpoint share a single banlist primitive: a ban applied
-    /// by the BLS sigverifier (which holds the same `Arc<Banlist<Pubkey>>`) is
-    /// honored on connection admission by both transports.
-    ///
-    /// Note: bans applied directly through the shared `Banlist` (rather than
-    /// through [`SimpleQosBanlist::ban`]) do not push an eviction request, so
-    /// an already-open legacy connection from a freshly-banned peer is dropped
-    /// only when it next closes; new connections are rejected immediately.
-    pub fn new_with_banlist(banlist: Arc<Banlist<Pubkey>>) -> (Self, Receiver<Pubkey>) {
-        let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
-        (
-            Self {
-                banlist,
-                eviction_sender,
-            },
-            eviction_receiver,
-        )
-    }
-
     /// Ban the `pubkey` for the specified `timeout`
     ///
     /// Returns `true` if the `id` was already banned else `false`.
@@ -106,10 +105,15 @@ impl SimpleQosBanlist {
 
     fn spawn_connection_evictor(
         &self,
-        mut eviction_receiver: Receiver<Pubkey>,
         staked_connection_table: Arc<Mutex<ConnectionTable<TokenBucket>>>,
         stats: Arc<StreamerStats>,
     ) {
+        let mut eviction_receiver = self
+            .eviction_receiver
+            .lock()
+            .expect("Simple QoS banlist eviction receiver lock poisoned")
+            .take()
+            .expect("Simple QoS banlist eviction task already spawned");
         let banlist = self.banlist.clone();
         let _eviction_task = tokio::spawn(async move {
             let mut prune_interval = interval(BANLIST_PRUNE_INTERVAL);
@@ -168,43 +172,24 @@ pub struct SimpleQos {
     staked_connection_table: Arc<Mutex<ConnectionTable<TokenBucket>>>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     pub(crate) banlist: Arc<SimpleQosBanlist>,
-    banlist_eviction_receiver: Option<Receiver<Pubkey>>,
 }
 
 impl SimpleQos {
+    /// `banlist` is the shared connection-admission banlist; see
+    /// [`SimpleQosBanlist`] for the migration rationale. Pass `Arc::default()`
+    /// for a private, unshared banlist.
     pub fn new(
         config: SimpleQosConfig,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
+        banlist: Arc<Banlist<Pubkey>>,
     ) -> Self {
-        Self::new_with_banlist(
-            config,
-            stats,
-            staked_nodes,
-            cancel,
-            Arc::new(Banlist::default()),
-        )
-    }
-
-    /// Like [`SimpleQos::new`] but over an externally-owned [`Banlist`]. See
-    /// [`SimpleQosBanlist::new_with_banlist`] for the migration rationale.
-    pub fn new_with_banlist(
-        config: SimpleQosConfig,
-        stats: Arc<StreamerStats>,
-        staked_nodes: Arc<RwLock<StakedNodes>>,
-        cancel: CancellationToken,
-        shared_banlist: Arc<Banlist<Pubkey>>,
-    ) -> Self {
-        let (banlist, banlist_eviction_receiver) =
-            SimpleQosBanlist::new_with_banlist(shared_banlist);
-        let banlist = Arc::new(banlist);
         Self {
             config,
             stats,
             staked_nodes,
-            banlist,
-            banlist_eviction_receiver: Some(banlist_eviction_receiver),
+            banlist: Arc::new(SimpleQosBanlist::from(banlist)),
             staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
                 ConnectionTableType::Staked,
                 cancel,
@@ -306,15 +291,8 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     }
 
     fn spawn_background_tasks(&mut self) {
-        let eviction_receiver = self
-            .banlist_eviction_receiver
-            .take()
-            .expect("Simple QoS banlist eviction task already spawned");
-        self.banlist.spawn_connection_evictor(
-            eviction_receiver,
-            self.staked_connection_table.clone(),
-            self.stats.clone(),
-        );
+        self.banlist
+            .spawn_connection_evictor(self.staked_connection_table.clone(), self.stats.clone());
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -564,6 +542,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let connection_table = ConnectionTable::new(ConnectionTableType::Staked, cancel);
@@ -617,6 +596,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let mut connection_table =
@@ -689,6 +669,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let connection_table = ConnectionTable::new(ConnectionTableType::Staked, cancel);
@@ -743,6 +724,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         // Create server-side accepted connection
@@ -780,6 +762,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         // Create connection using the staked keypairs
@@ -820,6 +803,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let client_tracker = ClientConnectionTracker {
@@ -867,6 +851,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let client_tracker = ClientConnectionTracker {
@@ -914,6 +899,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel,
+            Arc::default(),
         );
 
         simple_qos
@@ -968,6 +954,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         // Add first connection to fill the table
@@ -1038,6 +1025,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         // Add high-stake connection first
@@ -1096,6 +1084,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let client_tracker = ClientConnectionTracker {
@@ -1146,6 +1135,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let client_tracker = ClientConnectionTracker {
@@ -1185,6 +1175,7 @@ mod tests {
             stats.clone(),
             staked_nodes,
             cancel.clone(),
+            Arc::default(),
         );
 
         let client_tracker = ClientConnectionTracker {
@@ -1243,7 +1234,13 @@ mod tests {
             max_connections_per_peer: 10,
         };
 
-        let simple_qos = SimpleQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
+        let simple_qos = SimpleQos::new(
+            qos_config,
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+            Arc::default(),
+        );
 
         let client_tracker = ClientConnectionTracker {
             stats: stats.clone(),

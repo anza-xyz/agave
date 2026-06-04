@@ -77,7 +77,7 @@ use {
         evicting_sender::EvictingSender,
         nonblocking::simple_qos::SimpleQosConfig,
         packet::PacketBatch,
-        quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server_with_banlist},
+        quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
     solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
@@ -349,7 +349,7 @@ impl Tvu {
                     key_updater: bls_key_updater,
                 },
                 _legacy_banlist,
-            ) = spawn_simple_qos_server_with_banlist(
+            ) = spawn_simple_qos_server(
                 "solQuicBLS",
                 "quic_streamer_bls",
                 vec![bls_socket.into()],
