@@ -238,6 +238,11 @@ fn insert_vote_and_create_bls_message(
     is_refresh: bool,
     context: &mut VotingContext,
 ) -> Result<BLSOp, VoteError> {
+    // Update and save the vote history
+    if !is_refresh {
+        context.vote_history.add_vote(vote);
+    }
+
     let bank = context.sharable_banks.root();
     let message = match generate_vote_tx(
         vote,
@@ -257,15 +262,6 @@ fn insert_vote_and_create_bls_message(
             }
         }
     };
-
-    // Only record after generate_vote_tx has produced a signed message.
-    // Recording before would leave vote_history claiming we voted for the
-    // slot when HotSpare/NonVoting/NoRankFound short-circuited the broadcast,
-    // permanently blocking us from voting for that slot.
-    if !is_refresh {
-        context.vote_history.add_vote(vote);
-    }
-
     context
         .own_vote_sender
         .send(vec![message.clone()])
