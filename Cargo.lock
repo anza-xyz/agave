@@ -8922,6 +8922,7 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-pubsub-client",
  "solana-quic-client",
+ "solana-quic-datagram",
  "solana-rent",
  "solana-rpc-client",
  "solana-rpc-client-api",
@@ -8946,7 +8947,9 @@ dependencies = [
  "static_assertions",
  "strum",
  "tempfile",
+ "tokio",
  "tokio-util 0.7.18",
+ "wincode",
 ]
 
 [[package]]

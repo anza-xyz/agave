@@ -915,12 +915,6 @@ impl LocalCluster {
         listener_keypair: Keypair,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
-        let validator_keys: Vec<Arc<Keypair>> = self
-            .validators
-            .values()
-            .map(|v| v.info.keypair.clone())
-            .collect();
-        let node_stakes = vec![1u64; validator_keys.len()];
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
             num_new_notarized_votes,
@@ -928,8 +922,6 @@ impl LocalCluster {
             test_name,
             vote_listener_socket,
             listener_keypair,
-            &validator_keys,
-            &node_stakes,
         );
         info!("{test_name} done waiting for notarized votes");
     }
