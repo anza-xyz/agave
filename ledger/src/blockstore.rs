@@ -12479,10 +12479,7 @@ pub mod tests {
         assert_eq!(duplicate_shreds.len(), 1);
         assert_eq!(
             duplicate_shreds[0],
-            PossibleDuplicateShred::ChainedMerkleRootConflict(
-                coding_shred,
-                coding_shred_previous.into_payload()
-            )
+            PossibleDuplicateShred::ChainedMerkleRootConflict(coding_shred.slot())
         );
 
         // Should not check again, even though this shred conflicts as well
@@ -12532,10 +12529,7 @@ pub mod tests {
         assert_eq!(duplicate_shreds.len(), 1);
         assert_eq!(
             duplicate_shreds[0],
-            PossibleDuplicateShred::ChainedMerkleRootConflict(
-                data_shred,
-                coding_shred_previous.into_payload(),
-            )
+            PossibleDuplicateShred::ChainedMerkleRootConflict(data_shred.slot())
         );
         // Should not check again, even though this shred conflicts as well
         assert!(
@@ -12582,13 +12576,56 @@ pub mod tests {
         let duplicate_shreds =
             blockstore.insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule);
 
+        assert_eq!(duplicate_shreds.len(), 2);
+        assert!(
+            duplicate_shreds.contains(&PossibleDuplicateShred::ChainedMerkleRootConflict(
+                coding_shred.slot(),
+            ))
+        );
+        assert!(duplicate_shreds.contains(
+            &PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(coding_shred.slot(),)
+        ));
+    }
+
+    #[test]
+    fn test_chained_merkle_root_inconsistency_data_shreds_only() {
+        // Insert data shreds from consecutive FEC sets without any coding shreds.
+        // The ErasureMeta-based SIMD-0340 check cannot run, so the fixed-FEC
+        // MerkleRootMeta check must catch the inconsistent chain.
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let parent_slot = 0;
+        let slot = 1;
+        let fec_set_index = 0;
+        let (data_shreds, _, leader_schedule) =
+            setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
+        let data_shred_previous = data_shreds[0].clone();
+        let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
+
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(data_shred_previous.clone(), &leader_schedule,)
+                .is_empty()
+        );
+
+        let merkle_root = Hash::new_unique();
+        assert!(merkle_root != data_shred_previous.merkle_root().unwrap());
+        let (data_shreds, _, leader_schedule) = setup_erasure_shreds_with_index_and_chained_merkle(
+            slot,
+            parent_slot,
+            10,
+            next_fec_set_index,
+            merkle_root,
+        );
+        let data_shred = data_shreds[0].clone();
+
+        let duplicate_shreds =
+            blockstore.insert_shred_return_duplicate(data_shred.clone(), &leader_schedule);
         assert_eq!(duplicate_shreds.len(), 1);
         assert_eq!(
             duplicate_shreds[0],
-            PossibleDuplicateShred::ChainedMerkleRootConflict(
-                coding_shred,
-                next_data_shred.into_payload(),
-            )
+            PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(data_shred.slot())
         );
     }
 
@@ -12656,10 +12693,7 @@ pub mod tests {
         assert_eq!(duplicate_shreds.len(), 1);
         assert_eq!(
             duplicate_shreds[0],
-            PossibleDuplicateShred::ChainedMerkleRootConflict(
-                data_shred,
-                prev_coding_shred.into_payload(),
-            )
+            PossibleDuplicateShred::ChainedMerkleRootConflict(data_shred.slot())
         );
 
         // Insert coding shred
@@ -12670,10 +12704,7 @@ pub mod tests {
         assert_eq!(duplicate_shreds.len(), 1);
         assert_eq!(
             duplicate_shreds[0],
-            PossibleDuplicateShred::ChainedMerkleRootConflict(
-                coding_shred,
-                next_data_shred.into_payload(),
-            )
+            PossibleDuplicateShred::ChainedMerkleRootConflict(coding_shred.slot())
         );
     }
 

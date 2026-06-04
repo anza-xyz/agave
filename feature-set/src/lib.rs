@@ -2611,17 +2611,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             define_ltds_fee_only_semantics::id(),
             "SIMD-0186 Amendment: Define fee-only semantics",
         ),
-<<<<<<< HEAD
-=======
-        (
-            set_lamports_per_byte_to_6960::id(),
-            "SIMD-0438: Reset lamports per byte to legacy value of 6960",
-        ),
         (
             validate_chained_block_id_2::id(),
             "SIMD-340: Encompassing check for validate chained block ID",
         ),
->>>>>>> a49541ffc (blockstore: add secondary feature flag for SIMD-0340 (#12854))
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]
