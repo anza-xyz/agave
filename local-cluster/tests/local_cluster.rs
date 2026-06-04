@@ -401,8 +401,8 @@ fn test_mainnet_beta_cluster_type() {
     .unwrap();
     assert_eq!(cluster_nodes.len(), 1);
 
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
 
     // Programs that are available at epoch 0
@@ -419,8 +419,7 @@ fn test_mainnet_beta_cluster_type() {
         assert_matches!(
             (
                 program_id,
-                client
-                    .rpc_client()
+                rpc_client
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
                     .value
@@ -434,8 +433,7 @@ fn test_mainnet_beta_cluster_type() {
         assert_eq!(
             (
                 program_id,
-                client
-                    .rpc_client()
+                rpc_client
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
                     .value
@@ -976,9 +974,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let timer = Instant::now();
     loop {
         let validator_current_slot = cluster
-            .build_validator_tpu_quic_client(&validator_identity.pubkey())
+            .build_rpc_client(&validator_identity.pubkey())
             .unwrap()
-            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::finalized())
             .unwrap();
         trace!("validator current slot: {validator_current_slot}");
@@ -1366,19 +1363,14 @@ fn test_snapshots_blockstore_floor() {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
     let mut current_slot = 0;
 
     // Let this validator run a while with repair
     let target_slot = slot_floor + 40;
     while current_slot <= target_slot {
         trace!("current_slot: {current_slot}");
-        if let Ok(slot) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-        {
+        if let Ok(slot) = rpc_client.get_slot_with_commitment(CommitmentConfig::processed()) {
             current_slot = slot;
         } else {
             continue;
@@ -1499,12 +1491,11 @@ fn test_no_voting() {
         ..ClusterConfig::default()
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
     loop {
-        let last_slot = client
-            .rpc_client()
+        let last_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::processed())
             .expect("Couldn't get slot");
         if last_slot > 4 * VOTE_THRESHOLD_DEPTH as u64 {
@@ -1563,16 +1554,13 @@ fn test_optimistic_confirmation_violation_detection() {
     // so that the vote on `S-1` is definitely in gossip and optimistic confirmation is
     // detected on slot `S-1` for sure, then stop the heavier of the two
     // validators
-    let client = cluster
-        .build_validator_tpu_quic_client(&node_to_restart)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&node_to_restart).unwrap();
     let start = Instant::now();
     let target_slot = 50;
     let max_wait_time_seconds = 100;
     let mut optimistically_confirmed_slot;
     loop {
-        optimistically_confirmed_slot = client
-            .rpc_client()
+        optimistically_confirmed_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::confirmed())
             .unwrap();
 
@@ -1696,16 +1684,13 @@ fn test_optimistic_confirmation_violation_detection() {
         );
 
         // Wait for a root descended from `new_fork_slot` to be set.
-        let client = cluster
-            .build_validator_tpu_quic_client(&node_to_restart)
-            .unwrap();
+        let rpc_client = cluster.build_rpc_client(&node_to_restart).unwrap();
 
         info!("looking for root > {optimistically_confirmed_slot} on new fork {new_fork_slot}");
         let start = Instant::now();
         loop {
-            info!("Client connecting to: {}", client.rpc_client().url());
-            let last_root = client
-                .rpc_client()
+            info!("Client connecting to: {}", rpc_client.url());
+            let last_root = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap();
 
@@ -1780,9 +1765,7 @@ fn test_validator_saves_tower() {
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     let ledger_path = cluster
         .validators
@@ -1796,10 +1779,7 @@ fn test_validator_saves_tower() {
 
     // Wait for some votes to be generated
     loop {
-        if let Ok(slot) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-        {
+        if let Ok(slot) = rpc_client.get_slot_with_commitment(CommitmentConfig::processed()) {
             trace!("current slot: {slot}");
             if slot > 2 {
                 break;
@@ -1817,16 +1797,11 @@ fn test_validator_saves_tower() {
 
     // Restart the validator and wait for a new root
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for the first new root
     let last_replayed_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}");
             if root > 0 {
                 break root;
@@ -1848,16 +1823,11 @@ fn test_validator_saves_tower() {
         .unwrap();
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}, last_replayed_root: {last_replayed_root}");
             if root > last_replayed_root {
                 break root;
@@ -1879,16 +1849,11 @@ fn test_validator_saves_tower() {
     validator_info.config.require_tower = false;
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for another new root
     let new_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}, last tower root: {tower3_root}");
             if root > tower3_root {
                 break root;
