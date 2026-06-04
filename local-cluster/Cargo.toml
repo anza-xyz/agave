@@ -29,7 +29,6 @@ rand = { workspace = true }
 rayon = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
@@ -53,7 +52,6 @@ solana-poh-config = { workspace = true }
 solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-quic-client = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }

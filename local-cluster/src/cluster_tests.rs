@@ -4,11 +4,10 @@
 /// discover the rest of the network.
 use log::*;
 use {
-    crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
+    crate::local_cluster::LocalCluster,
     agave_votor_messages::consensus_message::ConsensusMessage,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_core::consensus::tower_storage::{
@@ -40,7 +39,6 @@ use {
     },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
     solana_tpu_client_next::{
         client_builder::{ClientBuilder, TransactionSender},
         leader_updater::create_pinned_leader_updater,
@@ -967,25 +965,5 @@ pub fn submit_vote_to_cluster_gossip(
         node_keypair.pubkey(),
         gossip_addr,
         socket_addr_space,
-    )
-}
-
-pub fn new_tpu_quic_client(
-    contact_info: &ContactInfo,
-    connection_cache: Arc<ConnectionCache>,
-) -> Result<QuicTpuClient, TpuSenderError> {
-    let rpc_pubsub_url = format!("ws://{}/", contact_info.rpc_pubsub().unwrap());
-    let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
-
-    let cache = match &*connection_cache {
-        ConnectionCache::Quic(cache) => cache,
-        ConnectionCache::Udp(_) => panic!("Expected a Quic ConnectionCache. Got UDP"),
-    };
-
-    TpuClient::new_with_connection_cache(
-        Arc::new(RpcClient::new(rpc_url)),
-        rpc_pubsub_url.as_str(),
-        TpuClientConfig::default(),
-        cache.clone(),
     )
 }
