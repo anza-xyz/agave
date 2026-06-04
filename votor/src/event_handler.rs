@@ -206,7 +206,7 @@ impl EventHandler {
 
     fn handle_parent_ready_event(
         slot: Slot,
-        parent_block @ (parent_slot, _): Block,
+        parent_block: Block,
         vctx: &mut VotingContext,
         ctx: &SharedContext,
         local_context: &mut LocalContext,
@@ -217,7 +217,7 @@ impl EventHandler {
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
 
         // We need to ensure that we've replayed the parent bank.
-        if parent_slot > vctx.sharable_banks.root().slot() {
+        if parent_block.slot > vctx.sharable_banks.root().slot() {
             request_switch(&ctx.latest_switch_request, *my_pubkey, parent_block);
         }
 
@@ -388,20 +388,20 @@ impl EventHandler {
 
             // We have observed the safe to notar condition, and can send a notar fallback vote
             // TODO: update cert pool to check parent block id for intra window slots
-            VotorEvent::SafeToNotar(block @ (slot, block_id)) => {
+            VotorEvent::SafeToNotar(block) => {
                 info!("{my_pubkey}: SafeToNotar {block:?}");
-                Self::try_skip_window(my_pubkey, slot, vctx, &mut votes)?;
-                if vctx.vote_history.its_over(slot)
-                    || vctx.vote_history.voted_notar_fallback(slot, block_id)
+                Self::try_skip_window(my_pubkey, block.slot, vctx, &mut votes)?;
+                if vctx.vote_history.its_over(block.slot)
+                    || vctx
+                        .vote_history
+                        .voted_notar_fallback(block.slot, block.block_id)
                 {
                     return Ok(votes);
                 }
-                info!("{my_pubkey}: Voting notarize-fallback for {slot} {block_id}");
-                if let Some(bls_op) = generate_vote_message(
-                    Vote::new_notarization_fallback_vote(slot, block_id),
-                    false,
-                    vctx,
-                )? {
+                info!("{my_pubkey}: Voting notarize-fallback for {block:?}");
+                if let Some(bls_op) =
+                    generate_vote_message(Vote::new_notarization_fallback_vote(block), false, vctx)?
+                {
                     votes.push(bls_op);
                 }
             }
@@ -445,12 +445,12 @@ impl EventHandler {
                 );
 
                 if let Some(slot) = *standstill_slot {
-                    if block.0 > slot {
+                    if block.slot > slot {
                         *standstill_slot = None;
                         info!(
                             "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
                              at slot={}. Ending timeout extension",
-                            block.0
+                            block.slot
                         );
                     }
                 }
@@ -459,7 +459,7 @@ impl EventHandler {
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        block.0,
+                        block.slot,
                         parent_block,
                         vctx,
                         ctx,
@@ -471,7 +471,7 @@ impl EventHandler {
                 vctx.consensus_metrics_sender
                     .send((
                         Instant::now(),
-                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.0 }],
+                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.slot }],
                     ))
                     .map_err(|_| SendError(()))?;
             }
@@ -548,7 +548,7 @@ impl EventHandler {
         vctx: &mut VotingContext,
         local_context: &mut LocalContext,
     ) -> Option<Block> {
-        let (slot, block_id) = finalized_block;
+        let Block { slot, block_id } = finalized_block;
         let first_slot_of_window = first_of_consecutive_leader_slots(slot);
         if first_slot_of_window == slot || first_slot_of_window == 0 {
             // No need to trigger parent ready for the first slot of the window
@@ -584,7 +584,10 @@ impl EventHandler {
              {parent_block_id}",
             local_context.my_pubkey
         );
-        Some((parent_slot, parent_block_id))
+        Some(Block {
+            slot: parent_slot,
+            block_id: parent_block_id,
+        })
     }
 
     fn handle_set_identity(
@@ -610,10 +613,10 @@ impl EventHandler {
 
     fn get_block_parent_block(bank: &Bank) -> (Block, Block) {
         let slot = bank.slot();
-        let block = (
+        let block = Block {
             slot,
-            bank.block_id().expect("Block id must be set upstream"),
-        );
+            block_id: bank.block_id().expect("Block id must be set upstream"),
+        };
         let parent_slot = bank.parent_slot();
         let parent_block_id = bank.parent_block_id().unwrap_or_else(|| {
             // To account for child of genesis and snapshots we insert a
@@ -623,7 +626,10 @@ impl EventHandler {
             trace!("Using default block id for {slot} parent {parent_slot}");
             Hash::default()
         });
-        let parent_block = (parent_slot, parent_block_id);
+        let parent_block = Block {
+            slot: parent_slot,
+            block_id: parent_block_id,
+        };
         (block, parent_block)
     }
 
@@ -636,8 +642,8 @@ impl EventHandler {
     /// An error returned will cause the voting process to be aborted.
     fn try_notar(
         my_pubkey: &Pubkey,
-        (slot, block_id): Block,
-        parent_block @ (parent_slot, parent_block_id): Block,
+        Block { slot, block_id }: Block,
+        parent_block: Block,
         pending_blocks: &mut PendingBlocks,
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
@@ -655,11 +661,13 @@ impl EventHandler {
                 return Ok(false);
             }
         } else {
-            if parent_slot.saturating_add(1) != slot {
+            if parent_block.slot.saturating_add(1) != slot {
                 // Non consecutive
                 return Ok(false);
             }
-            if voting_context.vote_history.voted_notar(parent_slot) != Some(parent_block_id) {
+            if voting_context.vote_history.voted_notar(parent_block.slot)
+                != Some(parent_block.block_id)
+            {
                 // Voted skip, or notarize on a different version of the parent
                 return Ok(false);
             }
@@ -667,7 +675,7 @@ impl EventHandler {
 
         info!("{my_pubkey}: Voting notarize for {slot} {block_id}");
         if let Some(bls_op) = generate_vote_message(
-            Vote::new_notarization_vote(slot, block_id),
+            Vote::new_notarization_vote(Block { slot, block_id }),
             false,
             voting_context,
         )? {
@@ -680,7 +688,7 @@ impl EventHandler {
         )?;
         pending_blocks.remove(&slot);
 
-        Self::try_final(my_pubkey, (slot, block_id), voting_context, votes)?;
+        Self::try_final(my_pubkey, Block { slot, block_id }, voting_context, votes)?;
 
         Ok(true)
     }
@@ -722,29 +730,31 @@ impl EventHandler {
     /// An error returned will cause the voting process to be aborted.
     fn try_final(
         my_pubkey: &Pubkey,
-        block @ (slot, block_id): Block,
+        block: Block,
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
     ) -> Result<bool, VoteError> {
         if !voting_context.vote_history.is_block_notarized(&block)
-            || voting_context.vote_history.its_over(slot)
-            || voting_context.vote_history.bad_window(slot)
+            || voting_context.vote_history.its_over(block.slot)
+            || voting_context.vote_history.bad_window(block.slot)
         {
             return Ok(false);
         }
 
         if voting_context
             .vote_history
-            .voted_notar(slot)
-            .is_none_or(|bid| bid != block_id)
+            .voted_notar(block.slot)
+            .is_none_or(|bid| bid != block.block_id)
         {
             return Ok(false);
         }
 
-        info!("{my_pubkey}: Voting finalize for {slot}");
-        if let Some(bls_op) =
-            generate_vote_message(Vote::new_finalization_vote(slot), false, voting_context)?
-        {
+        info!("{my_pubkey}: Voting finalize for {}", block.slot);
+        if let Some(bls_op) = generate_vote_message(
+            Vote::new_finalization_vote(block.slot),
+            false,
+            voting_context,
+        )? {
             votes.push(bls_op);
         }
         Ok(true)
@@ -826,31 +836,31 @@ impl EventHandler {
         let old_root = bank_forks_r.root().max(vctx.vote_history.root());
         let Some(new_root) = finalized_blocks
             .iter()
-            .filter_map(|&(slot, block_id)| {
-                let bank = bank_forks_r.get(slot)?;
+            .filter_map(|&block| {
+                let bank = bank_forks_r.get(block.slot)?;
 
                 // Check for bank hash mismatch
                 if bank.is_frozen()
-                    && bank.block_id() == Some(block_id)
+                    && bank.block_id() == Some(block.block_id)
                     && let Some(expected_hash) = bank.expected_bank_hash()
                     && expected_hash != bank.hash()
                 {
                     panic!(
-                        "{my_pubkey}: Slot {slot} block_id {block_id} has been finalized, however \
-                         we have a bank hash mismatch. The cluster bank hash is {expected_hash} \
-                         however we computed {}. At this point we will be unable to recover. \
-                         Please save a copy of your ledger to share on discord and restart from a \
-                         snapshot > {slot}.",
+                        "{my_pubkey}: Block {block:?} has been finalized, however we have a bank \
+                         hash mismatch. The cluster bank hash is {expected_hash} however we \
+                         computed {}. At this point we will be unable to recover. Please save a \
+                         copy of your ledger to share on discord and restart from a snapshot > {}.",
                         bank.hash(),
+                        block.slot
                     );
                 }
 
                 // Check if this block is rootable
-                (slot > old_root
-                    && vctx.vote_history.voted(slot)
+                (block.slot > old_root
+                    && vctx.vote_history.voted(block.slot)
                     && bank.is_frozen()
-                    && bank.block_id().is_some_and(|bid| bid == block_id))
-                .then_some(slot)
+                    && bank.block_id().is_some_and(|bid| bid == block.block_id))
+                .then_some(block.slot)
             })
             .max()
         else {
@@ -882,14 +892,14 @@ fn request_repair(
     my_pubkey: Pubkey,
     block: Block,
 ) -> Result<(), EventLoopError> {
-    let (slot, block_id) = block;
-    let event = RepairEvent::FetchBlock { slot, block_id };
+    let event = RepairEvent::FetchBlock { block };
     match sender.try_send(event) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(event)) => {
             error!(
                 "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
-                 send event for slot {slot}"
+                 send event for slot {}",
+                block.slot
             );
             sender
                 .send(event)
@@ -903,12 +913,9 @@ fn request_repair(
 
 /// Updates the latest switch-bank request for replay to consume.
 fn request_switch(latest: &LatestSwitchRequest, my_pubkey: Pubkey, block: Block) {
-    let (slot, block_id) = block;
-    let event = SwitchBankEvent::Switch { slot, block_id };
+    let event = SwitchBankEvent::Switch { block };
     if let Some(prev) = latest.try_advance(event) {
-        trace!(
-            "{my_pubkey}: Overwriting previous switch request {prev:?} with ({slot}, {block_id})"
-        );
+        trace!("{my_pubkey}: Overwriting previous switch request {prev:?} with ({block:?})");
     }
 }
 
@@ -968,7 +975,7 @@ mod tests {
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
         leader_window_info_receiver: Receiver<LeaderWindowInfo>,
-        highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+        highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
@@ -1445,8 +1452,20 @@ mod tests {
         // If there is a parent ready for block 1 Notarization is sent out.
         let slot = 1;
         let parent_slot = 0;
-        test_context.send_parent_ready_event(slot, (parent_slot, Hash::default()));
-        test_context.check_parent_ready_slot((slot, (parent_slot, Hash::default())));
+        test_context.send_parent_ready_event(
+            slot,
+            Block {
+                slot: parent_slot,
+                block_id: Hash::default(),
+            },
+        );
+        test_context.check_parent_ready_slot((
+            slot,
+            Block {
+                slot: parent_slot,
+                block_id: Hash::default(),
+            },
+        ));
         let root_bank = test_context
             .bank_forks
             .read()
@@ -1459,7 +1478,10 @@ mod tests {
         test_context.check_for_metrics_event(ConsensusMetricsEvent::StartOfSlot { slot });
 
         // We should receive Notarize Vote for block 1
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_1));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot,
+            block_id: block_id_1,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
         // Add block event for 1 again will not trigger another Notarize or commitment
         test_context.send_block_event(1, bank1.clone());
@@ -1470,7 +1492,10 @@ mod tests {
         let block_id_2 = bank2.block_id().unwrap();
 
         // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_2));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot,
+            block_id: block_id_2,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
         // Slot 3 somehow links to block 1, should not trigger Notarize vote because it has a wrong parent (not 2)
         let _ = test_context.create_block_and_send_block_event(3, bank1);
@@ -1482,9 +1507,24 @@ mod tests {
         let block_id_4 = bank4.block_id().unwrap();
 
         // Send parent ready for slot 4 should trigger Notarize vote for slot 4
-        test_context.send_parent_ready_event(slot, (2, block_id_2));
-        test_context.check_parent_ready_slot((slot, (2, block_id_2)));
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_4));
+        test_context.send_parent_ready_event(
+            slot,
+            Block {
+                slot: 2,
+                block_id: block_id_2,
+            },
+        );
+        test_context.check_parent_ready_slot((
+            slot,
+            Block {
+                slot: 2,
+                block_id: block_id_2,
+            },
+        ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot,
+            block_id: block_id_4,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
     }
 
@@ -1492,7 +1532,10 @@ mod tests {
     fn test_restored_parent_ready_sets_timeout() {
         let mut test_context = setup();
         let slot = 4;
-        let parent_block = (3, Hash::new_unique());
+        let parent_block = Block {
+            slot: 3,
+            block_id: Hash::new_unique(),
+        };
 
         assert!(
             test_context
@@ -1523,20 +1566,44 @@ mod tests {
         let block_id_1 = bank1.block_id().unwrap();
 
         // Add parent ready for 0 to trigger notar vote for 1
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
-        test_context.check_parent_ready_slot((1, (0, Hash::default())));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
+        test_context.check_parent_ready_slot((
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
         // Send block notarized event should trigger Finalize vote
-        test_context.send_block_notarized_event((1, block_id_1));
+        test_context.send_block_notarized_event(Block {
+            slot: 1,
+            block_id: block_id_1,
+        });
         test_context.check_for_vote(&Vote::new_finalization_vote(1));
 
         let bank2 = test_context.create_block_and_send_block_event(2, bank1);
         let block_id_2 = bank2.block_id().unwrap();
         // Both Notarize and Finalize votes should trigger for 2
-        test_context.check_for_vote(&Vote::new_notarization_vote(2, block_id_2));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 2,
+            block_id: block_id_2,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, 2);
-        test_context.send_block_notarized_event((2, block_id_2));
+        test_context.send_block_notarized_event(Block {
+            slot: 2,
+            block_id: block_id_2,
+        });
         test_context.check_for_vote(&Vote::new_finalization_vote(2));
 
         // Create bank3 but do not Notarize, so Finalize vote should not trigger
@@ -1546,14 +1613,20 @@ mod tests {
         // Check no notarization vote for 3
         test_context.check_no_vote_or_commitment();
 
-        test_context.send_block_notarized_event((slot, block_id_3));
+        test_context.send_block_notarized_event(Block {
+            slot,
+            block_id: block_id_3,
+        });
         // Check no Finalize vote for 3
         test_context.check_no_vote_or_commitment();
 
         // Now send Block event simulating replay completed for 3
         test_context.send_block_event(slot, bank3.clone());
         // There should be a notarization vote for 3
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_3));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot,
+            block_id: block_id_3,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
         // Check there is a Finalize vote for 3
         test_context.check_for_vote(&Vote::new_finalization_vote(slot));
@@ -1616,33 +1689,63 @@ mod tests {
             .root();
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1_old = bank_1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
 
-        test_context.check_parent_ready_slot((1, (0, Hash::default())));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1_old));
+        test_context.check_parent_ready_slot((
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1_old,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
 
         // Now we got safe_to_notar event for slot 1 and a different block id
         let block_id_1_1 = Hash::new_unique();
-        test_context.send_safe_to_notar_event((1, block_id_1_1));
+        test_context.send_safe_to_notar_event(Block {
+            slot: 1,
+            block_id: block_id_1_1,
+        });
         // We should see rest of the window skipped
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
         // We should also see notarize fallback for the new block id
-        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(1, block_id_1_1));
+        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(Block {
+            slot: 1,
+            block_id: block_id_1_1,
+        }));
 
         // We can trigger safe_to_notar event again for a different block id
         // In this test you can trigger this any number of times, but the white paper
         // proved we can only get up to 3 different block ids on a slot, and our
         // certificate pool implementation checks that.
         let block_id_1_2 = Hash::new_unique();
-        test_context.send_safe_to_notar_event((1, block_id_1_2));
+        test_context.send_safe_to_notar_event(Block {
+            slot: 1,
+            block_id: block_id_1_2,
+        });
         // No skips this time because we already skipped the rest of the window
         // We should also see notarize fallback for the new block id
-        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(1, block_id_1_2));
+        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(Block {
+            slot: 1,
+            block_id: block_id_1_2,
+        }));
 
         // But getting safe_to_notar for a block id we voted before should be no-op
-        test_context.send_safe_to_notar_event((1, block_id_1_1));
+        test_context.send_safe_to_notar_event(Block {
+            slot: 1,
+            block_id: block_id_1_1,
+        });
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1659,10 +1762,25 @@ mod tests {
             .root();
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank_1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
 
-        test_context.check_parent_ready_slot((1, (0, Hash::default())));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+        test_context.check_parent_ready_slot((
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
         // Now we got safe_to_skip event for slot 1
         test_context.send_safe_to_skip_event(1);
@@ -1683,7 +1801,14 @@ mod tests {
 
         // Produce a full window of blocks
         // Assume the leader for 1-3 is us, send produce window event
-        test_context.send_produce_window_event(1, 3, (0, Hash::default()));
+        test_context.send_produce_window_event(
+            1,
+            3,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
 
         // Check that leader_window_info is sent via channel
         let received_leader_window_info =
@@ -1692,17 +1817,33 @@ mod tests {
         assert_eq!(received_leader_window_info.end_slot, 3);
         assert_eq!(
             received_leader_window_info.parent_block,
-            (0, Hash::default())
+            Block {
+                slot: 0,
+                block_id: Hash::default()
+            }
         );
 
         // Suddenly I found out I produced block 1 already, send new produce window event
         let block_id_1 = Hash::new_unique();
-        test_context.send_produce_window_event(2, 3, (1, block_id_1));
+        test_context.send_produce_window_event(
+            2,
+            3,
+            Block {
+                slot: 1,
+                block_id: block_id_1,
+            },
+        );
         let received_leader_window_info =
             test_context.leader_window_info_receiver.try_recv().unwrap();
         assert_eq!(received_leader_window_info.start_slot, 2);
         assert_eq!(received_leader_window_info.end_slot, 3);
-        assert_eq!(received_leader_window_info.parent_block, (1, block_id_1));
+        assert_eq!(
+            received_leader_window_info.parent_block,
+            Block {
+                slot: 1,
+                block_id: block_id_1
+            }
+        );
     }
 
     #[test]
@@ -1718,13 +1859,34 @@ mod tests {
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
 
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
 
-        test_context.check_parent_ready_slot((1, (0, Hash::default())));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+        test_context.check_parent_ready_slot((
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
         // Now we got finalized event for slot 1
-        test_context.send_finalized_event((1, block_id_1), true);
+        test_context.send_finalized_event(
+            Block {
+                slot: 1,
+                block_id: block_id_1,
+            },
+            true,
+        );
         // Listen on drop bank receiver, it should get bank 0
         let dropped_banks = test_context.drop_bank_receiver.try_recv().unwrap();
         assert_eq!(dropped_banks.len(), 1);
@@ -1748,7 +1910,7 @@ mod tests {
         let expected_hash = Hash::new_unique();
         bank.set_expected_bank_hash(expected_hash);
 
-        test_context.send_finalized_event((1, block_id), true);
+        test_context.send_finalized_event(Block { slot: 1, block_id }, true);
     }
 
     #[test]
@@ -1765,7 +1927,13 @@ mod tests {
         bank.set_expected_bank_hash(expected_hash);
         let finalized_block_id = Hash::new_unique();
 
-        test_context.send_finalized_event((1, finalized_block_id), true);
+        test_context.send_finalized_event(
+            Block {
+                slot: 1,
+                block_id: finalized_block_id,
+            },
+            true,
+        );
     }
 
     #[test]
@@ -1785,21 +1953,45 @@ mod tests {
         let bank5 = test_context.create_block_and_send_block_event(5, bank4);
         let block_id_5 = bank5.block_id().unwrap();
 
-        test_context.send_finalized_event((5, block_id_5), true);
+        test_context.send_finalized_event(
+            Block {
+                slot: 5,
+                block_id: block_id_5,
+            },
+            true,
+        );
 
         // We should now have parent ready for slot 5
-        test_context.check_parent_ready_slot((5, (4, block_id_4)));
+        test_context.check_parent_ready_slot((
+            5,
+            Block {
+                slot: 4,
+                block_id: block_id_4,
+            },
+        ));
 
         // We are partitioned off from rest of the network, and suddenly received finalize for
         // slot 9 a little before we finished replay slot 9
         let bank9 = test_context.create_block_only(9, bank5);
         let block_id_9 = bank9.block_id().unwrap();
-        test_context.send_finalized_event((9, block_id_9), true);
+        test_context.send_finalized_event(
+            Block {
+                slot: 9,
+                block_id: block_id_9,
+            },
+            true,
+        );
 
         test_context.send_block_event(9, bank9);
 
         // We should now have parent ready for slot 9
-        test_context.check_parent_ready_slot((9, (5, block_id_5)));
+        test_context.check_parent_ready_slot((
+            9,
+            Block {
+                slot: 5,
+                block_id: block_id_5,
+            },
+        ));
     }
 
     #[test]
@@ -1815,9 +2007,18 @@ mod tests {
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
 
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1,
+        }));
 
         test_context.send_timeout_event(2);
         test_context.check_for_vote(&Vote::new_skip_vote(2));
@@ -1827,13 +2028,22 @@ mod tests {
         test_context.send_standstill_event(0);
 
         test_context.check_for_votes(&[
-            Vote::new_notarization_vote(1, block_id_1),
+            Vote::new_notarization_vote(Block {
+                slot: 1,
+                block_id: block_id_1,
+            }),
             Vote::new_skip_vote(2),
             Vote::new_skip_vote(3),
         ]);
 
         // Finalize block 1, should deactivate standstill
-        test_context.send_finalized_event((1, block_id_1), true);
+        test_context.send_finalized_event(
+            Block {
+                slot: 1,
+                block_id: block_id_1,
+            },
+            true,
+        );
         assert!(test_context.local_context.standstill_slot.is_none());
 
         // Send another standstill event with highest finalized at 1, we should refresh votes for 2 and 3 only
@@ -1861,7 +2071,13 @@ mod tests {
             .sharable_banks()
             .root();
         let _ = test_context.create_block_and_send_block_event(1, root_bank.clone());
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
 
         // There should be no votes but we should see commitments for hot spares
         assert_eq!(
@@ -1878,8 +2094,17 @@ mod tests {
         let slot = 4;
         let bank4 = test_context.create_block_and_send_block_event(slot, root_bank);
         let block_id_4 = bank4.block_id().unwrap();
-        test_context.send_parent_ready_event(slot, (0, Hash::default()));
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_4));
+        test_context.send_parent_ready_event(
+            slot,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot,
+            block_id: block_id_4,
+        }));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
 
         for file in files_to_remove {
@@ -1903,8 +2128,17 @@ mod tests {
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+        test_context.send_parent_ready_event(
+            1,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        );
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1,
+        }));
 
         // Send standstill event - should record the standstill slot
         test_context.send_standstill_event(0);
@@ -1920,7 +2154,13 @@ mod tests {
         assert_eq!(test_context.local_context.standstill_slot, Some(0));
 
         // Send a finalized event - should reset standstill_slot
-        test_context.send_finalized_event((1, block_id_1), false);
+        test_context.send_finalized_event(
+            Block {
+                slot: 1,
+                block_id: block_id_1,
+            },
+            false,
+        );
         assert!(test_context.local_context.standstill_slot.is_none());
     }
 }

@@ -1109,7 +1109,7 @@ pub async fn process_get_ag_genesis_info(
             CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
                 epoch,
                 slot: cert_type.slot(),
-                block_id: cert_type.to_block().unwrap().1,
+                block_id: cert_type.to_block().unwrap().block_id,
                 bitvec,
                 signature,
             })

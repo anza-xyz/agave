@@ -2967,7 +2967,10 @@ pub mod tests {
             },
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
-        agave_votor_messages::certificate::{Certificate, CertificateType},
+        agave_votor_messages::{
+            certificate::{Certificate, CertificateType},
+            consensus_message::Block,
+        },
         assert_matches::assert_matches,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
@@ -3020,30 +3023,32 @@ pub mod tests {
     };
 
     /// Generate a dummy alpenglow genesis certificate
-    fn genesis_certificate(slot: Slot, block_id: Hash) -> Arc<Certificate> {
+    fn genesis_certificate(genesis_block: Block) -> Arc<Certificate> {
         Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(slot, block_id),
+            cert_type: CertificateType::Genesis(genesis_block),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         })
     }
 
     /// Generate a dummy `MigrationStatus` in the `ReadyToEnable` phase
-    fn ready_to_enable_migration_status(genesis_slot: Slot, block_id: Hash) -> MigrationStatus {
+    fn ready_to_enable_migration_status(genesis_block: Block) -> MigrationStatus {
         let migration_status = MigrationStatus::default();
         let migration_slot = migration_status.record_feature_activation(0);
-        assert!(genesis_slot < migration_slot);
-        migration_status.set_genesis_block((genesis_slot, block_id));
-        migration_status.set_genesis_certificate(genesis_certificate(genesis_slot, block_id));
+        assert!(genesis_block.slot < migration_slot);
+        migration_status.set_genesis_block(genesis_block);
+        migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
         assert!(migration_status.is_ready_to_enable());
         migration_status
     }
 
     #[test]
     fn test_startup_replay_enable_waits_for_poh_service_when_started() {
-        let genesis_slot = 1;
-        let block_id = Hash::new_from_array([7; solana_hash::HASH_BYTES]);
-        let migration_status = Arc::new(ready_to_enable_migration_status(genesis_slot, block_id));
+        let genesis_block = Block {
+            slot: 1,
+            block_id: Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+        };
+        let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
         let poh_service = {
             let migration_status = Arc::clone(&migration_status);
             migration_status.set_poh_service_started();
@@ -3057,14 +3062,14 @@ pub mod tests {
 
         assert_eq!(
             migration_status.enable_alpenglow_during_startup(),
-            genesis_slot
+            genesis_block.slot
         );
         poh_service.join().unwrap();
 
         assert!(migration_status.is_alpenglow_enabled());
         assert_eq!(
             migration_status.wait_for_migration_or_exit(&AtomicBool::new(false)),
-            Some((genesis_slot, block_id))
+            Some(genesis_block)
         );
     }
 

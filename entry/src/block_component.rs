@@ -133,6 +133,7 @@ use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
+        consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -247,7 +248,7 @@ impl TryFrom<Certificate> for GenesisCertBlockMarker {
     type Error = String;
 
     fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-        let CertificateType::Genesis(slot, block_id) = cert.cert_type else {
+        let CertificateType::Genesis(block) = cert.cert_type else {
             return Err("expected genesis certificate".into());
         };
         if cert.bitmap.len() > Self::MAX_BITMAP_SIZE {
@@ -258,8 +259,8 @@ impl TryFrom<Certificate> for GenesisCertBlockMarker {
             ));
         }
         Ok(Self {
-            slot,
-            block_id,
+            slot: block.slot,
+            block_id: block.block_id,
             bls_signature: cert.signature,
             bitmap: cert.bitmap,
         })
@@ -269,7 +270,10 @@ impl TryFrom<Certificate> for GenesisCertBlockMarker {
 impl From<GenesisCertBlockMarker> for Certificate {
     fn from(cert: GenesisCertBlockMarker) -> Self {
         Self {
-            cert_type: CertificateType::Genesis(cert.slot, cert.block_id),
+            cert_type: CertificateType::Genesis(Block {
+                slot: cert.slot,
+                block_id: cert.block_id,
+            }),
             signature: cert.bls_signature,
             bitmap: cert.bitmap,
         }

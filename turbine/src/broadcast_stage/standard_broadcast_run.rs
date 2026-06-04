@@ -87,7 +87,10 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             parent_block_id: Hash::default(),
-            parent_for_double_merkle: (Slot::MAX, Hash::default()),
+            parent_for_double_merkle: Block {
+                slot: Slot::MAX,
+                block_id: Hash::default(),
+            },
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
             carryover_entry: None,
@@ -162,7 +165,10 @@ impl StandardBroadcastRun {
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
         self.parent_block_id = parent_block_id;
-        self.parent_for_double_merkle = (bank.parent_slot(), parent_block_id);
+        self.parent_for_double_merkle = Block {
+            slot: bank.parent_slot(),
+            block_id: parent_block_id,
+        };
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
         self.next_shred_index = 0u32;
@@ -279,10 +285,10 @@ impl StandardBroadcastRun {
             return;
         };
         let parent_for_double_merkle = match update_parent {
-            VersionedUpdateParent::V1(update_parent) => (
-                update_parent.new_parent_slot,
-                update_parent.new_parent_block_id,
-            ),
+            VersionedUpdateParent::V1(update_parent) => Block {
+                slot: update_parent.new_parent_slot,
+                block_id: update_parent.new_parent_block_id,
+            },
         };
         self.parent_for_double_merkle = parent_for_double_merkle;
     }
@@ -290,8 +296,8 @@ impl StandardBroadcastRun {
     /// Leaf that binds the current replay parent into the double-merkle block id.
     fn parent_info_leaf(&self, fec_set_count: u32) -> Hash {
         hashv(&[
-            &self.parent_for_double_merkle.0.to_le_bytes(),
-            self.parent_for_double_merkle.1.as_bytes(),
+            &self.parent_for_double_merkle.slot.to_le_bytes(),
+            self.parent_for_double_merkle.block_id.as_bytes(),
             &fec_set_count.to_le_bytes(),
         ])
     }
@@ -1260,7 +1266,10 @@ mod test {
         bs.parent = 10;
         let original_parent_block_id = Hash::new_unique();
         bs.parent_block_id = original_parent_block_id;
-        bs.parent_for_double_merkle = (bs.parent, bs.parent_block_id);
+        bs.parent_for_double_merkle = Block {
+            slot: bs.parent,
+            block_id: bs.parent_block_id,
+        };
 
         let new_parent_slot = 7;
         let new_parent_block_id = Hash::new_unique();
@@ -1286,7 +1295,10 @@ mod test {
         assert_eq!(bs.parent_block_id, original_parent_block_id);
         assert_eq!(
             bs.parent_for_double_merkle,
-            (new_parent_slot, new_parent_block_id)
+            Block {
+                slot: new_parent_slot,
+                block_id: new_parent_block_id
+            }
         );
         let fec_set_count = 3u32;
         assert_eq!(

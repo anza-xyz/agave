@@ -32,7 +32,7 @@ impl VoteHistoryVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
+    frozen_abi(digest = "BdNXvHhpPUTEba3DfDCLqirLoLXAmja2jyhroicM63bT")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct VoteHistory {
@@ -167,8 +167,12 @@ impl VoteHistory {
         // Asserts here guard against vote equivocation.
         match vote {
             Vote::Notarize(vote) => {
-                assert!(self.voted.insert(vote.slot));
-                assert!(self.voted_notar.insert(vote.slot, vote.block_id).is_none());
+                assert!(self.voted.insert(vote.block.slot));
+                assert!(
+                    self.voted_notar
+                        .insert(vote.block.slot, vote.block.block_id)
+                        .is_none()
+                );
             }
             Vote::Finalize(vote) => {
                 assert!(!self.skipped(vote.slot));
@@ -179,13 +183,13 @@ impl VoteHistory {
                 self.skipped.insert(vote.slot);
             }
             Vote::NotarizeFallback(vote) => {
-                assert!(self.voted(vote.slot));
-                assert!(!self.its_over(vote.slot));
-                self.skipped.insert(vote.slot);
+                assert!(self.voted(vote.block.slot));
+                assert!(!self.its_over(vote.block.slot));
+                self.skipped.insert(vote.block.slot);
                 self.voted_notar_fallback
-                    .entry(vote.slot)
+                    .entry(vote.block.slot)
                     .or_default()
-                    .insert(vote.block_id);
+                    .insert(vote.block.block_id);
             }
             Vote::SkipFallback(vote) => {
                 assert!(self.voted(vote.slot));
@@ -203,8 +207,8 @@ impl VoteHistory {
     }
 
     /// Add a new notarized block
-    pub fn add_block_notarized(&mut self, block @ (slot, _): Block) {
-        if slot < self.root {
+    pub fn add_block_notarized(&mut self, block: Block) {
+        if block.slot < self.root {
             return;
         }
         self.notarized_blocks.insert(block);
@@ -254,7 +258,7 @@ impl VoteHistory {
         self.skipped.retain(|s| *s >= root);
         self.its_over.retain(|s| *s >= root);
         self.votes_cast.retain(|s, _| *s >= root);
-        self.notarized_blocks.retain(|(s, _)| *s >= root);
+        self.notarized_blocks.retain(|block| block.slot >= root);
         self.parent_ready_slots.retain(|s, _| *s >= root);
     }
 
@@ -335,7 +339,10 @@ mod test {
 
         // Vote Notarize on slot 1
         let block_id_1 = Hash::new_unique();
-        let vote_notarize_1 = Vote::new_notarization_vote(1, block_id_1);
+        let vote_notarize_1 = Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: block_id_1,
+        });
         vote_history.add_vote(vote_notarize_1);
         assert!(vote_history.voted(1));
         assert!(!vote_history.its_over(1));
@@ -369,7 +376,10 @@ mod test {
 
         // Now vote NotarizeFallback on slot 2
         let block_id_2 = Hash::new_unique();
-        let vote_notarize_fallback_2 = Vote::new_notarization_fallback_vote(2, block_id_2);
+        let vote_notarize_fallback_2 = Vote::new_notarization_fallback_vote(Block {
+            slot: 2,
+            block_id: block_id_2,
+        });
         vote_history.add_vote(vote_notarize_fallback_2);
         assert!(vote_history.voted(2));
         assert!(vote_history.skipped(2));
@@ -390,7 +400,10 @@ mod test {
 
         // Vote Notarize on slot 3
         let block_id_3 = Hash::new_unique();
-        let vote_notarize_3 = Vote::new_notarization_vote(3, block_id_3);
+        let vote_notarize_3 = Vote::new_notarization_vote(Block {
+            slot: 3,
+            block_id: block_id_3,
+        });
         vote_history.add_vote(vote_notarize_3);
         assert!(vote_history.voted(3));
         assert!(!vote_history.skipped(3));
@@ -453,12 +466,18 @@ mod test {
     #[test]
     fn test_add_notarized_blocks() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let block_1 = (1, Hash::new_unique());
+        let block_1 = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
         assert!(!vote_history.is_block_notarized(&block_1));
         vote_history.add_block_notarized(block_1);
         assert!(vote_history.is_block_notarized(&block_1));
 
-        let block_2 = (2, Hash::new_unique());
+        let block_2 = Block {
+            slot: 2,
+            block_id: Hash::new_unique(),
+        };
         assert!(!vote_history.is_block_notarized(&block_2));
         vote_history.add_block_notarized(block_2);
         assert!(vote_history.is_block_notarized(&block_2));
@@ -477,46 +496,52 @@ mod test {
     fn test_add_parent_ready() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
         assert_eq!(vote_history.highest_parent_ready_slot(), None);
-        let block_id_0 = (0, Hash::new_unique());
-        vote_history.add_parent_ready(1, block_id_0);
-        assert!(vote_history.is_parent_ready(1, &block_id_0));
+        let block_0 = Block {
+            slot: 0,
+            block_id: Hash::new_unique(),
+        };
+        vote_history.add_parent_ready(1, block_0);
+        assert!(vote_history.is_parent_ready(1, &block_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
 
         vote_history.set_root(1);
         assert_eq!(vote_history.root(), 1);
-        assert!(vote_history.is_parent_ready(1, &block_id_0));
+        assert!(vote_history.is_parent_ready(1, &block_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
 
         // Add parent ready for slot 2
-        let block_id_2_0 = (1, Hash::new_unique());
-        let block_id_2_1 = (1, Hash::new_unique());
-        assert!(vote_history.add_parent_ready(2, block_id_2_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_0));
+        let block_2_0 = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
+        let block_2_1 = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
+        assert!(vote_history.add_parent_ready(2, block_2_0));
+        assert!(vote_history.is_parent_ready(2, &block_2_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
-        assert!(!vote_history.add_parent_ready(2, block_id_2_1));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_1));
-        assert!(!vote_history.add_parent_ready(2, block_id_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_0));
+        assert!(!vote_history.add_parent_ready(2, block_2_1));
+        assert!(vote_history.is_parent_ready(2, &block_2_1));
+        assert!(!vote_history.add_parent_ready(2, block_0));
+        assert!(vote_history.is_parent_ready(2, &block_0));
 
         // Set root to 2
         vote_history.set_root(2);
         assert_eq!(vote_history.root(), 2);
-        assert!(!vote_history.is_parent_ready(1, &block_id_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_1));
-        assert!(vote_history.is_parent_ready(2, &block_id_0));
+        assert!(!vote_history.is_parent_ready(1, &block_0));
+        assert!(vote_history.is_parent_ready(2, &block_2_0));
+        assert!(vote_history.is_parent_ready(2, &block_2_1));
+        assert!(vote_history.is_parent_ready(2, &block_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
-        let expected_parent = [block_id_2_0, block_id_2_1, block_id_0]
-            .into_iter()
-            .min()
-            .unwrap();
+        let expected_parent = [block_2_0, block_2_1, block_0].into_iter().min().unwrap();
         assert_eq!(
             vote_history.highest_parent_ready(),
             Some((2, expected_parent))
         );
 
         // Adding a parent ready for slot before root silently returns false
-        assert!(!vote_history.add_parent_ready(1, block_id_0));
+        assert!(!vote_history.add_parent_ready(1, block_0));
     }
 
     #[test]
@@ -527,7 +552,10 @@ mod test {
         let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
 
         // Add Notarize on 1 and Skip on 2
-        let vote_1 = Vote::new_notarization_vote(1, Hash::new_unique());
+        let vote_1 = Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        });
         let vote_2 = Vote::new_skip_vote(2);
         vote_history.add_vote(vote_1);
         vote_history.add_vote(vote_2);

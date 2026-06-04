@@ -616,6 +616,7 @@ mod tests {
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
+            consensus_message::Block,
             reward_certificate::NUM_SLOTS_FOR_REWARD,
         },
         bitvec::prelude::*,
@@ -672,9 +673,11 @@ mod tests {
         bank: &Bank,
         signing_ranks: &[usize],
     ) -> ValidatedBlockFinalizationCert {
-        let slot = bank.slot();
-        let block_id = Hash::new_unique();
-        let cert_type = CertificateType::FinalizeFast(slot, block_id);
+        let block = Block {
+            slot: bank.slot(),
+            block_id: Hash::new_unique(),
+        };
+        let cert_type = CertificateType::FinalizeFast(block);
         let max_rank = signing_ranks.iter().copied().max().unwrap_or(0);
         let mut bitvec = BitVec::<u8, Lsb0>::repeat(false, max_rank.saturating_add(1));
         for &rank in signing_ranks {

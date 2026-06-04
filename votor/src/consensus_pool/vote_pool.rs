@@ -134,7 +134,10 @@ impl DuplicateBlockVotePool {
 mod test {
     use {
         super::*,
-        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        agave_votor_messages::{
+            consensus_message::{Block, VoteMessage},
+            vote::Vote,
+        },
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     };
 
@@ -176,7 +179,7 @@ mod test {
         let mut vote_pool = DuplicateBlockVotePool::new(1);
         let my_pubkey = Pubkey::new_unique();
         let block_id = Hash::new_unique();
-        let vote = Vote::new_notarization_vote(3, block_id);
+        let vote = Vote::new_notarization_vote(Block { slot: 3, block_id });
         let vote = VoteMessage {
             vote,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
@@ -217,7 +220,10 @@ mod test {
 
         let votes = (0..4)
             .map(|_| {
-                let vote = Vote::new_notarization_fallback_vote(7, Hash::new_unique());
+                let vote = Vote::new_notarization_fallback_vote(Block {
+                    slot: 7,
+                    block_id: Hash::new_unique(),
+                });
                 VoteMessage {
                     vote,
                     signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),

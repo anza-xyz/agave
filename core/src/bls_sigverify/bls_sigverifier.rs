@@ -339,7 +339,7 @@ mod tests {
         },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
-            consensus_message::{ConsensusMessage, VoteMessage},
+            consensus_message::{Block, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},
@@ -543,7 +543,10 @@ mod tests {
         let vote_rank2 = 3;
         let vote_message2 = create_signed_vote_message(
             &ctx.validator_keypairs,
-            Vote::new_notarization_vote(6, Hash::new_unique()),
+            Vote::new_notarization_vote(Block {
+                slot: 6,
+                block_id: Hash::new_unique(),
+            }),
             vote_rank2,
         );
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
@@ -567,7 +570,10 @@ mod tests {
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
             &ctx.validator_keypairs,
-            Vote::new_notarization_fallback_vote(7, Hash::new_unique()),
+            Vote::new_notarization_fallback_vote(Block {
+                slot: 7,
+                block_id: Hash::new_unique(),
+            }),
             vote_rank3,
         );
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
@@ -649,7 +655,10 @@ mod tests {
         ));
         let msg2 = ConsensusMessage::Vote(create_signed_vote_message(
             &ctx.validator_keypairs,
-            Vote::new_notarization_fallback_vote(6, Hash::new_unique()),
+            Vote::new_notarization_fallback_vote(Block {
+                slot: 6,
+                block_id: Hash::new_unique(),
+            }),
             2,
         ));
         ctx.verifier
@@ -769,7 +778,10 @@ mod tests {
 
         let vote1 = Vote::new_skip_vote(42);
         let _vote1_payload = wincode::serialize(&vote1).expect("Failed to serialize vote");
-        let vote2 = Vote::new_notarization_vote(43, Hash::new_unique());
+        let vote2 = Vote::new_notarization_vote(Block {
+            slot: 43,
+            block_id: Hash::new_unique(),
+        });
         let _vote2_payload = wincode::serialize(&vote2).expect("Failed to serialize vote");
 
         // Group 1 votes
@@ -948,7 +960,10 @@ mod tests {
 
         // 2/3 of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 2).div_ceil(3);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,
@@ -973,7 +988,10 @@ mod tests {
 
         // 60% of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 6).div_ceil(10);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,
@@ -999,7 +1017,10 @@ mod tests {
         // < 60% of validators sign the cert
         assert!(ctx.validator_keypairs.len() >= 2);
         let num_signers = (ctx.validator_keypairs.len() * 6) / 10 - 1;
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,
@@ -1026,8 +1047,12 @@ mod tests {
 
         let slot = 20;
         let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
@@ -1043,7 +1068,7 @@ mod tests {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -1068,8 +1093,12 @@ mod tests {
 
         let slot = 20;
         let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
@@ -1085,7 +1114,7 @@ mod tests {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -1110,8 +1139,12 @@ mod tests {
 
         let slot = 20;
         let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
@@ -1127,7 +1160,7 @@ mod tests {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -1155,7 +1188,10 @@ mod tests {
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
         let slot = 10;
         let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(slot, block_hash);
+        let cert_type = CertificateType::Notarize(Block {
+            slot,
+            block_id: block_hash,
+        });
         let mut bitmap = BitVec::<u8, Lsb0>::new();
         bitmap.resize(num_signers, false);
         for i in 0..num_signers {
@@ -1204,8 +1240,11 @@ mod tests {
 
         // 70% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
-        let cert_original_vote = Vote::new_notarization_vote(10, cert_type.to_block().unwrap().1);
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let cert_original_vote = Vote::new_notarization_vote(cert_type.to_block().unwrap());
         let cert_payload = wincode::serialize(&cert_original_vote).unwrap();
 
         let cert_vote_messages: Vec<VoteMessage> = (0..num_signers)
@@ -1360,8 +1399,12 @@ mod tests {
         let num_signers = (ctx.validator_keypairs.len() * 8).div_ceil(10);
         let slot = 10;
         let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(slot, block_hash);
-        let original_vote = Vote::new_notarization_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let cert_type = CertificateType::Notarize(block);
+        let original_vote = Vote::new_notarization_vote(block);
         let signed_payload = wincode::serialize(&original_vote).unwrap();
         let mut vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
@@ -1419,7 +1462,10 @@ mod tests {
         ));
         let cert_message = ConsensusMessage::Certificate(create_signed_certificate_message(
             &ctx.validator_keypairs,
-            CertificateType::Notarize(43, Hash::new_unique()),
+            CertificateType::Notarize(Block {
+                slot: 43,
+                block_id: Hash::new_unique(),
+            }),
             &(0..7).collect::<Vec<_>>(),
         ));
         let vote_sender = Pubkey::new_unique();
@@ -1493,7 +1539,10 @@ mod tests {
         let messages: Vec<_> = (0..5)
             .map(|i| {
                 let slot = 10 + i as u64;
-                let cert_type = CertificateType::Notarize(slot, Hash::new_unique());
+                let cert_type = CertificateType::Notarize(Block {
+                    slot,
+                    block_id: Hash::new_unique(),
+                });
                 let mut cert = create_signed_certificate_message(
                     &ctx.validator_keypairs,
                     cert_type,

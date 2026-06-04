@@ -230,16 +230,16 @@ impl ConsensusPoolService {
     /// The max of genesis block, root block, or the restored parent ready from vote history
     fn initial_parent_ready(
         genesis_block: Option<Block>,
-        root_block @ (root_slot, _): Block,
+        root_block: Block,
         vote_history_highest_parent_ready: Option<(Slot, Block)>,
     ) -> ParentReady {
         let Some(genesis_block) = genesis_block else {
             // Alpenglow is not yet enabled, start with just the root
-            return (root_slot.checked_add(1).unwrap(), root_block);
+            return (root_block.slot.checked_add(1).unwrap(), root_block);
         };
 
-        let initial_block @ (initial_slot, _) = genesis_block.max(root_block);
-        let initial_parent_ready = (initial_slot.checked_add(1).unwrap(), initial_block);
+        let initial_block = genesis_block.max(root_block);
+        let initial_parent_ready = (initial_block.slot.checked_add(1).unwrap(), initial_block);
 
         if let Some(restored @ (restored_slot, _)) = vote_history_highest_parent_ready
             && restored_slot > initial_parent_ready.0
@@ -251,13 +251,13 @@ impl ConsensusPoolService {
     }
 
     fn root_block(root_bank: &Bank) -> Block {
-        (
-            root_bank.slot(),
-            root_bank
+        Block {
+            slot: root_bank.slot(),
+            block_id: root_bank
                 .block_id()
                 // Once SIMD-0333 is active we can hard unwrap here
                 .unwrap_or_default(),
-        )
+        }
     }
 
     // Main loop for the certificate pool service, it only exits when any channel is disconnected
@@ -539,13 +539,13 @@ impl ConsensusPoolService {
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
         // First, collect new pending blocks from the consensus pool and send them for repair
-        for block @ (slot, block_id) in consensus_pool.take_pending_safe_to_notar() {
+        for block in consensus_pool.take_pending_safe_to_notar() {
             if pending_safe_to_notar.contains(&block) {
                 continue;
             }
             match ctx
                 .repair_event_sender
-                .try_send(RepairEvent::FetchBlock { slot, block_id })
+                .try_send(RepairEvent::FetchBlock { block })
             {
                 Ok(()) => {
                     stats.pending_safe_to_notar_repair_sent += 1;
@@ -564,16 +564,16 @@ impl ConsensusPoolService {
 
         let highest_finalized = consensus_pool.highest_finalized_slot().unwrap_or(0);
 
-        pending_safe_to_notar.retain(|&(slot, block_id)| {
+        pending_safe_to_notar.retain(|&block| {
             // Discard if slot is at or below highest finalized
-            if slot <= highest_finalized {
+            if block.slot <= highest_finalized {
                 return false;
             }
 
             // Check if we've received the full block in blockstore
             let Some(location) = ctx
                 .blockstore
-                .get_block_location(slot, block_id)
+                .get_block_location(block.slot, block.block_id)
                 .expect("Blockstore operations must succeed")
             else {
                 // Block not yet received, keep waiting
@@ -583,21 +583,21 @@ impl ConsensusPoolService {
             // Block has been received, get the parent meta
             let slot_meta = ctx
                 .blockstore
-                .meta_from_location(slot, location)
+                .meta_from_location(block.slot, location)
                 .expect("Blockstore operations must succeed")
                 .expect("SlotMeta must exist if block location is present");
 
-            let parent_block = (
-                slot_meta
+            let parent_block = Block {
+                slot: slot_meta
                     .parent_slot
                     .expect("parent slot must exist for full blocks"),
-                slot_meta.parent_block_id,
-            );
+                block_id: slot_meta.parent_block_id,
+            };
 
             // Check if the parent has a NotarizeFallback certificate (or stronger)
             if consensus_pool.block_has_notar_fallback_or_stronger(parent_block) {
                 // All conditions met - emit SafeToNotar event
-                events.push(VotorEvent::SafeToNotar((slot, block_id)));
+                events.push(VotorEvent::SafeToNotar(block));
                 stats.pending_safe_to_notar_resolved += 1;
                 return false;
             }
@@ -691,7 +691,10 @@ mod tests {
 
             let root_bank = sharable_banks.root();
             let cluster_info = get_cluster_info(my_keypair.insecure_clone());
-            let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
+            let root_block = Block {
+                slot: root_bank.slot(),
+                block_id: root_bank.block_id().unwrap_or_default(),
+            };
             let initial_parent_ready = (root_bank.slot().checked_add(1).unwrap(), root_block);
             let consensus_pool = ConsensusPool::new(
                 cluster_info.clone(),
@@ -736,7 +739,10 @@ mod tests {
         // validator 0 to 7 send Notarize on slot 2
         let block_id = Hash::new_unique();
         let target_slot = 2;
-        let notarize_vote = Vote::new_notarization_vote(target_slot, block_id);
+        let notarize_vote = Vote::new_notarization_vote(Block {
+            slot: target_slot,
+            block_id,
+        });
 
         let mut events = vec![];
         let root_bank = ctx.sharable_banks.root();
@@ -792,12 +798,9 @@ mod tests {
             if let BLSOp::PushCertificate { certificate } = event {
                 assert_eq!(certificate.cert_type.slot(), target_slot);
                 assert!(
-                    matches!(certificate.cert_type, CertificateType::Notarize(_, _))
-                        || matches!(certificate.cert_type, CertificateType::FinalizeFast(_, _))
-                        || matches!(
-                            certificate.cert_type,
-                            CertificateType::NotarizeFallback(_, _)
-                        )
+                    matches!(certificate.cert_type, CertificateType::Notarize(_))
+                        || matches!(certificate.cert_type, CertificateType::FinalizeFast(_))
+                        || matches!(certificate.cert_type, CertificateType::NotarizeFallback(_,))
                 );
                 found_certificate = true;
             }
@@ -805,12 +808,11 @@ mod tests {
         assert!(found_certificate, "Should have received a certificate");
 
         // Verify that we received a finalized slot event
-        let finalized_event = events.iter().find(|event| {
-            matches!(
-                event,
-                VotorEvent::Finalized((slot, received_block_id), is_fast_finalized)
-                    if *slot == target_slot && *received_block_id == block_id && *is_fast_finalized
-            )
+        let finalized_event = events.iter().find(|event| match event {
+            VotorEvent::Finalized(block, is_fast_finalized) => {
+                block.slot == target_slot && block.block_id == block_id && *is_fast_finalized
+            }
+            _ => false,
         });
         assert!(
             finalized_event.is_some(),
@@ -938,7 +940,10 @@ mod tests {
         // Add a ParentReady event for the slot before our leader slot
         events.push(VotorEvent::ParentReady {
             slot: next_leader_slot.0,
-            parent_block: (next_leader_slot.0 - 1, Hash::new_unique()),
+            parent_block: Block {
+                slot: next_leader_slot.0 - 1,
+                block_id: Hash::new_unique(),
+            },
         });
 
         ConsensusPoolService::add_produce_block_event(
@@ -978,7 +983,10 @@ mod tests {
             .0;
         let restored_parent_ready = (
             next_leader_slot,
-            (next_leader_slot.checked_sub(1).unwrap(), Hash::new_unique()),
+            Block {
+                slot: next_leader_slot.checked_sub(1).unwrap(),
+                block_id: Hash::new_unique(),
+            },
         );
         let exit = ctx.exit.clone();
 
@@ -1039,20 +1047,38 @@ mod tests {
 
     #[test]
     fn test_kick_off_parent_ready_uses_restored_vote_history() {
-        let genesis_block = Some((10, Hash::new_unique()));
-        let root_block = (12, Hash::new_unique());
+        let genesis_block = Some(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let root_block = Block {
+            slot: 12,
+            block_id: Hash::new_unique(),
+        };
         assert_eq!(
             ConsensusPoolService::initial_parent_ready(genesis_block, root_block, None),
             (13, root_block)
         );
 
-        let restored = (16, (15, Hash::new_unique()));
+        let restored = (
+            16,
+            Block {
+                slot: 15,
+                block_id: Hash::new_unique(),
+            },
+        );
         assert_eq!(
             ConsensusPoolService::initial_parent_ready(genesis_block, root_block, Some(restored)),
             restored
         );
 
-        let stale = (12, (11, Hash::new_unique()));
+        let stale = (
+            12,
+            Block {
+                slot: 11,
+                block_id: Hash::new_unique(),
+            },
+        );
         assert_eq!(
             ConsensusPoolService::initial_parent_ready(genesis_block, root_block, Some(stale)),
             (13, root_block)

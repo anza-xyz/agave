@@ -788,6 +788,7 @@ mod tests {
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
+            consensus_message::Block,
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
         },
         assert_matches::assert_matches,
@@ -1029,7 +1030,10 @@ mod tests {
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
         let genesis_cert = Certificate {
-            cert_type: CertificateType::Genesis(1, Hash::default()),
+            cert_type: CertificateType::Genesis(Block {
+                slot: 1,
+                block_id: Hash::default(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };

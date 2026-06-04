@@ -189,7 +189,7 @@ struct RepairState {
     sent_requests: HashMap<OutgoingMessage, u64>,
 
     /// Blocks we've previously requested. Used to avoid re-initiating repair for an in progress block.
-    requested_blocks: HashSet<Block>,
+    requested_blocks: HashSet<(Slot, Hash)>,
 
     // Stats
     response_stats: BlockIdRepairResponsesStats,
@@ -611,8 +611,10 @@ impl BlockIdRepairService {
             } => {
                 // Queue a request to repair the parent (filtered out later if we already have the parent)
                 state.push_pending_repair_event(RepairEvent::FetchBlock {
-                    slot: p_slot,
-                    block_id: p_block_id,
+                    block: Block {
+                        slot: p_slot,
+                        block_id: p_block_id,
+                    },
                 });
 
                 // Queue FecSetRoot requests
@@ -718,14 +720,16 @@ impl BlockIdRepairService {
         event: RepairEvent,
         root: Slot,
         blockstore: &Blockstore,
-        requested_blocks: &HashSet<Block>,
+        requested_blocks: &HashSet<(Slot, Hash)>,
     ) -> Result<PendingRepairDecision, BlockstoreError> {
         if event.slot() <= root {
             return Ok(PendingRepairDecision::Drop);
         }
 
         match event {
-            RepairEvent::FetchBlock { slot, block_id } => {
+            RepairEvent::FetchBlock {
+                block: Block { slot, block_id },
+            } => {
                 if requested_blocks.contains(&(slot, block_id)) {
                     return Ok(PendingRepairDecision::Drop);
                 }
@@ -860,8 +864,10 @@ impl BlockIdRepairService {
             .expect("SlotMeta must be populated for full slots");
 
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            slot: meta.parent_slot.expect("Parent must exist for full slots"),
-            block_id: meta.parent_block_id,
+            block: Block {
+                slot: meta.parent_slot.expect("Parent must exist for full slots"),
+                block_id: meta.parent_block_id,
+            },
         });
 
         Ok(())
@@ -1183,19 +1189,25 @@ mod tests {
 
         for slot in base_slot..base_slot + MAX_PENDING_REPAIR_EVENTS as Slot {
             state.push_pending_repair_event(RepairEvent::FetchBlock {
-                slot,
-                block_id: Hash::new_unique(),
+                block: Block {
+                    slot,
+                    block_id: Hash::new_unique(),
+                },
             });
             assert!(state.pending_repair_events.len() <= MAX_PENDING_REPAIR_EVENTS);
         }
 
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            slot: 1,
-            block_id: Hash::new_unique(),
+            block: Block {
+                slot: 1,
+                block_id: Hash::new_unique(),
+            },
         });
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            slot: base_slot + MAX_PENDING_REPAIR_EVENTS as Slot,
-            block_id: Hash::new_unique(),
+            block: Block {
+                slot: base_slot + MAX_PENDING_REPAIR_EVENTS as Slot,
+                block_id: Hash::new_unique(),
+            },
         });
 
         assert_eq!(state.pending_repair_events.len(), MAX_PENDING_REPAIR_EVENTS);
@@ -1446,12 +1458,9 @@ mod tests {
 
         // Verify: FetchBlock event for parent was added to pending_repair_events
         assert_eq!(state.pending_repair_events.len(), 1);
-        let RepairEvent::FetchBlock {
-            slot: s,
-            block_id: b,
-        } = state.pending_repair_events.first().unwrap();
-        assert_eq!(*s, parent_slot);
-        assert_eq!(*b, parent_block_id);
+        let RepairEvent::FetchBlock { block } = state.pending_repair_events.first().unwrap();
+        assert_eq!(block.slot, parent_slot);
+        assert_eq!(block.block_id, parent_block_id);
 
         // Verify: FecSetRoot requests were added to pending
         assert_eq!(state.pending_repair_requests.len(), fec_set_count_usize);
@@ -1714,7 +1723,9 @@ mod tests {
         // Mark the slot as dead (Turbine failed)
         blockstore.set_dead_slot(slot).unwrap();
 
-        let event = RepairEvent::FetchBlock { slot, block_id };
+        let event = RepairEvent::FetchBlock {
+            block: Block { slot, block_id },
+        };
 
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
             .unwrap();
@@ -1748,7 +1759,9 @@ mod tests {
 
         let slot = 100u64;
         let block_id = Hash::new_unique();
-        let event = RepairEvent::FetchBlock { slot, block_id };
+        let event = RepairEvent::FetchBlock {
+            block: Block { slot, block_id },
+        };
 
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
             .unwrap();
@@ -1758,12 +1771,9 @@ mod tests {
 
         // Verify: Event was deferred
         assert_eq!(state.pending_repair_events.len(), 1);
-        let RepairEvent::FetchBlock {
-            slot: s,
-            block_id: b,
-        } = state.pending_repair_events.first().unwrap();
-        assert_eq!(*s, slot);
-        assert_eq!(*b, block_id);
+        let RepairEvent::FetchBlock { block } = state.pending_repair_events.first().unwrap();
+        assert_eq!(block.slot, slot);
+        assert_eq!(block.block_id, block_id);
 
         // Verify: block was NOT added to requested_blocks (so it can be re-added when reprocessed)
         assert!(!state.requested_blocks.contains(&(slot, block_id)));
@@ -1786,8 +1796,10 @@ mod tests {
             .unwrap();
 
         let event = RepairEvent::FetchBlock {
-            slot,
-            block_id: requested_block_id,
+            block: Block {
+                slot,
+                block_id: requested_block_id,
+            },
         };
 
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
@@ -1825,7 +1837,9 @@ mod tests {
         // Pre-add block to requested_blocks
         state.requested_blocks.insert((slot, block_id));
 
-        let event = RepairEvent::FetchBlock { slot, block_id };
+        let event = RepairEvent::FetchBlock {
+            block: Block { slot, block_id },
+        };
 
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
             .unwrap();
@@ -1843,7 +1857,9 @@ mod tests {
         // Use slot 0 which is at root
         let slot = 0u64;
         let block_id = Hash::new_unique();
-        let event = RepairEvent::FetchBlock { slot, block_id };
+        let event = RepairEvent::FetchBlock {
+            block: Block { slot, block_id },
+        };
 
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
             .unwrap();
@@ -1868,8 +1884,10 @@ mod tests {
 
         let new_block_id = Hash::new_unique();
         let event = RepairEvent::FetchBlock {
-            slot,
-            block_id: new_block_id,
+            block: Block {
+                slot,
+                block_id: new_block_id,
+            },
         };
 
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
@@ -1898,8 +1916,10 @@ mod tests {
             .iter()
             .map(|block_id| {
                 let event = RepairEvent::FetchBlock {
-                    slot,
-                    block_id: *block_id,
+                    block: Block {
+                        slot,
+                        block_id: *block_id,
+                    },
                 };
                 match BlockIdRepairService::decide_pending_repair_event(
                     &my_pubkey,

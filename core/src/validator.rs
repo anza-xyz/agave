@@ -3113,7 +3113,10 @@ mod tests {
     #[test]
     fn test_should_require_vote_history_file() {
         use {
-            agave_votor_messages::certificate::{Certificate, CertificateType},
+            agave_votor_messages::{
+                certificate::{Certificate, CertificateType},
+                consensus_message::Block,
+            },
             solana_account::{AccountSharedData, state_traits::StateMut},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
@@ -3172,7 +3175,10 @@ mod tests {
         ));
 
         bank.set_alpenglow_genesis_certificate(&Certificate {
-            cert_type: CertificateType::Genesis(40, Hash::new_unique()),
+            cert_type: CertificateType::Genesis(Block {
+                slot: 40,
+                block_id: Hash::new_unique(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         });

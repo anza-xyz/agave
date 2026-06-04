@@ -154,8 +154,8 @@ impl EventHandlerStats {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
                 entry.parent_ready = Some(Instant::now());
             }
-            VotorEvent::Finalized((slot, _), is_fast_finalization) => {
-                let entry = self.slot_tracking_map.entry(*slot).or_default();
+            VotorEvent::Finalized(block, is_fast_finalization) => {
+                let entry = self.slot_tracking_map.entry(block.slot).or_default();
                 if entry.finalized.is_none() {
                     entry.finalized = Some((Instant::now(), *is_fast_finalization));
                 } else if *is_fast_finalization {

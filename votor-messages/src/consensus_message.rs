@@ -20,13 +20,39 @@ pod_wrapper! {
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
-/// Block, a (slot, hash) tuple
-pub type Block = (Slot, Hash);
+/// An alpenglow block
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "xCqtGMfgy9TMmCDZP9o4BidVTPKfMWrLmqxpRDLYwtR")
+)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
+pub struct Block {
+    /// The slot in the block.
+    pub slot: Slot,
+    /// The block_id of the block.
+    pub block_id: Hash,
+}
+
 /// A consensus vote.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5eorzdc18a1sNEUDLAKPgrHCqHmA8ssuTwKSGsZLwBqR")
+    frozen_abi(digest = "CTiXEk2aQbpf6TS6PNKcaTsGkLruDvAYsTLFhHKW2vsm")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
@@ -43,7 +69,7 @@ pub struct VoteMessage {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "FJKdeeziPmtNpqrV7Wk3tVeHS6CzWWLvkX3MdgYXoKwk")
+    frozen_abi(digest = "CbPatwRWz8NyUAj3HeAxAAWAWTxJnHGAfekLspUQpMHN")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]

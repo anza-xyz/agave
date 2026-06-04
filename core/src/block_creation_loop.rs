@@ -125,7 +125,7 @@ pub struct BlockCreationLoopConfig {
 
     // Receivers / notifications from banking stage / replay / votor
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
@@ -145,7 +145,7 @@ struct LeaderContext {
     /// ParentReady for a future window observed while producing the current one.
     pending_parent_ready: Option<LeaderWindowInfo>,
     /// Highest ParentReady event observed by Votor, used to abandon stale windows.
-    highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     blockstore: Arc<Blockstore>,
@@ -365,12 +365,12 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         let LeaderWindowInfo {
             start_slot,
             end_slot,
-            parent_block: (parent_slot, parent_hash),
+            parent_block,
             block_timer,
         } = info;
 
         trace!(
-            "{my_pubkey}: window {start_slot}-{end_slot} parent {parent_slot} \
+            "{my_pubkey}: window {start_slot}-{end_slot} parent {parent_block:?} \
              flh={fast_leader_handover}"
         );
 
@@ -383,8 +383,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
             fast_leader_handover,
             start_slot,
             end_slot,
-            parent_slot,
-            parent_hash,
+            parent_block,
             block_timer,
             &mut ctx,
         ) {
@@ -552,16 +551,15 @@ fn produce_window(
     fast_leader_handover: bool,
     start_slot: Slot,
     end_slot: Slot,
-    parent_slot: Slot,
-    parent_hash: Hash,
+    parent_block: Block,
     mut block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     // Insert the first bank
     let mut working_bank = start_leader_wait_for_parent_replay(
         start_slot,
-        parent_slot,
-        Some(parent_hash),
+        parent_block.slot,
+        Some(parent_block.block_id),
         block_timer,
         ctx,
     )?;
@@ -582,7 +580,7 @@ fn produce_window(
 
         let mut bank_completion_measure = Measure::start("bank_completion");
         let optimistic_parent =
-            (fast_leader_handover && slot == start_slot).then_some((parent_slot, parent_hash));
+            (fast_leader_handover && slot == start_slot).then_some(parent_block);
         if let Err(e) =
             record_and_complete_block(ctx, slot, optimistic_parent, &mut block_timer, timeout)
         {
@@ -631,7 +629,7 @@ fn produce_window(
 fn record_and_complete_block(
     ctx: &mut LeaderContext,
     bank_slot: Slot,
-    mut optimistic_parent: Option<(Slot, Hash)>,
+    mut optimistic_parent: Option<Block>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
@@ -801,7 +799,7 @@ fn process_parent_ready(
     ctx: &mut LeaderContext,
     info: LeaderWindowInfo,
     bank_slot: Slot,
-    optimistic_parent: &mut Option<(Slot, Hash)>,
+    optimistic_parent: &mut Option<Block>,
     accumulated_txs: &mut Vec<VersionedTransaction>,
     block_timer: &mut Instant,
     records_shutdown: &mut bool,
@@ -870,10 +868,9 @@ fn send_update_parent(
     poh_recorder: &RwLock<PohRecorder>,
     new_parent_block: Block,
 ) -> Result<(), PohRecorderError> {
-    let (new_parent_slot, new_parent_block_id) = new_parent_block;
     let update_parent = UpdateParentV1 {
-        new_parent_slot,
-        new_parent_block_id,
+        new_parent_slot: new_parent_block.slot,
+        new_parent_block_id: new_parent_block.block_id,
     };
     let marker = VersionedBlockMarker::from_update_parent(update_parent);
     poh_recorder.write().unwrap().send_marker(marker)?;
@@ -894,7 +891,7 @@ fn send_update_parent(
 fn handle_parent_ready(
     ctx: &mut LeaderContext,
     leader_window_info: LeaderWindowInfo,
-    optimistic_parent_block: (Slot, Hash),
+    optimistic_parent_block: Block,
     mut accumulated_txs: Vec<VersionedTransaction>,
     block_timer: &mut Instant,
 ) -> Result<Option<Arc<Bank>>, PohRecorderError> {
@@ -925,8 +922,11 @@ fn handle_parent_ready(
     send_update_parent(&ctx.poh_recorder, leader_window_info.parent_block)?;
 
     let slot = leader_window_info.start_slot;
-    let (old_parent_slot, _) = optimistic_parent_block;
-    let (new_parent_slot, new_parent_hash) = leader_window_info.parent_block;
+    let old_parent_slot = optimistic_parent_block.slot;
+    let Block {
+        slot: new_parent_slot,
+        block_id: new_parent_hash,
+    } = leader_window_info.parent_block;
 
     let bank = ctx
         .poh_recorder
@@ -1435,7 +1435,10 @@ mod tests {
         LeaderWindowInfo {
             start_slot,
             end_slot: last_of_consecutive_leader_slots(start_slot),
-            parent_block: (parent_slot, Hash::new_unique()),
+            parent_block: Block {
+                slot: parent_slot,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         }
     }
@@ -1453,7 +1456,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(selected.start_slot, 16);
-        assert_eq!(selected.parent_block.0, 15);
+        assert_eq!(selected.parent_block.slot, 15);
     }
 
     #[test]
@@ -1463,7 +1466,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(selected.start_slot, 8);
-        assert_eq!(selected.parent_block.0, 6);
+        assert_eq!(selected.parent_block.slot, 6);
     }
 
     fn recv_update_parent_marker(
@@ -1543,7 +1546,13 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((0, (0, Hash::default())))),
+            highest_parent_ready: Arc::new(RwLock::new((
+                0,
+                Block {
+                    slot: 0,
+                    block_id: Hash::default(),
+                },
+            ))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1655,7 +1664,13 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((0, (0, Hash::default())))),
+            highest_parent_ready: Arc::new(RwLock::new((
+                0,
+                Block {
+                    slot: 0,
+                    block_id: Hash::default(),
+                },
+            ))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1724,7 +1739,13 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((2, (0, Hash::default())))),
+            highest_parent_ready: Arc::new(RwLock::new((
+                2,
+                Block {
+                    slot: 0,
+                    block_id: Hash::default(),
+                },
+            ))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1827,7 +1848,13 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((4, (new_parent_slot, new_parent_hash)))),
+            highest_parent_ready: Arc::new(RwLock::new((
+                4,
+                Block {
+                    slot: new_parent_slot,
+                    block_id: new_parent_hash,
+                },
+            ))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1863,13 +1890,19 @@ mod tests {
         let parent_ready = LeaderWindowInfo {
             start_slot: leader_slot,
             end_slot: 7,
-            parent_block: (new_parent_slot, new_parent_hash),
+            parent_block: Block {
+                slot: new_parent_slot,
+                block_id: new_parent_hash,
+            },
             block_timer: Instant::now(),
         };
         let new_bank = handle_parent_ready(
             &mut ctx,
             parent_ready,
-            (optimistic_parent_slot, optimistic_parent_hash),
+            Block {
+                slot: optimistic_parent_slot,
+                block_id: optimistic_parent_hash,
+            },
             vec![accumulated_tx.clone()],
             &mut Instant::now(),
         )
