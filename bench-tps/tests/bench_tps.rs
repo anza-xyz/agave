@@ -63,12 +63,22 @@ fn create_local_cluster_and_client() -> (
 
     cluster.transfer(&cluster.funding_keypair, &faucet_pubkey, 100_000_000_000);
 
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
+        .unwrap_or_else(|err| panic!("Could not build rpc client: {err:?}"));
+    let contact_info = cluster
+        .get_contact_info(cluster.entry_point_info.pubkey())
+        .expect("entry point not found");
+    let rpc_pubsub_url = format!("ws://{}/", contact_info.rpc_pubsub().unwrap());
     let client = Arc::new(
-        cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
-            .unwrap_or_else(|err| {
-                panic!("Could not create TpuClient with Quic Cache {err:?}");
-            }),
+        TpuClient::new(
+            "bench_tps_local_cluster",
+            rpc_client,
+            &rpc_pubsub_url,
+            TpuClientConfig::default(),
+            QuicConnectionManager::new_with_connection_config(QuicConfig::new().unwrap()),
+        )
+        .unwrap_or_else(|err| panic!("Could not create TpuClient: {err:?}")),
     );
 
     (cluster, client)
