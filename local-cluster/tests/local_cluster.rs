@@ -4,8 +4,9 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
+    agave_votor::voting_service::VotingServiceOverride,
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
+    arc_swap::ArcSwap,
     assert_matches::assert_matches,
     crossbeam_channel::{Receiver, bounded},
     gag::BufferRedirect,
@@ -6013,22 +6014,25 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         leader_schedule: Arc::new(leader_schedule),
     };
 
+    let node_pubkeys = validator_keys
+        .iter()
+        .map(|key| key.node_keypair.pubkey())
+        .collect::<Vec<_>>();
+    let listener_keypair = Keypair::new();
+    let listener_pubkey = listener_keypair.pubkey();
+
     // Create our UDP socket to listen to votes
     let vote_listener_addr = bind_to_localhost_unique().unwrap();
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
     validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
+        override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
+            listener_pubkey,
+            vote_listener_addr.local_addr().unwrap(),
+        )]))),
     });
     validator_config.wait_for_supermajority = Some(0);
-
-    // Collect node pubkeys
-    let node_pubkeys = validator_keys
-        .iter()
-        .map(|key| key.node_keypair.pubkey())
-        .collect::<Vec<_>>();
 
     // Cluster config
     let mut cluster_config = ClusterConfig {
@@ -6073,18 +6077,12 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     info!("restarting node B");
     cluster.restart_node(&node_pubkeys[1], b_info, SocketAddrSpace::Unspecified);
 
-    // Ensure all nodes are voting
-    let validator_node_keypairs: Vec<_> = validator_keys
-        .iter()
-        .map(|k| k.node_keypair.clone())
-        .collect();
     cluster.check_for_new_notarized_votes(
         16,
         "test_alpenglow_imbalanced_stakes_catchup",
         SocketAddrSpace::Unspecified,
         vote_listener_addr,
-        &validator_node_keypairs,
-        &node_stakes,
+        listener_keypair,
     );
 }
 
@@ -6202,16 +6200,20 @@ fn test_alpenglow_migration(
 ) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
 
+    let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
+
+    let listener_keypair = Keypair::new();
+
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
+        override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
+            listener_keypair.pubkey(),
+            vote_listener_addr.local_addr().unwrap(),
+        )]))),
     });
     validator_config.wait_for_supermajority = Some(0);
-
-    let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
 
     validator_config.fixed_leader_schedule = Some(FixedSchedule {
         leader_schedule: Arc::new(leader_schedule),
@@ -6244,12 +6246,8 @@ fn test_alpenglow_migration(
     // Create local cluster with alpenglow accounts but feature not activated
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
-    let validator_keys: Vec<Arc<Keypair>> = cluster
-        .validators
-        .values()
-        .map(|v| v.info.keypair.clone())
-        .collect();
-
+    // Send feature activation transaction
+    info!("Sending feature activation transaction");
     let client = RpcClient::new_socket_with_commitment(
         cluster.entry_point_info.rpc().unwrap(),
         CommitmentConfig::processed(),
@@ -6290,8 +6288,7 @@ fn test_alpenglow_migration(
         test_name,
         SocketAddrSpace::Unspecified,
         vote_listener_addr,
-        &validator_keys,
-        &node_stakes,
+        listener_keypair,
     );
 
     // Additionally ensure that roots are being made
