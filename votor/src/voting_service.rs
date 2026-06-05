@@ -7,22 +7,26 @@ use {
         certificate::Certificate,
         consensus_message::{ConsensusMessage, VoteMessage},
     },
+    bytes::Bytes,
     crossbeam_channel::Receiver,
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
-    solana_connection_cache::client_connection::ClientConnection,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
-    solana_pubkey::Pubkey,
+    solana_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::Datagram},
     solana_runtime::bank_forks::BankForks,
-    solana_transaction_error::TransportError,
     std::{
-        collections::HashMap,
-        net::SocketAddr,
+        process,
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    tokio::sync::{mpsc, mpsc::error::TrySendError},
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    arc_swap::ArcSwap,
+    solana_pubkey::Pubkey,
+    std::{collections::HashMap, net::SocketAddr},
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
@@ -45,107 +49,42 @@ pub enum BLSOp {
     },
 }
 
-fn send_message(
-    buf: Vec<u8>,
-    socket: &SocketAddr,
-    connection_cache: &ConnectionCache,
-) -> Result<(), TransportError> {
-    let client = connection_cache.get_connection(socket);
-
-    client.send_data_async(Arc::new(buf))
-}
-
 pub struct VotingService {
     thread_hdl: JoinHandle<()>,
 }
 
-/// Override for Alpenglow ports to allow testing with different ports
-/// The last_modified is used to determine if the override has changed so
-/// StakedValidatorsCache can refresh its cache.
-/// Inside the map, the key is the validator's vote pubkey and the value
-/// is the overridden socket address.
-/// For example, if you want validator A to send messages for validator B's
-/// Alpenglow port to a new_address, you would insert an entry into the A's
-/// map like this: (B will not get the message as a result):
-/// `override_map.insert(validator_b_pubkey, new_address);`
-#[derive(Clone, Default)]
-pub struct AlpenglowPortOverride {
-    inner: Arc<RwLock<AlpenglowPortOverrideInner>>,
-}
-
-#[derive(Clone)]
-struct AlpenglowPortOverrideInner {
-    override_map: HashMap<Pubkey, SocketAddr>,
-    last_modified: Instant,
-}
-
-impl Default for AlpenglowPortOverrideInner {
-    fn default() -> Self {
-        Self {
-            override_map: HashMap::new(),
-            last_modified: Instant::now(),
-        }
-    }
-}
-
-impl AlpenglowPortOverride {
-    pub fn update_override(&self, new_override: HashMap<Pubkey, SocketAddr>) {
-        let mut inner = self.inner.write().unwrap();
-        inner.override_map = new_override;
-        inner.last_modified = Instant::now();
-    }
-
-    pub fn has_new_override(&self, previous: Instant) -> bool {
-        self.inner.read().unwrap().last_modified != previous
-    }
-
-    pub fn last_modified(&self) -> Instant {
-        self.inner.read().unwrap().last_modified
-    }
-
-    pub fn clear(&self) {
-        let mut inner = self.inner.write().unwrap();
-        inner.override_map.clear();
-        inner.last_modified = Instant::now();
-    }
-
-    pub fn get_override_map(&self) -> HashMap<Pubkey, SocketAddr> {
-        self.inner.read().unwrap().override_map.clone()
-    }
-}
-
+/// Test-only knob plumbed through [`ValidatorConfig`] so local-cluster tests can
+/// override the (pubkey -> socket) set used to address votor peers.
 #[derive(Clone)]
 pub struct VotingServiceOverride {
-    pub additional_listeners: Vec<SocketAddr>,
-    pub alpenglow_port_override: AlpenglowPortOverride,
+    #[cfg(feature = "dev-context-only-utils")]
+    pub override_listeners: Arc<ArcSwap<HashMap<Pubkey, SocketAddr>>>,
 }
 
 impl VotingService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
-        connection_cache: Arc<ConnectionCache>,
+        egress: mpsc::Sender<Datagram>,
+        allowlist: Arc<StakedNodesAllowlist>,
         bank_forks: Arc<RwLock<BankForks>>,
-        test_override: Option<VotingServiceOverride>,
+        #[cfg(feature = "dev-context-only-utils")] test_override: Option<VotingServiceOverride>,
     ) -> Self {
-        let (additional_listeners, alpenglow_port_override) = match test_override {
-            None => (Vec::new(), None),
-            Some(VotingServiceOverride {
-                additional_listeners,
-                alpenglow_port_override,
-            }) => (additional_listeners, Some(alpenglow_port_override)),
-        };
-
         let thread_hdl = Builder::new()
             .name("solVotorVoteSvc".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
-                    bank_forks.clone(),
+                    bank_forks.read().unwrap().sharable_banks(),
                     Duration::from_secs(STAKED_VALIDATORS_CACHE_TTL_S),
                     STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET,
                     false,
-                    alpenglow_port_override,
+                    Some(allowlist),
+                    #[cfg(feature = "dev-context-only-utils")]
+                    test_override
+                        .map(|v| v.override_listeners)
+                        .unwrap_or_default(),
                 );
 
                 info!("AlpenglowVotingService has started");
@@ -154,8 +93,7 @@ impl VotingService {
                         &cluster_info,
                         vote_history_storage.as_ref(),
                         bls_op,
-                        &connection_cache,
-                        &additional_listeners,
+                        &egress,
                         &mut staked_validators_cache,
                     );
                 }
@@ -169,8 +107,7 @@ impl VotingService {
         slot: Slot,
         cluster_info: &ClusterInfo,
         message: &ConsensusMessage,
-        connection_cache: &ConnectionCache,
-        additional_listeners: &[SocketAddr],
+        egress: &mpsc::Sender<Datagram>,
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
         let buf = match wincode::serialize(message) {
@@ -180,19 +117,31 @@ impl VotingService {
                 return;
             }
         };
+        let buf = Bytes::from(buf);
 
-        let (staked_validator_alpenglow_sockets, _) = staked_validators_cache
-            .get_staked_validators_by_slot(slot, cluster_info, Instant::now());
-        let sockets = additional_listeners
-            .iter()
-            .chain(staked_validator_alpenglow_sockets.iter());
+        let (staked_peers, _) = staked_validators_cache.get_staked_validators_by_slot(
+            slot,
+            cluster_info,
+            Instant::now(),
+        );
 
-        // We use send_message in a loop right now because we worry that sending packets too fast
-        // will cause a packet spike and overwhelm the network. If we later find out that this is
-        // not an issue, we can optimize this by using multi_targret_send or similar methods.
-        for socket in sockets {
-            if let Err(e) = send_message(buf.clone(), socket, connection_cache) {
-                warn!("Failed to send alpenglow message to {socket}: {e:?}");
+        // Drop on full / closed — votor consensus tolerates loss; we
+        // never want to backpressure into vote production.
+        for (pubkey, addr) in staked_peers {
+            let result = egress.try_send(Datagram {
+                peer_pubkey: *pubkey,
+                peer_address: *addr,
+                message: buf.clone(),
+            });
+            match result {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    warn!("alpenglow egress channel full; dropping vote/cert");
+                }
+                Err(TrySendError::Closed(_)) => {
+                    warn!("alpenglow egress channel closed; endpoint shutting down");
+                    return;
+                }
             }
         }
     }
@@ -201,8 +150,7 @@ impl VotingService {
         cluster_info: &ClusterInfo,
         vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
-        connection_cache: &ConnectionCache,
-        additional_listeners: &[SocketAddr],
+        egress: &mpsc::Sender<Datagram>,
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
         match bls_op {
@@ -213,7 +161,7 @@ impl VotingService {
                 let mut measure = Measure::start("alpenglow vote history save");
                 if let Err(err) = vote_history_storage.store(&saved_vote_history) {
                     error!("Unable to save vote history to storage: {err:?}");
-                    std::process::exit(1);
+                    process::exit(1);
                 }
                 measure.stop();
                 trace!("{measure}");
@@ -223,8 +171,7 @@ impl VotingService {
                     slot,
                     cluster_info,
                     &msg,
-                    connection_cache,
-                    additional_listeners,
+                    egress,
                     staked_validators_cache,
                 );
             }
@@ -236,8 +183,7 @@ impl VotingService {
                         slot,
                         cluster_info,
                         &message,
-                        connection_cache,
-                        additional_listeners,
+                        egress,
                         staked_validators_cache,
                     );
                 }
@@ -250,8 +196,7 @@ impl VotingService {
                         slot,
                         cluster_info,
                         &msg,
-                        connection_cache,
-                        additional_listeners,
+                        egress,
                         staked_validators_cache,
                     );
                 }
@@ -265,6 +210,7 @@ impl VotingService {
 }
 
 #[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use {
         super::*,
@@ -276,11 +222,16 @@ mod tests {
             consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::bounded,
+        bytes::Bytes,
+        crossbeam_channel::{Receiver, bounded, unbounded},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+        solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
-        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+        solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
+        solana_quic_datagram::{
+            allowlist::{AllowAll, Allowlist},
+            endpoint::{Datagram, QuicDatagramEndpoint},
+        },
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -289,24 +240,46 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::{
-            nonblocking::swqos::SwQosConfig,
-            quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_weighted_qos_server},
-            streamer::StakedNodes,
-        },
-        std::{
-            net::SocketAddr,
-            sync::{Arc, RwLock},
-        },
         test_case::test_case,
-        tokio_util::sync::CancellationToken,
+        tokio::runtime::{Builder, Runtime},
     };
+
+    /// Spin up an in-process quic-datagram endpoint with the given keypair
+    /// and allowlist. Returns (endpoint, ingress_rx, bound_addr, runtime).
+    fn spawn_endpoint<A: Allowlist>(
+        keypair: Keypair,
+        allowlist: Arc<A>,
+    ) -> (
+        QuicDatagramEndpoint,
+        Receiver<Datagram>,
+        SocketAddr,
+        Runtime,
+    ) {
+        let rt = Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        let socket = bind_to_localhost_unique().expect("bind UDP");
+        let addr = socket.local_addr().expect("local addr");
+        let (ingress_tx, ingress_rx) = bounded(4096);
+        let banlist = Arc::new(Banlist::<Pubkey>::default());
+        let endpoint = QuicDatagramEndpoint::new(
+            rt.handle(),
+            &keypair,
+            socket,
+            ingress_tx,
+            allowlist,
+            banlist,
+        )
+        .expect("QuicDatagramEndpoint::new");
+        (endpoint, ingress_rx, addr, rt)
+    }
 
     fn create_voting_service(
         bls_receiver: Receiver<BLSOp>,
-        listener: SocketAddr,
+        spy_listener: (Pubkey, SocketAddr),
+        egress: mpsc::Sender<Datagram>,
     ) -> (VotingService, Vec<ValidatorVoteKeypairs>) {
-        // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -330,14 +303,13 @@ mod tests {
                 bls_receiver,
                 Arc::new(cluster_info),
                 Arc::new(NullVoteHistoryStorage::default()),
-                Arc::new(ConnectionCache::new_quic(
-                    "TestAlpenglowConnectionCache",
-                    10,
-                )),
+                egress,
+                Arc::new(StakedNodesAllowlist::new(HashMap::new())),
                 bank_forks,
                 Some(VotingServiceOverride {
-                    additional_listeners: vec![listener],
-                    alpenglow_port_override: AlpenglowPortOverride::default(),
+                    override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([
+                        spy_listener,
+                    ]))),
                 }),
             ),
             validator_keypairs,
@@ -380,59 +352,62 @@ mod tests {
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();
-        let (bls_sender, bls_receiver) = bounded(1024);
-        // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
-        // Bind to a random UDP port
-        let socket = bind_to_localhost_unique().unwrap();
-        let listener_addr = socket.local_addr().unwrap();
+        let listener_kp = Keypair::new();
+        let listener_pubkey = listener_kp.pubkey();
+        let (endpoint, ingress_rx, listener_addr, _rt) =
+            spawn_endpoint(listener_kp, Arc::new(AllowAll));
 
-        // Create VotingService with the listener address
-        let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
+        let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) =
+            spawn_endpoint(Keypair::new(), Arc::new(AllowAll));
+        let egress = client_endpoint.egress.clone();
 
-        // Send a BLS message via the VotingService
-        assert!(bls_sender.send(bls_op).is_ok());
+        let (bls_sender, bls_receiver) = unbounded();
+        let (_voting_service, _validator_keypairs) = create_voting_service(
+            bls_receiver,
+            (listener_pubkey, listener_addr),
+            egress.clone(),
+        );
 
-        // Start a quick streamer to handle quick control packets
-        let (sender, receiver) = bounded(1024);
-        let stakes = validator_keypairs
-            .iter()
-            .map(|x| (x.node_keypair.pubkey(), 100))
-            .collect();
-        let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
-            Arc::new(stakes),
-            HashMap::<Pubkey, u64>::default(), // overrides
-        )));
-        let cancel = CancellationToken::new();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: quic_server_thread,
-            key_updater: _,
-        } = spawn_stake_weighted_qos_server(
-            "AlpenglowLocalClusterTest",
-            "voting_service_test",
-            [socket.into()],
-            &Keypair::new(),
-            sender,
-            staked_nodes,
-            QuicStreamerConfig::default_for_tests(),
-            SwQosConfig::default(),
-            cancel.clone(),
-        )
-        .unwrap();
-
-        let packets = receiver.recv().unwrap();
-        let packet = packets.first().expect("No packets received");
-        let received_message = wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap())
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to deserialize BLSMessage: {:?} {:?}",
-                    size_of::<ConsensusMessage>(),
-                    err
-                )
+        // Trigger all connections to be established with disposable packets
+        let warmup = Bytes::from_static(b"warmup");
+        let warmup_deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            let _ = egress.try_send(Datagram {
+                peer_pubkey: listener_pubkey,
+                peer_address: listener_addr,
+                message: warmup.clone(),
             });
-        assert_eq!(received_message, expected_message);
-        cancel.cancel();
-        quic_server_thread.join().unwrap();
+            if ingress_rx.recv_timeout(Duration::from_millis(50)).is_ok() {
+                break;
+            }
+            assert!(
+                Instant::now() < warmup_deadline,
+                "warmup datagram did not reach listener within 500ms; dial never completed",
+            );
+        }
+
+        // Send the BLS op through. The cached `Established` carries it.
+        bls_sender.send(bls_op).expect("bls_sender.send");
+
+        // The listener endpoint should receive the serialized
+        // ConsensusMessage. Drain ingress until we see a match.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let received = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                panic!("listener never received the message");
+            }
+            let recv_result = ingress_rx.recv_timeout(remaining);
+            if let Ok(dg) = recv_result {
+                if let Ok(msg) = wincode::deserialize::<ConsensusMessage>(&dg.message) {
+                    break msg;
+                }
+            }
+        };
+        assert_eq!(received, expected_message);
+
+        endpoint.close();
+        client_endpoint.close();
     }
 }
