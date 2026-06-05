@@ -45,8 +45,12 @@ const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
 const SOCKET_TAG_TVU: u8 = 10;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const SOCKET_TAG_ALPENGLOW: u8 = 13;
-const_assert_eq!(SOCKET_CACHE_SIZE, 14);
-const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
+// Second alpenglow port: votor QUIC-datagram transport, advertised alongside
+// SOCKET_TAG_ALPENGLOW (the legacy QUIC-stream transport) during the dual-stack
+// migration window. Additive tag — old nodes ignore it.
+const SOCKET_TAG_ALPENGLOW_DATAGRAM: u8 = 14;
+const_assert_eq!(SOCKET_CACHE_SIZE, 15);
+const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW_DATAGRAM as usize + 1usize;
 
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
@@ -303,6 +307,7 @@ impl ContactInfo {
     get_socket!(tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     get_socket!(alpenglow, SOCKET_TAG_ALPENGLOW);
+    get_socket!(alpenglow_datagram, SOCKET_TAG_ALPENGLOW_DATAGRAM);
 
     set_socket!(set_gossip, SOCKET_TAG_GOSSIP);
     set_socket!(set_rpc, SOCKET_TAG_RPC);
@@ -321,6 +326,7 @@ impl ContactInfo {
     set_socket!(set_tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     set_socket!(set_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     set_socket!(set_alpenglow, SOCKET_TAG_ALPENGLOW);
+    set_socket!(set_alpenglow_datagram, SOCKET_TAG_ALPENGLOW_DATAGRAM);
 
     remove_socket!(
         remove_serve_repair,
@@ -335,6 +341,7 @@ impl ContactInfo {
     );
     remove_socket!(remove_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     remove_socket!(remove_alpenglow, SOCKET_TAG_ALPENGLOW);
+    remove_socket!(remove_alpenglow_datagram, SOCKET_TAG_ALPENGLOW_DATAGRAM);
 
     #[cfg(test)]
     fn get_socket(&self, key: u8) -> Result<SocketAddr, Error> {

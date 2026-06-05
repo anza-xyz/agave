@@ -220,6 +220,7 @@ impl Tpu {
             vote_quic_server_config.quic_streamer_config,
             vote_quic_server_config.qos_config,
             cancel.clone(),
+            Arc::default(),
         )
         .unwrap();
 

@@ -2349,8 +2349,12 @@ pub struct Sockets {
     pub tpu_vote_forwarding_client: UdpSocket, // udp write only
     /// Client-side socket for ForwardingStage non-vote transactions
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
-    /// Socket for alpenglow consensus logic
+    /// Socket for alpenglow consensus logic (legacy QUIC-stream transport)
     pub alpenglow: Option<UdpSocket>, // udp read/write
+    /// Socket for the votor QUIC-datagram transport. Bound alongside
+    /// `alpenglow` during the dual-stack migration window; advertised under
+    /// SOCKET_TAG_ALPENGLOW_DATAGRAM.
+    pub alpenglow_datagram: Option<UdpSocket>, // udp read/write
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket, // quic write only
     /// Connection cache endpoint for QUIC-based Alpenglow messages

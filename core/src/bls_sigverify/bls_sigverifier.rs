@@ -19,16 +19,19 @@ use {
         consensus_message::{ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
+    crossbeam_channel::{Receiver, Select, Sender, TryRecvError},
+    lazy_lru::LruCache,
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch},
     solana_pubkey::Pubkey,
+    solana_quic_datagram::endpoint::Datagram,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
+    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::{
         collections::HashSet,
         sync::{
@@ -50,6 +53,17 @@ pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 /// We ban the sender for 2 days which roughly corresponds to an epoch
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
+/// Capacity of the cross-transport dedup cache.
+///
+/// PLACEHOLDER: a fixed-size LRU keyed by a hash of the raw message bytes.
+/// During the dual-stack migration the same consensus message arrives over
+/// both transports; this drops the second copy before sigverify.
+const DEDUP_CACHE_CAPACITY: usize = 1 << 16;
+
+/// How long the sigverifier blocks waiting for inbound messages before waking.
+/// Also the idle cadence at which it reports stats (~one slot).
+const INGRESS_RECV_TIMEOUT: Duration = Duration::from_millis(400);
+
 pub(crate) struct SigVerifierContext {
     pub(crate) migration_status: Arc<MigrationStatus>,
     pub(crate) banlist: Arc<SimpleQosBanlist>,
@@ -60,8 +74,35 @@ pub(crate) struct SigVerifierContext {
     pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
 }
 
+/// Which transport delivered an inbound consensus message. Tracked during the
+/// dual-stack migration to measure per-transport volume and which transport
+/// delivers each message first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VotorTransport {
+    /// New QUIC-datagram transport.
+    Datagram,
+    /// Legacy QUIC-stream transport.
+    Stream,
+}
+
+/// A [`PacketBatch`] tagged with the transport that delivered it. The tag is
+/// attached at read time based on which channel the messages arrived on; it
+/// carries the transport into [`SigVerifier::extract_and_filter_msgs`] for the
+/// per-transport metrics. Datagram-transport messages are wrapped into
+/// single-packet batches (see [`datagram_to_batch`]); stream-transport batches
+/// come straight from the legacy QUIC-stream server.
+struct IngressMessage {
+    transport: VotorTransport,
+    batch: PacketBatch,
+}
+
 pub(crate) struct SigVerifierChannels {
-    pub(crate) packet_receiver: Receiver<PacketBatch>,
+    /// Inbound consensus messages from the QUIC-datagram endpoint. `None` when
+    /// that transport was not constructed (non-Testnet/Development clusters).
+    pub(crate) datagram_receiver: Option<Receiver<Datagram>>,
+    /// Inbound `PacketBatch`es straight from the legacy QUIC-stream server.
+    /// `None` when the legacy server was not spawned.
+    pub(crate) stream_receiver: Option<Receiver<PacketBatch>>,
     pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
     pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
@@ -98,6 +139,11 @@ struct SigVerifier {
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
+    /// Cross-transport dedup cache (placeholder). Keyed by a hash of the raw
+    /// message bytes; value unused. See [`DEDUP_CACHE_CAPACITY`].
+    recent_msgs: LruCache<u64, ()>,
+    /// Hasher state for the dedup cache.
+    dedup_hasher: ahash::RandomState,
 }
 
 impl SigVerifier {
@@ -129,39 +175,52 @@ impl SigVerifier {
             leader_schedule,
             thread_pool,
             generated_cert_types,
+            recent_msgs: LruCache::new(DEDUP_CACHE_CAPACITY),
+            dedup_hasher: ahash::RandomState::new(),
         }
     }
 
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok(batches) = recv_batches(&self.channels.packet_receiver, SOFT_RECEIVE_CAP) else {
-                error!("packet_receiver disconnected:  Exiting.");
+            let Ok(batches) = self.recv_batches(SOFT_RECEIVE_CAP) else {
+                error!("all votor ingress channels disconnected: Exiting.");
                 break;
             };
-            if batches.is_empty() || self.migration_status.is_pre_feature_activation() {
+            if self.migration_status.is_pre_feature_activation() {
+                // No votor traffic before activation; skip work and reporting
+                // to avoid emitting empty datapoints on non-alpenglow nodes.
                 continue;
             }
 
-            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
-            self.stats
-                .verify_and_send_batch_us
-                .add_sample(verify_time_us);
-            if let Err(e) = verify_res {
-                error!("verify_and_send_batch() failed with {e}. Exiting.");
-                break;
+            if !batches.is_empty() {
+                let (verify_res, verify_time_us) =
+                    measure_us!(self.verify_and_send_batches(batches));
+                self.stats
+                    .verify_and_send_batch_us
+                    .add_sample(verify_time_us);
+                if let Err(e) = verify_res {
+                    error!("verify_and_send_batch() failed with {e}. Exiting.");
+                    break;
+                }
             }
+            // Report once per slot (~400ms). Driven every loop iteration —
+            // including idle ones, since `recv_batches` wakes at least every
+            // 400ms — so the cadence holds with or without traffic.
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
         self.stats.do_report(self.sharable_banks.root().slot());
     }
 
-    fn verify_and_send_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), SigVerifyError> {
+    fn verify_and_send_batches(
+        &mut self,
+        items: Vec<IngressMessage>,
+    ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(root_bank.slot());
 
         let ((certs_to_verify, votes_to_verify), extract_msgs_us) =
-            measure_us!(self.extract_and_filter_msgs(batches, &root_bank));
+            measure_us!(self.extract_and_filter_msgs(items, &root_bank));
         self.stats
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
@@ -207,57 +266,94 @@ impl SigVerifier {
 
     fn extract_and_filter_msgs(
         &mut self,
-        batches: Vec<PacketBatch>,
+        items: Vec<IngressMessage>,
         root_bank: &Bank,
     ) -> (Vec<CertPayload>, Vec<VotePayload>) {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes = Vec::new();
         let mut num_pkts = 0u64;
-        for packet in batches.iter().flatten() {
-            num_pkts = num_pkts.saturating_add(1);
-            if packet.meta().discard() {
-                self.stats.num_discarded_pkts += 1;
-                continue;
-            }
-            let Ok(msg) = packet.deserialize_slice::<ConsensusMessage, _>(..) else {
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
-            let Some(remote_pubkey) = packet.meta().remote_pubkey() else {
-                debug_assert!(false, "BLS packet missing remote pubkey");
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
-            match msg {
-                ConsensusMessage::Vote(vote) => {
-                    if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
-                        votes.push(VotePayload {
-                            vote_message: vote,
-                            bls_pubkey,
-                            pubkey,
+        for IngressMessage { transport, batch } in items {
+            for packet in batch.iter() {
+                num_pkts = num_pkts.saturating_add(1);
+                // Per-transport receive volume (counts every arrival, including
+                // copies later dropped as duplicates).
+                match transport {
+                    VotorTransport::Datagram => self.stats.num_recv_datagram += 1,
+                    VotorTransport::Stream => self.stats.num_recv_stream += 1,
+                }
+                if packet.meta().discard() {
+                    self.stats.num_discarded_pkts += 1;
+                    continue;
+                }
+                let Some(remote_pubkey) = packet.meta().remote_pubkey() else {
+                    debug_assert!(
+                        false,
+                        "votor packet missing QUIC-authenticated remote pubkey"
+                    );
+                    self.stats.num_malformed_pkts += 1;
+                    continue;
+                };
+                let Some(payload) = packet.data(..) else {
+                    self.stats.num_malformed_pkts += 1;
+                    continue;
+                };
+                // Cross-transport dedup (placeholder): the same message from the
+                // same sender reaches us over both the legacy QUIC-stream and
+                // the new QUIC-datagram transport during migration. Drop the
+                // second copy before the (expensive) deserialize + sigverify.
+                // Keyed on (sender, raw bytes) so that distinct senders
+                // broadcasting an identical payload (e.g. the same certificate)
+                // are not collapsed here — cert dedup is handled separately via
+                // `verified_certs`.
+                let digest = self
+                    .dedup_hasher
+                    .hash_one((remote_pubkey.as_ref(), payload));
+                if self.recent_msgs.get(&digest).is_some() {
+                    self.stats.num_dedup_dropped += 1;
+                    continue;
+                }
+                self.recent_msgs.put(digest, ());
+                // This is the first copy of this message we've seen — record
+                // which transport delivered it first (won the race).
+                match transport {
+                    VotorTransport::Datagram => self.stats.num_first_datagram += 1,
+                    VotorTransport::Stream => self.stats.num_first_stream += 1,
+                }
+                let Ok(msg) = packet.deserialize_slice::<ConsensusMessage, _>(..) else {
+                    self.stats.num_malformed_pkts += 1;
+                    continue;
+                };
+                match msg {
+                    ConsensusMessage::Vote(vote) => {
+                        if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
+                            votes.push(VotePayload {
+                                vote_message: vote,
+                                bls_pubkey,
+                                pubkey,
+                                remote_pubkey,
+                                prepared_payload: None,
+                            });
+                        }
+                    }
+                    ConsensusMessage::Certificate(cert) => {
+                        if cert.cert_type.slot() < root_slot {
+                            self.stats.num_old_certs_received += 1;
+                            continue;
+                        }
+                        if self.verified_certs.contains(&cert.cert_type) {
+                            self.stats.num_verified_certs_received += 1;
+                            continue;
+                        }
+                        if self.generated_cert_types.has_cert(&cert.cert_type) {
+                            self.stats.num_generated_certs_received += 1;
+                            continue;
+                        }
+                        certs.push(CertPayload {
+                            cert,
                             remote_pubkey,
-                            prepared_payload: None,
                         });
                     }
-                }
-                ConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() < root_slot {
-                        self.stats.num_old_certs_received += 1;
-                        continue;
-                    }
-                    if self.verified_certs.contains(&cert.cert_type) {
-                        self.stats.num_verified_certs_received += 1;
-                        continue;
-                    }
-                    if self.generated_cert_types.has_cert(&cert.cert_type) {
-                        self.stats.num_generated_certs_received += 1;
-                        continue;
-                    }
-                    certs.push(CertPayload {
-                        cert,
-                        remote_pubkey,
-                    });
                 }
             }
         }
@@ -292,40 +388,108 @@ impl SigVerifier {
         self.stats.num_old_votes_received += 1;
         None
     }
-}
 
-/// Receives a `Vec<PacketBatch>` from the `receiver` while adhering to the `soft_receive_cap` limit.
-///
-/// Returns `Err(())` if the channel disconnected.
-fn recv_batches(
-    receiver: &Receiver<PacketBatch>,
-    soft_receive_cap: usize,
-) -> Result<Vec<PacketBatch>, ()> {
-    let batch = match receiver.recv_timeout(Duration::from_secs(1)) {
-        Ok(b) => b,
-        Err(e) => match e {
-            RecvTimeoutError::Timeout => {
-                return Ok(vec![]);
-            }
-            RecvTimeoutError::Disconnected => {
+    /// Receive up to `soft_receive_cap` consensus messages across the two
+    /// transport ingress channels, tagging each with the channel it arrived on
+    /// (the datagram endpoint vs. the legacy stream server). Blocks up to
+    /// [`INGRESS_RECV_TIMEOUT`] — which also bounds how long the run loop
+    /// sleeps before its per-slot stats report while idle.
+    ///
+    /// A channel that disconnects is dropped from the set; returns `Err(())`
+    /// only once *both* channels are gone.
+    fn recv_batches(&mut self, soft_receive_cap: usize) -> Result<Vec<IngressMessage>, ()> {
+        // Block until at least one live channel is ready (data or disconnect),
+        // or the idle timeout fires.
+        {
+            let mut sel = Select::new();
+            let dg = self
+                .channels
+                .datagram_receiver
+                .as_ref()
+                .map(|rx| sel.recv(rx));
+            let st = self
+                .channels
+                .stream_receiver
+                .as_ref()
+                .map(|rx| sel.recv(rx));
+            if dg.is_none() && st.is_none() {
                 return Err(());
             }
-        },
-    };
-    let mut batches = Vec::with_capacity(soft_receive_cap);
-    batches.push(batch);
-    while batches.len() < soft_receive_cap {
-        match receiver.try_recv() {
-            Ok(b) => {
-                batches.push(b);
+            if sel.ready_timeout(INGRESS_RECV_TIMEOUT).is_err() {
+                return Ok(Vec::new()); // idle — no traffic this interval
             }
-            Err(e) => match e {
-                TryRecvError::Empty => return Ok(batches),
-                TryRecvError::Disconnected => return Err(()),
-            },
         }
+        // Drain both channels, tagging by source. A channel found disconnected
+        // is dropped from the set so the next `Select` won't spin on it.
+        let mut items = Vec::with_capacity(soft_receive_cap);
+        // Datagram-transport messages are wrapped into single-packet batches;
+        // stream-transport batches pass through unchanged.
+        let dg_alive = Self::drain_channel(
+            &mut self.channels.datagram_receiver,
+            VotorTransport::Datagram,
+            &mut items,
+            soft_receive_cap,
+            datagram_to_batch,
+        );
+        let st_alive = Self::drain_channel(
+            &mut self.channels.stream_receiver,
+            VotorTransport::Stream,
+            &mut items,
+            soft_receive_cap,
+            |batch| batch,
+        );
+        if !dg_alive && !st_alive {
+            return Err(());
+        }
+        Ok(items)
     }
-    Ok(batches)
+
+    /// Drain queued items from `slot` (if present) into `out` up to `cap`,
+    /// mapping each through `to_batch` and tagging it with `transport`. On
+    /// disconnect, sets `*slot = None`. Returns whether the channel is still
+    /// live afterwards.
+    fn drain_channel<T>(
+        slot: &mut Option<Receiver<T>>,
+        transport: VotorTransport,
+        out: &mut Vec<IngressMessage>,
+        cap: usize,
+        to_batch: impl Fn(T) -> PacketBatch,
+    ) -> bool {
+        let Some(rx) = slot.as_ref() else {
+            return false;
+        };
+        while out.len() < cap {
+            match rx.try_recv() {
+                Ok(item) => out.push(IngressMessage {
+                    transport,
+                    batch: to_batch(item),
+                }),
+                Err(TryRecvError::Empty) => return true,
+                Err(TryRecvError::Disconnected) => {
+                    *slot = None;
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Wraps a single inbound [`Datagram`] as a one-packet [`PacketBatch`] so the
+/// rest of the sigverifier can operate on the `PacketBatch` abstraction. The
+/// QUIC-authenticated sender pubkey is stored in the packet meta, where the
+/// extract step reads it back via [`Meta::remote_pubkey`].
+fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
+    let Datagram {
+        peer_pubkey,
+        peer_address,
+        message,
+    } = datagram;
+    let mut meta = Meta::default();
+    meta.size = message.len();
+    meta.set_socket_addr(&peer_address);
+    meta.set_remote_pubkey(peer_pubkey);
+    PacketBatch::Single(BytesPacket::new(message, meta))
 }
 
 #[cfg(test)]
@@ -350,7 +514,6 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{Packet, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -364,8 +527,7 @@ mod tests {
     };
 
     fn new_test_banlist() -> Arc<SimpleQosBanlist> {
-        let (banlist, _banlist_eviction_receiver) = SimpleQosBanlist::new();
-        Arc::new(banlist)
+        Arc::new(SimpleQosBanlist::from(Arc::default()))
     }
 
     struct TestContext {
@@ -373,7 +535,7 @@ mod tests {
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
         banlist: Arc<SimpleQosBanlist>,
 
-        _packet_sender: Sender<PacketBatch>,
+        _packet_sender: Sender<Datagram>,
         repair_receiver: VerifiedVoterSlotsReceiver,
         _reward_receiver: Receiver<AddVoteMessage>,
         pool_receiver: Receiver<Vec<ConsensusMessage>>,
@@ -435,7 +597,8 @@ mod tests {
                     generated_cert_types: generated_cert_types.clone(),
                 },
                 SigVerifierChannels {
-                    packet_receiver,
+                    datagram_receiver: Some(packet_receiver),
+                    stream_receiver: None,
                     channel_to_repair,
                     channel_to_reward,
                     channel_to_pool,
@@ -499,11 +662,53 @@ mod tests {
         }
     }
 
-    fn message_to_packet(message: &ConsensusMessage, remote_pubkey: Pubkey) -> Packet {
-        let mut packet = Packet::default();
-        packet.populate_packet(None, message).unwrap();
-        packet.meta_mut().set_remote_pubkey(remote_pubkey);
-        packet
+    #[test]
+    fn test_blssigverifier_cross_transport_dedup() {
+        // The same (sender, message) reaching us over both transports must be
+        // verified once: the second copy is dropped before sigverify.
+        let mut ctx = TestContext::new();
+
+        let sender = Pubkey::new_unique();
+        let vote_message =
+            create_signed_vote_message(&ctx.validator_keypairs, Vote::new_finalization_vote(5), 2);
+        let msg = ConsensusMessage::Vote(vote_message);
+        // Same message from the same sender, datagram first then stream.
+        let items = vec![
+            message_to_item_with_transport(&msg, sender, VotorTransport::Datagram),
+            message_to_item_with_transport(&msg, sender, VotorTransport::Stream),
+        ];
+
+        ctx.verifier.verify_and_send_batches(items).unwrap();
+
+        assert_eq!(ctx.verifier.stats.num_dedup_dropped, 1);
+        assert_eq!(
+            ctx.pool_receiver.try_iter().flatten().count(),
+            1,
+            "duplicate must not be forwarded twice"
+        );
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+        // Both arrivals counted per transport; datagram won the race.
+        assert_eq!(ctx.verifier.stats.num_recv_datagram, 1);
+        assert_eq!(ctx.verifier.stats.num_recv_stream, 1);
+        assert_eq!(ctx.verifier.stats.num_first_datagram, 1);
+        assert_eq!(ctx.verifier.stats.num_first_stream, 0);
+
+        // A distinct sender broadcasting identical bytes is NOT collapsed here.
+        // Deliver it stream-first to exercise the other win counter.
+        let other_sender = Pubkey::new_unique();
+        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier
+            .verify_and_send_batches(vec![message_to_item_with_transport(
+                &msg,
+                other_sender,
+                VotorTransport::Stream,
+            )])
+            .unwrap();
+        assert_eq!(ctx.verifier.stats.num_dedup_dropped, 0);
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.verifier.stats.num_recv_stream, 1);
+        assert_eq!(ctx.verifier.stats.num_first_stream, 1);
+        assert_eq!(ctx.verifier.stats.num_first_datagram, 0);
     }
 
     #[test]
@@ -526,7 +731,7 @@ mod tests {
         ];
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages1))
+            .verify_and_send_batches(messages_to_items(&messages1))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
@@ -552,7 +757,7 @@ mod tests {
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages2))
+            .verify_and_send_batches(messages_to_items(&messages2))
             .unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
@@ -579,7 +784,7 @@ mod tests {
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages3))
+            .verify_and_send_batches(messages_to_items(&messages3))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
@@ -598,11 +803,17 @@ mod tests {
     fn test_blssigverifier_verify_malformed() {
         let mut ctx = TestContext::new();
 
-        let packets = vec![Packet::default()];
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        // An empty payload won't deserialize as ConsensusMessage; the
+        // sigverifier should count it as malformed.
+        let items = vec![IngressMessage {
+            transport: VotorTransport::Datagram,
+            batch: datagram_to_batch(Datagram {
+                peer_pubkey: Pubkey::new_unique(),
+                peer_address: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+                message: bytes::Bytes::new(),
+            }),
+        }];
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
         assert_eq!(ctx.verifier.stats.num_malformed_pkts, 1);
@@ -619,7 +830,7 @@ mod tests {
         let messages_no_stakes = vec![ConsensusMessage::Vote(vote_message_no_stakes)];
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages_no_stakes))
+            .verify_and_send_batches(messages_to_items(&messages_no_stakes))
             .unwrap();
 
         assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes, 1);
@@ -634,7 +845,7 @@ mod tests {
             rank: 1000, // Invalid rank
         })];
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages_invalid_rank))
+            .verify_and_send_batches(messages_to_items(&messages_invalid_rank))
             .unwrap();
         assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank, 1);
 
@@ -662,7 +873,7 @@ mod tests {
             2,
         ));
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg1)))
+            .verify_and_send_batches(messages_to_items(std::slice::from_ref(&msg1)))
             .unwrap();
 
         // The cap-1 channel is now full.  The second send hits Full and falls
@@ -681,7 +892,7 @@ mod tests {
         });
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg2)))
+            .verify_and_send_batches(messages_to_items(std::slice::from_ref(&msg2)))
             .unwrap();
 
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
@@ -708,31 +919,8 @@ mod tests {
         let messages = vec![msg];
         let result = ctx
             .verifier
-            .verify_and_send_batches(messages_to_batches(&messages));
+            .verify_and_send_batches(messages_to_items(&messages));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_blssigverifier_send_discarded_packets() {
-        let mut ctx = TestContext::new();
-
-        let message = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.validator_keypairs,
-            Vote::new_finalization_vote(5),
-            0,
-        ));
-        let mut packet = message_to_packet(&message, Pubkey::new_unique());
-        packet.meta_mut().set_discard(true); // Manually discard
-
-        let packets = vec![packet];
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
-        expect_no_receive(&ctx.pool_receiver);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(ctx.verifier.stats.num_discarded_pkts, 1);
     }
 
     #[test]
@@ -753,13 +941,11 @@ mod tests {
                 signature,
                 rank,
             });
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items: Vec<IngressMessage> = packets;
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             num_votes,
@@ -796,7 +982,7 @@ mod tests {
                 vote1,
                 i,
             ));
-            packets.push(message_to_packet(&msg, Pubkey::new_unique()));
+            packets.push(message_to_item(&msg, Pubkey::new_unique()));
         }
 
         // Group 2 votes
@@ -812,13 +998,11 @@ mod tests {
                 vote2,
                 i,
             ));
-            packets.push(message_to_packet(&msg, Pubkey::new_unique()));
+            packets.push(message_to_item(&msg, Pubkey::new_unique()));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items: Vec<IngressMessage> = packets;
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             num_votes,
@@ -876,13 +1060,11 @@ mod tests {
                 signature,
                 rank,
             });
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items: Vec<IngressMessage> = packets;
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
         assert_eq!(
             sent_messages.len(),
@@ -930,13 +1112,11 @@ mod tests {
 
             consensus_messages.push(consensus_message.clone());
 
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items: Vec<IngressMessage> = packets;
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
         assert_eq!(
             sent_messages.len(),
@@ -970,11 +1150,9 @@ mod tests {
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             1,
@@ -998,11 +1176,9 @@ mod tests {
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             1,
@@ -1027,12 +1203,10 @@ mod tests {
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
         // The call still succeeds, but the packet is marked for discard.
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             0,
@@ -1075,11 +1249,9 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             1,
@@ -1121,11 +1293,9 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             1,
@@ -1167,11 +1337,9 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             0,
@@ -1205,11 +1373,9 @@ mod tests {
             bitmap: encoded_bitmap,
         };
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let items = messages_to_items(&[consensus_message]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(
             ctx.verifier.stats.cert_stats.signature_verification_failed,
@@ -1235,7 +1401,7 @@ mod tests {
                 signature,
                 rank,
             });
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_item(&consensus_message, Pubkey::new_unique()));
         }
 
         // 70% of validators sign.
@@ -1263,15 +1429,13 @@ mod tests {
             .expect("Failed to aggregate votes for certificate");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
-        packets.push(message_to_packet(
+        packets.push(message_to_item(
             &consensus_message_cert,
             Pubkey::new_unique(),
         ));
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items: Vec<IngressMessage> = packets;
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().flatten().count(),
             num_votes + 1,
@@ -1297,10 +1461,8 @@ mod tests {
             rank: invalid_rank,
         });
 
-        let packet_batches = messages_to_batches(&[consensus_message]);
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items = messages_to_items(&[consensus_message]);
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank, 1);
     }
@@ -1350,7 +1512,8 @@ mod tests {
                 generated_cert_types: Arc::new(GeneratedCertTypes::default()),
             },
             SigVerifierChannels {
-                packet_receiver,
+                datagram_receiver: Some(packet_receiver),
+                stream_receiver: None,
                 channel_to_repair: votes_for_repair_sender,
                 channel_to_reward: reward_votes_sender,
                 channel_to_pool: message_sender,
@@ -1367,11 +1530,9 @@ mod tests {
             signature,
             rank: 0,
         });
-        let packet_batches_vote = messages_to_batches(&[consensus_message_vote]);
+        let items_vote = messages_to_items(&[consensus_message_vote]);
 
-        sig_verifier
-            .verify_and_send_batches(packet_batches_vote)
-            .unwrap();
+        sig_verifier.verify_and_send_batches(items_vote).unwrap();
         expect_no_receive(&message_receiver);
         assert_eq!(sig_verifier.stats.num_old_votes_received, 1);
 
@@ -1381,11 +1542,9 @@ mod tests {
             &[0], // Signer rank 0
         );
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
-        let packet_batches_cert = messages_to_batches(&[consensus_message_cert]);
+        let items_cert = messages_to_items(&[consensus_message_cert]);
 
-        sig_verifier
-            .verify_and_send_batches(packet_batches_cert)
-            .unwrap();
+        sig_verifier.verify_and_send_batches(items_cert).unwrap();
         expect_no_receive(&message_receiver);
         assert_eq!(sig_verifier.stats.num_old_certs_received, 1);
         assert_eq!(sig_verifier.stats.num_old_votes_received, 1);
@@ -1423,11 +1582,9 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert1 = builder1.build().expect("Failed to build certificate");
         let consensus_message1 = ConsensusMessage::Certificate(cert1);
-        let packet_batches1 = messages_to_batches(&[consensus_message1]);
+        let items1 = messages_to_items(&[consensus_message1]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches1)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items1).unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received, 0);
@@ -1440,12 +1597,10 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert2 = builder2.build().expect("Failed to build certificate");
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
-        let packet_batches2 = messages_to_batches(&[consensus_message2]);
+        let items2 = messages_to_items(&[consensus_message2]);
 
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
-        ctx.verifier
-            .verify_and_send_batches(packet_batches2)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items2).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 0);
@@ -1470,14 +1625,12 @@ mod tests {
         ));
         let vote_sender = Pubkey::new_unique();
         let cert_sender = Pubkey::new_unique();
-        let packet_batches = messages_to_batches_with_remote_pubkeys(&[
+        let items = messages_to_items_with_remote_pubkeys(&[
             (vote_message, vote_sender),
             (cert_message, cert_sender),
         ]);
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
         assert!(!ctx.banlist.is_banned(&vote_sender));
         assert!(!ctx.banlist.is_banned(&cert_sender));
@@ -1512,7 +1665,7 @@ mod tests {
             .collect();
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
+            .verify_and_send_batches(messages_to_items_with_remote_pubkeys(&messages))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
 
@@ -1556,7 +1709,7 @@ mod tests {
             .collect();
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
+            .verify_and_send_batches(messages_to_items_with_remote_pubkeys(&messages))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
 
@@ -1587,10 +1740,8 @@ mod tests {
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items = messages_to_items(&[consensus_message]);
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(ctx.verifier.stats.num_generated_certs_received, 1);
     }
 
@@ -1610,30 +1761,51 @@ mod tests {
             Vote::new_skip_vote(slot),
             0,
         ));
-        let packet_batches = messages_to_batches(&[cert, vote]);
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let items = messages_to_items(&[cert, vote]);
+        ctx.verifier.verify_and_send_batches(items).unwrap();
         assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future, 1);
         assert_eq!(ctx.verifier.stats.vote_stats.too_far_in_future, 1);
     }
 
-    fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {
+    fn messages_to_items(messages: &[ConsensusMessage]) -> Vec<IngressMessage> {
         let messages_with_remote_pubkeys: Vec<_> = messages
             .iter()
             .cloned()
             .map(|message| (message, Pubkey::new_unique()))
             .collect();
-        messages_to_batches_with_remote_pubkeys(&messages_with_remote_pubkeys)
+        messages_to_items_with_remote_pubkeys(&messages_with_remote_pubkeys)
     }
 
-    fn messages_to_batches_with_remote_pubkeys(
+    fn messages_to_items_with_remote_pubkeys(
         messages: &[(ConsensusMessage, Pubkey)],
-    ) -> Vec<PacketBatch> {
-        let packets: Vec<_> = messages
+    ) -> Vec<IngressMessage> {
+        messages
             .iter()
-            .map(|(message, remote_pubkey)| message_to_packet(message, *remote_pubkey))
-            .collect();
-        vec![RecycledPacketBatch::new(packets).into()]
+            .map(|(message, remote_pubkey)| message_to_item(message, *remote_pubkey))
+            .collect()
+    }
+
+    /// Defaults to the datagram transport; tests that exercise the
+    /// per-transport metrics use [`message_to_item_with_transport`].
+    fn message_to_item(message: &ConsensusMessage, remote_pubkey: Pubkey) -> IngressMessage {
+        message_to_item_with_transport(message, remote_pubkey, VotorTransport::Datagram)
+    }
+
+    fn message_to_item_with_transport(
+        message: &ConsensusMessage,
+        remote_pubkey: Pubkey,
+        transport: VotorTransport,
+    ) -> IngressMessage {
+        let bytes =
+            bytes::Bytes::from(wincode::serialize(message).expect("serialize ConsensusMessage"));
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+        IngressMessage {
+            transport,
+            batch: datagram_to_batch(Datagram {
+                peer_pubkey: remote_pubkey,
+                peer_address: addr,
+                message: bytes,
+            }),
+        }
     }
 }

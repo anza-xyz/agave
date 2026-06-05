@@ -300,6 +300,10 @@ impl Node {
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("Alpenglow port bind should succeed");
 
+        let (alpenglow_datagram_port, alpenglow_datagram) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
+                .expect("Alpenglow datagram port bind should succeed");
+
         let (_, block_id_repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("Block ID repair port bind should succeed");
@@ -398,10 +402,13 @@ impl Node {
         // cleanup timing.
         info.set_serve_repair(QUIC, (advertised_ip, 1)).unwrap();
         info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
+        info.set_alpenglow_datagram((advertised_ip, alpenglow_datagram_port))
+            .unwrap();
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             alpenglow: Some(alpenglow),
+            alpenglow_datagram: Some(alpenglow_datagram),
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tpu_vote: tpu_vote_sockets,

@@ -1187,6 +1187,12 @@ impl Validator {
             ))
         };
 
+        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
+
+        // Legacy QUIC-stream transport client for votor consensus messages.
+        // During the dual-stack migration every vote/cert is also sent over
+        // this ConnectionCache (keyed by peers' SOCKET_TAG_ALPENGLOW address)
+        // alongside the new QUIC-datagram egress.
         let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
             "connection_cache_bls_quic",
             // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
@@ -1206,7 +1212,6 @@ impl Validator {
             )),
             Some((&staked_nodes, &identity_keypair.pubkey())),
         ));
-        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
         key_notifiers.write().unwrap().add(
             KeyUpdaterType::BlsConnectionCache,
             bls_connection_cache.clone(),
@@ -1226,6 +1231,56 @@ impl Validator {
                 .build()
                 .unwrap()
         });
+
+        // Votor QUIC datagram endpoint (new transport). Binds the
+        // SOCKET_TAG_ALPENGLOW_DATAGRAM socket;
+        let alpenglow_datagram_socket = if matches!(
+            genesis_config.cluster_type,
+            ClusterType::Testnet | ClusterType::Development,
+        ) {
+            node.sockets.alpenglow_datagram.take()
+        } else {
+            None
+        };
+        // Shared votor banlist primitive.
+        let votor_banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
+        let (votor_egress, votor_datagram_ingress, votor_allowlist, _alpenglow_endpoint_task) =
+            if let Some(socket) = alpenglow_datagram_socket {
+                let votor_rt_handle = tpu_client_next_runtime
+                    .as_ref()
+                    .map(TokioRuntime::handle)
+                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                let (ingress_sender, ingress_receiver) =
+                    crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
+                // Seed allowlist synchronously with the current epoch's
+                // staked-set so the endpoint never accepts handshakes
+                // against an empty allow-list. The StakedValidatorsCache
+                // owned by the voting service re-publishes on every epoch
+                // boundary going forward.
+                let allowlist = agave_votor::datagram_endpoint::build_allowlist(&bank_forks);
+                let solana_quic_datagram::QuicDatagramEndpoint {
+                    endpoint: _quic_endpoint,
+                    egress,
+                    key_updater,
+                    task,
+                } = agave_votor::datagram_endpoint::spawn(
+                    votor_rt_handle,
+                    &identity_keypair,
+                    socket,
+                    ingress_sender,
+                    allowlist.clone(),
+                    votor_banlist.clone(),
+                )
+                .map_err(|e| ValidatorError::Other(format!("alpenglow endpoint: {e:?}")))?;
+                key_notifiers
+                    .write()
+                    .unwrap()
+                    .add(KeyUpdaterType::VotorDatagram, key_updater);
+                (egress, Some(ingress_receiver), Some(allowlist), Some(task))
+            } else {
+                let (egress, _) = tokio::sync::mpsc::channel(1);
+                (egress, None, None, None)
+            };
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1651,6 +1706,10 @@ impl Validator {
                 staked_nodes: staked_nodes.clone(),
                 key_notifiers: key_notifiers.clone(),
                 bls_connection_cache,
+                votor_egress,
+                votor_datagram_ingress,
+                votor_banlist,
+                votor_allowlist,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },

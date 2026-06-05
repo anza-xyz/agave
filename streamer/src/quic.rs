@@ -675,7 +675,13 @@ pub fn spawn_stake_weighted_qos_server(
 
 /// Spawns a tokio runtime and a streamer instance inside it.
 ///
-/// Additionally returns a banlist for control over connection admission
+/// The QoS layer bans on the supplied externally-owned
+/// [`Banlist`](solana_net_utils::banlist::Banlist); the votor dual-stack
+/// migration shares one banlist between the legacy QUIC-stream server and the
+/// new QUIC-datagram endpoint. Pass `Arc::default()` for a private banlist.
+///
+/// Additionally returns a banlist handle for control over connection admission.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_simple_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -686,6 +692,7 @@ pub fn spawn_simple_qos_server(
     quic_server_params: QuicStreamerConfig,
     qos_config: SimpleQosConfig,
     cancel: CancellationToken,
+    banlist: Arc<solana_net_utils::banlist::Banlist<solana_pubkey::Pubkey>>,
 ) -> Result<(SpawnServerResult, Arc<SimpleQosBanlist>), QuicServerError> {
     let server_params = SimpleQosQuicStreamerConfig {
         quic_streamer_config: quic_server_params,
@@ -697,6 +704,7 @@ pub fn spawn_simple_qos_server(
         stats.clone(),
         staked_nodes,
         cancel.clone(),
+        banlist,
     );
     let banlist = simple_qos.banlist.clone();
 
@@ -776,6 +784,7 @@ mod test {
             server_params.quic_streamer_config,
             server_params.qos_config,
             cancel.clone(),
+            Arc::default(),
         )
         .unwrap();
         (t, receiver, server_address, cancel, banlist)

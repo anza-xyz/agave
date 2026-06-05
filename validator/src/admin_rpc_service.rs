@@ -1374,6 +1374,7 @@ mod tests {
                     KeyUpdaterType::RpcService,
                     KeyUpdaterType::Bls,
                     KeyUpdaterType::BlsConnectionCache,
+                    KeyUpdaterType::VotorDatagram,
                 ])
             );
             let mut io = MetaIoHandler::default();

@@ -28,13 +28,13 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
+    solana_quic_datagram::{
+        Banlist,
+        allowlist::AllowAll,
+        endpoint::{Datagram, QuicDatagramEndpoint},
+    },
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::{
-        nonblocking::simple_qos::SimpleQosConfig,
-        quic::{QuicStreamerConfig, spawn_simple_qos_server},
-        streamer::StakedNodes,
-    },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
@@ -54,7 +54,6 @@ use {
         thread::{JoinHandle, sleep},
         time::{Duration, Instant},
     },
-    tokio_util::sync::CancellationToken,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -434,41 +433,43 @@ pub fn check_for_new_processed(
     );
 }
 
-/// Start a QUIC streamer to listen for votes and certificates.
-/// Returns a cancellation token, the server thread handle, and a receiver for packet batches.
-pub fn start_quic_streamer_to_listen_for_votes_and_certs(
+/// Spawn a votor-flavored quic-datagram endpoint to sniff vote / cert
+/// traffic for a local-cluster test. Validators in the cluster dial this
+/// listener as an `AdditionalListener` (the voting service sends to
+/// additional listeners over the datagram transport); the lex-pubkey rule
+/// requires `listener_keypair.pubkey() > max(validator_pubkeys)` and the
+/// validators' admission must include `listener_keypair.pubkey()` — both
+/// ensured by the caller (the test).
+///
+/// Returns the endpoint (kept alive by the caller so its task is not
+/// dropped), the ingress receiver (one item per received datagram), and a
+/// tokio runtime whose lifetime must outlive the endpoint.
+pub fn start_datagram_listener_for_votes_and_certs(
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
-    node_stakes: &[u64],
+    listener_keypair: Keypair,
 ) -> (
-    CancellationToken,
-    JoinHandle<()>,
-    crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
+    QuicDatagramEndpoint,
+    crossbeam_channel::Receiver<Datagram>,
+    tokio::runtime::Runtime,
 ) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .thread_name("solAlpenglowListen")
+        .build()
+        .expect("tokio runtime");
     let (sender, receiver) = crossbeam_channel::unbounded();
-    let cancel = CancellationToken::new();
-    let stakes = validator_keys
-        .iter()
-        .zip(node_stakes)
-        .map(|(keypair, stake)| (keypair.pubkey(), *stake))
-        .collect();
-    let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
-        Arc::new(stakes),
-        HashMap::<Pubkey, u64>::default(), // overrides
-    )));
-    let (result, _banlist) = spawn_simple_qos_server(
-        "solAlpenglowTest",
-        "alpenglow_local_cluster_test",
-        [vote_listener_socket.into()],
-        &Keypair::new(),
+    let banlist = Arc::new(Banlist::<Pubkey>::default());
+    let endpoint = agave_votor::datagram_endpoint::spawn(
+        rt.handle(),
+        &listener_keypair,
+        vote_listener_socket,
         sender,
-        staked_nodes,
-        QuicStreamerConfig::default(),
-        SimpleQosConfig::default(),
-        cancel.clone(),
+        Arc::new(AllowAll),
+        banlist,
     )
-    .unwrap();
-    (cancel, result.thread, receiver)
+    .expect("alpenglow datagram listener");
+    (endpoint, receiver, rt)
 }
 
 /// Check that all nodes in the cluster are producing notarized votes.
@@ -477,8 +478,7 @@ pub fn check_for_new_notarized_votes(
     contact_infos: &[ContactInfo],
     test_name: &str,
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
-    node_stakes: &[u64],
+    listener_keypair: Keypair,
 ) {
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
@@ -499,11 +499,9 @@ pub fn check_for_new_notarized_votes(
     let contact_infos_owned: Vec<ContactInfo> = contact_infos.to_vec();
     let test_name_owned = test_name.to_string();
 
-    let (cancel, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
-        vote_listener_socket,
-        validator_keys,
-        node_stakes,
-    );
+    // Keep `_endpoint` and `_rt` alive for the duration of the listener loop.
+    let (_endpoint, receiver, _rt) =
+        start_datagram_listener_for_votes_and_certs(vote_listener_socket, listener_keypair);
 
     // Now start vote listener and wait for new notarized votes.
     let vote_listener = std::thread::spawn({
@@ -518,52 +516,45 @@ pub fn check_for_new_notarized_votes(
         move || {
             while !done {
                 assert!(loop_start.elapsed() < loop_timeout);
-                let Ok(packet_batch) = receiver.recv_timeout(Duration::from_millis(100)) else {
+                let Ok(dg) = receiver.recv_timeout(Duration::from_millis(100)) else {
                     continue;
                 };
-                for packet in packet_batch.iter() {
-                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
-                    else {
-                        continue;
-                    };
-                    let vote = vote_message.vote;
-                    if !vote.is_notarization() {
-                        continue;
-                    }
-                    let rank = vote_message.rank;
-                    if rank >= contact_infos_owned.len() as u16 {
-                        warn!(
-                            "Received vote with rank {} which is greater than number of nodes {}",
-                            rank,
-                            contact_infos_owned.len()
-                        );
-                        continue;
-                    }
-                    let slot = vote.slot();
-                    if slot <= last_notarized[rank as usize] {
-                        continue;
-                    }
-                    last_notarized[rank as usize] = slot;
-                    num_new_notarized_votes[rank as usize] += 1;
-                    done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
-                    if done || last_print.elapsed().as_secs() > 3 {
-                        info!(
-                            "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
-                             observed: {num_new_notarized_votes:?}"
-                        );
-                        last_print = Instant::now();
-                    }
+                let Ok(ConsensusMessage::Vote(vote_message)) =
+                    wincode::deserialize::<ConsensusMessage>(&dg.message)
+                else {
+                    continue;
+                };
+                let vote = vote_message.vote;
+                if !vote.is_notarization() {
+                    continue;
                 }
-                if done {
-                    cancel.cancel();
+                let rank = vote_message.rank;
+                if rank >= contact_infos_owned.len() as u16 {
+                    warn!(
+                        "Received vote with rank {} which is greater than number of nodes {}",
+                        rank,
+                        contact_infos_owned.len()
+                    );
+                    continue;
+                }
+                let slot = vote.slot();
+                if slot <= last_notarized[rank as usize] {
+                    continue;
+                }
+                last_notarized[rank as usize] = slot;
+                num_new_notarized_votes[rank as usize] += 1;
+                done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
+                if done || last_print.elapsed().as_secs() > 3 {
+                    info!(
+                        "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
+                         observed: {num_new_notarized_votes:?}"
+                    );
+                    last_print = Instant::now();
                 }
             }
         }
     });
     vote_listener.join().expect("Vote listener thread panicked");
-    quic_server_thread
-        .join()
-        .expect("QUIC server thread panicked");
 }
 
 pub fn check_no_new_roots(

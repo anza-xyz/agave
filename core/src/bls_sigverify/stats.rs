@@ -7,9 +7,11 @@ use {
 };
 
 /// Max number of root slots to wait before triggering reporting of stats.
-const SLOTS_INTERVAL: Slot = 10;
-/// Max amount of seconds to wait before triggering reporting of stats.
-const DURATION_INTERVAL: Duration = Duration::from_secs(5);
+/// One slot → report once per slot.
+const SLOTS_INTERVAL: Slot = 1;
+/// Max amount of time to wait before triggering reporting of stats. One slot
+/// is ~400ms; this is the idle-path fallback when the root isn't advancing.
+const DURATION_INTERVAL: Duration = Duration::from_millis(400);
 
 /// A struct to control when stats should be reported depending on how many slots or time has passed.
 #[derive(Debug)]
@@ -51,6 +53,23 @@ pub(super) struct SigVerifierStats {
     pub(super) num_discarded_pkts: u64,
     /// Number of times we failed to deserialize a packet.
     pub(super) num_malformed_pkts: u64,
+    /// Number of duplicate messages dropped before sigverify. During the
+    /// dual-stack migration the same consensus message arrives over both the
+    /// legacy QUIC-stream and the new QUIC-datagram transport; the dedup cache
+    /// drops the second copy so it is only verified once.
+    pub(super) num_dedup_dropped: u64,
+    /// Total messages received over the QUIC-datagram transport (includes
+    /// copies later dropped as duplicates).
+    pub(super) num_recv_datagram: u64,
+    /// Total messages received over the legacy QUIC-stream transport (includes
+    /// copies later dropped as duplicates).
+    pub(super) num_recv_stream: u64,
+    /// Number of unique messages whose first-arriving copy came over the
+    /// QUIC-datagram transport (datagram "won" the race).
+    pub(super) num_first_datagram: u64,
+    /// Number of unique messages whose first-arriving copy came over the
+    /// legacy QUIC-stream transport (stream "won" the race).
+    pub(super) num_first_stream: u64,
     /// Number of votes discarded due to an invalid rank.
     pub(super) discard_vote_invalid_rank: u64,
     /// Number of votes discarded due to no epoch stakes.
@@ -77,6 +96,11 @@ impl SigVerifierStats {
             discard_vote_invalid_rank: 0,
             num_discarded_pkts: 0,
             num_malformed_pkts: 0,
+            num_dedup_dropped: 0,
+            num_recv_datagram: 0,
+            num_recv_stream: 0,
+            num_first_datagram: 0,
+            num_first_stream: 0,
             discard_vote_no_epoch_stakes: 0,
             num_old_votes_received: 0,
             num_old_certs_received: 0,
@@ -106,6 +130,11 @@ impl SigVerifierStats {
             num_pkts,
             num_discarded_pkts,
             num_malformed_pkts,
+            num_dedup_dropped,
+            num_recv_datagram,
+            num_recv_stream,
+            num_first_datagram,
+            num_first_stream,
             num_old_votes_received,
             num_old_certs_received,
             num_verified_certs_received,
@@ -150,6 +179,11 @@ impl SigVerifierStats {
                 i64
             ),
             ("num_malformed_pkts", *num_malformed_pkts, i64),
+            ("num_dedup_dropped", *num_dedup_dropped, i64),
+            ("num_recv_datagram", *num_recv_datagram, i64),
+            ("num_recv_stream", *num_recv_stream, i64),
+            ("num_first_datagram", *num_first_datagram, i64),
+            ("num_first_stream", *num_first_stream, i64),
             ("num_old_certs_received", *num_old_certs_received, i64),
             (
                 "verify_and_send_batch_us_max",
