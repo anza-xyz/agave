@@ -6616,6 +6616,7 @@ dependencies = [
 name = "solana-clap-utils"
 version = "4.1.0-beta.2"
 dependencies = [
+ "bs58",
  "chrono",
  "clap 2.34.0",
  "rpassword",
