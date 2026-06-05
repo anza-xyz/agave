@@ -12,7 +12,8 @@ use {
         sockets::{
             SocketConfiguration as SocketConfig, bind_gossip_port_in_range,
             bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            get_max_recv_buffer_size, get_max_send_buffer_size, localhost_port_range_for_tests,
+            multi_bind_in_range_with_config,
         },
     },
     solana_pubkey::Pubkey,
@@ -76,14 +77,51 @@ impl Node {
             target_os = "macos"
         )) {
             const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+            let recv_buffer_size = get_max_recv_buffer_size()
+                .map_err(|err| {
+                    error!(
+                        "Maximum socket receive buffer size could not be determined: {}",
+                        err
+                    )
+                })
+                .ok();
+            let send_buffer_size = get_max_send_buffer_size()
+                .map_err(|err| {
+                    error!(
+                        "Maximum socket send buffer size could not be determined: {}",
+                        err
+                    )
+                })
+                .ok();
+            if let Some(sz) = recv_buffer_size {
+                info!("Maximum socket receive buffer size is {}", sz)
+            }
+            if let Some(sz) = send_buffer_size {
+                info!("Maximum socket send buffer size is {}", sz)
+            }
+            let maybe_set_recv_buffer_size = move |c: SocketConfig| {
+                let Some(sz) = recv_buffer_size else { return c };
+                c.recv_buffer_size(sz)
+            };
+            let maybe_set_send_buffer_size = move |c: SocketConfig| {
+                let Some(sz) = send_buffer_size else { return c };
+                c.send_buffer_size(sz)
+            };
+            let maybe_set_recv_and_send_buffer_sizes = move |c| {
+                let c = maybe_set_recv_buffer_size(c);
+                let c = maybe_set_send_buffer_size(c);
+                c
+            };
             SocketConfigs {
-                read_write: SocketConfig::default(),
-                primarily_read_quic: SocketConfig::default()
+                read_write: maybe_set_recv_and_send_buffer_sizes(SocketConfig::default()),
+                primarily_read_quic: maybe_set_recv_buffer_size(SocketConfig::default())
                     .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_write_quic: SocketConfig::default()
+                primarily_write_quic: maybe_set_send_buffer_size(SocketConfig::default())
                     .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_read_udp: SocketConfig::default().send_buffer_size(1),
-                primarily_write_udp: SocketConfig::default().recv_buffer_size(1),
+                primarily_read_udp: maybe_set_recv_buffer_size(SocketConfig::default())
+                    .send_buffer_size(1),
+                primarily_write_udp: maybe_set_send_buffer_size(SocketConfig::default())
+                    .recv_buffer_size(1),
             }
         } else {
             SocketConfigs::default()
