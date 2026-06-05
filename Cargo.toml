@@ -74,6 +74,7 @@ members = [
     "programs/zk-token-proof",
     "pubsub-client",
     "quic-client",
+    "quic-datagram",
     "random",
     "rayon-threadlimit",
     "rbpf-cli",
@@ -456,6 +457,7 @@ solana-program-test = { path = "program-test", version = "=4.3.0-alpha.0", featu
 solana-pubkey = { version = "4.2.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=4.3.0-alpha.0" }
 solana-quic-client = { path = "quic-client", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
+solana-quic-datagram = { path = "quic-datagram", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-remote-wallet = { path = "remote-wallet", version = "=4.3.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-rent = "4.2.1"

@@ -19,9 +19,9 @@ use {
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
+    solana_net_utils::banlist::Banlist,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::collections::HashSet,
     thiserror::Error,
 };
@@ -51,7 +51,7 @@ pub(super) fn verify_and_send_certificates(
     certs: Vec<CertPayload>,
     root_bank: &Bank,
     channel_to_pool: &Sender<SigVerifiedBatch>,
-    banlist: &SimpleQosBanlist,
+    banlist: &Banlist<Pubkey>,
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
     for cert in certs.iter().map(|cert_payload| &cert_payload.cert) {
@@ -93,7 +93,7 @@ fn verify_certs(
     root_bank: &Bank,
     verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
-    banlist: &SimpleQosBanlist,
+    banlist: &Banlist<Pubkey>,
     thread_pool: &ThreadPool,
 ) -> SigVerifiedBatch {
     let verified = thread_pool.install(|| {

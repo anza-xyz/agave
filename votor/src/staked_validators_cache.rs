@@ -1,21 +1,28 @@
+#[cfg(feature = "dev-context-only-utils")]
+use arc_swap::ArcSwap;
 use {
-    crate::voting_service::AlpenglowPortOverride,
     lazy_lru::LruCache,
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
+    solana_quic_datagram::allowlist::StakedNodesAllowlist,
+    solana_runtime::bank_forks::SharableBanks,
     std::{
         collections::HashMap,
         net::SocketAddr,
-        sync::{Arc, RwLock},
+        sync::Arc,
         time::{Duration, Instant},
     },
 };
 
+/// Slots on either side of an epoch boundary during which the adjacent epoch's
+/// staked set is merged into the inbound allowlist, so peers transitioning
+/// across the boundary are not transiently rejected.
+const EPOCH_BOUNDARY_SLOTS: u64 = 100;
+
 struct StakedValidatorsCacheEntry {
-    /// Alpenglow Sockets associated with the staked validators
-    alpenglow_sockets: Vec<SocketAddr>,
+    /// Identities and Votor endpoint addresses for all staked validators.
+    peers: Vec<(Pubkey, SocketAddr)>,
 
     /// The time at which this entry was created
     creation_time: Instant,
@@ -35,43 +42,119 @@ pub struct StakedValidatorsCache {
     /// Time to live for cache entries
     ttl: Duration,
 
-    /// Bank forks
-    bank_forks: Arc<RwLock<BankForks>>,
+    /// Lock-free handle to the root/working banks.
+    sharable_banks: SharableBanks,
 
     /// Whether to include the running validator's socket address in cache entries
     include_self: bool,
 
-    /// Optional override for Alpenglow port, used for testing purposes
-    alpenglow_port_override: Option<AlpenglowPortOverride>,
+    /// Allowlist for the votor datagram endpoint.
+    allowlist: Option<Arc<StakedNodesAllowlist>>,
 
-    /// timestamp of the last alpenglow port override we read
-    alpenglow_port_override_last_modified: Instant,
+    /// Live, shared override of the (pubkey -> socket) set
+    #[cfg(feature = "dev-context-only-utils")]
+    test_overrides: Arc<ArcSwap<HashMap<Pubkey, SocketAddr>>>,
 }
 
 impl StakedValidatorsCache {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        bank_forks: Arc<RwLock<BankForks>>,
+        sharable_banks: SharableBanks,
         ttl: Duration,
         target_cache_size: usize,
         include_self: bool,
-        alpenglow_port_override: Option<AlpenglowPortOverride>,
+        allowlist: Option<Arc<StakedNodesAllowlist>>,
+        #[cfg(feature = "dev-context-only-utils")] test_overrides: Arc<
+            ArcSwap<HashMap<Pubkey, SocketAddr>>,
+        >,
     ) -> Self {
         Self {
             cache: LruCache::new(target_cache_size),
             ttl,
-            bank_forks,
+            sharable_banks,
             include_self,
-            alpenglow_port_override,
-            alpenglow_port_override_last_modified: Instant::now(),
+            allowlist,
+            #[cfg(feature = "dev-context-only-utils")]
+            test_overrides,
         }
+    }
+
+    /// Lookup an epoch's staked node set. `None` if neither the root
+    /// nor working bank knows this epoch.
+    fn epoch_staked_nodes_raw(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
+        let banks = [self.sharable_banks.root(), self.sharable_banks.working()];
+        banks.iter().find_map(|bank| bank.epoch_staked_nodes(epoch))
+    }
+
+    /// Clone an epoch's staked node set, falling back to an empty set
+    /// if the epoch is unknown.
+    fn epoch_staked_nodes_cloned(&self, epoch: Epoch) -> HashMap<Pubkey, u64> {
+        self.epoch_staked_nodes_raw(epoch)
+            .map(|nodes| (*nodes).clone())
+            .unwrap_or_else(|| {
+                error!(
+                    "StakedValidatorsCache: unknown Bank::epoch_staked_nodes for epoch: {epoch}"
+                );
+                HashMap::default()
+            })
+    }
+
+    /// Inject the test-only override pubkeys into `map` (dev builds only).
+    /// Overrides are not epoch-specific, so this applies uniformly
+    /// to whatever staked set was assembled. Entries carry a stake of 1,
+    /// they exist only to exercise the network stack in tests.
+    #[cfg_attr(
+        not(feature = "dev-context-only-utils"),
+        allow(unused_variables, clippy::unused_self)
+    )]
+    fn inject_overrides(&self, map: &mut HashMap<Pubkey, u64>) {
+        #[cfg(feature = "dev-context-only-utils")]
+        for (pk, _) in self.test_overrides.load().iter() {
+            map.entry(*pk).or_insert(1);
+        }
+    }
+
+    /// Publish the inbound admission allowlist for QUIC endpoint.
+    /// This is driven on the voting-service heartbeat so it stays fresh.
+    ///
+    /// Near an epoch boundary (within [`EPOCH_BOUNDARY_SLOTS`] on either side)
+    /// the adjacent epoch's staked set is merged in so peers transitioning
+    /// across the boundary are not transiently rejected.
+    pub fn refresh_allowlist(&self) {
+        let Some(allowlist) = self.allowlist.as_ref() else {
+            return;
+        };
+        let working = self.sharable_banks.working();
+        let epoch_schedule = working.epoch_schedule();
+        let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(working.slot());
+        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+
+        let near_start = slot_index < EPOCH_BOUNDARY_SLOTS;
+        let near_end = slot_index >= slots_in_epoch.saturating_sub(EPOCH_BOUNDARY_SLOTS);
+
+        let mut staked = self.epoch_staked_nodes_cloned(epoch);
+        if near_start && epoch > 0 {
+            if let Some(prev) = self.epoch_staked_nodes_raw(epoch.saturating_sub(1)) {
+                for (pubkey, stake) in prev.iter() {
+                    staked.entry(*pubkey).or_insert(*stake);
+                }
+            }
+        }
+        if near_end {
+            if let Some(next) = self.epoch_staked_nodes_raw(epoch.saturating_add(1)) {
+                for (pubkey, stake) in next.iter() {
+                    staked.entry(*pubkey).or_insert(*stake);
+                }
+            }
+        }
+        self.inject_overrides(&mut staked);
+        allowlist.swap(Arc::new(staked));
     }
 
     #[inline]
     fn cur_epoch(&self, slot: Slot) -> Epoch {
-        self.bank_forks
-            .read()
-            .unwrap()
-            .working_bank()
+        self.sharable_banks
+            .working()
             .epoch_schedule()
             .get_epoch(slot)
     }
@@ -82,67 +165,48 @@ impl StakedValidatorsCache {
         cluster_info: &ClusterInfo,
         update_time: Instant,
     ) {
-        let banks = {
-            let bank_forks = self.bank_forks.read().unwrap();
-            [bank_forks.root_bank(), bank_forks.working_bank()]
-        };
-
-        let epoch_staked_nodes = banks
-            .iter()
-            .find_map(|bank| bank.epoch_staked_nodes(epoch))
-            .unwrap_or_else(|| {
-                error!(
-                    "StakedValidatorsCache::get: unknown Bank::epoch_staked_nodes for epoch: \
-                     {epoch}"
-                );
-                Arc::<HashMap<Pubkey, u64>>::default()
-            });
+        let mut epoch_staked_nodes = self.epoch_staked_nodes_cloned(epoch);
+        self.inject_overrides(&mut epoch_staked_nodes);
 
         struct Node {
             pubkey: Pubkey,
-            stake: u64,
             alpenglow_socket: SocketAddr,
         }
 
         let mut nodes: Vec<_> = epoch_staked_nodes
             .iter()
             .filter(|(pubkey, _stake)| self.include_self || pubkey != &&cluster_info.id())
-            .filter_map(|(pubkey, stake)| {
+            .filter_map(|(pubkey, _stake)| {
+                // override sockets
+                #[cfg(feature = "dev-context-only-utils")]
+                {
+                    if let Some(socket) = self.test_overrides.load().get(pubkey) {
+                        return Some(Node {
+                            pubkey: *pubkey,
+                            alpenglow_socket: *socket,
+                        });
+                    }
+                }
                 cluster_info.lookup_contact_info(pubkey, |node| {
                     node.alpenglow().map(|alpenglow_socket| Node {
                         pubkey: *pubkey,
-                        stake: *stake,
                         alpenglow_socket,
                     })
                 })?
             })
             .collect();
 
+        nodes.sort_unstable_by_key(|node| node.alpenglow_socket);
         nodes.dedup_by_key(|node| node.alpenglow_socket);
-        nodes.sort_unstable_by_key(|a| a.stake);
 
-        let mut alpenglow_sockets = Vec::with_capacity(nodes.len());
-        let override_map = self
-            .alpenglow_port_override
-            .as_ref()
-            .map(|x| x.get_override_map());
+        let mut peers = Vec::with_capacity(nodes.len());
         for node in nodes {
-            let alpenglow_socket = node.alpenglow_socket;
-            let socket = if let Some(override_map) = &override_map {
-                // If we have an override, use it.
-                override_map
-                    .get(&node.pubkey)
-                    .cloned()
-                    .unwrap_or(alpenglow_socket)
-            } else {
-                alpenglow_socket
-            };
-            alpenglow_sockets.push(socket);
+            peers.push((node.pubkey, node.alpenglow_socket));
         }
         self.cache.put(
             epoch,
             StakedValidatorsCacheEntry {
-                alpenglow_sockets,
+                peers,
                 creation_time: update_time,
             },
         );
@@ -153,30 +217,8 @@ impl StakedValidatorsCache {
         slot: Slot,
         cluster_info: &ClusterInfo,
         access_time: Instant,
-    ) -> (&[SocketAddr], bool) {
-        // Check if self.alpenglow_port_override has a different last_modified.
-        // Immediately refresh the cache if it does.
-        if let Some(alpenglow_port_override) = &self.alpenglow_port_override
-            && alpenglow_port_override.has_new_override(self.alpenglow_port_override_last_modified)
-        {
-            self.alpenglow_port_override_last_modified = alpenglow_port_override.last_modified();
-            trace!(
-                "refreshing cache entry for epoch {} due to alpenglow port override last_modified \
-                 change",
-                self.cur_epoch(slot)
-            );
-            self.refresh_cache_entry(self.cur_epoch(slot), cluster_info, access_time);
-        }
-
-        self.get_staked_validators_by_epoch(self.cur_epoch(slot), cluster_info, access_time)
-    }
-
-    fn get_staked_validators_by_epoch(
-        &mut self,
-        epoch: Epoch,
-        cluster_info: &ClusterInfo,
-        access_time: Instant,
-    ) -> (&[SocketAddr], bool) {
+    ) -> (&[(Pubkey, SocketAddr)], bool) {
+        let epoch = self.cur_epoch(slot);
         // For a given epoch, if we either:
         //
         // (1) have a cache entry that has expired
@@ -196,10 +238,7 @@ impl StakedValidatorsCache {
         (
             // Unwrapping is fine here, since update_cache guarantees that we push a cache entry to
             // self.cache[epoch].
-            self.cache
-                .get(&epoch)
-                .map(|v| &*v.alpenglow_sockets)
-                .unwrap(),
+            self.cache.get(&epoch).map(|v| &*v.peers).unwrap(),
             refresh_cache,
         )
     }
@@ -219,7 +258,7 @@ impl StakedValidatorsCache {
 mod tests {
     use {
         super::StakedValidatorsCache,
-        crate::voting_service::AlpenglowPortOverride,
+        arc_swap::ArcSwap,
         rand::Rng,
         solana_gossip::{
             cluster_info::ClusterInfo, contact_info::ContactInfo, crds::GossipRoute,
@@ -239,7 +278,7 @@ mod tests {
         solana_time_utils::timestamp,
         std::{
             collections::HashMap,
-            net::{Ipv4Addr, SocketAddr},
+            net::Ipv4Addr,
             sync::{Arc, RwLock},
             time::{Duration, Instant},
         },
@@ -363,7 +402,14 @@ mod tests {
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
         // Create our staked validators cache
-        let mut svc = StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            Duration::from_secs(5),
+            5,
+            true,
+            None,
+            Arc::new(ArcSwap::default()),
+        );
 
         let now = Instant::now();
 
@@ -438,7 +484,14 @@ mod tests {
         let (bank_forks, cluster_info, _) = create_bank_forks_and_cluster_info(50, 7, base_slot);
 
         // Create our staked validators cache
-        let mut svc = StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            Duration::from_secs(5),
+            5,
+            true,
+            None,
+            Arc::new(ArcSwap::default()),
+        );
 
         assert_eq!(0, svc.len());
         assert!(svc.is_empty());
@@ -510,7 +563,14 @@ mod tests {
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
         // Create our staked validators cache
-        let mut svc = StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            Duration::from_secs(5),
+            5,
+            true,
+            None,
+            Arc::new(ArcSwap::default()),
+        );
 
         let now = Instant::now();
 
@@ -539,61 +599,32 @@ mod tests {
             .unwrap();
 
         // Create our staked validators cache - set include_self to true
-        let mut svc =
-            StakedValidatorsCache::new(bank_forks.clone(), Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            Duration::from_secs(5),
+            5,
+            true,
+            None,
+            Arc::new(ArcSwap::default()),
+        );
 
-        let (sockets, _) =
-            svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
-        assert_eq!(sockets.len(), num_nodes);
-        assert!(sockets.contains(&my_socket_addr));
-
-        // Create our staked validators cache - set include_self to false
-        let mut svc =
-            StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, false, None);
-
-        let (sockets, _) =
-            svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
-        // We should have num_nodes - 1 sockets, since we exclude our own socket address.
-        assert_eq!(sockets.len(), num_nodes.checked_sub(1).unwrap());
-        assert!(!sockets.contains(&my_socket_addr));
-    }
-
-    #[test]
-    fn test_alpenglow_port_override() {
-        agave_logger::setup();
-        let (bank_forks, cluster_info, node_pubkeys) = create_bank_forks_and_cluster_info(3, 0, 1);
-        let pubkey_b = node_pubkeys[1];
-
-        let alpenglow_port_override = AlpenglowPortOverride::default();
-        let blackhole_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let (peers, _) = svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
+        assert_eq!(peers.len(), num_nodes);
+        assert!(peers.iter().any(|(_, s)| s == &my_socket_addr));
 
         // Create our staked validators cache - set include_self to false
         let mut svc = StakedValidatorsCache::new(
-            bank_forks,
+            bank_forks.read().unwrap().sharable_banks(),
             Duration::from_secs(5),
             5,
             false,
-            Some(alpenglow_port_override.clone()),
+            None,
+            Arc::new(ArcSwap::default()),
         );
-        // Nothing in the override, so we should get the original socket addresses.
-        let (sockets, _) = svc.get_staked_validators_by_slot(0, &cluster_info, Instant::now());
-        assert_eq!(sockets.len(), 2);
-        assert!(!sockets.contains(&blackhole_addr));
 
-        // Add an override for pubkey_B, and check that we get the overridden socket address.
-        alpenglow_port_override.update_override(HashMap::from([(pubkey_b, blackhole_addr)]));
-        let (sockets, _) = svc.get_staked_validators_by_slot(0, &cluster_info, Instant::now());
-        assert_eq!(sockets.len(), 2);
-        // Sort sockets to ensure the blackhole address is at index 0.
-        let mut sockets: Vec<_> = sockets.to_vec();
-        sockets.sort();
-        assert_eq!(sockets[0], blackhole_addr);
-        assert_ne!(sockets[1], blackhole_addr);
-
-        // Now clear the override, and check that we get the original socket addresses.
-        alpenglow_port_override.clear();
-        let (sockets, _) = svc.get_staked_validators_by_slot(0, &cluster_info, Instant::now());
-        assert_eq!(sockets.len(), 2);
-        assert!(!sockets.contains(&blackhole_addr));
+        let (peers, _) = svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
+        // We should have num_nodes - 1 sockets, since we exclude our own socket address.
+        assert_eq!(peers.len(), num_nodes.checked_sub(1).unwrap());
+        assert!(!peers.iter().any(|(_, s)| s == &my_socket_addr));
     }
 }

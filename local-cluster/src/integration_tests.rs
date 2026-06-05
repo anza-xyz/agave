@@ -17,7 +17,8 @@ use {
         validator_configs::*,
     },
     agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
-    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
+    agave_votor::voting_service::VotingServiceOverride,
+    arc_swap::ArcSwap,
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
@@ -479,11 +480,13 @@ pub fn run_cluster_partition<C>(
         .unwrap()
         .no_wait_for_vote_to_start_leader = true;
     let slots_per_epoch = 2048;
-    let alpenglow_port_override = AlpenglowPortOverride::default();
+    // Shared, live handle to the votor peer-socket override map. Starts empty; we
+    // populate it below to blackhole all peers (simulating a partition), then clear
+    // it to heal. Every validator's cache reads this same handle on each refresh.
+    let alpenglow_port_override = Arc::new(ArcSwap::from_pointee(HashMap::new()));
     for config in &mut validator_configs {
         config.voting_service_test_override = Some(VotingServiceOverride {
-            additional_listeners: vec![],
-            alpenglow_port_override: alpenglow_port_override.clone(),
+            override_listeners: alpenglow_port_override.clone(),
         });
     }
     let mut config = ClusterConfig {
@@ -555,14 +558,14 @@ pub fn run_cluster_partition<C>(
             .iter()
             .map(|node| (*node.pubkey(), blackhole_addr)),
     );
-    alpenglow_port_override.update_override(new_override);
+    alpenglow_port_override.store(Arc::new(new_override));
     sleep(partition_duration);
 
     on_before_partition_resolved(&mut cluster, &mut context);
     info!("PARTITION_TEST remove partition");
     turbine_mode.set(TurbineModeKind::Enabled);
     // Restore the alpenglow port override to the default, so that the nodes can communicate again.
-    alpenglow_port_override.clear();
+    alpenglow_port_override.store(Arc::new(HashMap::new()));
 
     // Give partitions time to propagate their blocks from during the partition
     // after the partition resolves

@@ -36,7 +36,7 @@ use {
         GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
     },
     solana_gossip::{
-        cluster_info::{ClusterInfo, NodeConfig},
+        cluster_info::{ClusterInfo, DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS, NodeConfig},
         contact_info::Protocol,
         node::Node,
     },
@@ -1116,6 +1116,7 @@ impl TestValidator {
                 num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
                 num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                     .expect("Number of QUIC endpoints can not be zero"),
+                num_alpenglow_quic_endpoints: DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS,
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);

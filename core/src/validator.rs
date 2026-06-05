@@ -123,7 +123,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+        bank::Bank,
         bank_forks::BankForks,
         bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
@@ -1196,32 +1196,7 @@ impl Validator {
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_max_connections(
-            "connection_cache_bls_quic",
-            // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
-            // we wouldn't expect more than a 100 PPS. 1 connection is enough.
-            1, /* connection_pool_size */
-            // Overprovision to account for epoch boundary validator set rotations
-            MAX_ALPENGLOW_VOTE_ACCOUNTS * 2, /* max_connections */
-            Some(node.sockets.quic_alpenglow_client),
-            Some((
-                &identity_keypair,
-                node.info
-                    .alpenglow()
-                    .ok_or_else(|| {
-                        ValidatorError::Other(String::from(
-                            "Invalid QUIC address for Alpenglow BLS",
-                        ))
-                    })?
-                    .ip(),
-            )),
-            Some((&staked_nodes, &identity_keypair.pubkey())),
-        ));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        key_notifiers.write().unwrap().add(
-            KeyUpdaterType::BlsConnectionCache,
-            bls_connection_cache.clone(),
-        );
 
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
@@ -1626,7 +1601,6 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
-                alpenglow: node.sockets.alpenglow,
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
@@ -1688,10 +1662,9 @@ impl Validator {
                 bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
-                cancel: cancel.clone(),
-                staked_nodes: staked_nodes.clone(),
                 key_notifiers: key_notifiers.clone(),
-                bls_connection_cache,
+                alpenglow_sockets: node.sockets.alpenglow,
+                #[cfg(feature = "dev-context-only-utils")]
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },
@@ -1926,7 +1899,7 @@ impl Validator {
         );
         info!(
             "local alpenglow address: {}",
-            node.sockets.alpenglow.local_addr().unwrap()
+            node.sockets.alpenglow[0].local_addr().unwrap()
         );
     }
 
