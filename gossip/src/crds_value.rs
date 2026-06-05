@@ -22,13 +22,25 @@ use {
 };
 
 /// CrdsValue that is replicated across the cluster
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "8xNLrmP9ntFynzXsxzf7LyeVve69aWzsmYA3ndrFHTCs",
+        abi_serializer = ["bincode", "wincode"],
+        // `hash` is recomputed from [signature, data] on deserialize, so it can't
+        // match an independently-sampled value; verify the wire round-trip only.
+        test_roundtrip = "wire_only",
+    )
+)]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub struct CrdsValue {
     signature: Signature,
     data: CrdsData,
     #[serde(skip_serializing)]
     #[wincode(skip)]
+    // Not on the wire (recomputed on deserialize); keep it out of the sample.
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Hash::default()"))]
     hash: Hash, // Sha256 hash of [signature, data].
 }
 

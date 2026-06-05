@@ -55,6 +55,17 @@ type GossipProtocolWincodeConfig =
     wincode::config::Configuration<true, GOSSIP_PROTOCOL_PREALLOC_LIMIT>;
 
 /// Gossip protocol messages base enum
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "8VFHarXNCkGKv89tUFR4uQVLcSum4km8yobxxq16LzmJ",
+        abi_serializer = ["bincode", "wincode"],
+        // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
+        // recomputed on deserialize), so verify the wire round-trip only.
+        test_roundtrip = "wire_only",
+    )
+)]
 #[derive(Serialize, Deserialize, Debug, SchemaRead, SchemaWrite)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
@@ -69,6 +80,14 @@ pub(crate) enum Protocol {
     // Update count_packets_received if new variants are added here.
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    frozen_abi(
+        abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
 pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
@@ -79,7 +98,15 @@ pub(crate) fn deserialize_protocol(input: &[u8]) -> wincode::ReadResult<Protocol
     )
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "GomZf5rFL743zPKH71UShh64JfNvrDBBEC2o2VehinsT",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, SchemaRead, SchemaWrite)]
 pub(crate) struct PruneData {
     /// Pubkey of the node that sent this prune data

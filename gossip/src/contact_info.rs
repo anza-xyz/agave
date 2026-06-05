@@ -79,6 +79,15 @@ pub enum Error {
     UnusedIpAddr(IpAddr),
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi),
+    frozen_abi(
+        abi_digest = "Baf4fGA1YWMEjJTc96iNT4JJPkMKSXorR5LrtiCtnF1C",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, SchemaWrite)]
 pub struct ContactInfo {
     pubkey: Pubkey,
@@ -107,7 +116,7 @@ pub struct ContactInfo {
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
 pub(crate) struct SocketEntry {
     pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
@@ -708,6 +717,36 @@ impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
             extensions: vec![],
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
+    }
+}
+
+// `ContactInfo` derives only `StableAbi` (not `StableAbiSample`): `cache` is a
+// derived field recomputed on deserialize, and `addrs`/`sockets` must satisfy
+// cross-field invariants (`sanitize_entries`), so independent per-field sampling
+// can't produce round-trippable values. We build a valid node via `set_socket`,
+// which maintains every invariant (including `cache`), so the digest test can use
+// `test_roundtrip = "eq_and_wire"`.
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<ContactInfo>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> ContactInfo {
+        use solana_frozen_abi::stable_abi::StableAbi;
+        let mut node = ContactInfo::new(
+            <Pubkey as StableAbi>::random(rng),
+            /*wallclock:*/ rng.random(),
+            /*shred_version:*/ rng.random(),
+        );
+        node.outset = rng.random();
+        node.version = <solana_version::Version as StableAbi>::random(rng);
+        for key in 0..SOCKET_CACHE_SIZE as u8 {
+            if rng.random::<bool>() {
+                // Ignore sockets that fail sanitization (zero port, unspecified or
+                // multicast IP); `set_socket` leaves the node unchanged on error.
+                let _ = node.set_socket(key, <SocketAddr as StableAbi>::random(rng));
+            }
+        }
+        node
     }
 }
 

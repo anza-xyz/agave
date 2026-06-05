@@ -14,7 +14,15 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "3mueGPQfnZCXQfb5bdTU1afXeFToiJxpFGkckSSjH3RD",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct RestartLastVotedForkSlots {
     pub from: Pubkey,
@@ -31,7 +39,15 @@ pub enum RestartLastVotedForkSlotsError {
     LastVotedForkEmpty,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "9uCfdqWTWRZoxarLXEJ2HcJgvNs65jfFYK4fBReMkJzJ",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 // repr(C) makes this struct zero-copy eligible in wincode.
 #[repr(C)]
@@ -44,14 +60,17 @@ pub struct RestartHeaviestFork {
     pub shred_version: u16,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 enum SlotsOffsets {
     RunLengthEncoding(RunLengthEncoding),
     RawOffsets(RawOffsets),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 struct U16(
     #[serde(with = "serde_varint")]
@@ -61,13 +80,20 @@ struct U16(
 
 // The vector always starts with 1. Encode number of 1's and 0's consecutively.
 // For example, 110000111 is [2, 4, 3].
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 struct RunLengthEncoding(Vec<U16>);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
-struct RawOffsets(BitVec<u8>);
+struct RawOffsets(
+    // `BitVec` has no `StableAbi` impl; sample a non-empty one (see `sample_bit_vec`).
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "solana_bloom::bloom::sample_bit_vec(rng)")
+    )]
+    BitVec<u8>,
+);
 
 impl Sanitize for RestartLastVotedForkSlots {
     fn sanitize(&self) -> std::result::Result<(), SanitizeError> {
