@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
+        admin_rpc_post_init::KeyUpdaters,
         banking_trace::BankingTracer,
         block_creation_loop::{ReplayHighestFrozen, rewards::msg_types::AddVoteMessage},
         bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
@@ -57,12 +57,12 @@ use {
     },
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
+    solana_quic_datagram::{Banlist, endpoint::Datagram},
     solana_rpc::{
         max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank::MAX_ALPENGLOW_VOTE_ACCOUNTS,
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommandReceiver, BankForksController},
         commitment::BlockCommitmentCache,
@@ -71,12 +71,7 @@ use {
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_streamer::{
-        evicting_sender::EvictingSender,
-        nonblocking::simple_qos::SimpleQosConfig,
-        quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
-        streamer::StakedNodes,
-    },
+    solana_streamer::{evicting_sender::EvictingSender, streamer::StakedNodes},
     solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
@@ -117,7 +112,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
+    bls_sigverify_threads: Option<JoinHandle<()>>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -184,8 +179,16 @@ pub struct AlpenglowInitializationState {
     pub staked_nodes: Arc<RwLock<StakedNodes>>,
     pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
 
-    // For BLS voting service
-    pub bls_connection_cache: Arc<ConnectionCache>,
+    // Votor QUIC datagram transport handles. Egress goes to the BLS
+    // voting service; ingress feeds the BLS sigverifier; banlist is shared
+    // with the sigverifier so external triggers (e.g. signature failure)
+    // can soft-ban peers cluster-wide. `votor_allowlist` is owned by the
+    // voting service's StakedValidatorsCache, which republishes the
+    // staked-pubkey set on every epoch boundary.
+    pub votor_egress: tokio::sync::mpsc::Sender<solana_quic_datagram::endpoint::Datagram>,
+    pub votor_ingress: Receiver<Datagram>,
+    pub votor_banlist: Arc<Banlist<Pubkey>>,
+    pub votor_allowlist: Option<Arc<solana_quic_datagram::StakedNodesAllowlist>>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
 }
 
@@ -266,8 +269,11 @@ impl Tvu {
             votor_event_receiver,
             cancel,
             staked_nodes,
-            key_notifiers,
-            bls_connection_cache,
+            key_notifiers: _key_notifiers,
+            votor_egress,
+            votor_ingress,
+            votor_banlist,
+            votor_allowlist,
             voting_service_test_override,
             highest_finalized,
         } = votor_init;
@@ -279,51 +285,25 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
-        // The BLS socket is currently only available on Testnet and Development clusters.
-        // Closer to release we will enable this for all clusters.
-        let bls_sigverify_threads = if let Some(bls_socket) = bls_socket {
-            let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
-
-            let (
-                SpawnServerResult {
-                    endpoints: _,
-                    thread: bls_streamer_t,
-                    key_updater: bls_key_updater,
-                },
-                banlist,
-            ) = {
-                let quic_server_params = QuicStreamerConfig {
-                    num_threads: NonZeroUsize::new(4.min(num_cpus::get())).unwrap(),
-                    ..Default::default()
-                };
-                let qos_config = SimpleQosConfig {
-                    max_streams_per_second: 30,
-                    // Cap by # of active validators (some overhead for epoch boundaries)
-                    max_staked_connections: MAX_ALPENGLOW_VOTE_ACCOUNTS * 2,
-                    // Two staked connection per validator to account for hotspares
-                    max_connections_per_peer: 2,
-                };
-                spawn_simple_qos_server(
-                    "solQuicBLS",
-                    "quic_streamer_bls",
-                    vec![bls_socket.into()],
-                    &cluster_info.keypair(),
-                    bls_packet_sender,
-                    staked_nodes,
-                    quic_server_params,
-                    qos_config,
-                    cancel,
-                )
-                .unwrap()
-            };
-
-            // sigverifier
+        // BLS sigverifier — fed by the quic-datagram endpoint constructed
+        // in validator.rs. The endpoint task itself runs there; here we
+        // only consume its ingress + banlist.
+        //
+        // The bls_socket is currently only available on Testnet and
+        // Development clusters; outside that window the endpoint is not
+        // constructed and ingress will simply never fire. The `_` on
+        // bls_socket below is intentional — we don't actually need it
+        // here anymore (validator.rs already consumed it).
+        let _ = bls_socket;
+        let _ = cancel;
+        let _ = staked_nodes;
+        let bls_sigverify_threads = {
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let bls_sigverifier_t = bls_sigverifier::spawn_service(
                 exit.clone(),
                 SigVerifierContext {
                     migration_status: migration_status.clone(),
-                    banlist,
+                    banlist: votor_banlist,
                     sharable_banks,
                     cluster_info: cluster_info.clone(),
                     leader_schedule: leader_schedule_cache.clone(),
@@ -331,20 +311,14 @@ impl Tvu {
                     generated_cert_types: generated_cert_types.clone(),
                 },
                 SigVerifierChannels {
-                    packet_receiver: bls_packet_receiver,
+                    packet_receiver: votor_ingress,
                     channel_to_repair: verified_voter_slots_sender,
                     channel_to_reward: reward_votes_sender,
                     channel_to_pool: consensus_message_sender.clone(),
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
             );
-
-            let mut key_notifiers = key_notifiers.write().unwrap();
-            key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
-
-            Some((bls_streamer_t, bls_sigverifier_t))
-        } else {
-            None
+            Some(bls_sigverifier_t)
         };
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -595,7 +569,8 @@ impl Tvu {
             bls_receiver,
             cluster_info.clone(),
             vote_history_storage,
-            bls_connection_cache,
+            votor_egress,
+            votor_allowlist,
             bank_forks.clone(),
             voting_service_test_override,
         );
@@ -671,8 +646,7 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let Some((streamer, sigverifier)) = self.bls_sigverify_threads {
-            streamer.join()?;
+        if let Some(sigverifier) = self.bls_sigverify_threads {
             sigverifier.join()?;
         }
         self.votor.join()?;
@@ -799,10 +773,12 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
-        let bls_connection_cache = ConnectionCache::new_quic_for_tests(
-            "connection_cache_bls_quic",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        );
+        // Stub the votor datagram channels — the test runs without an
+        // actual alpenglow endpoint. The egress sink and ingress source
+        // are never connected to each other; ingress simply never fires.
+        let (votor_egress, _votor_egress_rx) = tokio::sync::mpsc::channel(1024);
+        let (_votor_ingress_tx, votor_ingress) = bounded(1024);
+        let votor_banlist = Arc::new(Banlist::<Pubkey>::default());
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
         let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
@@ -901,7 +877,10 @@ pub mod tests {
                 cancel,
                 staked_nodes,
                 key_notifiers,
-                bls_connection_cache: Arc::new(bls_connection_cache),
+                votor_egress,
+                votor_ingress,
+                votor_banlist,
+                votor_allowlist: None,
                 voting_service_test_override: None,
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,

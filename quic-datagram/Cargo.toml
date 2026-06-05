@@ -1,6 +1,6 @@
 [package]
 name = "solana-quic-datagram"
-description = "QUIC datagram endpoint with staked-only allowlist for Solana consensus traffic"
+description = "QUIC datagram transport for Solana consensus traffic"
 documentation = "https://docs.rs/solana-quic-datagram"
 version = { workspace = true }
 authors = { workspace = true }

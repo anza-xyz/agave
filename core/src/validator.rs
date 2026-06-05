@@ -1187,30 +1187,7 @@ impl Validator {
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
-            "connection_cache_bls_quic",
-            // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
-            // we wouldn't expect more than a 100 PPS. 1 connection is enough.
-            1, /* connection_pool_size */
-            Some(node.sockets.quic_alpenglow_client),
-            Some((
-                &identity_keypair,
-                node.info
-                    .alpenglow()
-                    .ok_or_else(|| {
-                        ValidatorError::Other(String::from(
-                            "Invalid QUIC address for Alpenglow BLS",
-                        ))
-                    })?
-                    .ip(),
-            )),
-            Some((&staked_nodes, &identity_keypair.pubkey())),
-        ));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        key_notifiers.write().unwrap().add(
-            KeyUpdaterType::BlsConnectionCache,
-            bls_connection_cache.clone(),
-        );
 
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
@@ -1226,6 +1203,62 @@ impl Validator {
                 .build()
                 .unwrap()
         });
+
+        // Votor QUIC datagram endpoint. One UDP socket multiplexes
+        // outbound votes/certs (egress) and inbound consensus messages
+        // (ingress) per the lex-pubkey direction rule. Only constructed
+        // on Testnet/Development clusters; absent → stub channels are
+        // installed downstream so the BLS sigverifier task spawns but
+        // never receives anything.
+        let alpenglow_socket = if matches!(
+            genesis_config.cluster_type,
+            ClusterType::Testnet | ClusterType::Development,
+        ) {
+            node.sockets.alpenglow.take()
+        } else {
+            None
+        };
+        let (votor_egress, votor_ingress, votor_banlist, votor_allowlist) =
+            if let Some(socket) = alpenglow_socket {
+                let votor_rt_handle = tpu_client_next_runtime
+                    .as_ref()
+                    .map(TokioRuntime::handle)
+                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                let (ingress_tx, ingress_rx) =
+                    crossbeam_channel::bounded(crate::tvu::MAX_ALPENGLOW_PACKET_NUM);
+
+                let banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
+                let allowlist = agave_votor::datagram_endpoint::build_allowlist(
+                    &bank_forks.read().unwrap().sharable_banks(),
+                );
+
+                let solana_quic_datagram::QuicDatagramEndpoint {
+                    egress,
+                    key_updater,
+                    task: _,
+                    ..
+                } = solana_quic_datagram::QuicDatagramEndpoint::new(
+                    votor_rt_handle,
+                    &identity_keypair,
+                    socket,
+                    agave_votor::datagram_endpoint::ALPENGLOW_ALPN,
+                    ingress_tx,
+                    allowlist.clone(),
+                    banlist.clone(),
+                )
+                .map_err(|e| ValidatorError::Other(format!("alpenglow endpoint: {e:?}")))?;
+                key_notifiers
+                    .write()
+                    .unwrap()
+                    .add(KeyUpdaterType::VotorDatagram, key_updater);
+                (egress, ingress_rx, banlist, Some(allowlist))
+            } else {
+                let (egress, _) = tokio::sync::mpsc::channel(1);
+                let (_, ingress) =
+                    crossbeam_channel::bounded::<solana_quic_datagram::endpoint::Datagram>(1);
+                let banlist = Arc::new(solana_quic_datagram::Banlist::<Pubkey>::default());
+                (egress, ingress, banlist, None)
+            };
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1650,7 +1683,10 @@ impl Validator {
                 cancel: cancel.clone(),
                 staked_nodes: staked_nodes.clone(),
                 key_notifiers: key_notifiers.clone(),
-                bls_connection_cache,
+                votor_egress,
+                votor_ingress,
+                votor_banlist,
+                votor_allowlist,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },
