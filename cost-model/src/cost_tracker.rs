@@ -64,12 +64,41 @@ pub struct UpdatedCosts {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CostTrackerLimits {
+    pub account_cost: u64,
+    pub block_cost: u64,
+    // Maximum new account allocation data per block in bytes.
+    pub allocated_data_size: u64,
+}
+
+impl CostTrackerLimits {
+    const MAX: Self = Self::new(u64::MAX, u64::MAX, u64::MAX);
+
+    pub const fn new(account_cost: u64, block_cost: u64, allocated_data_size: u64) -> Self {
+        Self {
+            account_cost,
+            block_cost,
+            allocated_data_size,
+        }
+    }
+}
+
+impl Default for CostTrackerLimits {
+    fn default() -> Self {
+        const _: () = assert!(MAX_WRITABLE_ACCOUNT_UNITS <= MAX_BLOCK_UNITS);
+        Self {
+            account_cost: MAX_WRITABLE_ACCOUNT_UNITS,
+            block_cost: MAX_BLOCK_UNITS,
+            allocated_data_size: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
+        }
+    }
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 pub struct CostTracker {
-    account_cost_limit: u64,
-    block_cost_limit: u64,
-    // Maximum new account allocation data per block in bytes.
-    allocated_data_size_limit: u64,
+    limits: CostTrackerLimits,
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
     block_cost: SharedBlockCost,
     transaction_count: Saturating<u64>,
@@ -86,12 +115,8 @@ pub struct CostTracker {
 
 impl Default for CostTracker {
     fn default() -> Self {
-        const _: () = assert!(MAX_WRITABLE_ACCOUNT_UNITS <= MAX_BLOCK_UNITS);
-
         Self {
-            account_cost_limit: MAX_WRITABLE_ACCOUNT_UNITS,
-            block_cost_limit: MAX_BLOCK_UNITS,
-            allocated_data_size_limit: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
+            limits: CostTrackerLimits::default(),
             cost_by_writable_accounts: HashMap::with_capacity_and_hasher(
                 WRITABLE_ACCOUNTS_PER_BLOCK,
                 ahash::RandomState::new(),
@@ -111,43 +136,37 @@ impl Default for CostTracker {
 impl CostTracker {
     pub fn new_from_parent_limits(&self) -> Self {
         let mut new = Self::default();
-        new.set_limits(
-            self.account_cost_limit,
-            self.block_cost_limit,
-            self.allocated_data_size_limit,
-        );
+        new.set_limits(self.limits);
         new
+    }
+
+    /// Get the cost tracker limits.
+    pub fn get_limits(&self) -> CostTrackerLimits {
+        self.limits
     }
 
     /// Get the overall account limit.
     pub fn get_account_limit(&self) -> u64 {
-        self.account_cost_limit
+        self.limits.account_cost
     }
 
     /// Get the overall block limit.
     pub fn get_block_limit(&self) -> u64 {
-        self.block_cost_limit
+        self.limits.block_cost
     }
 
     /// Get the overall allocated account data size limit.
     pub fn get_allocated_data_size_limit(&self) -> u64 {
-        self.allocated_data_size_limit
+        self.limits.allocated_data_size
     }
 
     /// allows to adjust limits initiated during construction
-    pub fn set_limits(
-        &mut self,
-        account_cost_limit: u64,
-        block_cost_limit: u64,
-        allocated_data_size_limit: u64,
-    ) {
-        self.account_cost_limit = account_cost_limit;
-        self.block_cost_limit = block_cost_limit;
-        self.allocated_data_size_limit = allocated_data_size_limit;
+    pub fn set_limits(&mut self, limits: CostTrackerLimits) {
+        self.limits = limits;
     }
 
     pub fn set_limits_max(&mut self) {
-        self.set_limits(u64::MAX, u64::MAX, u64::MAX);
+        self.set_limits(CostTrackerLimits::MAX);
     }
 
     pub fn in_flight_transaction_count(&self) -> usize {
@@ -289,7 +308,8 @@ impl CostTracker {
     fn find_number_of_contended_accounts(&self) -> usize {
         // accounts has more than 95% of account_cu_limit is considered as highly contended
         let contended_cost_mark: u64 = self
-            .account_cost_limit
+            .limits
+            .account_cost
             .saturating_mul(95)
             .saturating_div(100);
 
@@ -305,20 +325,20 @@ impl CostTracker {
     ) -> Result<(), CostTrackerError> {
         let cost: u64 = tx_cost.sum();
 
-        if self.block_cost().saturating_add(cost) > self.block_cost_limit {
+        if self.block_cost().saturating_add(cost) > self.limits.block_cost {
             // check against the total package cost
             return Err(CostTrackerError::WouldExceedBlockMaxLimit);
         }
 
         // check if the transaction itself is more costly than the account_cost_limit
-        if cost > self.account_cost_limit {
+        if cost > self.limits.account_cost {
             return Err(CostTrackerError::WouldExceedAccountMaxLimit);
         }
 
         let allocated_accounts_data_size =
             self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
 
-        if allocated_accounts_data_size.0 > self.allocated_data_size_limit {
+        if allocated_accounts_data_size.0 > self.limits.allocated_data_size {
             return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
         }
 
@@ -326,7 +346,7 @@ impl CostTracker {
         for account_key in tx_cost.writable_accounts() {
             match self.cost_by_writable_accounts.get(account_key) {
                 Some(chained_cost) => {
-                    if chained_cost.saturating_add(cost) > self.account_cost_limit {
+                    if chained_cost.saturating_add(cost) > self.limits.account_cost {
                         return Err(CostTrackerError::WouldExceedAccountMaxLimit);
                     } else {
                         continue;
@@ -456,11 +476,13 @@ mod tests {
     impl CostTracker {
         fn new(account_cost_limit: u64, block_cost_limit: u64) -> Self {
             assert!(account_cost_limit <= block_cost_limit);
-            Self {
-                account_cost_limit,
-                block_cost_limit,
-                ..Self::default()
-            }
+            let mut cost_tracker = Self::default();
+            cost_tracker.set_limits(CostTrackerLimits {
+                account_cost: account_cost_limit,
+                block_cost: block_cost_limit,
+                ..CostTrackerLimits::default()
+            });
+            cost_tracker
         }
     }
 
@@ -522,8 +544,8 @@ mod tests {
     #[test]
     fn test_cost_tracker_initialization() {
         let testee = CostTracker::new(10, 11);
-        assert_eq!(10, testee.account_cost_limit);
-        assert_eq!(11, testee.block_cost_limit);
+        assert_eq!(10, testee.limits.account_cost);
+        assert_eq!(11, testee.limits.block_cost);
         assert_eq!(0, testee.cost_by_writable_accounts.len());
         assert_eq!(0, testee.block_cost());
     }
@@ -748,7 +770,10 @@ mod tests {
         assert_eq!(testee.would_fit(&tx_cost), Ok(()),);
 
         // Transaction does not fit with 1B limit.
-        testee.allocated_data_size_limit = 1;
+        testee.set_limits(CostTrackerLimits {
+            allocated_data_size: 1,
+            ..testee.get_limits()
+        });
         assert_eq!(
             testee.would_fit(&tx_cost),
             Err(CostTrackerError::WouldExceedAccountDataBlockLimit),

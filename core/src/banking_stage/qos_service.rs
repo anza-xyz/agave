@@ -211,6 +211,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
+        solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -300,7 +301,7 @@ mod tests {
         let cost_limit = transfer_tx_cost + vote_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(cost_limit, cost_limit, 0);
+            .set_limits(CostTrackerLimits::new(cost_limit, cost_limit, 0));
         let (results, num_selected) =
             QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);

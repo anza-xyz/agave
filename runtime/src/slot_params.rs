@@ -1,6 +1,7 @@
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     solana_clock::Slot,
+    solana_cost_model::cost_tracker::CostTrackerLimits,
     solana_epoch_schedule::EpochSchedule,
     solana_pubkey::Pubkey,
     std::{
@@ -20,9 +21,7 @@ pub struct SlotParams {
     pub(crate) ns_per_slot: u128,
     pub(crate) slots_per_year: f64,
     pub(crate) hashes_per_tick: Option<u64>,
-    pub(crate) max_block_units: u64,
-    pub(crate) max_writable_account_units: u64,
-    pub(crate) max_block_accounts_data_size_delta: u64,
+    pub(crate) cost_tracker_limits: CostTrackerLimits,
     pub(crate) max_data_shreds_per_slot: u32,
     pub(crate) max_code_shreds_per_slot: u32,
     pub(crate) max_entry_bytes_per_slot: u64,
@@ -86,22 +85,30 @@ impl SlotParams {
     }
 
     /// Returns the per-bank cost limits for these params.
-    pub(crate) const fn cost_limits(self, raise_block_limits_to_100m: bool) -> (u64, u64, u64) {
-        let (max_writable_account_units, max_block_units) = if raise_block_limits_to_100m {
+    pub(crate) const fn cost_limits(self, raise_block_limits_to_100m: bool) -> CostTrackerLimits {
+        let cost_tracker_limits = self.cost_tracker_limits;
+        let (account_cost, block_cost) = if raise_block_limits_to_100m {
             (
-                self.max_writable_account_units
+                cost_tracker_limits
+                    .account_cost
                     .saturating_mul(100)
                     .saturating_div(60),
-                self.max_block_units.saturating_mul(100).saturating_div(60),
+                cost_tracker_limits
+                    .block_cost
+                    .saturating_mul(100)
+                    .saturating_div(60),
             )
         } else {
-            (self.max_writable_account_units, self.max_block_units)
+            (
+                cost_tracker_limits.account_cost,
+                cost_tracker_limits.block_cost,
+            )
         };
 
-        (
-            max_writable_account_units,
-            max_block_units,
-            self.max_block_accounts_data_size_delta,
+        CostTrackerLimits::new(
+            account_cost,
+            block_cost,
+            cost_tracker_limits.allocated_data_size,
         )
     }
 }
@@ -111,9 +118,7 @@ pub(crate) const LEGACY_SLOT_PARAMS: SlotParams = SlotParams {
     ns_per_slot: 400_000_000,
     slots_per_year: 78_892_314.984,
     hashes_per_tick: Some(LEGACY_HASHES_PER_TICK),
-    max_block_units: 60_000_000,
-    max_writable_account_units: 24_000_000,
-    max_block_accounts_data_size_delta: 100_000_000,
+    cost_tracker_limits: CostTrackerLimits::new(24_000_000, 60_000_000, 100_000_000),
     max_data_shreds_per_slot: 32_768,
     max_code_shreds_per_slot: 32_768,
     max_entry_bytes_per_slot: 20 * 1024 * 1024,
@@ -124,9 +129,7 @@ pub(crate) const SLOT_PARAMS_350MS: SlotParams = SlotParams {
     ns_per_slot: 350_000_000,
     slots_per_year: 90_162_645.696,
     hashes_per_tick: Some(54_687),
-    max_block_units: 52_500_000,
-    max_writable_account_units: 21_000_000,
-    max_block_accounts_data_size_delta: 87_500_000,
+    cost_tracker_limits: CostTrackerLimits::new(21_000_000, 52_500_000, 87_500_000),
     max_data_shreds_per_slot: 28_672,
     max_code_shreds_per_slot: 28_672,
     max_entry_bytes_per_slot: 18_350_080,
@@ -137,9 +140,7 @@ pub(crate) const SLOT_PARAMS_300MS: SlotParams = SlotParams {
     ns_per_slot: 300_000_000,
     slots_per_year: 105_189_753.312,
     hashes_per_tick: Some(46_875),
-    max_block_units: 45_000_000,
-    max_writable_account_units: 18_000_000,
-    max_block_accounts_data_size_delta: 75_000_000,
+    cost_tracker_limits: CostTrackerLimits::new(18_000_000, 45_000_000, 75_000_000),
     max_data_shreds_per_slot: 24_576,
     max_code_shreds_per_slot: 24_576,
     max_entry_bytes_per_slot: 15_728_640,
@@ -150,9 +151,7 @@ pub(crate) const SLOT_PARAMS_250MS: SlotParams = SlotParams {
     ns_per_slot: 250_000_000,
     slots_per_year: 126_227_703.974,
     hashes_per_tick: Some(39_062),
-    max_block_units: 37_500_000,
-    max_writable_account_units: 15_000_000,
-    max_block_accounts_data_size_delta: 62_500_000,
+    cost_tracker_limits: CostTrackerLimits::new(15_000_000, 37_500_000, 62_500_000),
     max_data_shreds_per_slot: 20_480,
     max_code_shreds_per_slot: 20_480,
     max_entry_bytes_per_slot: 13_107_200,
@@ -163,9 +162,7 @@ pub(crate) const SLOT_PARAMS_200MS: SlotParams = SlotParams {
     ns_per_slot: 200_000_000,
     slots_per_year: 157_784_629.968,
     hashes_per_tick: Some(31_250),
-    max_block_units: 30_000_000,
-    max_writable_account_units: 12_000_000,
-    max_block_accounts_data_size_delta: 50_000_000,
+    cost_tracker_limits: CostTrackerLimits::new(12_000_000, 30_000_000, 50_000_000),
     max_data_shreds_per_slot: 16_384,
     max_code_shreds_per_slot: 16_384,
     max_entry_bytes_per_slot: 10_485_760,
@@ -354,10 +351,10 @@ mod tests {
             (SLOT_PARAMS_250MS, 25_000_000, 62_500_000),
             (SLOT_PARAMS_200MS, 20_000_000, 50_000_000),
         ] {
-            let (_, _, data_size_limit) = params.cost_limits(false);
+            let data_size_limit = params.cost_limits(false).allocated_data_size;
             assert_eq!(
                 params.cost_limits(true),
-                (
+                CostTrackerLimits::new(
                     expected_account_limit,
                     expected_block_limit,
                     data_size_limit

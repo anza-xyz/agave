@@ -6326,16 +6326,11 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
         params.max_entry_bytes_per_slot()
     );
     let cost_tracker = bank.read_cost_tracker().unwrap();
-    let (account_limit, block_limit, data_size_limit) = params.cost_limits(
+    let cost_limits = params.cost_limits(
         bank.feature_set
             .is_active(&feature_set::raise_block_limits_to_100m::id()),
     );
-    assert_eq!(cost_tracker.get_account_limit(), account_limit);
-    assert_eq!(cost_tracker.get_block_limit(), block_limit);
-    assert_eq!(
-        cost_tracker.get_allocated_data_size_limit(),
-        data_size_limit
-    );
+    assert_eq!(cost_tracker.get_limits(), cost_limits);
 }
 
 #[test]
