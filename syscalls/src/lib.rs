@@ -2810,7 +2810,7 @@ declare_builtin_function!(
             .transaction_context
             .resize_region(region, new_len)?;
         unsafe {
-            // FIXME(nagisa): RISKY! The above might have realloc'd, but replace_region can
+            // TODO(nagisa): RISKY! The above might have realloc'd, but replace_region can
             // still fail, leaving the memory mapping in an entirely invalid and unsound state
             // if used afterwards!
             //

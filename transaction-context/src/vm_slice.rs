@@ -51,13 +51,21 @@ impl<T> VmSlice<T> {
         self.len = new_len;
     }
 
-    #[cfg(any(target_arch = "bpf", target_arch = "sbf"))]
-    pub fn deref(&self) -> &[T] {
+    #[cfg(any(
+        target_arch = "bpf",
+        target_arch = "sbf",
+        feature = "dummy-for-ci-check"
+    ))]
+    pub fn as_slice(&self) -> &[T] {
         unsafe { core::slice::from_raw_parts(self.ptr as *const T, self.len as usize) }
     }
 
-    #[cfg(any(target_arch = "bpf", target_arch = "sbf"))]
-    pub fn deref_mut(&mut self) -> &mut [T] {
+    #[cfg(any(
+        target_arch = "bpf",
+        target_arch = "sbf",
+        feature = "dummy-for-ci-check"
+    ))]
+    pub fn as_slice_mut(&mut self) -> &mut [T] {
         unsafe { core::slice::from_raw_parts_mut(self.ptr as *mut T, self.len as usize) }
     }
 }

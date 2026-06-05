@@ -236,6 +236,31 @@ pub fn execute<'a, 'b: 'a>(
     let is_abi_v2 = executable.get_sbpf_version() == SBPFVersion::V4
         && invoke_context.get_feature_set().program_runtime_abiv2;
 
+    #[cfg(feature = "sbpf-debugger")]
+    let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
+        (
+            invoke_context.debug_port,
+            Some(format!(
+                "program_id={};cpi_level={};caller={}",
+                program_id,
+                instruction_context.get_stack_height().saturating_sub(1),
+                invoke_context
+                    .get_stack_height()
+                    .checked_sub(2)
+                    .and_then(|nesting_level| {
+                        transaction_context
+                            .get_instruction_context_at_nesting_level(nesting_level)
+                            .ok()
+                    })
+                    .and_then(|ctx| ctx.get_program_key().ok())
+                    .map(|key| key.to_string())
+                    .unwrap_or_else(|| "none".into())
+            )),
+        )
+    } else {
+        (None, None)
+    };
+
     let mut abiv1_parameters = if is_abi_v2 {
         initialize_abi_v2_areas(invoke_context, executable)?;
         None
@@ -281,31 +306,6 @@ pub fn execute<'a, 'b: 'a>(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-
-    #[cfg(feature = "sbpf-debugger")]
-    let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
-        (
-            invoke_context.debug_port,
-            Some(format!(
-                "program_id={};cpi_level={};caller={}",
-                program_id,
-                instruction_context.get_stack_height().saturating_sub(1),
-                invoke_context
-                    .get_stack_height()
-                    .checked_sub(2)
-                    .and_then(|nesting_level| {
-                        transaction_context
-                            .get_instruction_context_at_nesting_level(nesting_level)
-                            .ok()
-                    })
-                    .and_then(|ctx| ctx.get_program_key().ok())
-                    .map(|key| key.to_string())
-                    .unwrap_or_else(|| "none".into())
-            )),
-        )
-    } else {
-        (None, None)
-    };
 
     let mut create_vm_time = Measure::start("create_vm");
     if let Some(v1_params) = &mut abiv1_parameters {

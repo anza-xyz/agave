@@ -1,4 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::arithmetic_side_effects)]
 
 use {
     core::{alloc::Layout, ptr::null_mut, slice},
@@ -25,7 +27,7 @@ fn set_buffer_length(base_address: u64, new_length: u64) -> u64 {
     unsafe {
         let syscall: extern "C" fn(u64, u64, u64, u64, u64) -> u64 =
             core::mem::transmute(0x713026f5u64);
-        syscall(base_address as u64, new_length, 0, 0, 0)
+        syscall(base_address, new_length, 0, 0, 0)
     }
 }
 
@@ -149,7 +151,7 @@ unsafe fn test_valid_accesses(
     assert_eq!(current_ix.index_of_caller_instruction, u16::MAX);
 
     if tx_frame.current_executing_instruction == 0 {
-        let ix_accounts = current_ix.instruction_accounts.deref();
+        let ix_accounts = current_ix.instruction_accounts.as_slice();
         assert_eq!(ix_accounts.len(), 2);
         assert!(
             ix_accounts.get_unchecked(0).is_writable() && ix_accounts.get_unchecked(0).is_signer()
@@ -163,16 +165,16 @@ unsafe fn test_valid_accesses(
             .get_unchecked(ix_accounts.get_unchecked(0).index_in_transaction as usize);
         assert_eq!(acc_1.lamports, 223450);
         assert_eq!(acc_1.owner.to_bytes(), [0u8; 32]);
-        assert_eq!(acc_1.payload.deref(), &[1, 2, 3]);
+        assert_eq!(acc_1.payload.as_slice(), &[1, 2, 3]);
 
         let acc_2 = tx_accounts_metadata
             .get_unchecked(ix_accounts.get_unchecked(1).index_in_transaction as usize);
         assert_eq!(acc_2.lamports, 90123);
-        assert_eq!(acc_2.key.to_bytes(), acc_2.payload.deref());
+        assert_eq!(acc_2.key.to_bytes(), acc_2.payload.as_slice());
 
-        assert_eq!(current_ix.instruction_data.deref(), b"\x02");
+        assert_eq!(current_ix.instruction_data.as_slice(), b"\x02");
     } else if tx_frame.current_executing_instruction == 1 {
-        let ix_accounts = current_ix.instruction_accounts.deref();
+        let ix_accounts = current_ix.instruction_accounts.as_slice();
         assert_eq!(ix_accounts.len(), 2);
         assert!(
             !ix_accounts.get_unchecked(0).is_writable() && ix_accounts.get_unchecked(0).is_signer()
@@ -185,14 +187,14 @@ unsafe fn test_valid_accesses(
             .get_unchecked(ix_accounts.get_unchecked(0).index_in_transaction as usize);
         assert_eq!(acc_1.lamports, 35);
         assert_eq!(acc_1.owner.to_bytes(), [0u8; 32]);
-        assert_eq!(acc_1.payload.deref(), &[3, 4, 5]);
+        assert_eq!(acc_1.payload.as_slice(), &[3, 4, 5]);
 
         let acc_2 = tx_accounts_metadata
             .get_unchecked(ix_accounts.get_unchecked(1).index_in_transaction as usize);
         assert_eq!(acc_2.lamports, 9123);
         assert_eq!(acc_2.owner, acc_1.key);
 
-        assert_eq!(current_ix.instruction_data.deref(), b"\x03");
+        assert_eq!(current_ix.instruction_data.as_slice(), b"\x03");
     } else {
         panic!("Not expecting more than two instructions.")
     }
@@ -211,13 +213,13 @@ unsafe fn write_to_account(
     current_ix: &InstructionFrame,
     tx_accounts_metadata: &mut [AccountSharedFields],
 ) {
-    let ix_accounts = current_ix.instruction_accounts.deref();
+    let ix_accounts = current_ix.instruction_accounts.as_slice();
     let ix_account = ix_accounts.get_unchecked(0);
 
     let account_data = tx_accounts_metadata
         .get_unchecked_mut(ix_account.index_in_transaction as usize)
         .payload
-        .deref_mut();
+        .as_slice_mut();
     *account_data.get_unchecked_mut(0) = 7;
     *account_data.get_unchecked_mut(1) = 8;
     *account_data.get_unchecked_mut(2) = 9;
@@ -244,7 +246,7 @@ unsafe fn test_set_buffer_length_account(
     let meta = &account_metadata[account_idx as usize];
     assert_eq!(meta.payload.len(), 3);
     let mut expected_data = [0; 6];
-    expected_data[..3].copy_from_slice(meta.payload.deref());
+    expected_data[..3].copy_from_slice(meta.payload.as_slice());
     set_buffer_length(meta.payload.ptr(), 6);
     assert_eq!(meta.payload.len(), 6);
     let account_data = core::slice::from_raw_parts(meta.payload.ptr() as *const u8, 6);
@@ -252,7 +254,7 @@ unsafe fn test_set_buffer_length_account(
 }
 
 unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSharedFields]) {
-    let ix_accounts = ix_ctx.instruction_accounts.deref();
+    let ix_accounts = ix_ctx.instruction_accounts.as_slice();
     let first_account_idx_in_tx = ix_accounts.get_unchecked(0).index_in_transaction as usize;
     let second_account_idx_in_tx = ix_accounts.get_unchecked(1).index_in_transaction as usize;
     let debug_str = format!(
@@ -262,14 +264,14 @@ unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSh
     sol_log(debug_str.as_bytes());
 
     let first_account = accounts.get_unchecked(first_account_idx_in_tx);
-    let new_ower = Pubkey::new_from_array(first_account.payload.deref()[0..32].try_into().unwrap());
-    let write_to_account_afterwards = first_account.payload.deref()[32];
+    let new_ower =
+        Pubkey::new_from_array(first_account.payload.as_slice()[0..32].try_into().unwrap());
+    let write_to_account_afterwards = first_account.payload.as_slice()[32];
 
     // Asserting old owner
     let program_id = accounts
         .get_unchecked(ix_ctx.program_account_index_in_tx as usize)
-        .key
-        .clone();
+        .key;
     let second_account = accounts.get_unchecked_mut(second_account_idx_in_tx);
     assert_eq!(program_id, second_account.owner);
 
@@ -282,7 +284,7 @@ unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSh
     // I cannot write to the account after changing its owner
     // This write should fail
     if write_to_account_afterwards == 1 {
-        *second_account.payload.deref_mut().get_unchecked_mut(0) = 9;
+        *second_account.payload.as_slice_mut().get_unchecked_mut(0) = 9;
     }
 }
 
@@ -290,7 +292,7 @@ unsafe fn test_sol_transfer_lamports(
     account_metadata: &mut [AccountSharedFields],
     ix_frame: &InstructionFrame,
 ) {
-    let instruction_accounts = ix_frame.instruction_accounts.deref();
+    let instruction_accounts = ix_frame.instruction_accounts.as_slice();
     let to_account_idx_tx = instruction_accounts.get_unchecked(0).index_in_transaction as usize;
     let from_account_idx_tx = instruction_accounts.get_unchecked(1).index_in_transaction as usize;
 
@@ -334,7 +336,7 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
     let current_ix = instruction_trace
         .get(tx_frame.current_executing_instruction as usize)
         .unwrap();
-    match current_ix.instruction_data.deref() {
+    match current_ix.instruction_data.as_slice() {
         [0x00, ..] => {
             let mes = format!("tx accs: {}", tx_frame.number_of_transaction_accounts);
             sol_log(mes.as_bytes());

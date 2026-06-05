@@ -11,6 +11,9 @@ edition = { workspace = true }
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+dummy-for-ci-check = ["solana-transaction-context/dummy-for-ci-check"]
+
 [dependencies]
 solana-pubkey = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["agave-unstable-api"] }
