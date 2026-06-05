@@ -98,6 +98,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
     solana_reward_info::RewardType,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_upgradeable, ed25519_program, incinerator, native_loader,
         secp256k1_program,
@@ -112,8 +113,13 @@ use {
     solana_svm::{
         account_loader::{FeesOnlyTransaction, LoadedTransaction, TRANSACTION_ACCOUNT_BASE_SIZE},
         rollback_accounts::RollbackAccounts,
-        transaction_commit_result::TransactionCommitResultExtensions,
-        transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
+        transaction_commit_result::{CommittedTransaction, TransactionCommitResultExtensions},
+        transaction_execution_result::{
+            AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+            TransactionLoadedAccountsStats,
+        },
+        transaction_processing_result::ProcessedTransaction,
+        transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMMessage,
