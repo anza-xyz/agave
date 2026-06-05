@@ -9,9 +9,9 @@ use {
     solana_net_utils::{
         find_available_ports_in_range,
         sockets::{
-            SocketConfiguration as SocketConfig, bind_gossip_port_in_range,
-            bind_in_range_with_config, bind_more_with_config, localhost_port_range_for_tests,
-            multi_bind_in_range_with_config,
+            SocketConfiguration as SocketConfig, UdpSocketBufferLimits,
+            bind_gossip_port_in_range_with_config, bind_in_range_with_config,
+            bind_more_with_config, localhost_port_range_for_tests, multi_bind_in_range_with_config,
         },
     },
     solana_pubkey::Pubkey,
@@ -47,22 +47,52 @@ impl Node {
     /// (handshakes, ACKs, connection management). For UDP, "read/write" only
     /// describes buffer tuning: Agave does not send from primarily_read_udp
     /// sockets nor receive on primarily_write_udp sockets. Setting the unused
-    /// side to 0 avoids increasing it; Linux still enforces a minimum.
+    /// side to 1 avoids increasing it; Linux still enforces a minimum. Note
+    /// unlike Linux, MacOS and FreeBSD will not accept a buffer size of zero.
+    /// Furthermore as UDP socket sends on MacOS and FreeBSD are unbuffered,
+    /// there is no point increasing UDP socket send buffers on those platforms.
     ///
     /// NOTE: In Linux, the minimum send buffer size (SO_SNDBUF) is 2048 bytes
     /// and the minimum receive buffer size (SO_RCVBUF) is 256 bytes
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html
     fn create_socket_configs() -> SocketConfigs {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "macos"
+        )) {
             const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+
+            let udp_socket_limits = UdpSocketBufferLimits::new();
+            let recv_max = udp_socket_limits.recv_limit;
+            let recv_quic_ctrl = udp_socket_limits.recv_clamp(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE);
+            let send_max = udp_socket_limits.send_limit;
+            let send_quic_ctrl = udp_socket_limits.send_clamp(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE);
+
+            // As UDP socket sends on freebsd & macos are always
+            // unbuffered, do not change the send buffer size.
+            let (send_max, send_quic_ctrl) = if cfg!(target_os = "linux") {
+                (send_max, send_quic_ctrl)
+            } else {
+                (None, None)
+            };
+
             SocketConfigs {
-                read_write: SocketConfig::default(),
+                read_write: SocketConfig::default()
+                    .recv_buffer_size(recv_max)
+                    .send_buffer_size(send_max),
                 primarily_read_quic: SocketConfig::default()
-                    .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
+                    .recv_buffer_size(recv_max)
+                    .send_buffer_size(send_quic_ctrl),
                 primarily_write_quic: SocketConfig::default()
-                    .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_read_udp: SocketConfig::default().send_buffer_size(0),
-                primarily_write_udp: SocketConfig::default().recv_buffer_size(0),
+                    .recv_buffer_size(recv_quic_ctrl)
+                    .send_buffer_size(send_max),
+                primarily_read_udp: SocketConfig::default()
+                    .recv_buffer_size(recv_max)
+                    .send_buffer_size(Some(1)),
+                primarily_write_udp: SocketConfig::default()
+                    .recv_buffer_size(Some(1))
+                    .send_buffer_size(send_max),
             }
         } else {
             SocketConfigs::default()
@@ -118,11 +148,15 @@ impl Node {
             num_votor_quic_endpoints: num_votor_endpoints,
         } = config;
         let gossip_addr = SocketAddr::new(bind_ip_addr, gossip_port);
-        let (gossip_port, (gossip, ip_echo)) =
-            bind_gossip_port_in_range(&gossip_addr, port_range, bind_ip_addr);
 
         let socket_configs = Self::create_socket_configs();
 
+        let (gossip_port, (gossip, ip_echo)) = bind_gossip_port_in_range_with_config(
+            &gossip_addr,
+            port_range,
+            bind_ip_addr,
+            socket_configs.read_write,
+        );
         let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
