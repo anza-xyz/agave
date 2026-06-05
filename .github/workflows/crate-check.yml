@@ -1,4 +1,4 @@
-name: crate-check
+name: Crate Check
 
 on:
   push:
