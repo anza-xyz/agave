@@ -63,13 +63,18 @@ impl Node {
     /// (handshakes, ACKs, connection management). For UDP, "read/write" only
     /// describes buffer tuning: Agave does not send from primarily_read_udp
     /// sockets nor receive on primarily_write_udp sockets. Setting the unused
-    /// side to 0 avoids increasing it; Linux still enforces a minimum.
+    /// side to 1 avoids increasing it; Linux still enforces a minimum. Note
+    /// unlike Linux, MacOS and FreeBSD will not accept a buffer size of zero.
     ///
     /// NOTE: In Linux, the minimum send buffer size (SO_SNDBUF) is 2048 bytes
     /// and the minimum receive buffer size (SO_RCVBUF) is 256 bytes
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html
     fn create_socket_configs() -> SocketConfigs {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "macos"
+        )) {
             const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
             SocketConfigs {
                 read_write: SocketConfig::default(),
@@ -77,8 +82,8 @@ impl Node {
                     .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
                 primarily_write_quic: SocketConfig::default()
                     .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_read_udp: SocketConfig::default().send_buffer_size(0),
-                primarily_write_udp: SocketConfig::default().recv_buffer_size(0),
+                primarily_read_udp: SocketConfig::default().send_buffer_size(1),
+                primarily_write_udp: SocketConfig::default().recv_buffer_size(1),
             }
         } else {
             SocketConfigs::default()
