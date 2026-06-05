@@ -425,7 +425,8 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
     derive(AbiEnumVisitor, AbiExample, StableAbi),
     frozen_abi(
         api_digest = "2j14Ywc3jWmohnXsEuMUQRPLf7JmxAVKvXKeKpYuzg7S",
-        abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c"
+        abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c",
+        abi_serializer = "wincode"
     )
 )]
 #[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
