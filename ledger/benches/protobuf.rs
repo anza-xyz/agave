@@ -1,13 +1,12 @@
 #![allow(clippy::arithmetic_side_effects)]
-#![feature(test)]
-extern crate test;
 
 use {
     bincode::{deserialize, serialize},
+    criterion::{Criterion, criterion_group, criterion_main},
     prost::Message,
     solana_runtime::bank::RewardType,
     solana_transaction_status::{Reward, Rewards},
-    test::Bencher,
+    std::hint::black_box,
 };
 
 fn create_rewards() -> Rewards {
@@ -18,7 +17,9 @@ fn create_rewards() -> Rewards {
             post_balance: u64::MAX,
             reward_type: Some(RewardType::Fee),
             commission: None,
-            commission_bps: None,
+            // `Reward::commission_bps` is `skip_serializing_if` without a serde
+            // `default`, so it must be `Some` to round-trip through bincode.
+            commission_bps: Some(i as u16),
         })
         .collect()
 }
@@ -44,52 +45,67 @@ fn protobuf_deserialize_rewards(bytes: &[u8]) -> Rewards {
         .into()
 }
 
-fn bench_serialize_rewards<S>(bench: &mut Bencher, serialize_method: S)
+fn bench_serialize_rewards<S>(name: &str, c: &mut Criterion, serialize_method: S)
 where
     S: Fn(Rewards) -> Vec<u8>,
 {
     let rewards = create_rewards();
-    bench.iter(move || {
-        let _ = serialize_method(rewards.clone());
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            black_box(serialize_method(rewards.clone()));
+        })
     });
 }
 
-fn bench_deserialize_rewards<S, D>(bench: &mut Bencher, serialize_method: S, deserialize_method: D)
-where
+fn bench_deserialize_rewards<S, D>(
+    name: &str,
+    c: &mut Criterion,
+    serialize_method: S,
+    deserialize_method: D,
+) where
     S: Fn(Rewards) -> Vec<u8>,
     D: Fn(&[u8]) -> Rewards,
 {
     let rewards = create_rewards();
     let rewards_bytes = serialize_method(rewards);
-    bench.iter(move || {
-        let _ = deserialize_method(&rewards_bytes);
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            black_box(deserialize_method(&rewards_bytes));
+        })
     });
 }
 
-#[bench]
-fn bench_serialize_bincode(bencher: &mut Bencher) {
-    bench_serialize_rewards(bencher, bincode_serialize_rewards);
+fn bench_serialize_bincode(c: &mut Criterion) {
+    bench_serialize_rewards("bench_serialize_bincode", c, bincode_serialize_rewards);
 }
 
-#[bench]
-fn bench_serialize_protobuf(bencher: &mut Bencher) {
-    bench_serialize_rewards(bencher, protobuf_serialize_rewards);
+fn bench_serialize_protobuf(c: &mut Criterion) {
+    bench_serialize_rewards("bench_serialize_protobuf", c, protobuf_serialize_rewards);
 }
 
-#[bench]
-fn bench_deserialize_bincode(bencher: &mut Bencher) {
+fn bench_deserialize_bincode(c: &mut Criterion) {
     bench_deserialize_rewards(
-        bencher,
+        "bench_deserialize_bincode",
+        c,
         bincode_serialize_rewards,
         bincode_deserialize_rewards,
     );
 }
 
-#[bench]
-fn bench_deserialize_protobuf(bencher: &mut Bencher) {
+fn bench_deserialize_protobuf(c: &mut Criterion) {
     bench_deserialize_rewards(
-        bencher,
+        "bench_deserialize_protobuf",
+        c,
         protobuf_serialize_rewards,
         protobuf_deserialize_rewards,
     );
 }
+
+criterion_group!(
+    benches,
+    bench_serialize_bincode,
+    bench_serialize_protobuf,
+    bench_deserialize_bincode,
+    bench_deserialize_protobuf
+);
+criterion_main!(benches);
