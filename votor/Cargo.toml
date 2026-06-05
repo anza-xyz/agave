@@ -33,7 +33,9 @@ agave-bls-sigverify = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
+arc-swap = { workspace = true }
 bitvec = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
@@ -63,6 +65,7 @@ solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-quic-datagram = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
@@ -75,16 +78,21 @@ solana-transaction-error = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt"] }
 wincode = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+clap = { version = "4.5.58", features = ["derive"] }
+num_cpus = { workspace = true }
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-quic-datagram = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-tls-utils = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }
