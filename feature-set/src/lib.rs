@@ -1530,19 +1530,19 @@ pub mod set_lamports_per_byte_to_6960 {
 }
 
 pub mod reduce_slot_time_to_350ms {
-    solana_pubkey::declare_id!("iBRL2iJvhLssJveF1utbmmQGmjonmNYZALcJFEHTbUF");
+    solana_pubkey::declare_id!("iBRL5RuWhw4yqaAZu96RUULHckHTZAoe2b77qaV38JZ");
 }
 
 pub mod reduce_slot_time_to_300ms {
-    solana_pubkey::declare_id!("iBRLA3zvd6x9445cK1vS7xt8n6Y7DS3otfRcDdW8JRW");
+    solana_pubkey::declare_id!("iBRLL3k18HST852F1Mf3Lv83waTNQmmqvKDxvYGwQFL");
 }
 
 pub mod reduce_slot_time_to_250ms {
-    solana_pubkey::declare_id!("iBRLR6nG3fDi8YD4mpPTUVTgo5NaiYfZgrzokCfADP2");
+    solana_pubkey::declare_id!("iBRLMc81UjRa8fn8A6eE8bJTnRbgQoPTynM51akENCV");
 }
 
 pub mod reduce_slot_time_to_200ms {
-    solana_pubkey::declare_id!("iBRLypKvvj9VEvwoTeRpbLhbW55NFR4T3GE9BUR8A16");
+    solana_pubkey::declare_id!("iBRLjhJnkmDZgNoZRDMW11d8ZV7HvsL3vAyRjZB5npW");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {

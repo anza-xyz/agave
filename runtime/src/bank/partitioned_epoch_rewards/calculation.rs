@@ -3014,7 +3014,7 @@ mod tests {
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let pubkey = solana_pubkey::new_rand();
 
-        let pre_burn_balance = 10 * crate::bank::VAT_TO_BURN_PER_EPOCH;
+        let pre_burn_balance = 10 * crate::bank::DEFAULT_VAT_TO_BURN_PER_EPOCH;
         let commission_lamports = 12_345;
 
         // Commission is planned against the pre-burn account state.
@@ -3034,7 +3034,7 @@ mod tests {
 
         // Simulate the VAT burn that would run in `update_epoch_stakes`
         // between reward calculation and distribution.
-        let post_burn_balance = pre_burn_balance - crate::bank::VAT_TO_BURN_PER_EPOCH;
+        let post_burn_balance = pre_burn_balance - crate::bank::DEFAULT_VAT_TO_BURN_PER_EPOCH;
         let mut burned_account = commission_account.clone();
         burned_account.set_lamports(post_burn_balance);
         bank.store_account_and_update_capitalization(&pubkey, &burned_account);
