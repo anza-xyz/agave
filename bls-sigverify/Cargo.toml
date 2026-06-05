@@ -26,6 +26,7 @@ dev-context-only-utils = [
 agave-bls-cert-verify = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
@@ -38,13 +39,14 @@ solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }
-solana-streamer = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]

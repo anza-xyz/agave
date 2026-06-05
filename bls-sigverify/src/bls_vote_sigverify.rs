@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
+        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, SigVerifierChannels, send_ban_request},
         errors::SigVerifyVoteError,
         rewards::RewardVoteMessage,
         stats::SigVerifyVoteStats,
@@ -18,6 +18,7 @@ use {
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
     },
+    agave_votor_transport::endpoint::BanCommand,
     log::info,
     rayon::{
         ThreadPool,
@@ -33,8 +34,8 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::{collections::HashMap, num::NonZero},
+    tokio::sync::mpsc,
 };
 
 fn into_vote_msg(msg: UnverifiedVoteMessage) -> VoteMessage {
@@ -86,7 +87,7 @@ pub(super) fn verify_and_send_votes(
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &mpsc::Sender<BanCommand>,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
@@ -106,7 +107,7 @@ pub(super) fn verify_and_send_votes(
             vote_payload_to_sign,
             unverified_votes,
             &mut stats,
-            banlist,
+            ban_sender,
             thread_pool,
         );
         stats.sig_verified_votes += verified_votes.len() as u64;
@@ -207,7 +208,7 @@ fn verify_votes(
     vote_payload_to_sign: VotePayloadToSign,
     unverified_votes: Vec<UnverifiedVotePayload>,
     stats: &mut SigVerifyVoteStats,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &mpsc::Sender<BanCommand>,
     thread_pool: &ThreadPool,
 ) -> Vec<VerifiedVotePayload> {
     debug_assert!(
@@ -218,14 +219,11 @@ fn verify_votes(
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));
     for (sender_identity_pubkey, error) in invalid_remote_pubkeys {
         stats.banning_validator += 1;
-        if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
-            stats.already_banned += 1;
-        } else {
-            info!(
-                "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
-                 verification {error:?}"
-            );
-        }
+        send_ban_request(ban_sender, sender_identity_pubkey);
+        info!(
+            "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
+             verification {error:?}"
+        );
     }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
 
