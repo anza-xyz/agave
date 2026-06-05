@@ -33,7 +33,6 @@ use {
     log::{debug, info},
     solana_clock::Slot,
     solana_gossip::ping_pong::{Ping, Pong},
-    solana_hash::Hash,
     solana_keypair::signable::Signable,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver},
@@ -157,7 +156,7 @@ enum PendingRepairDecision {
 
 /// Action to perform as a result of a repair event
 enum RepairAction {
-    StartRepair { slot: Slot, block_id: Hash },
+    StartRepair { block: Block },
     QueueParent { slot: Slot, location: BlockLocation },
 }
 
@@ -189,7 +188,7 @@ struct RepairState {
     sent_requests: HashMap<OutgoingMessage, u64>,
 
     /// Blocks we've previously requested. Used to avoid re-initiating repair for an in progress block.
-    requested_blocks: HashSet<(Slot, Hash)>,
+    requested_blocks: HashSet<Block>,
 
     // Stats
     response_stats: BlockIdRepairResponsesStats,
@@ -408,7 +407,7 @@ impl BlockIdRepairService {
         let mut first_error = None;
 
         // Clean up old request tracking
-        state.requested_blocks.retain(|(slot, _)| *slot > root);
+        state.requested_blocks.retain(|block| block.slot > root);
         state.prune_expected_ping_responses(timestamp());
 
         // Process responses, generate new requests / repair events
@@ -601,7 +600,7 @@ impl BlockIdRepairService {
             .sent_requests
             .remove(&OutgoingMessage::Metadata(request));
 
-        let (slot, block_id) = request.block();
+        let Block { slot, block_id } = request.block();
 
         match response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -720,25 +719,23 @@ impl BlockIdRepairService {
         event: RepairEvent,
         root: Slot,
         blockstore: &Blockstore,
-        requested_blocks: &HashSet<(Slot, Hash)>,
+        requested_blocks: &HashSet<Block>,
     ) -> Result<PendingRepairDecision, BlockstoreError> {
         if event.slot() <= root {
             return Ok(PendingRepairDecision::Drop);
         }
 
         match event {
-            RepairEvent::FetchBlock {
-                block: Block { slot, block_id },
-            } => {
-                if requested_blocks.contains(&(slot, block_id)) {
+            RepairEvent::FetchBlock { block } => {
+                if requested_blocks.contains(&block) {
                     return Ok(PendingRepairDecision::Drop);
                 }
 
                 // Check if we already have the block, if so queue fetching the parent
                 // Note: when a block becomes full in blockstore -> we atomically calculate the DMR and populate location
-                if let Some(location) = blockstore.get_block_location(slot, block_id)? {
+                if let Some(location) = blockstore.get_block_location(block.slot, block.block_id)? {
                     return Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
-                        slot,
+                        slot: block.slot,
                         location,
                     }));
                 }
@@ -747,48 +744,47 @@ impl BlockIdRepairService {
                 // Note: we require the invariant that Turbine + Eager repair will either:
                 // - Eventually fill in all shreds for a slot (slot_meta.is_full()) resulting in the DMR calculation
                 // - Mark the slot as dead
-                if blockstore.is_dead(slot) {
+                if blockstore.is_dead(block.slot) {
                     info!(
-                        "{my_pubkey}: FetchBlock: slot {slot} is dead, starting repair for \
-                         block_id={block_id:?}"
+                        "{my_pubkey}: FetchBlock: slot {} is dead, starting repair for \
+                         block_id={:?}",
+                        block.slot, block.block_id
                     );
                     return Ok(PendingRepairDecision::Act(RepairAction::StartRepair {
-                        slot,
-                        block_id,
+                        block,
                     }));
                 }
 
                 // Turbine did not fail, check the progress
-                match blockstore.get_double_merkle_root(slot, BlockLocation::Original)? {
+                match blockstore.get_double_merkle_root(block.slot, BlockLocation::Original)? {
                     None => {
                         // Turbine has not completed, defer and check again later
                         debug!(
-                            "{my_pubkey}: FetchBlock: Turbine not complete for slot {slot}, \
-                             deferring"
+                            "{my_pubkey}: FetchBlock: Turbine not complete for slot {}, deferring",
+                            block.slot
                         );
                         Ok(PendingRepairDecision::KeepPending)
                     }
-                    Some(turbine_block_id) if turbine_block_id != block_id => {
+                    Some(turbine_block_id) if turbine_block_id != block.block_id => {
                         // Turbine has a different block
                         warn!(
                             "{my_pubkey}: FetchBlock: Turbine has different block \
-                             {turbine_block_id:?} vs requested {block_id:?} for slot {slot}, \
-                             starting repair"
+                             {turbine_block_id:?} vs requested block {block:?}, starting repair"
                         );
                         Ok(PendingRepairDecision::Act(RepairAction::StartRepair {
-                            slot,
-                            block_id,
+                            block,
                         }))
                     }
                     Some(_) => {
                         // Turbine completed between when we checked for the block above and here
                         // Queue the parent
                         debug!(
-                            "{my_pubkey}: FetchBlock: Turbine has correct block for slot {slot}, \
-                             fetching parent"
+                            "{my_pubkey}: FetchBlock: Turbine has correct block for slot {}, \
+                             fetching parent",
+                            block.slot
                         );
                         Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
-                            slot,
+                            slot: block.slot,
                             location: BlockLocation::Original,
                         }))
                     }
@@ -805,8 +801,8 @@ impl BlockIdRepairService {
         state: &mut RepairState,
     ) -> Result<(), BlockstoreError> {
         match action {
-            RepairAction::StartRepair { slot, block_id } => {
-                if state.requested_blocks.contains(&(slot, block_id)) {
+            RepairAction::StartRepair { block } => {
+                if state.requested_blocks.contains(&block) {
                     return Ok(());
                 }
 
@@ -814,19 +810,20 @@ impl BlockIdRepairService {
                 let alternate_blocks: Vec<_> = state
                     .requested_blocks
                     .iter()
-                    .filter(|(s, _)| *s == slot)
-                    .map(|(_, b)| *b)
+                    .filter(|b| b.slot == block.slot)
+                    .map(|b| b.block_id)
                     .collect();
 
                 if alternate_blocks.len() >= MAX_ALTERNATE_BLOCKS_PER_SLOT {
                     error!(
-                        "{my_pubkey}: Too many alternate blocks for slot {slot}, ignoring request \
-                         for {block_id:?}, requested_blocks: {alternate_blocks:?}"
+                        "{my_pubkey}: Too many alternate blocks for slot {}, ignoring request for \
+                         {:?}, requested_blocks: {alternate_blocks:?}",
+                        block.slot, block.block_id
                     );
                     datapoint_error!(
                         "block_id_repair_service-too_many_alternate_blocks",
-                        ("slot", slot, i64),
-                        ("block_id", block_id.to_string(), String),
+                        ("slot", block.slot, i64),
+                        ("block_id", block.block_id.to_string(), String),
                     );
                     return Ok(());
                 }
@@ -834,9 +831,12 @@ impl BlockIdRepairService {
                 state
                     .pending_repair_requests
                     .push(OutgoingMessage::Metadata(
-                        BlockIdRepairType::ParentAndFecSetCount { slot, block_id },
+                        BlockIdRepairType::ParentAndFecSetCount {
+                            slot: block.slot,
+                            block_id: block.block_id,
+                        },
                     ));
-                state.requested_blocks.insert((slot, block_id));
+                state.requested_blocks.insert(block);
                 Ok(())
             }
             RepairAction::QueueParent { slot, location } => {
@@ -1005,9 +1005,10 @@ impl BlockIdRepairService {
                             );
                         })
                     else {
-                        state
-                            .requested_blocks
-                            .remove(&(shred_request.slot(), shred_request.block_id().unwrap()));
+                        state.requested_blocks.remove(&Block {
+                            slot: shred_request.slot(),
+                            block_id: shred_request.block_id().unwrap(),
+                        });
                         continue;
                     };
 
@@ -1744,7 +1745,7 @@ mod tests {
         }
 
         // Verify: block was added to requested_blocks
-        assert!(state.requested_blocks.contains(&(slot, block_id)));
+        assert!(state.requested_blocks.contains(&Block { slot, block_id }));
 
         // Verify: no deferred events
         assert!(state.pending_repair_events.is_empty());
@@ -1776,7 +1777,7 @@ mod tests {
         assert_eq!(block.block_id, block_id);
 
         // Verify: block was NOT added to requested_blocks (so it can be re-added when reprocessed)
-        assert!(!state.requested_blocks.contains(&(slot, block_id)));
+        assert!(!state.requested_blocks.contains(&Block { slot, block_id }));
     }
 
     #[test]
@@ -1819,7 +1820,10 @@ mod tests {
         }
 
         // Verify: block was added to requested_blocks
-        assert!(state.requested_blocks.contains(&(slot, requested_block_id)));
+        assert!(state.requested_blocks.contains(&Block {
+            slot,
+            block_id: requested_block_id
+        }));
 
         // Verify: no deferred events
         assert!(state.pending_repair_events.is_empty());
@@ -1835,7 +1839,7 @@ mod tests {
         let block_id = Hash::new_unique();
 
         // Pre-add block to requested_blocks
-        state.requested_blocks.insert((slot, block_id));
+        state.requested_blocks.insert(Block { slot, block_id });
 
         let event = RepairEvent::FetchBlock {
             block: Block { slot, block_id },
@@ -1866,7 +1870,7 @@ mod tests {
 
         // Verify: No request was added (slot at root is ignored)
         assert!(state.pending_repair_requests.is_empty());
-        assert!(!state.requested_blocks.contains(&(slot, block_id)));
+        assert!(!state.requested_blocks.contains(&Block { slot, block_id }));
     }
 
     #[test]
@@ -1879,7 +1883,10 @@ mod tests {
 
         // Fill up requested_blocks with MAX_ALTERNATE_BLOCKS_PER_SLOT blocks for this slot
         for _ in 0..MAX_ALTERNATE_BLOCKS_PER_SLOT {
-            state.requested_blocks.insert((slot, Hash::new_unique()));
+            state.requested_blocks.insert(Block {
+                slot,
+                block_id: Hash::new_unique(),
+            });
         }
 
         let new_block_id = Hash::new_unique();
@@ -1896,7 +1903,10 @@ mod tests {
         // Verify: No new request was added
         assert!(state.pending_repair_requests.is_empty());
         // Verify: new block was NOT added to requested_blocks
-        assert!(!state.requested_blocks.contains(&(slot, new_block_id)));
+        assert!(!state.requested_blocks.contains(&Block {
+            slot,
+            block_id: new_block_id
+        }));
     }
 
     #[test]
@@ -1954,12 +1964,14 @@ mod tests {
         assert!(
             block_ids[..MAX_ALTERNATE_BLOCKS_PER_SLOT]
                 .iter()
-                .all(|block_id| state.requested_blocks.contains(&(slot, *block_id)))
+                .all(|block_id| state.requested_blocks.contains(&Block {
+                    slot,
+                    block_id: *block_id
+                }))
         );
-        assert!(
-            !state
-                .requested_blocks
-                .contains(&(slot, block_ids[MAX_ALTERNATE_BLOCKS_PER_SLOT]))
-        );
+        assert!(!state.requested_blocks.contains(&Block {
+            slot,
+            block_id: block_ids[MAX_ALTERNATE_BLOCKS_PER_SLOT]
+        }));
     }
 }
