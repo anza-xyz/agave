@@ -36,6 +36,16 @@ cargo_build_sbf_sanity() {
   popd
 }
 
+abi_v2_integration_test() {
+  cargo_build_sbf="$(realpath ./cargo-build-sbf)"
+
+  pushd programs/sbf
+  $cargo_build_sbf --arch v3 --abi-v2 --workspace
+
+  SBF_OUT_DIR=target/deploy cargo test --features=abi-v2 --test abi_v2
+  popd
+}
+
 # Run the appropriate test based on entrypoint
 testName=$(basename "$0" .sh)
 
@@ -98,6 +108,10 @@ test-stable-sbf)
   _ make -C programs/sbf clean-all test-v3
   _ make -C programs/sbf clean-all
   _ cargo_build_sbf_sanity "v3"
+
+  # ABIv2 integration tests
+  _ make -C programs/sbf clean-all
+  _ abi_v2_integration_test
 
   exit 0
   ;;
