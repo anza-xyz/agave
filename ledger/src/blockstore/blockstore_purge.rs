@@ -121,16 +121,6 @@ impl Blockstore {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn run_purge(
-        &self,
-        from_slot: Slot,
-        to_slot: Slot,
-        purge_type: PurgeType,
-    ) -> Result<()> {
-        self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut PurgeStats::default())
-    }
-
     /// Purges all columns relating to `slot`.
     ///
     /// Additionally, we cleanup the parent of `slot` by clearing `slot` from
@@ -530,7 +520,7 @@ pub mod tests {
         }
 
         // Purging range outside of TransactionStatus max slots should not affect TransactionStatus data
-        blockstore.run_purge(10, 20, PurgeType::Exact).unwrap();
+        blockstore.purge_slots(10, 20, PurgeType::Exact).unwrap();
 
         let status_entries: Vec<_> = blockstore
             .transaction_status_cf
@@ -541,7 +531,9 @@ pub mod tests {
     }
 
     fn clear_and_repopulate_transaction_statuses_for_test(blockstore: &Blockstore, max_slot: u64) {
-        blockstore.run_purge(0, max_slot, PurgeType::Exact).unwrap();
+        blockstore
+            .purge_slots(0, max_slot, PurgeType::Exact)
+            .unwrap();
         let mut iter = blockstore
             .transaction_status_cf
             .iter(IteratorMode::Start)
@@ -632,12 +624,14 @@ pub mod tests {
 
         // Partially purge and ensure special columns are non-empty
         blockstore
-            .run_purge(0, max_slot - 5, PurgeType::Exact)
+            .purge_slots(0, max_slot - 5, PurgeType::Exact)
             .unwrap();
         assert!(!blockstore.special_columns_empty().unwrap());
 
         // Purge the rest and ensure the special columns are empty once again
-        blockstore.run_purge(0, max_slot, PurgeType::Exact).unwrap();
+        blockstore
+            .purge_slots(0, max_slot, PurgeType::Exact)
+            .unwrap();
         assert!(blockstore.special_columns_empty().unwrap());
     }
 
@@ -651,7 +645,7 @@ pub mod tests {
 
         // Test purge outside bounds
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        blockstore.run_purge(10, 12, PurgeType::Exact).unwrap();
+        blockstore.purge_slots(10, 12, PurgeType::Exact).unwrap();
 
         let mut status_entry_iterator = blockstore
             .transaction_status_cf
@@ -666,7 +660,7 @@ pub mod tests {
 
         // Test purge inside written range
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        blockstore.run_purge(2, 4, PurgeType::Exact).unwrap();
+        blockstore.purge_slots(2, 4, PurgeType::Exact).unwrap();
 
         let mut status_entry_iterator = blockstore
             .transaction_status_cf
@@ -683,7 +677,7 @@ pub mod tests {
         // Purge up to but not including max_slot
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
         blockstore
-            .run_purge(0, max_slot - 1, PurgeType::Exact)
+            .purge_slots(0, max_slot - 1, PurgeType::Exact)
             .unwrap();
 
         let mut status_entry_iterator = blockstore
@@ -697,7 +691,7 @@ pub mod tests {
 
         // Test purge all
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        blockstore.run_purge(0, 22, PurgeType::Exact).unwrap();
+        blockstore.purge_slots(0, 22, PurgeType::Exact).unwrap();
 
         let mut status_entry_iterator = blockstore
             .transaction_status_cf
@@ -708,7 +702,7 @@ pub mod tests {
 
     fn purge_exact(blockstore: &Blockstore, oldest_slot: Slot) {
         blockstore
-            .run_purge(0, oldest_slot - 1, PurgeType::Exact)
+            .purge_slots(0, oldest_slot - 1, PurgeType::Exact)
             .unwrap();
     }
 

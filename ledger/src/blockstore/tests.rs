@@ -498,7 +498,7 @@ fn test_shred_cleanup_check() {
 
     let max_purge_slot = 1;
     blockstore
-        .run_purge(0, max_purge_slot, PurgeType::Exact)
+        .purge_slots(0, max_purge_slot, PurgeType::Exact)
         .unwrap();
     *blockstore.lowest_cleanup_slot.write().unwrap() = max_purge_slot;
 
@@ -3748,7 +3748,7 @@ fn test_get_rooted_transaction() {
     }
 
     blockstore
-        .run_purge(0, slot, PurgeType::CompactionFilter)
+        .purge_slots(0, slot, PurgeType::CompactionFilter)
         .unwrap();
     *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
     for VersionedTransactionWithStatusMeta { transaction, .. } in expected_transactions {
@@ -3865,7 +3865,7 @@ fn test_get_complete_transaction() {
     }
 
     blockstore
-        .run_purge(0, slot, PurgeType::CompactionFilter)
+        .purge_slots(0, slot, PurgeType::CompactionFilter)
         .unwrap();
     *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
     for VersionedTransactionWithStatusMeta { transaction, .. } in expected_transactions {
@@ -4551,7 +4551,7 @@ fn test_lowest_slot() {
         blockstore.insert_shreds(shreds, None, false).unwrap();
     }
     assert_eq!(blockstore.lowest_slot(), 1);
-    blockstore.run_purge(0, 5, PurgeType::Exact).unwrap();
+    blockstore.purge_slots(0, 5, PurgeType::Exact).unwrap();
     assert_eq!(blockstore.lowest_slot(), 6);
 }
 
@@ -4567,10 +4567,10 @@ fn test_highest_slot() {
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert_eq!(blockstore.highest_slot().unwrap(), Some(slot));
     }
-    blockstore.run_purge(5, 10, PurgeType::Exact).unwrap();
+    blockstore.purge_slots(5, 10, PurgeType::Exact).unwrap();
     assert_eq!(blockstore.highest_slot().unwrap(), Some(4));
 
-    blockstore.run_purge(0, 4, PurgeType::Exact).unwrap();
+    blockstore.purge_slots(0, 4, PurgeType::Exact).unwrap();
     assert_eq!(blockstore.highest_slot().unwrap(), None);
 }
 
@@ -5635,7 +5635,7 @@ fn test_duplicate_last_index_mark_dead() {
 
             // Cleanup the slot
             blockstore
-                .run_purge(slot, slot, PurgeType::Exact)
+                .purge_slots(slot, slot, PurgeType::Exact)
                 .expect("Purge database operations failed");
             assert!(blockstore.meta(slot).unwrap().is_none());
 
