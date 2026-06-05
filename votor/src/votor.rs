@@ -63,7 +63,7 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::consensus_message::{Block, ConsensusMessage},
+    agave_votor_messages::consensus_message::{Block, SigVerifiedBatch},
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -111,13 +111,13 @@ pub struct VotorConfig {
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
-    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
+    pub own_vote_sender: Sender<SigVerifiedBatch>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
-    pub consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
+    pub consensus_message_receiver: Receiver<SigVerifiedBatch>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
 }
 

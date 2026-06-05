@@ -16,7 +16,7 @@ use {
     },
     agave_votor_messages::{
         certificate::CertificateType,
-        consensus_message::{ConsensusMessage, VoteMessage},
+        consensus_message::{ConsensusMessage, SigVerifiedBatch, VoteMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
@@ -64,7 +64,7 @@ pub(crate) struct SigVerifierChannels {
     pub(crate) packet_receiver: Receiver<PacketBatch>,
     pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
-    pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
+    pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
     pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
 }
 
@@ -376,7 +376,7 @@ mod tests {
         _packet_sender: Sender<PacketBatch>,
         repair_receiver: VerifiedVoterSlotsReceiver,
         _reward_receiver: Receiver<AddVoteMessage>,
-        pool_receiver: Receiver<Vec<ConsensusMessage>>,
+        pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,
     }
@@ -388,8 +388,8 @@ mod tests {
         }
 
         fn new_with_pool_channel(
-            channel_to_pool: Sender<Vec<ConsensusMessage>>,
-            pool_receiver: Receiver<Vec<ConsensusMessage>>,
+            channel_to_pool: Sender<SigVerifiedBatch>,
+            pool_receiver: Receiver<SigVerifiedBatch>,
         ) -> Self {
             let num_validators = 10;
             let validator_keypairs = (0..num_validators)
@@ -528,7 +528,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages1))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
         let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
@@ -555,7 +555,7 @@ mod tests {
             .verify_and_send_batches(messages_to_batches(&messages2))
             .unwrap();
 
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
         let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
@@ -581,7 +581,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages3))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
         let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
@@ -648,21 +648,20 @@ mod tests {
         let (channel_to_pool, pool_receiver) = crossbeam_channel::bounded(1);
         let mut ctx = TestContext::new_with_pool_channel(channel_to_pool, pool_receiver);
 
-        let msg1 = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.validator_keypairs,
-            Vote::new_finalization_vote(5),
-            0,
-        ));
-        let msg2 = ConsensusMessage::Vote(create_signed_vote_message(
+        let msg1 =
+            create_signed_vote_message(&ctx.validator_keypairs, Vote::new_finalization_vote(5), 0);
+        let msg2 = create_signed_vote_message(
             &ctx.validator_keypairs,
             Vote::new_notarization_fallback_vote(Block {
                 slot: 6,
                 block_id: Hash::new_unique(),
             }),
             2,
-        ));
+        );
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg1)))
+            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(
+                &ConsensusMessage::Vote(msg1.clone()),
+            )))
             .unwrap();
 
         // The cap-1 channel is now full.  The second send hits Full and falls
@@ -681,13 +680,15 @@ mod tests {
         });
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg2)))
+            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(
+                &ConsensusMessage::Vote(msg2.clone()),
+            )))
             .unwrap();
 
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
         // Both messages were eventually delivered (no silent drop).
-        assert_eq!(m1_recv, vec![msg1]);
-        assert_eq!(m2_recv, vec![msg2]);
+        assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
+        assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
         // pool_sent counts every message that made it onto the channel,
         // whether via try_send or the blocking fallback.
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 2);
@@ -760,11 +761,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
-            num_votes,
-            "Did not send all valid packets"
-        );
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
     }
 
     #[test]
@@ -819,11 +823,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
-            num_votes,
-            "Did not send all valid packets"
-        );
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
         assert_eq!(
             ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
             1
@@ -883,19 +890,28 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
-        assert_eq!(
-            sent_messages.len(),
-            num_votes - 1,
-            "Only valid votes should be sent"
-        );
-        assert!(!sent_messages.iter().any(|msg| {
-            if let ConsensusMessage::Vote(vm) = msg {
-                vm.vote == vote2 && vm.rank == invalid_rank
-            } else {
-                false
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes - 1);
             }
-        }));
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+
+        let mut found_msg = false;
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                for vote in votes {
+                    if vote.vote == vote2 && vote.rank == invalid_rank {
+                        found_msg = true;
+                        break;
+                    }
+                }
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+        assert!(!found_msg);
     }
 
     #[test]
@@ -937,21 +953,29 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
-        assert_eq!(
-            sent_messages.len(),
-            num_votes - 1,
-            "Only valid votes should be sent"
-        );
+        let batches: Vec<_> = ctx.pool_receiver.try_iter().collect();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes - 1);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
 
         // Ensure the message with the invalid rank is not in the sent messages.
-        assert!(!sent_messages.iter().any(|msg| {
-            if let ConsensusMessage::Vote(vm) = msg {
-                vm.rank == invalid_rank
-            } else {
-                false
+        let mut found_msg = false;
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                for vote in votes {
+                    if vote.rank == invalid_rank {
+                        found_msg = true;
+                        break;
+                    }
+                }
             }
-        }));
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+        assert!(!found_msg);
     }
 
     #[test]
@@ -976,7 +1000,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base2 certificate should be sent"
         );
@@ -1004,7 +1028,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base2 certificate should be sent"
         );
@@ -1034,7 +1058,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             0,
             "This certificate should be invalid"
         );
@@ -1081,7 +1105,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base3 certificate should be sent"
         );
@@ -1127,7 +1151,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base3 certificate should be sent"
         );
@@ -1173,7 +1197,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             0,
             "This certificate should be invalid"
         );
@@ -1272,11 +1296,30 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
-            num_votes + 1,
-            "All valid messages in a mixed batch should be sent"
-        );
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 2);
+
+        let batch_0_was_votes = match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes);
+                true
+            }
+            SigVerifiedBatch::Certificates(certs) => {
+                assert_eq!(certs.len(), 1);
+                false
+            }
+        };
+
+        match &batches[1] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert!(!batch_0_was_votes);
+                assert_eq!(votes.len(), num_votes);
+            }
+            SigVerifiedBatch::Certificates(certs) => {
+                assert!(batch_0_was_votes);
+                assert_eq!(certs.len(), 1);
+            }
+        }
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, num_votes as u64);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
     }
@@ -1429,7 +1472,7 @@ mod tests {
             .verify_and_send_batches(packet_batches1)
             .unwrap();
 
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 1);
 
@@ -1478,7 +1521,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert!(!ctx.banlist.is_banned(&vote_sender));
         assert!(!ctx.banlist.is_banned(&cert_sender));
     }
@@ -1514,7 +1557,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), 3);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
 
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
@@ -1558,7 +1608,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Certificates(certs) => {
+                assert_eq!(certs.len(), 3);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
 
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {

@@ -6,7 +6,7 @@ use {
         cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
     agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-    agave_votor_messages::consensus_message::ConsensusMessage,
+    agave_votor_messages::consensus_message::SigVerifiedBatch,
     crossbeam_channel::{Sender, TrySendError},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -52,18 +52,18 @@ pub(super) fn send_votes_to_rewards(
     }
 }
 
-/// Sends the `votes` to the consensus pool.  If the channel is full, then does a
+/// Sends the `batch` to the consensus pool.  If the channel is full, then does a
 /// blocking send.
 pub(super) fn send_votes_to_pool(
-    votes: Vec<ConsensusMessage>,
-    channel: &Sender<Vec<ConsensusMessage>>,
+    batch: SigVerifiedBatch,
+    channel: &Sender<SigVerifiedBatch>,
     stats: &mut SigVerifyVoteStats,
 ) -> Result<(), SigVerifyVoteError> {
-    if votes.is_empty() {
+    if batch.is_empty() {
         return Ok(());
     }
-    let len = votes.len();
-    match channel.try_send(votes) {
+    let len = batch.len();
+    match channel.try_send(batch) {
         Ok(()) => {
             stats.pool_sent += len as u64;
             stats.pool_outstanding_msgs = channel.len() as u64;
@@ -108,18 +108,18 @@ pub(super) fn send_votes_to_repair(
     Ok(())
 }
 
-/// Sends the `messages` to the consensus pool.  If the channel is bounded and full, then does a
+/// Sends the `batch` to the consensus pool.  If the channel is bounded and full, then does a
 /// blocking send.
 pub(super) fn send_certs_to_pool(
-    messages: Vec<ConsensusMessage>,
-    channel_to_pool: &Sender<Vec<ConsensusMessage>>,
+    batch: SigVerifiedBatch,
+    channel_to_pool: &Sender<SigVerifiedBatch>,
     stats: &mut SigVerifyCertStats,
 ) -> Result<(), SigVerifyCertError> {
-    if messages.is_empty() {
+    if batch.is_empty() {
         return Ok(());
     }
-    let len = messages.len();
-    match channel_to_pool.try_send(messages) {
+    let len = batch.len();
+    match channel_to_pool.try_send(batch) {
         Ok(()) => {
             stats.pool_sent += len as u64;
             stats.pool_outstanding_msgs = channel_to_pool.len() as u64;

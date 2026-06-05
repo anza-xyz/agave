@@ -26,7 +26,7 @@ pod_wrapper! {
     derive(AbiExample),
     frozen_abi(digest = "5WqvPnvSnVXQFrAs9o29szFGDiCk45Pgk8K1evTZSrwo")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,

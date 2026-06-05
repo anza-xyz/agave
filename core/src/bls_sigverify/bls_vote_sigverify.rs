@@ -14,7 +14,7 @@ use {
     },
     agave_votor::consensus_metrics::ConsensusMetricsEvent,
     agave_votor_messages::{
-        consensus_message::{ConsensusMessage, VoteMessage},
+        consensus_message::{SigVerifiedBatch, VoteMessage},
         vote::Vote,
     },
     rayon::{
@@ -129,7 +129,7 @@ fn process_verified_votes(
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
 ) -> (
-    Vec<ConsensusMessage>,
+    SigVerifiedBatch,
     HashMap<Pubkey, Vec<Slot>>,
     AddVoteMessage,
     Vec<ConsensusMetricsEvent>,
@@ -154,7 +154,7 @@ fn process_verified_votes(
             id: payload.pubkey,
             vote: payload.vote_message.vote,
         });
-        votes_for_pool.push(ConsensusMessage::Vote(payload.vote_message));
+        votes_for_pool.push(payload.vote_message);
     }
     let msgs_for_repair = msgs_for_repair
         .into_iter()
@@ -164,6 +164,7 @@ fn process_verified_votes(
             (pubkey, slots)
         })
         .collect();
+    let votes_for_pool = SigVerifiedBatch::Votes(votes_for_pool);
     (
         votes_for_pool,
         msgs_for_repair,

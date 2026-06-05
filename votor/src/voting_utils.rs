@@ -7,7 +7,7 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
         vote::Vote,
     },
     crossbeam_channel::{SendError, Sender},
@@ -117,7 +117,7 @@ pub struct VotingContext {
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
+    pub own_vote_sender: Sender<SigVerifiedBatch>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -264,7 +264,7 @@ fn insert_vote_and_create_bls_message(
     };
     context
         .own_vote_sender
-        .send(vec![ConsensusMessage::Vote(vote_msg.clone())])
+        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
         .map_err(|_| SendError(()))?;
 
     // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
@@ -319,21 +319,18 @@ mod tests {
         std::sync::{Arc, RwLock},
     };
 
-    fn generate_expected_consensus_message(
-        vote: Vote,
-        my_bls_keypair: &BLSKeypair,
-    ) -> ConsensusMessage {
+    fn generate_expected_consensus_message(vote: Vote, my_bls_keypair: &BLSKeypair) -> VoteMessage {
         let vote_serialized = wincode::serialize(&vote).unwrap();
         let signature = my_bls_keypair.sign(&vote_serialized);
-        ConsensusMessage::Vote(VoteMessage {
+        VoteMessage {
             vote,
             signature: signature.into(),
             rank: 0,
-        })
+        }
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<Vec<ConsensusMessage>>,
+        own_vote_sender: Sender<SigVerifiedBatch>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> VotingContext {
@@ -346,7 +343,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks_with_forks(
-        own_vote_sender: Sender<Vec<ConsensusMessage>>,
+        own_vote_sender: Sender<SigVerifiedBatch>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (VotingContext, Arc<RwLock<BankForks>>) {
@@ -416,7 +413,7 @@ mod tests {
             saved_vote_history,
         } = result
         {
-            let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
+            let msg = Arc::unwrap_or_clone(vote);
             assert_eq!(msg, expected_message);
             assert_eq!(
                 saved_vote_history,
@@ -434,7 +431,10 @@ mod tests {
 
         // Check that own vote sender receives the vote
         let received_message = own_vote_receiver.recv().unwrap();
-        assert_eq!(received_message, vec![expected_message]);
+        assert_eq!(
+            received_message,
+            SigVerifiedBatch::Votes(vec![expected_message])
+        );
     }
 
     #[test]

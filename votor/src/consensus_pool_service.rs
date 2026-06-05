@@ -16,7 +16,7 @@ use {
     },
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{Block, ConsensusMessage},
+        consensus_message::{Block, ConsensusMessage, SigVerifiedBatch},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -54,7 +54,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub(crate) vote_history_highest_parent_ready: Option<(Slot, Block)>,
 
-    pub(crate) consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
+    pub(crate) consensus_message_receiver: Receiver<SigVerifiedBatch>,
 
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
@@ -164,6 +164,41 @@ impl ConsensusPoolService {
                 Err(TrySendError::Full(_)) => {
                     stats.certificates_dropped += num_certs.saturating_sub(i);
                     return Err(AddVoteError::VotingServiceQueueFull);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_batch(
+        ctx: &mut ConsensusPoolContext,
+        msgs: impl Iterator<Item = ConsensusMessage>,
+        consensus_pool: &mut ConsensusPool,
+        events: &mut Vec<VotorEvent>,
+        standstill_timer: &mut Instant,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), AddVoteError> {
+        for msg in msgs {
+            match Self::process_consensus_message(
+                ctx,
+                msg,
+                consensus_pool,
+                events,
+                standstill_timer,
+                stats,
+            ) {
+                Ok(()) => {}
+                Err(AddVoteError::ChannelDisconnected(channel_name)) => {
+                    return Err(AddVoteError::ChannelDisconnected(channel_name));
+                }
+                Err(e) => {
+                    // This is a non critical error, a duplicate vote for example
+                    trace!(
+                        "{}: unable to push vote into pool {}",
+                        ctx.cluster_info.id(),
+                        e
+                    );
+                    stats.add_message_failed += 1;
                 }
             }
         }
@@ -375,37 +410,42 @@ impl ConsensusPoolService {
                 Duration::from_millis(20)
             };
 
-            let messages: Vec<ConsensusMessage> = select! {
+            let batches: Vec<SigVerifiedBatch> = select! {
                 recv(ctx.consensus_message_receiver) -> msg => {
                     let Ok(first) = msg else {
                         return Self::handle_channel_disconnected(&mut ctx, "consensus_message_receiver");
                     };
-                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).flatten().collect()
+                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).collect()
                 },
                 default(wait_timeout) => continue
             };
 
-            for message in messages {
-                match Self::process_consensus_message(
-                    &mut ctx,
-                    message,
-                    &mut consensus_pool,
-                    &mut events,
-                    &mut standstill_timer,
-                    &mut stats,
-                ) {
+            for batch in batches {
+                let ret = match batch {
+                    SigVerifiedBatch::Votes(votes) => Self::process_batch(
+                        &mut ctx,
+                        votes.into_iter().map(ConsensusMessage::Vote),
+                        &mut consensus_pool,
+                        &mut events,
+                        &mut standstill_timer,
+                        &mut stats,
+                    ),
+                    SigVerifiedBatch::Certificates(certs) => Self::process_batch(
+                        &mut ctx,
+                        certs.into_iter().map(ConsensusMessage::Certificate),
+                        &mut consensus_pool,
+                        &mut events,
+                        &mut standstill_timer,
+                        &mut stats,
+                    ),
+                };
+                match ret {
                     Ok(()) => {}
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
                         return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str());
                     }
-                    Err(e) => {
-                        // This is a non critical error, a duplicate vote for example
-                        trace!(
-                            "{}: unable to push vote into pool {}",
-                            ctx.cluster_info.id(),
-                            e
-                        );
-                        stats.add_message_failed += 1;
+                    Err(_) => {
+                        // error was handled in process_batch.
                     }
                 }
             }

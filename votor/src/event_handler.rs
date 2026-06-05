@@ -934,7 +934,7 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
             vote::Vote,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
@@ -970,7 +970,7 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<Vec<ConsensusMessage>>,
+        own_vote_receiver: Receiver<SigVerifiedBatch>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1383,7 +1383,7 @@ mod tests {
             );
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, vec![ConsensusMessage::Vote(expected_message)]);
+            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
         }
 
         fn check_for_commitment(&mut self, expected_type: CommitmentType, expected_slot: Slot) {
