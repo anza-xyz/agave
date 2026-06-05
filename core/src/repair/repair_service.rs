@@ -14,7 +14,7 @@ use {
             repair_weight::RepairWeight,
             serve_repair::{
                 REPAIR_PEERS_CACHE_CAPACITY, RepairPeers, RepairProtocol, RepairRequestHeader,
-                ServeRepair, ShredRepairType,
+                RepairSigningPool, ServeRepair, ShredRepairType,
             },
         },
     },
@@ -45,6 +45,7 @@ use {
         collections::{HashMap, HashSet, hash_map::Entry},
         iter::Iterator,
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -76,6 +77,13 @@ const NUM_PEERS_TO_SAMPLE_FOR_REPAIRS: usize = 10;
 // frequent reallocations for typical mainnet blocks while still letting unusually
 // large blocks grow lazily.
 const MIN_FEC_SET_OBSERVATION_CAPACITY: usize = 32;
+
+const MAX_REPAIR_SIGNING_THREADS: usize = 8;
+
+fn default_num_repair_signing_threads() -> NonZeroUsize {
+    NonZeroUsize::new((num_cpus::get() / 4).clamp(1, MAX_REPAIR_SIGNING_THREADS))
+        .expect("thread count is non-zero")
+}
 
 /// Returns the fixed-size FEC set ordinal containing `shred_index`.
 fn fec_set_ordinal(shred_index: u64) -> usize {
@@ -802,32 +810,35 @@ impl RepairService {
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
         repair_metrics: &mut RepairMetrics,
+        repair_signing_pool: &mut RepairSigningPool,
     ) {
         let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
-        let batch: Vec<(Vec<u8>, SocketAddr)> = {
+        let identity_keypair = repair_info.cluster_info.keypair();
+        let proto = {
             let mut outstanding_requests = outstanding_requests.write().unwrap();
             repairs
                 .into_iter()
                 .filter_map(|repair_request| {
-                    let (to, req) = serve_repair
-                        .repair_request(
+                    serve_repair
+                        .repair_request_proto(
                             repair_info,
                             repair_request,
                             peers_cache,
                             &mut repair_metrics.stats,
                             &mut outstanding_requests,
+                            &identity_keypair,
                         )
-                        .ok()??;
-                    Some((req, to))
+                        .ok()
                 })
-                .collect()
+                .collect::<Vec<_>>()
         };
+        let batch = repair_signing_pool.sign_batch(identity_keypair, proto);
         build_repairs_batch_elapsed.stop();
 
         let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
         if !batch.is_empty() {
             let num_pkts = batch.len();
-            let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
+            let batch = batch.iter().map(|(addr, bytes)| (bytes, addr));
             match batch_send(repair_socket, batch) {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(err, num_failed)) => {
@@ -853,6 +864,7 @@ impl RepairService {
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
         migration_status: &MigrationStatus,
+        repair_signing_pool: &mut RepairSigningPool,
     ) {
         let RepairChannels {
             verified_voter_slots_receiver,
@@ -909,6 +921,7 @@ impl RepairService {
             outstanding_requests,
             repair_socket,
             repair_metrics,
+            repair_signing_pool,
         );
     }
 
@@ -947,6 +960,8 @@ impl RepairService {
             repair_eligibility: RepairEligibility::default(),
         };
 
+        let mut repair_signing_pool = RepairSigningPool::new(default_num_repair_signing_threads());
+
         while !exit.load(Ordering::Relaxed) {
             Self::run_repair_iteration(
                 blockstore.as_ref(),
@@ -956,6 +971,7 @@ impl RepairService {
                 outstanding_requests,
                 repair_socket,
                 migration_status.as_ref(),
+                &mut repair_signing_pool,
             );
             repair_tracker.repair_metrics.maybe_report();
             sleep(Duration::from_millis(REPAIR_MS));
