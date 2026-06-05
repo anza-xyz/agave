@@ -27,9 +27,46 @@ pub struct QosService;
 
 impl QosService {
     /// Calculate cost of transactions, if not already filtered out, determine which ones to
-    /// include in the slot, and accumulate costs in the cost tracker.
+    /// include in the slot based on the current remaining block cost.
     /// Returns a vector of results containing selected transaction costs, and the number of
     /// transactions that were *NOT* selected.
+    pub fn select_transactions_for_remaining_block_cost<'a, Tx: TransactionWithMeta>(
+        bank: &Bank,
+        transactions: &'a [Tx],
+        pre_results: impl Iterator<Item = transaction::Result<()>>,
+    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, u64) {
+        let transaction_costs =
+            Self::compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
+        let remaining_block_cost = {
+            let cost_tracker = bank.read_cost_tracker().unwrap();
+            cost_tracker
+                .get_block_limit()
+                .saturating_sub(cost_tracker.block_cost())
+        };
+        let mut num_included = 0;
+        let transactions_qos_cost_results = transaction_costs
+            .into_iter()
+            .map(|cost| match cost {
+                Ok(cost) if cost.sum() <= remaining_block_cost => {
+                    num_included += 1;
+                    Ok(cost)
+                }
+                Ok(_cost) => Err(TransactionError::WouldExceedMaxBlockCostLimit),
+                Err(err) => Err(err),
+            })
+            .collect::<Vec<_>>();
+        let cost_model_throttled_transactions_count =
+            transactions.len().saturating_sub(num_included) as u64;
+
+        (
+            transactions_qos_cost_results,
+            cost_model_throttled_transactions_count,
+        )
+    }
+
+    /// Reserve/refund-era API retained for compatibility while call sites move to
+    /// `select_transactions_for_remaining_block_cost()`.
+    #[allow(dead_code)]
     pub fn select_and_accumulate_transaction_costs<'a, Tx: TransactionWithMeta>(
         bank: &Bank,
         transactions: &'a [Tx],
@@ -80,6 +117,7 @@ impl QosService {
     /// Given a list of transactions and their costs, this function returns a corresponding
     /// list of Results that indicate if a transaction is selected to be included in the current block,
     /// and a count of the number of transactions that would fit in the block
+    #[allow(dead_code)]
     fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
         transactions: impl Iterator<Item = &'a Tx>,
         transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
@@ -129,6 +167,7 @@ impl QosService {
 
     /// Removes transaction costs from the cost tracker if not committed or recorded, or
     /// updates the transaction costs for committed transactions.
+    #[allow(dead_code)]
     pub fn remove_or_update_costs<'a, Tx: TransactionWithMeta + 'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         transaction_committed_status: Option<&Vec<CommitTransactionDetails>>,
@@ -148,6 +187,7 @@ impl QosService {
 
     /// For recorded transactions, remove units reserved by uncommitted transaction, or update
     /// units for committed transactions.
+    #[allow(dead_code)]
     fn remove_or_update_recorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         transaction_committed_status: &Vec<CommitTransactionDetails>,
@@ -188,6 +228,7 @@ impl QosService {
     }
 
     /// Remove reserved units for transaction batch that unsuccessfully recorded.
+    #[allow(dead_code)]
     fn remove_unrecorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
