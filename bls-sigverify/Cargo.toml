@@ -20,6 +20,7 @@ agave-unstable-api = []
 dev-context-only-utils = [
     "agave-bls-cert-verify/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
+    "agave-votor-transport/dev-context-only-utils",
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
 ]
@@ -28,6 +29,7 @@ dev-context-only-utils = [
 agave-bls-cert-verify = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
@@ -47,7 +49,6 @@ solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }
-solana-streamer = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
@@ -63,6 +64,7 @@ solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-signer = { workspace = true }
+tokio = { workspace = true }
 
 [[bench]]
 name = "bls_vote_sigverify"

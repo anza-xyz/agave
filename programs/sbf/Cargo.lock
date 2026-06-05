@@ -84,6 +84,7 @@ dependencies = [
  "agave-bls-cert-verify",
  "agave-math-utils",
  "agave-votor-messages",
+ "agave-votor-transport",
  "bitvec",
  "crossbeam-channel",
  "log",
@@ -103,7 +104,6 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-signer-store",
- "solana-streamer",
  "thiserror 2.0.19",
  "wincode",
 ]
@@ -302,6 +302,7 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
+ "agave-votor-transport",
  "agave-xdp",
  "bytesize",
  "caps",
@@ -384,17 +385,17 @@ dependencies = [
  "agave-logger",
  "agave-math-utils",
  "agave-votor-messages",
+ "agave-votor-transport",
+ "arc-swap",
  "bitvec",
+ "bytes",
  "crossbeam-channel",
  "itertools 0.14.0",
- "lazy-lru",
  "log",
  "parking_lot 0.12.2",
  "smallvec",
  "solana-bls-signatures",
- "solana-client",
  "solana-clock",
- "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-gossip",
  "solana-hash 4.5.0",
@@ -411,9 +412,10 @@ dependencies = [
  "solana-signer-store",
  "solana-streamer",
  "solana-time-utils",
+ "solana-tls-utils",
  "solana-transaction",
- "solana-transaction-error",
  "thiserror 2.0.19",
+ "tokio",
  "wincode",
 ]
 
@@ -437,6 +439,26 @@ dependencies = [
  "solana-signer-store",
  "thiserror 2.0.19",
  "wincode",
+]
+
+[[package]]
+name = "agave-votor-transport"
+version = "4.3.0-alpha.2"
+dependencies = [
+ "arrayvec",
+ "bytes",
+ "crossbeam-channel",
+ "log",
+ "qualifier_attr",
+ "quinn",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+ "solana-tls-utils",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util 0.7.19",
 ]
 
 [[package]]
@@ -6483,6 +6505,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
  "agave-xdp",
  "ahash 0.8.12",
  "anyhow",

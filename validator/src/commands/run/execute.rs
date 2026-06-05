@@ -12,6 +12,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
+    agave_votor_transport::MAX_ENDPOINTS,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -253,6 +254,12 @@ pub fn execute(
     }
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+    let num_votor_quic_endpoints = value_t_or_exit!(matches, "num_votor_endpoints", NonZeroUsize);
+    if num_votor_quic_endpoints.get() > MAX_ENDPOINTS {
+        Err(format!(
+            "--num-votor-endpoints must be at most {MAX_ENDPOINTS}"
+        ))?;
+    }
 
     let node_config = NodeConfig {
         advertised_ip,
@@ -265,6 +272,7 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
+        num_votor_quic_endpoints,
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);

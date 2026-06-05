@@ -68,7 +68,7 @@ use {
         collections::HashMap,
         io::{Error, Result},
         iter,
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Duration,
@@ -909,9 +909,8 @@ impl LocalCluster {
         num_new_notarized_votes: usize,
         test_name: &str,
         socket_addr_space: SocketAddrSpace,
-        vote_listener_addr: std::net::UdpSocket,
-        validator_node_keypairs: &[Arc<Keypair>],
-        node_stakes: &[u64],
+        vote_listener_socket: UdpSocket,
+        listener_keypair: Keypair,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         let bank_forks = self.bank_forks();
@@ -921,9 +920,8 @@ impl LocalCluster {
             num_new_notarized_votes,
             &alive_node_contact_infos,
             test_name,
-            vote_listener_addr,
-            validator_node_keypairs,
-            node_stakes,
+            vote_listener_socket,
+            listener_keypair,
             bank_forks,
         );
         info!("{test_name} done waiting for notarized votes");

@@ -21,6 +21,7 @@ use {
         vote::Vote,
         wire::VotePayloadToSign,
     },
+    agave_votor_transport::endpoint::BanSender,
     log::info,
     rayon::{
         ThreadPool, current_thread_index,
@@ -36,7 +37,6 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::BLSPubkeyToRankMap},
-    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::{collections::HashMap, num::NonZero, sync::Arc},
 };
 
@@ -90,7 +90,7 @@ pub(super) fn verify_and_send_votes(
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &BanSender,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
@@ -114,7 +114,7 @@ pub(super) fn verify_and_send_votes(
             vote_payload_to_sign,
             unverified_votes,
             &mut stats,
-            banlist,
+            ban_sender,
             thread_pool,
         );
 
@@ -212,7 +212,7 @@ fn verify_votes(
     vote_payload_to_sign: VotePayloadToSign,
     unverified_votes: Vec<UnverifiedVotePayload>,
     stats: &mut SigVerifyVoteStats,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &BanSender,
     thread_pool: &ThreadPool,
 ) -> Vec<VerifiedVotePayload> {
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
@@ -252,14 +252,11 @@ fn verify_votes(
             stats.num_individual_verified += verified_votes.len() as u64;
             for (sender_identity_pubkey, error) in invalid_remote_pubkeys {
                 stats.banning_validator += 1;
-                if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
-                    stats.already_banned += 1;
-                } else {
-                    info!(
-                        "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
-                         verification {error:?}"
-                    );
-                }
+                ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
+                info!(
+                    "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
+                     verification {error:?}"
+                );
             }
             stats.fn_verify_individual_votes_stats.add_sample(time_us);
             verified_votes

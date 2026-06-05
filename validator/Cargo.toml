@@ -26,6 +26,7 @@ agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
+agave-votor-transport = { workspace = true }
 agave-xdp = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }

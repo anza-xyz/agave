@@ -71,7 +71,6 @@ pub(super) struct SigVerifierStats {
     /// Number of times a vote was too far in the future and discarded.
     pub(super) vote_too_far_in_future: Saturating<u64>,
     pub(super) invalid_vote_banning_validator: Saturating<u64>,
-    pub(super) invalid_vote_already_banned: Saturating<u64>,
     /// Last time the stats were reported.
     last_report: Reporting,
 }
@@ -94,7 +93,6 @@ impl SigVerifierStats {
             vote_too_far_in_future: Saturating(0),
             verify_and_send_batch_us: WelfordStats::default(),
             invalid_vote_banning_validator: Saturating(0),
-            invalid_vote_already_banned: Saturating(0),
             last_report: Reporting::new(root_slot),
         }
     }
@@ -127,7 +125,6 @@ impl SigVerifierStats {
             verify_and_send_batch_us,
             vote_too_far_in_future,
             invalid_vote_banning_validator,
-            invalid_vote_already_banned,
             last_report: _,
         } = self;
 
@@ -191,11 +188,6 @@ impl SigVerifierStats {
                 invalid_vote_banning_validator.0,
                 i64
             ),
-            (
-                "invalid_vote_already_banned",
-                invalid_vote_already_banned.0,
-                i64
-            ),
             ("num_pkts_max", num_pkts.maximum().unwrap_or(0), i64),
             ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
             ("num_pkts_count", num_pkts.count(), i64),
@@ -216,8 +208,6 @@ pub(super) struct SigVerifyCertStats {
     /// Number of certs skipped because another cert of the same `CertificateType` was verified in
     /// the same batch.
     pub(super) redundant_certs_skipped: Saturating<u64>,
-    /// Number of times we are banning a validator that was already banned.
-    pub(super) already_banned: Saturating<u64>,
     /// Number of times we are banning a validator.
     pub(super) banning_validator: Saturating<u64>,
 
@@ -244,7 +234,6 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            already_banned,
             banning_validator,
             certificate_verification_failed,
             too_far_in_future,
@@ -257,7 +246,6 @@ impl SigVerifyCertStats {
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.redundant_certs_skipped += redundant_certs_skipped;
-        self.already_banned += already_banned;
         self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
         self.too_far_in_future += too_far_in_future;
@@ -274,7 +262,6 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            already_banned,
             banning_validator,
             certificate_verification_failed,
             too_far_in_future,
@@ -294,7 +281,6 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("redundant_certs_skipped", redundant_certs_skipped.0, i64),
-            ("already_banned", already_banned.0, i64),
             ("banning_validator", banning_validator.0, i64),
             (
                 "certificate_verification_failed",
@@ -335,8 +321,6 @@ pub(super) struct SigVerifyVoteStats {
     /// Number of votes that were individually verified.
     pub(super) num_individual_verified: Saturating<u64>,
 
-    /// Number of times we are banning a validator that was already banned.
-    pub(super) already_banned: Saturating<u64>,
     /// Number of times we are banning a validator.
     pub(super) banning_validator: Saturating<u64>,
 
@@ -379,7 +363,6 @@ impl SigVerifyVoteStats {
             optimistic_verification_failed,
             optimistic_batch,
             num_individual_verified,
-            already_banned,
             banning_validator,
             metrics_sent,
             metrics_channel_full,
@@ -400,7 +383,6 @@ impl SigVerifyVoteStats {
         self.optimistic_verification_failed += optimistic_verification_failed;
         self.optimistic_batch.merge(optimistic_batch);
         self.num_individual_verified += num_individual_verified;
-        self.already_banned += already_banned;
         self.banning_validator += banning_validator;
         self.metrics_sent += metrics_sent;
         self.metrics_channel_full += metrics_channel_full;
@@ -427,7 +409,6 @@ impl SigVerifyVoteStats {
             optimistic_verification_failed,
             optimistic_batch,
             num_individual_verified,
-            already_banned,
             banning_validator,
             metrics_sent,
             metrics_channel_full,
@@ -463,7 +444,6 @@ impl SigVerifyVoteStats {
                 i64
             ),
             ("num_individual_verified", num_individual_verified.0, i64),
-            ("already_banned", already_banned.0, i64),
             ("banning_validator", banning_validator.0, i64),
             ("metrics_sent", metrics_sent.0, i64),
             ("metrics_channel_full", metrics_channel_full.0, i64),
