@@ -74,7 +74,6 @@ pub struct ValidatorKeys {
 }
 
 impl ValidatorKeys {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             node_keypair: Arc::new(Keypair::new()),
