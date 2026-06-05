@@ -10,7 +10,7 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            SocketConfiguration as SocketConfig, bind_gossip_port_in_range,
+            SocketConfiguration as SocketConfig, bind_gossip_port_in_range_with_config,
             bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
             get_max_recv_buffer_size, get_max_send_buffer_size, localhost_port_range_for_tests,
             multi_bind_in_range_with_config,
@@ -179,16 +179,21 @@ impl Node {
         let mut gossip_sockets = Vec::with_capacity(bind_ip_addrs.len());
         let mut gossip_ports = Vec::with_capacity(bind_ip_addrs.len());
         let mut ip_echo_sockets = Vec::with_capacity(bind_ip_addrs.len());
+
+        let socket_configs = Self::create_socket_configs();
+
         for ip in bind_ip_addrs.iter() {
             let gossip_addr = SocketAddr::new(*ip, gossip_port);
-            let (port, (gossip, ip_echo)) =
-                bind_gossip_port_in_range(&gossip_addr, port_range, *ip);
+            let (port, (gossip, ip_echo)) = bind_gossip_port_in_range_with_config(
+                &gossip_addr,
+                port_range,
+                *ip,
+                socket_configs.read_write,
+            );
             gossip_sockets.push(gossip);
             gossip_ports.push(port);
             ip_echo_sockets.push(ip_echo);
         }
-
-        let socket_configs = Self::create_socket_configs();
 
         let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,

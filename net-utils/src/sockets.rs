@@ -46,6 +46,15 @@ pub fn bind_gossip_port_in_range(
     bind_ip_addr: IpAddr,
 ) -> (u16, (UdpSocket, TcpListener)) {
     let config = SocketConfiguration::default();
+    bind_gossip_port_in_range_with_config(gossip_addr, port_range, bind_ip_addr, config)
+}
+
+pub fn bind_gossip_port_in_range_with_config(
+    gossip_addr: &SocketAddr,
+    port_range: PortRange,
+    bind_ip_addr: IpAddr,
+    config: SocketConfiguration,
+) -> (u16, (UdpSocket, TcpListener)) {
     if gossip_addr.port() != 0 {
         (
             gossip_addr.port(),
