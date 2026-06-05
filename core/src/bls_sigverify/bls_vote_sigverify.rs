@@ -90,7 +90,7 @@ pub(super) fn verify_and_send_votes(
     stats.sig_verified_votes += verified_votes.len() as u64;
 
     let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
-        process_verified_votes(&verified_votes, root_bank, cluster_info, leader_schedule);
+        process_verified_votes(verified_votes, root_bank, cluster_info, leader_schedule);
 
     send_votes_to_pool(votes_for_pool, &channels.channel_to_pool, &mut stats)?;
     send_votes_to_repair(msgs_for_repair, &channels.channel_to_repair, &mut stats)?;
@@ -124,7 +124,7 @@ fn inspect_for_repair(vote: &VotePayload, msgs_for_repair: &mut HashMap<Pubkey, 
 /// In particular, collects and returns the relevant messages for the consensus pool; rewards;
 /// repair; and metrics;
 fn process_verified_votes(
-    verified_votes: &[VotePayload],
+    verified_votes: Vec<VotePayload>,
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
@@ -138,25 +138,23 @@ fn process_verified_votes(
     let mut msgs_for_repair = HashMap::new();
     let mut votes_for_pool = Vec::with_capacity(verified_votes.len());
     let mut votes_for_metrics = Vec::with_capacity(verified_votes.len());
-    for vote in verified_votes {
-        let vote_message = vote.vote_message;
+    for payload in verified_votes {
         if crate::block_creation_loop::rewards::certs_builder::wants_vote(
             cluster_info,
             leader_schedule,
             root_bank.slot(),
-            &vote_message,
+            &payload.vote_message,
         ) {
-            votes_for_reward.push(vote_message);
+            votes_for_reward.push(payload.vote_message.clone());
         }
 
-        inspect_for_repair(vote, &mut msgs_for_repair);
-
-        votes_for_pool.push(ConsensusMessage::Vote(vote_message));
+        inspect_for_repair(&payload, &mut msgs_for_repair);
 
         votes_for_metrics.push(ConsensusMetricsEvent::Vote {
-            id: vote.pubkey,
-            vote: vote.vote_message.vote,
+            id: payload.pubkey,
+            vote: payload.vote_message.vote,
         });
+        votes_for_pool.push(ConsensusMessage::Vote(payload.vote_message));
     }
     let msgs_for_repair = msgs_for_repair
         .into_iter()

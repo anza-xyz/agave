@@ -53,8 +53,8 @@ pub enum GenerateVoteTxResult {
     // The following are the successful cases
     // Generated a vote transaction
     Tx(Transaction),
-    // Generated a ConsensusMessage
-    ConsensusMessage(ConsensusMessage),
+    // Generated a VoteMessage
+    Vote(VoteMessage),
 }
 
 impl GenerateVoteTxResult {
@@ -74,7 +74,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => false,
-            Self::Tx(_) | Self::ConsensusMessage(_) => false,
+            Self::Tx(_) | Self::Vote(_) => false,
         }
     }
 
@@ -86,7 +86,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => true,
-            Self::Tx(_) | Self::ConsensusMessage(_) => false,
+            Self::Tx(_) | Self::Vote(_) => false,
         }
     }
 }
@@ -216,11 +216,11 @@ pub fn generate_vote_tx(
     };
 
     let vote_serialized = wincode::serialize(&vote).unwrap();
-    GenerateVoteTxResult::ConsensusMessage(ConsensusMessage::Vote(VoteMessage {
+    GenerateVoteTxResult::Vote(VoteMessage {
         vote,
         signature: bls_keypair.sign(&vote_serialized).into(),
         rank: my_rank,
-    }))
+    })
 }
 
 /// Send an alpenglow vote as a BLSMessage
@@ -244,7 +244,7 @@ fn insert_vote_and_create_bls_message(
     }
 
     let bank = context.sharable_banks.root();
-    let message = match generate_vote_tx(
+    let vote_msg = match generate_vote_tx(
         vote,
         &bank,
         context.vote_account_pubkey,
@@ -253,7 +253,7 @@ fn insert_vote_and_create_bls_message(
         context.wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
-        GenerateVoteTxResult::ConsensusMessage(m) => m,
+        GenerateVoteTxResult::Vote(vote) => vote,
         e => {
             if e.is_transient_error() {
                 return Err(VoteError::TransientError(Box::new(e)));
@@ -264,7 +264,7 @@ fn insert_vote_and_create_bls_message(
     };
     context
         .own_vote_sender
-        .send(vec![message.clone()])
+        .send(vec![ConsensusMessage::Vote(vote_msg.clone())])
         .map_err(|_| SendError(()))?;
 
     // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
@@ -273,8 +273,7 @@ fn insert_vote_and_create_bls_message(
 
     // Return vote for sending
     Ok(BLSOp::PushVote {
-        message: Arc::new(message),
-        slot: vote.slot(),
+        vote: Arc::new(vote_msg),
         saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
     })
 }
@@ -413,16 +412,15 @@ mod tests {
             .unwrap();
         let expected_message = generate_expected_consensus_message(vote, &my_bls_keypair);
         if let BLSOp::PushVote {
-            message,
-            slot,
+            vote,
             saved_vote_history,
-        } = &result
+        } = result
         {
-            assert_eq!(slot, &vote_slot);
-            assert_eq!(**message, expected_message);
+            let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
+            assert_eq!(msg, expected_message);
             assert_eq!(
                 saved_vote_history,
-                &SavedVoteHistoryVersions::from(
+                SavedVoteHistoryVersions::from(
                     SavedVoteHistory::new(
                         &voting_context.vote_history,
                         &voting_context.identity_keypair
@@ -431,7 +429,7 @@ mod tests {
                 )
             );
         } else {
-            panic!("Expected BLSOp::PushVote, got {result:?}");
+            panic!("Expected BLSOp::VotePush, got {result:?}");
         }
 
         // Check that own vote sender receives the vote

@@ -3,7 +3,10 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_votor_messages::{certificate::Certificate, consensus_message::ConsensusMessage},
+    agave_votor_messages::{
+        certificate::Certificate,
+        consensus_message::{ConsensusMessage, VoteMessage},
+    },
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -31,8 +34,7 @@ const STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET: usize = 3;
 #[derive(Debug)]
 pub enum BLSOp {
     PushVote {
-        message: Arc<ConsensusMessage>,
-        slot: Slot,
+        vote: Arc<VoteMessage>,
         saved_vote_history: SavedVoteHistoryVersions,
     },
     PushCertificate {
@@ -202,8 +204,7 @@ impl VotingService {
     ) {
         match bls_op {
             BLSOp::PushVote {
-                message,
-                slot,
+                vote,
                 saved_vote_history,
             } => {
                 let mut measure = Measure::start("alpenglow vote history save");
@@ -213,21 +214,22 @@ impl VotingService {
                 }
                 measure.stop();
                 trace!("{measure}");
-
+                let slot = vote.vote.slot();
+                let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
                 Self::broadcast_consensus_message(
                     slot,
                     cluster_info,
-                    &message,
+                    &msg,
                     connection_cache,
                     additional_listeners,
                     staked_validators_cache,
                 );
             }
             BLSOp::PushCertificate { certificate } => {
-                let vote_slot = certificate.cert_type.slot();
-                let message = ConsensusMessage::Certificate((*certificate).clone());
+                let slot = certificate.cert_type.slot();
+                let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
                 Self::broadcast_consensus_message(
-                    vote_slot,
+                    slot,
                     cluster_info,
                     &message,
                     connection_cache,
@@ -323,12 +325,11 @@ mod tests {
     }
 
     #[test_case(BLSOp::PushVote {
-        message: Arc::new(ConsensusMessage::Vote(VoteMessage {
+        vote: Arc::new(VoteMessage {
             vote: Vote::new_skip_vote(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
-        })),
-        slot: 5,
+        }),
         saved_vote_history: SavedVoteHistoryVersions::Current(SavedVoteHistory::default()),
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(5),

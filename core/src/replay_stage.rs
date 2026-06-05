@@ -1748,17 +1748,16 @@ impl ReplayStage {
             None,
             &mut HashMap::new(),
         ) {
-            GenerateVoteTxResult::ConsensusMessage(message) => {
+            GenerateVoteTxResult::Vote(vote_msg) => {
                 // Send vote to ConsensusPool and rest of cluster
                 warn!(
                     "{} Alpenglow migration: Casting genesis vote for ({block:?})",
                     identity_keypair.pubkey()
                 );
                 // If sending fails that means the channel is disconnected and we are shutting down
-                let _ = own_vote_sender.send(vec![message.clone()]);
+                let _ = own_vote_sender.send(vec![ConsensusMessage::Vote(vote_msg.clone())]);
                 let _ = bls_sender.send(BLSOp::PushVote {
-                    message: Arc::new(message),
-                    slot: block.slot,
+                    vote: Arc::new(vote_msg),
                     saved_vote_history:
                         agave_votor::vote_history_storage::SavedVoteHistoryVersions::Current(
                             SavedVoteHistory::default(),

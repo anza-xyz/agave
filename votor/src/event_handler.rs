@@ -1348,15 +1348,15 @@ mod tests {
                 let expected_vote_serialized = wincode::serialize(v).unwrap();
                 let signature: BLSSignature =
                     self.my_bls_keypair.sign(&expected_vote_serialized).into();
-                let expected_message = ConsensusMessage::Vote(VoteMessage {
+                let expected_message = VoteMessage {
                     vote: *v,
                     rank: 0,
                     signature,
-                });
+                };
                 let prev_length = self.bls_ops.len();
-                self.bls_ops.retain(|bls_op| {
-                    !matches!(bls_op, BLSOp::PushVote { message, .. } if **message == expected_message)
-                });
+                self.bls_ops.retain(
+                    |bls_op| !matches!(bls_op, BLSOp::PushVote{ vote, .. } if **vote == expected_message),
+                );
                 assert!(
                     self.bls_ops.len() < prev_length,
                     "Did not find expected vote: {expected_message:?}",
@@ -1368,22 +1368,22 @@ mod tests {
             let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
             let signature: BLSSignature =
                 self.my_bls_keypair.sign(&expected_vote_serialized).into();
-            let expected_message = ConsensusMessage::Vote(VoteMessage {
+            let expected_message = VoteMessage {
                 vote: *expected_vote,
                 rank: 0,
                 signature,
-            });
+            };
             let prev_length = self.bls_ops.len();
-            self.bls_ops.retain(|bls_op| {
-                !matches!(bls_op, BLSOp::PushVote { message, .. } if **message == expected_message)
-            });
+            self.bls_ops.retain(
+                |bls_op| !matches!(bls_op, BLSOp::PushVote { vote, .. } if **vote == expected_message),
+            );
             assert!(
                 self.bls_ops.len() < prev_length,
                 "Did not find expected vote: {expected_message:?}",
             );
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, vec![expected_message]);
+            assert_eq!(own_vote, vec![ConsensusMessage::Vote(expected_message)]);
         }
 
         fn check_for_commitment(&mut self, expected_type: CommitmentType, expected_slot: Slot) {

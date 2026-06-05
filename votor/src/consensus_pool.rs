@@ -408,7 +408,7 @@ impl ConsensusPool {
         vote_message: VoteMessage,
         events: &mut Vec<VotorEvent>,
     ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
-        let vote = &vote_message.vote;
+        let vote = vote_message.vote;
         let rank = vote_message.rank;
         let vote_slot = vote.slot();
         let (validator_vote_key, validator_stake, total_stake) =
@@ -452,7 +452,7 @@ impl ConsensusPool {
                     .entry(vote_slot)
                     .or_insert_with(|| SlotStakeCounters::new(total_stake));
                 fallback_vote_counters.add_vote(
-                    vote,
+                    &vote,
                     entry_stake,
                     my_vote_pubkey == &validator_vote_key,
                     events,
@@ -463,7 +463,7 @@ impl ConsensusPool {
         }
         self.stats.incr_ingested_vote_type(vote_type);
 
-        self.update_certificates(root_bank, vote, block_id, events, total_stake)
+        self.update_certificates(root_bank, &vote, block_id, events, total_stake)
     }
 
     fn add_certificate(

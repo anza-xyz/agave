@@ -54,7 +54,7 @@ pub struct Block {
     derive(AbiExample),
     frozen_abi(digest = "CTiXEk2aQbpf6TS6PNKcaTsGkLruDvAYsTLFhHKW2vsm")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
