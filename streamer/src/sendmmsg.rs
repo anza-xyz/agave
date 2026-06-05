@@ -139,8 +139,45 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
 
         let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts_len, 0) } {
             -1 => {
+                let errno = io::Error::last_os_error();
+                if let Some(errno) = errno.raw_os_error() {
+                    // Handle transient sending errors due to busy
+                    // hardware by blocking in poll() and retrying
+                    if errno == libc::ENOBUFS || errno == libc::EAGAIN {
+                        let mut pfd = [libc::pollfd {
+                            fd: sock_fd,
+                            events: libc::POLLOUT,
+                            revents: 0,
+                        }];
+                        debug!(
+                            "sendmmsg({},{}): errno {}; waiting for socket to become writable",
+                            sock_fd, pkts_len, errno,
+                        );
+                        let rc = unsafe {
+                            libc::poll(pfd.as_mut_ptr(), pfd.len() as libc::nfds_t, 1000)
+                        };
+                        if rc > 0 {
+                            info!(
+                                "sendmmsg({},{}): poll elapsed; socket now writable",
+                                sock_fd, pkts_len
+                            );
+                            continue;
+                        } else if rc < 0 {
+                            let errno = io::Error::last_os_error();
+                            warn!(
+                                "sendmmsg({},{}): poll errno {}: {}",
+                                sock_fd,
+                                pkts_len,
+                                errno.raw_os_error().unwrap_or_default(),
+                                errno
+                            );
+                        } else {
+                            warn!("sendmsg({},{}): poll timed out", sock_fd, pkts_len);
+                        }
+                    }
+                }
                 if erropt.is_none() {
-                    erropt = Some(io::Error::last_os_error());
+                    erropt = Some(errno)
                 }
                 // skip over the failing packet
                 1_usize

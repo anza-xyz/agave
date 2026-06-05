@@ -299,7 +299,7 @@ impl Node {
         let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
-            socket_configs.primarily_write_udp,
+            socket_configs.primarily_write_udp.set_non_blocking(true),
             num_tvu_retransmit_sockets.get(),
         )
         .expect("tvu retransmit multi_bind");
