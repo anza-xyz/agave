@@ -26,9 +26,10 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch},
     solana_pubkey::Pubkey,
+    solana_quic_datagram::{Banlist, endpoint::Datagram},
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
     std::{
         collections::HashSet,
         sync::{
@@ -52,7 +53,7 @@ pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
 pub(crate) struct SigVerifierContext {
     pub(crate) migration_status: Arc<MigrationStatus>,
-    pub(crate) banlist: Arc<SimpleQosBanlist>,
+    pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
@@ -61,7 +62,7 @@ pub(crate) struct SigVerifierContext {
 }
 
 pub(crate) struct SigVerifierChannels {
-    pub(crate) packet_receiver: Receiver<PacketBatch>,
+    pub(crate) packet_receiver: Receiver<Datagram>,
     pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
     pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
@@ -84,7 +85,7 @@ pub(crate) fn spawn_service(
 
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
-    banlist: Arc<SimpleQosBanlist>,
+    banlist: Arc<Banlist<Pubkey>>,
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
@@ -294,15 +295,33 @@ impl SigVerifier {
     }
 }
 
-/// Receives a `Vec<PacketBatch>` from the `receiver` while adhering to the `soft_receive_cap` limit.
+/// Wraps a single inbound [`Datagram`] as a one-packet [`PacketBatch`] so the
+/// rest of the sigverifier can keep operating on the `PacketBatch` abstraction.
+/// The QUIC-authenticated sender pubkey is stored in the packet meta, where the
+/// extract step reads it back via [`Meta::remote_pubkey`].
+fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
+    let Datagram {
+        peer_pubkey,
+        peer_address,
+        message,
+    } = datagram;
+    let mut meta = Meta::default();
+    meta.size = message.len();
+    meta.set_socket_addr(&peer_address);
+    meta.set_remote_pubkey(peer_pubkey);
+    PacketBatch::Single(BytesPacket::new(message, meta))
+}
+
+/// Receives a batch of [`Datagram`]s from the `receiver`, each wrapped as a
+/// single-packet [`PacketBatch`], up to the `soft_receive_cap` limit.
 ///
 /// Returns `Err(())` if the channel disconnected.
 fn recv_batches(
-    receiver: &Receiver<PacketBatch>,
+    receiver: &Receiver<Datagram>,
     soft_receive_cap: usize,
 ) -> Result<Vec<PacketBatch>, ()> {
     let batch = match receiver.recv_timeout(Duration::from_secs(1)) {
-        Ok(b) => b,
+        Ok(b) => datagram_to_batch(b),
         Err(e) => match e {
             RecvTimeoutError::Timeout => {
                 return Ok(vec![]);
@@ -317,7 +336,7 @@ fn recv_batches(
     while batches.len() < soft_receive_cap {
         match receiver.try_recv() {
             Ok(b) => {
-                batches.push(b);
+                batches.push(datagram_to_batch(b));
             }
             Err(e) => match e {
                 TryRecvError::Empty => return Ok(batches),
@@ -363,17 +382,16 @@ mod tests {
         solana_signer_store::encode_base2,
     };
 
-    fn new_test_banlist() -> Arc<SimpleQosBanlist> {
-        let (banlist, _banlist_eviction_receiver) = SimpleQosBanlist::new();
-        Arc::new(banlist)
+    fn new_test_banlist() -> Arc<Banlist<Pubkey>> {
+        Arc::new(Banlist::<Pubkey>::default())
     }
 
     struct TestContext {
         verifier: SigVerifier,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        banlist: Arc<SimpleQosBanlist>,
+        banlist: Arc<Banlist<Pubkey>>,
 
-        _packet_sender: Sender<PacketBatch>,
+        _packet_sender: Sender<Datagram>,
         repair_receiver: VerifiedVoterSlotsReceiver,
         _reward_receiver: Receiver<AddVoteMessage>,
         pool_receiver: Receiver<SigVerifiedBatch>,
