@@ -5,6 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
+    solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
@@ -13,7 +14,8 @@ use {
     },
     solana_runtime::{
         bank::{
-            Bank, LoadAndExecuteTransactionsOutput, entry_bytes_budget::EntryBytesReserveError,
+            Bank, LoadAndExecuteTransactionsOutput, ProcessedTransactionCounts,
+            entry_bytes_budget::EntryBytesReserveError,
         },
         transaction_batch::TransactionBatch,
     },
@@ -21,7 +23,9 @@ use {
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_result::TransactionProcessingResultExtensions,
+        transaction_processing_result::{
+            TransactionProcessingResult, TransactionProcessingResultExtensions,
+        },
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
@@ -197,7 +201,7 @@ impl Consumer {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
             cost_model_us,
-        ) = measure_us!(QosService::select_and_accumulate_transaction_costs(
+        ) = measure_us!(QosService::select_transactions_for_remaining_block_cost(
             bank,
             txs,
             pre_results
@@ -222,21 +226,6 @@ impl Consumer {
 
         // Once the accounts are new transactions can enter the pipeline to process them
         let (_, unlock_us) = measure_us!(drop(batch));
-
-        let ExecuteAndCommitTransactionsOutput {
-            ref commit_transactions_result,
-            ..
-        } = execute_and_commit_transactions_output;
-
-        // Costs of all transactions are added to the cost_tracker before processing.
-        // To ensure accurate tracking of compute units, transactions that ultimately
-        // were not included in the block should have their cost removed, the rest
-        // should update with their actually consumed units.
-        QosService::remove_or_update_costs(
-            transaction_qos_cost_results.iter(),
-            commit_transactions_result.as_ref().ok(),
-            bank,
-        );
 
         debug!(
             "bank: {} lock: {}us unlock: {}us txs_len: {}",
@@ -337,10 +326,22 @@ impl Consumer {
         execute_and_commit_timings.load_execute_us = load_execute_us;
 
         let LoadAndExecuteTransactionsOutput {
-            processing_results,
-            processed_counts,
+            mut processing_results,
+            mut processed_counts,
             balance_collector,
         } = load_and_execute_transactions_output;
+
+        let (transaction_costs, mut actual_cost_retryable_transaction_indexes) =
+            Self::try_add_processed_transaction_costs(
+                bank,
+                batch.sanitized_transactions(),
+                &mut processing_results,
+                &mut processed_counts,
+                &mut error_counters,
+                flags.all_or_nothing,
+            );
+        retryable_transaction_indexes.append(&mut actual_cost_retryable_transaction_indexes);
+        retryable_transaction_indexes.sort_unstable();
 
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
@@ -395,6 +396,8 @@ impl Consumer {
         };
 
         if let Err(recorder_err) = recording_result {
+            Self::remove_added_transaction_costs(bank, &transaction_costs);
+
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| {
                     processing_result.was_processed().then_some(RetryableIndex {
@@ -468,6 +471,153 @@ impl Consumer {
             commit_transactions_result: Ok(commit_transaction_statuses),
             execute_and_commit_timings,
             error_counters,
+        }
+    }
+
+    fn try_add_processed_transaction_costs<'a, Tx: TransactionWithMeta>(
+        bank: &Bank,
+        transactions: &'a [Tx],
+        processing_results: &mut [TransactionProcessingResult],
+        processed_counts: &mut ProcessedTransactionCounts,
+        error_counters: &mut TransactionErrorMetrics,
+        all_or_nothing: bool,
+    ) -> (Vec<Option<TransactionCost<'a, Tx>>>, Vec<RetryableIndex>) {
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        let mut transaction_costs = Vec::with_capacity(processing_results.len());
+        let mut retryable_transaction_indexes = Vec::new();
+        let mut all_or_nothing_error = None;
+
+        for (index, (tx, processing_result)) in transactions
+            .iter()
+            .zip(processing_results.iter_mut())
+            .enumerate()
+        {
+            if all_or_nothing_error.is_some() {
+                transaction_costs.push(None);
+                continue;
+            }
+
+            let Some((executed_units, loaded_accounts_data_size)) = processing_result
+                .processed_transaction()
+                .map(|processed_tx| {
+                    (
+                        processed_tx.executed_units(),
+                        processed_tx.loaded_accounts_data_size(),
+                    )
+                })
+            else {
+                transaction_costs.push(None);
+                continue;
+            };
+
+            let transaction_cost = CostModel::calculate_cost_for_executed_transaction(
+                tx,
+                executed_units,
+                loaded_accounts_data_size,
+                &bank.feature_set,
+            );
+
+            match cost_tracker.try_add(&transaction_cost) {
+                Ok(_) => {
+                    transaction_costs.push(Some(transaction_cost));
+                }
+                Err(err) => {
+                    let transaction_error = TransactionError::from(err);
+                    Self::accumulate_cost_limit_error(&transaction_error, error_counters);
+                    transaction_costs.push(None);
+                    if all_or_nothing {
+                        all_or_nothing_error = Some(transaction_error);
+                    } else {
+                        Self::decrement_processed_counts(tx, processing_result, processed_counts);
+                        *processing_result = Err(transaction_error);
+                        retryable_transaction_indexes.push(RetryableIndex {
+                            index,
+                            immediately_retryable: false,
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(transaction_error) = all_or_nothing_error {
+            for transaction_cost in transaction_costs.iter().flatten() {
+                cost_tracker.remove(transaction_cost);
+            }
+            transaction_costs.iter_mut().for_each(|cost| *cost = None);
+            retryable_transaction_indexes.clear();
+
+            for (index, (tx, processing_result)) in transactions
+                .iter()
+                .zip(processing_results.iter_mut())
+                .enumerate()
+            {
+                if processing_result.was_processed() {
+                    Self::decrement_processed_counts(tx, processing_result, processed_counts);
+                    *processing_result = Err(transaction_error.clone());
+                    retryable_transaction_indexes.push(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    });
+                }
+            }
+        }
+
+        (transaction_costs, retryable_transaction_indexes)
+    }
+
+    fn remove_added_transaction_costs<Tx: TransactionWithMeta>(
+        bank: &Bank,
+        transaction_costs: &[Option<TransactionCost<'_, Tx>>],
+    ) {
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        for transaction_cost in transaction_costs.iter().flatten() {
+            cost_tracker.remove(transaction_cost);
+        }
+    }
+
+    fn decrement_processed_counts(
+        transaction: &impl TransactionWithMeta,
+        processing_result: &TransactionProcessingResult,
+        processed_counts: &mut ProcessedTransactionCounts,
+    ) {
+        processed_counts.processed_transactions_count = processed_counts
+            .processed_transactions_count
+            .saturating_sub(1);
+        processed_counts.signature_count = processed_counts
+            .signature_count
+            .saturating_sub(transaction.signature_details().num_transaction_signatures());
+
+        if !transaction.is_simple_vote_transaction() {
+            processed_counts.processed_non_vote_transactions_count = processed_counts
+                .processed_non_vote_transactions_count
+                .saturating_sub(1);
+        }
+
+        if processing_result.was_processed_with_successful_result() {
+            processed_counts.processed_with_successful_result_count = processed_counts
+                .processed_with_successful_result_count
+                .saturating_sub(1);
+        }
+    }
+
+    fn accumulate_cost_limit_error(
+        transaction_error: &TransactionError,
+        error_counters: &mut TransactionErrorMetrics,
+    ) {
+        match transaction_error {
+            TransactionError::WouldExceedMaxBlockCostLimit => {
+                error_counters.would_exceed_max_block_cost_limit += 1;
+            }
+            TransactionError::WouldExceedMaxVoteCostLimit => {
+                error_counters.would_exceed_max_vote_cost_limit += 1;
+            }
+            TransactionError::WouldExceedMaxAccountCostLimit => {
+                error_counters.would_exceed_max_account_cost_limit += 1;
+            }
+            TransactionError::WouldExceedAccountDataBlockLimit => {
+                error_counters.would_exceed_account_data_block_limit += 1;
+            }
+            _ => {}
         }
     }
 
@@ -561,13 +711,20 @@ mod tests {
     }
 
     fn setup_test(transaction_status_sender: Option<TransactionStatusSender>) -> TestFrame {
+        setup_test_with_lamports(10_000, transaction_status_sender)
+    }
+
+    fn setup_test_with_lamports(
+        lamports: u64,
+        transaction_status_sender: Option<TransactionStatusSender>,
+    ) -> TestFrame {
         agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(
-            10_000,
+            lamports,
             &Pubkey::new_unique(),
             bootstrap_validator_stake_lamports(),
         );
@@ -979,6 +1136,194 @@ mod tests {
 
         assert_eq!(get_block_cost(), expected_block_cost);
         assert_eq!(get_tx_count(), 2);
+    }
+
+    #[test]
+    fn test_actual_cost_limit_rejects_after_execution_before_record() {
+        const TRANSACTION_COUNT: usize = 32;
+
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver,
+            consumer,
+        } = setup_test_with_lamports(1_000_000_000, None);
+
+        let payer_keypairs = (0..TRANSACTION_COUNT)
+            .map(|_| Keypair::new())
+            .collect::<Vec<_>>();
+        for payer in &payer_keypairs {
+            bank.transfer(1_000_000, &mint_keypair, &payer.pubkey())
+                .unwrap();
+        }
+
+        let transactions = sanitize_transactions(
+            payer_keypairs
+                .iter()
+                .map(|payer| {
+                    system_transaction::transfer(
+                        payer,
+                        &Pubkey::new_unique(),
+                        1,
+                        bank.last_blockhash(),
+                    )
+                })
+                .collect(),
+        );
+        let estimated_cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set).sum();
+        let block_limit = estimated_cost.saturating_mul(2);
+        bank.write_cost_tracker()
+            .unwrap()
+            .set_limits(block_limit, block_limit, u64::MAX);
+
+        let process_transactions_batch_output =
+            consumer.process_and_record_transactions(&bank, &transactions);
+        let ProcessTransactionBatchOutput {
+            cost_model_throttled_transactions_count,
+            execute_and_commit_transactions_output,
+            ..
+        } = process_transactions_batch_output;
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            retryable_transaction_indexes,
+            commit_transactions_result,
+            ..
+        } = execute_and_commit_transactions_output;
+        let commit_transaction_details = commit_transactions_result.unwrap();
+        let committed_count = commit_transaction_details
+            .iter()
+            .filter(|details| matches!(details, CommitTransactionDetails::Committed { .. }))
+            .count();
+        let late_cost_rejected_indexes = commit_transaction_details
+            .iter()
+            .enumerate()
+            .filter_map(|(index, details)| {
+                matches!(
+                    details,
+                    CommitTransactionDetails::NotCommitted(
+                        TransactionError::WouldExceedMaxBlockCostLimit
+                    )
+                )
+                .then_some(index)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(cost_model_throttled_transactions_count, 0);
+        assert!(committed_count > 0);
+        assert!(!late_cost_rejected_indexes.is_empty());
+        assert_eq!(
+            transaction_counts.attempted_processing_count,
+            TRANSACTION_COUNT as u64
+        );
+        assert_eq!(transaction_counts.processed_count, committed_count as u64);
+        assert_eq!(
+            transaction_counts.processed_with_successful_result_count,
+            committed_count as u64
+        );
+        assert_eq!(
+            retryable_transaction_indexes,
+            late_cost_rejected_indexes
+                .iter()
+                .map(|index| RetryableIndex::new(*index, false))
+                .collect::<Vec<_>>()
+        );
+
+        let cost_tracker = bank.read_cost_tracker().unwrap();
+        assert_eq!(cost_tracker.transaction_count(), committed_count as u64);
+        assert!(cost_tracker.block_cost() <= block_limit);
+        drop(cost_tracker);
+
+        let record = record_receiver.drain().next().unwrap();
+        assert_eq!(record.transaction_batches.len(), 1);
+        assert_eq!(record.transaction_batches[0].len(), committed_count);
+    }
+
+    #[test]
+    fn test_actual_cost_limit_honors_all_or_nothing() {
+        const TRANSACTION_COUNT: usize = 32;
+
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test_with_lamports(1_000_000_000, None);
+
+        let payer_keypairs = (0..TRANSACTION_COUNT)
+            .map(|_| Keypair::new())
+            .collect::<Vec<_>>();
+        for payer in &payer_keypairs {
+            bank.transfer(1_000_000, &mint_keypair, &payer.pubkey())
+                .unwrap();
+        }
+
+        let transactions = sanitize_transactions(
+            payer_keypairs
+                .iter()
+                .map(|payer| {
+                    system_transaction::transfer(
+                        payer,
+                        &Pubkey::new_unique(),
+                        1,
+                        bank.last_blockhash(),
+                    )
+                })
+                .collect(),
+        );
+        let estimated_cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set).sum();
+        let block_limit = estimated_cost.saturating_mul(2);
+        bank.write_cost_tracker()
+            .unwrap()
+            .set_limits(block_limit, block_limit, u64::MAX);
+
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions_with_pre_results(
+                &bank,
+                &transactions,
+                std::iter::repeat(Ok(())),
+                ExecutionFlags {
+                    drop_on_failure: false,
+                    all_or_nothing: true,
+                },
+            );
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            retryable_transaction_indexes,
+            commit_transactions_result,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+        let commit_transaction_details = commit_transactions_result.unwrap();
+
+        assert_eq!(
+            process_transactions_batch_output.cost_model_throttled_transactions_count,
+            0
+        );
+        assert_eq!(
+            transaction_counts.attempted_processing_count,
+            TRANSACTION_COUNT as u64
+        );
+        assert_eq!(transaction_counts.processed_count, 0);
+        assert_eq!(transaction_counts.processed_with_successful_result_count, 0);
+        assert!(commit_transaction_details.iter().all(|details| {
+            matches!(
+                details,
+                CommitTransactionDetails::NotCommitted(
+                    TransactionError::WouldExceedMaxBlockCostLimit
+                )
+            )
+        }));
+        assert_eq!(
+            retryable_transaction_indexes,
+            (0..TRANSACTION_COUNT)
+                .map(|index| RetryableIndex::new(index, false))
+                .collect::<Vec<_>>()
+        );
+
+        let cost_tracker = bank.read_cost_tracker().unwrap();
+        assert_eq!(cost_tracker.transaction_count(), 0);
+        assert_eq!(cost_tracker.block_cost(), 0);
     }
 
     #[test_case(false; "locked")]
