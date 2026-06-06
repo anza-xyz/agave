@@ -5225,11 +5225,16 @@ fn test_duplicate_shreds_switch_failure() {
         // Ensure all the slots <= dup_slot are also full so we know we can replay up to dup_slot
         // on restart
         info!("Waiting to receive and replay entire duplicate fork with tip {dup_slot}");
+        let start = Instant::now();
         loop {
             let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
             if let Some(frozen_hash) = duplicate_fork_validator_blockstore.get_bank_hash(dup_slot) {
                 return frozen_hash;
             }
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "Timed out waiting to receive and replay duplicate fork with tip {dup_slot}",
+            );
             sleep(Duration::from_millis(1000));
         }
     }
