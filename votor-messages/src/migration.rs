@@ -441,6 +441,9 @@ impl MigrationStatus {
 
     /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
     pub fn set_poh_service_started(&self) {
+        // Hold `migration_wait` while flipping the bit so the decision in
+        // `enable_alpenglow_during_startup` is serialized against PohService startup.
+        let _guard = self.migration_wait.0.lock().unwrap();
         self.poh_service_started.store(true, Ordering::Release);
     }
 
@@ -683,7 +686,15 @@ impl MigrationStatus {
         };
 
         let genesis_slot = genesis_cert.cert_type.slot();
+
+        // Take `migration_wait` so the check + phase swap is atomic against
+        // `set_poh_service_started`; otherwise PohService could start between
+        // the load and the write, leaving its tick thread in the bring-up loop
+        // while the phase says AlpenglowEnabled.
+        let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
+        let mut guard = is_alpenglow_enabled.lock().unwrap();
         if self.poh_service_started.load(Ordering::Acquire) {
+            drop(guard);
             // If `PohService` is started, use the full enable pathway
             // We do not respect the exit flag during startup replay
             let exit = AtomicBool::new(false);
@@ -694,8 +705,7 @@ impl MigrationStatus {
         // If `PohService` has not yet started, enable in this single thread
         self.shutdown_poh.store(true, Ordering::Release);
         *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
-        let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
-        *is_alpenglow_enabled.lock().unwrap() = true;
+        *guard = true;
         // No need to condvar as we're in startup and no one is waiting for us.
         warn!(
             "{}: Alpenglow enabled during startup! Genesis slot {genesis_slot}",
