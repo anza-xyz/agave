@@ -617,7 +617,12 @@ impl ValidatorTpuConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 ..Default::default()
             },
-            qos_config: SimpleQosConfig::default(),
+            qos_config: SimpleQosConfig {
+                // Way more than the size of our clusters. If some super low staked validators can not
+                // find room, it does not present a liveness issue.
+                max_staked_connections: 4096,
+                ..Default::default()
+            },
         };
 
         // Two threads is reasonable for tests; benches are free to set more
