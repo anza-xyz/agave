@@ -113,14 +113,9 @@ async fn process_rewards(
                 format!("Rewards not available {err}")
             }
         })?;
-    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
-
     let mut epoch_rewards: Vec<CliKeyedEpochReward> = vec![];
     let mut block_times: HashMap<Slot, UnixTimestamp> = HashMap::new();
     let epoch_metadata = if let Some(Some(first_reward)) = rewards.iter().find(|&v| v.is_some()) {
-        let (epoch_start_time, epoch_end_time) =
-            crate::stake::get_epoch_boundary_timestamps(rpc_client, first_reward, &epoch_schedule)
-                .await?;
         for (reward, address) in rewards.iter().zip(addresses) {
             let cli_reward = if let Some(reward) = reward {
                 let block_time = if let Some(block_time) = block_times.get(&reward.effective_slot) {
@@ -130,7 +125,7 @@ async fn process_rewards(
                     block_times.insert(reward.effective_slot, block_time);
                     block_time
                 };
-                crate::stake::make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
+                crate::stake::make_cli_reward(reward, block_time)
             } else {
                 None
             };
