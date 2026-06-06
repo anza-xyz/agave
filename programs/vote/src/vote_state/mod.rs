@@ -71,10 +71,10 @@ fn check_and_filter_proposed_vote_state(
         .slot();
 
     // If the proposed state is not new enough, return
-    if let Some(last_vote_slot) = vote_state.votes().back().map(|lockout| lockout.slot()) {
-        if last_proposed_slot <= last_vote_slot {
-            return Err(VoteError::VoteTooOld);
-        }
+    if let Some(last_vote_slot) = vote_state.votes().back().map(|lockout| lockout.slot())
+        && last_proposed_slot <= last_vote_slot
+    {
+        return Err(VoteError::VoteTooOld);
     }
 
     if slot_hashes.is_empty() {
@@ -461,17 +461,15 @@ pub fn process_new_vote_state(
             return Err(VoteError::ZeroConfirmations);
         } else if vote.confirmation_count() > MAX_LOCKOUT_HISTORY as u32 {
             return Err(VoteError::ConfirmationTooLarge);
-        } else if let Some(new_root) = new_root {
-            if vote.slot() <= new_root
+        } else if let Some(new_root) = new_root && vote.slot() <= new_root
                 &&
                 // This check is necessary because
                 // https://github.com/ryoqun/solana/blob/df55bfb46af039cbc597cd60042d49b9d90b5961/core/src/consensus.rs#L120
                 // always sets a root for even empty towers, which is then hard unwrapped here
                 // https://github.com/ryoqun/solana/blob/df55bfb46af039cbc597cd60042d49b9d90b5961/core/src/consensus.rs#L776
                 new_root != Slot::default()
-            {
-                return Err(VoteError::SlotSmallerThanRoot);
-            }
+        {
+            return Err(VoteError::SlotSmallerThanRoot);
         }
 
         if let Some(previous_vote) = previous_vote {
