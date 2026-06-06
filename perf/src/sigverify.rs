@@ -124,9 +124,169 @@ pub fn ed25519_verify(
 }
 
 pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool, enable_tx_v1: bool) {
-    for mut packet in batch.iter_mut() {
-        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote, enable_tx_v1) {
-            packet.meta_mut().set_discard(true);
+    // Two-pass over the batch:
+    //  Pass 1 (immutable): parse each surviving packet, run all the
+    //  non-cryptographic checks (sanitize, version gate, vote-only filter,
+    //  signature/pubkey shape) and collect every signature that needs
+    //  cryptographic verification into one flat batch. We can't hold these
+    //  borrows across `iter_mut()`, so the result is captured into owned
+    //  per-packet outcomes.
+    //
+    //  Pass 2 (one call): `ed25519_dalek::verify_batch` amortizes the
+    //  basepoint scalar multiplication across the whole chunk via Straus
+    //  multi-scalar multiplication. On batch success every packet's
+    //  signatures verified. On batch failure we identify the bad packet(s)
+    //  with a per-signature `verify_strict` fall-back so we discard only
+    //  what actually failed.
+    //
+    //  Pass 3 (mutable): apply the outcomes — set the SIMPLE_VOTE_TX flag
+    //  for matching packets, discard anything that failed any of the
+    //  checks above.
+
+    enum Outcome {
+        Drop,
+        Verify { is_simple_vote_tx: bool, failed: bool },
+    }
+
+    let mut outcomes: Vec<Outcome> = Vec::with_capacity(batch.len());
+
+    {
+        // Inner scope so the views (which borrow from `batch`) are dropped
+        // before pass 3 takes `batch.iter_mut()`.
+        let mut views: Vec<Option<SanitizedTransactionView<&[u8]>>> =
+            Vec::with_capacity(batch.len());
+
+        // Pass 1 (immutable on `batch`): parse, sanitize, decide vote-ness,
+        // and capture views. Pre-decisions (`Drop`) are recorded directly in
+        // `outcomes`; everything else carries forward to pass 2.
+        for packet in batch.iter() {
+            if packet.meta().discard() {
+                outcomes.push(Outcome::Drop);
+                views.push(None);
+                continue;
+            }
+            let Some(data) = packet.data(..) else {
+                outcomes.push(Outcome::Drop);
+                views.push(None);
+                continue;
+            };
+            let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, true) else {
+                outcomes.push(Outcome::Drop);
+                views.push(None);
+                continue;
+            };
+            if !enable_tx_v1 && matches!(view.version(), TransactionVersion::V1) {
+                outcomes.push(Outcome::Drop);
+                views.push(None);
+                continue;
+            }
+            let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
+            if reject_non_vote && !is_simple_vote_tx {
+                outcomes.push(Outcome::Drop);
+                views.push(None);
+                continue;
+            }
+            if view.signatures().is_empty() {
+                outcomes.push(Outcome::Drop);
+                views.push(None);
+                continue;
+            }
+            outcomes.push(Outcome::Verify {
+                is_simple_vote_tx,
+                failed: false,
+            });
+            views.push(Some(view));
+        }
+
+        // Pass 2 (still immutable on `batch`): build flat (sig, vk, msg)
+        // vectors from the views, then call `verify_batch` once over the
+        // whole chunk. The basepoint scalar multiplication inside
+        // `verify_batch` is shared across all signatures via Straus
+        // multi-scalar multiplication, which dominates the per-signature
+        // verify_strict cost.
+        let mut signatures: Vec<ed25519_dalek::Signature> = Vec::new();
+        let mut verifying_keys: Vec<ed25519_dalek::VerifyingKey> = Vec::new();
+        // One entry per pushed signature; multi-sig transactions repeat the
+        // same `&[u8]` here — pointer duplication, not data duplication.
+        let mut messages: Vec<&[u8]> = Vec::new();
+        let mut sig_ranges: Vec<Option<core::ops::Range<usize>>> =
+            vec![None; outcomes.len()];
+
+        for (idx, entry) in views.iter().enumerate() {
+            let Some(view) = entry else { continue };
+            let tx_signatures = view.signatures();
+            let static_account_keys = view.static_account_keys();
+            let message = view.message_data();
+            let sig_start = signatures.len();
+            let mut bad_pubkey = false;
+            for (signature, pubkey) in tx_signatures.iter().zip(static_account_keys.iter()) {
+                let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+                    bad_pubkey = true;
+                    break;
+                };
+                let sig_bytes: [u8; 64] = (*signature).into();
+                signatures.push(ed25519_dalek::Signature::from_bytes(&sig_bytes));
+                verifying_keys.push(vk);
+                messages.push(message);
+            }
+            if bad_pubkey {
+                signatures.truncate(sig_start);
+                verifying_keys.truncate(sig_start);
+                messages.truncate(sig_start);
+                outcomes[idx] = Outcome::Drop;
+                continue;
+            }
+            sig_ranges[idx] = Some(sig_start..signatures.len());
+        }
+
+        // `verify_batch` is slightly looser than `verify_strict` (does not
+        // enforce canonical R encoding); this is the documented malleability
+        // quirk in `ed25519-dalek` and is not a forgery vector — the
+        // signature still binds to message and pubkey.
+        let batch_failed = !signatures.is_empty()
+            && ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys).is_err();
+
+        if batch_failed {
+            // Fall back to per-signature `verify_strict` to pinpoint exactly
+            // which packet(s) failed; only those get discarded.
+            for (idx, range) in sig_ranges.iter().enumerate() {
+                let Some(range) = range else { continue };
+                let mut ok = true;
+                for i in range.clone() {
+                    if verifying_keys[i]
+                        .verify_strict(messages[i], &signatures[i])
+                        .is_err()
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok
+                    && let Outcome::Verify { failed, .. } = &mut outcomes[idx]
+                {
+                    *failed = true;
+                }
+            }
+        }
+    } // drop views + flat vectors here
+
+    // Pass 3 (mutable on `batch`): apply the outcomes.
+    for (mut packet, outcome) in batch.iter_mut().zip(outcomes.iter()) {
+        match outcome {
+            Outcome::Drop => {
+                packet.meta_mut().set_discard(true);
+            }
+            Outcome::Verify {
+                is_simple_vote_tx,
+                failed,
+            } => {
+                if *is_simple_vote_tx {
+                    packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
+                }
+                if *failed {
+                    packet.meta_mut().set_discard(true);
+                }
+            }
         }
     }
 }
