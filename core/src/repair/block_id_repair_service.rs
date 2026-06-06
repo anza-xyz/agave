@@ -576,6 +576,10 @@ impl BlockIdRepairService {
 
         debug!("{my_pubkey}: Received response: {response:?}, nonce={nonce}");
 
+        // Capture whether the nonce was actually pending *before* register_response
+        // consumes it, so we can attribute failures correctly.
+        let was_pending = state.outstanding_requests.is_pending(nonce);
+
         let Some(request) =
             // verify the response (and check merkle proof validity)
             state.outstanding_requests.register_response(
@@ -586,10 +590,32 @@ impl BlockIdRepairService {
                 |block_id_request| *block_id_request,
             )
         else {
-            debug!(
-                "{my_pubkey}: Response with invalid nonce {nonce} or failed verification for {response:?}"
-            );
-            state.response_stats.invalid_packets += 1;
+            if was_pending {
+                // We had an active request matching this nonce; the response failed
+                // either Merkle proof verification or expiration. Surface this per
+                // variant so operators can spot peers feeding bad metadata.
+                let from = packet.meta().socket_addr();
+                warn!(
+                    "{my_pubkey}: verify_response failed for nonce {nonce} from {from}, \
+                     response: {response:?}"
+                );
+                match response {
+                    BlockIdRepairResponse::ParentFecSetCount { .. } => {
+                        state.response_stats.verify_failed_parent_fec_set_count += 1;
+                    }
+                    BlockIdRepairResponse::FecSetRoot { .. } => {
+                        state.response_stats.verify_failed_fec_set_root += 1;
+                    }
+                    // Ping was already handled above; reaching it here would be a
+                    // logic error rather than an adversarial input.
+                    BlockIdRepairResponse::Ping { .. } => {
+                        state.response_stats.invalid_packets += 1;
+                    }
+                }
+            } else {
+                debug!("{my_pubkey}: Response with unknown nonce {nonce} for {response:?}");
+                state.response_stats.unknown_nonce_responses += 1;
+            }
             return;
         };
 
@@ -1602,8 +1628,88 @@ mod tests {
         assert!(state.pending_repair_events.is_empty());
         assert!(state.pending_repair_requests.is_empty());
 
-        // Verify: invalid packet stat was incremented
-        assert_eq!(state.response_stats.invalid_packets, 1);
+        // Verify: unknown-nonce stat was incremented, and we did NOT double-count
+        // this as a verify failure or as a malformed-packet failure.
+        assert_eq!(state.response_stats.unknown_nonce_responses, 1);
+        assert_eq!(state.response_stats.invalid_packets, 0);
+        assert_eq!(state.response_stats.verify_failed_parent_fec_set_count, 0);
+        assert_eq!(state.response_stats.verify_failed_fec_set_root, 0);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_verify_fail_parent_fec_set_count() {
+        // Pending nonce + bogus proof should bump verify_failed_parent_fec_set_count,
+        // not unknown_nonce_responses or invalid_packets.
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        let request = BlockIdRepairType::ParentAndFecSetCount {
+            slot: 100,
+            block_id: Hash::new_unique(),
+        };
+        let nonce = state.outstanding_requests.add_request(request, timestamp());
+
+        // Proof of the right length for fec_set_count=2, but garbage contents
+        // so the recomputed root won't match block_id.
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count: 2,
+            parent_info: (99, Hash::new_unique()),
+            parent_proof: vec![0xab; SIZE_OF_MERKLE_PROOF_ENTRY * 2],
+        };
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        assert_eq!(state.response_stats.verify_failed_parent_fec_set_count, 1);
+        assert_eq!(state.response_stats.verify_failed_fec_set_root, 0);
+        assert_eq!(state.response_stats.unknown_nonce_responses, 0);
+        assert_eq!(state.response_stats.invalid_packets, 0);
+        // Bad response must consume the nonce so the attacker doesn't get a second shot.
+        assert!(!state.outstanding_requests.is_pending(nonce));
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_verify_fail_fec_set_root() {
+        // FecSetRoot with garbage proof contents — recomputed root won't match block_id.
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        let request = BlockIdRepairType::FecSetRoot {
+            slot: 100,
+            block_id: Hash::new_unique(),
+            fec_set_index: 0,
+        };
+        let nonce = state.outstanding_requests.add_request(request, timestamp());
+
+        let response = BlockIdRepairResponse::FecSetRoot {
+            fec_set_root: Hash::new_unique(),
+            fec_set_proof: vec![0xcd; SIZE_OF_MERKLE_PROOF_ENTRY * 2],
+        };
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        assert_eq!(state.response_stats.verify_failed_fec_set_root, 1);
+        assert_eq!(state.response_stats.verify_failed_parent_fec_set_count, 0);
+        assert_eq!(state.response_stats.unknown_nonce_responses, 0);
+        assert_eq!(state.response_stats.invalid_packets, 0);
+        assert!(!state.outstanding_requests.is_pending(nonce));
     }
 
     #[test]
