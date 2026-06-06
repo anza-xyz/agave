@@ -2,7 +2,10 @@ use {
     crate::{
         nonblocking::{
             qos::{ConnectionContext, QosController},
-            quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
+            quic::{
+                ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+                QUIC_CONNECTION_HANDSHAKE_TIMEOUT,
+            },
             simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
@@ -104,6 +107,9 @@ pub(crate) fn configure_server(
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+    // Set an explicit retry token lifetime. Keeping this tight
+    // helps prevent replay attacks by ensuring tokens are only valid for a short time.
+    server_config.retry_token_lifetime(QUIC_CONNECTION_HANDSHAKE_TIMEOUT);
 
     // disable path migration as we do not expect TPU clients to be on a mobile device
     server_config.migration(false);
@@ -194,6 +200,8 @@ pub struct StreamerStats {
     pub(crate) connection_add_failed_on_pruning: AtomicUsize,
     pub(crate) connection_add_failed_banned: AtomicUsize,
     pub(crate) connection_setup_timeout: AtomicUsize,
+    pub(crate) connection_attempts_asked_to_retry: AtomicUsize,
+    pub(crate) connection_retry_token_invalid: AtomicUsize,
     pub(crate) connection_setup_error: AtomicUsize,
     pub(crate) connection_setup_error_closed: AtomicUsize,
     pub(crate) connection_setup_error_timed_out: AtomicUsize,
@@ -540,6 +548,18 @@ impl StreamerStats {
             (
                 "refused_connections_too_many_open_connections",
                 self.refused_connections_too_many_open_connections
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_attempts_asked_to_retry",
+                self.connection_attempts_asked_to_retry
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_retry_token_invalid",
+                self.connection_retry_token_invalid
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
