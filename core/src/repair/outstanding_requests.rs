@@ -44,25 +44,34 @@ where
     }
 
     /// Register a response to the request associated with `nonce`.
-    /// If there are no more expected responses to the request, return `None`
-    ///
-    /// Performs validation on the response, if:
-    /// - Request has expired
-    /// - Or validation fails
-    ///
-    /// Deletes the request from the cache
-    ///
-    /// Otherwise decrement the # of expected requests.
-    /// If the expected number of responses is now 0 and there is no metadata associated with the request,
-    /// delete the response.
-    ///
-    /// Finally return `success_fn(request)`
+    /// See [`Self::register_response_with_failure_handler`] for the full
+    /// behavior; this is a thin wrapper that ignores verify failures.
     pub fn register_response<R>(
         &mut self,
         nonce: u32,
         response: &S,
         now: u64,
-        success_fn: impl Fn(&T) -> R,
+        success_fn: impl FnOnce(&T) -> R,
+    ) -> Option<R> {
+        self.register_response_with_failure_handler(nonce, response, now, success_fn, |_| {})
+    }
+
+    /// Like [`Self::register_response`] but additionally invokes `failure_fn`
+    /// when there was a matching pending request and `verify_response`
+    /// returned false. Lets the caller re-queue the request immediately
+    /// against a different peer instead of waiting for the timeout retry.
+    ///
+    /// `failure_fn` is NOT invoked for unknown / already-consumed nonces or
+    /// for requests that have hit their `expire_timestamp` — those are
+    /// dropped silently as before (the timeout retry path handles
+    /// genuinely-stale requests).
+    pub fn register_response_with_failure_handler<R>(
+        &mut self,
+        nonce: u32,
+        response: &S,
+        now: u64,
+        success_fn: impl FnOnce(&T) -> R,
+        failure_fn: impl FnOnce(&T),
     ) -> Option<R> {
         let mut should_delete = false;
         let response = self.requests.get_mut(&nonce).and_then(|status| {
@@ -71,9 +80,17 @@ where
                 return None;
             }
 
-            if now >= status.expire_timestamp || !status.request.verify_response(response) {
-                // Invalid/expired response should invalidate this nonce.
+            if now >= status.expire_timestamp {
+                // Stale: leave to the caller's timeout retry path, just GC here.
                 should_delete = true;
+                return None;
+            }
+
+            if !status.request.verify_response(response) {
+                // Peer responded fast with garbage. Hand the request back so
+                // the caller can re-queue against a different peer.
+                should_delete = true;
+                failure_fn(&status.request);
                 return None;
             }
 

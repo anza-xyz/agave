@@ -576,20 +576,41 @@ impl BlockIdRepairService {
 
         debug!("{my_pubkey}: Received response: {response:?}, nonce={nonce}");
 
-        let Some(request) =
-            // verify the response (and check merkle proof validity)
-            state.outstanding_requests.register_response(
+        // On verify failure, the request is stashed here so we can re-queue it
+        // immediately against a fresh peer instead of waiting DELTA for the
+        // timeout retry. Stays None for unknown/expired nonces.
+        let mut verify_failed_request: Option<BlockIdRepairType> = None;
+
+        let result = state
+            .outstanding_requests
+            .register_response_with_failure_handler(
                 nonce,
                 &response,
                 timestamp(),
                 // If valid return the original request
                 |block_id_request| *block_id_request,
-            )
-        else {
-            debug!(
-                "{my_pubkey}: Response with invalid nonce {nonce} or failed verification for {response:?}"
+                |block_id_request| {
+                    verify_failed_request = Some(*block_id_request);
+                },
             );
+
+        let Some(request) = result else {
             state.response_stats.invalid_packets += 1;
+            if let Some(failed_request) = verify_failed_request {
+                // Peer sent garbage in response to a request we'd issued.
+                // Re-queue immediately so the next send picks a different peer
+                // instead of paying a full DELTA before retrying.
+                let msg = OutgoingMessage::Metadata(failed_request);
+                state.sent_requests.remove(&msg);
+                state.pending_repair_requests.push(msg);
+                debug!(
+                    "{my_pubkey}: verify_response failed for nonce {nonce} from {}, re-queued
+                     {failed_request:?}",
+                    packet.meta().socket_addr(),
+                );
+            } else {
+                debug!("{my_pubkey}: unknown/expired nonce {nonce} for {response:?}");
+            }
             return;
         };
 
@@ -1603,6 +1624,101 @@ mod tests {
         assert!(state.pending_repair_requests.is_empty());
 
         // Verify: invalid packet stat was incremented
+        assert_eq!(state.response_stats.invalid_packets, 1);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_verify_failure_requeues_immediately() {
+        // A response that targets an active nonce but fails Merkle verification
+        // must be requeued for an immediate retry against a different peer,
+        // not left to the DELTA timeout path.
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        let slot = 100u64;
+        let block_id = Hash::new_unique();
+        let request = BlockIdRepairType::ParentAndFecSetCount { slot, block_id };
+        let nonce = state.outstanding_requests.add_request(request, timestamp());
+        state
+            .sent_requests
+            .insert(OutgoingMessage::Metadata(request), timestamp());
+
+        // Proof of the right length for fec_set_count=2 but garbage contents so
+        // the recomputed root won't match block_id.
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count: 2,
+            parent_info: (99, Hash::new_unique()),
+            parent_proof: vec![0xab; SIZE_OF_MERKLE_PROOF_ENTRY * 2],
+        };
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        // The bad response must:
+        //  - clear the old sent_requests entry (so the timeout retry doesn't fire a duplicate)
+        //  - re-queue the same request for the next send iteration
+        //  - count as an invalid_packets event
+        assert!(
+            !state
+                .sent_requests
+                .contains_key(&OutgoingMessage::Metadata(request))
+        );
+        assert_eq!(state.pending_repair_requests.len(), 1);
+        assert_eq!(
+            state.pending_repair_requests.peek(),
+            Some(&OutgoingMessage::Metadata(request))
+        );
+        assert_eq!(state.response_stats.invalid_packets, 1);
+
+        // And the nonce must be consumed: a second response with the same
+        // nonce is a no-op (no extra re-queue, no extra invalid_packets).
+        let second_data = serialize_response(&response, nonce);
+        let second_packet = make_packet(&second_data);
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&second_packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+        assert_eq!(state.pending_repair_requests.len(), 1);
+        assert_eq!(state.response_stats.invalid_packets, 2);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_unknown_nonce_does_not_requeue() {
+        // Counter-test: a response with no matching outstanding request must
+        // NOT be requeued. The failure path only fires for verify failures.
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count: 2,
+            parent_info: (99, Hash::new_unique()),
+            parent_proof: vec![0xcd; SIZE_OF_MERKLE_PROOF_ENTRY * 2],
+        };
+        let data = serialize_response(&response, 12345u32);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        assert!(state.pending_repair_requests.is_empty());
+        assert!(state.sent_requests.is_empty());
         assert_eq!(state.response_stats.invalid_packets, 1);
     }
 
