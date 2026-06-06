@@ -166,32 +166,29 @@ impl SigVerifier {
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
 
-        let (votes_result, certs_result) = self.thread_pool.join(
-            || {
-                verify_and_send_votes(
-                    votes_to_verify,
-                    &root_bank,
-                    &self.cluster_info,
-                    &self.leader_schedule,
-                    &self.banlist,
-                    &self.thread_pool,
-                    &self.channels,
-                )
-            },
-            || {
-                verify_and_send_certificates(
-                    &mut self.verified_certs,
-                    certs_to_verify,
-                    &root_bank,
-                    &self.channels.channel_to_pool,
-                    &self.banlist,
-                    &self.thread_pool,
-                )
-            },
-        );
-
-        let vote_stats = votes_result?;
-        let cert_stats = certs_result?;
+        // Run votes and certs verification sequentially. Both paths use
+        // self.thread_pool internally (join/install/par_iter), so an outer
+        // thread_pool.join() here would nest rayon blocking operations on
+        // the same pool. Rayon work-steals while blocked, which stacks
+        // frames from stolen tasks onto the current thread's stack and can
+        // overflow under load.
+        let vote_stats = verify_and_send_votes(
+            votes_to_verify,
+            &root_bank,
+            &self.cluster_info,
+            &self.leader_schedule,
+            &self.banlist,
+            &self.thread_pool,
+            &self.channels,
+        )?;
+        let cert_stats = verify_and_send_certificates(
+            &mut self.verified_certs,
+            certs_to_verify,
+            &root_bank,
+            &self.channels.channel_to_pool,
+            &self.banlist,
+            &self.thread_pool,
+        )?;
 
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
