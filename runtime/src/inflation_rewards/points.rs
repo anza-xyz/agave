@@ -201,12 +201,25 @@ fn calc_earned_credits(
 
     // figure out how much this stake has seen that
     //   for which the vote account has a record
+    //
+    // `epoch_credits` recorded in a vote account are monotonically
+    // non-decreasing (the vote program only ever increments credits, and
+    // arbitrary data cannot be injected into a vote-program-owned account
+    // because `set_owner` requires the account data to be zeroed before any
+    // owner change). Therefore `final_epoch_credits >= initial_epoch_credits`
+    // and `final_epoch_credits >= *new_credits_observed` always hold here, and
+    // these subtractions never underflow for any reachable input. We use
+    // `saturating_sub` purely as defense-in-depth: if that invariant were ever
+    // violated, failing safe to "no credits earned" is preferable to an
+    // underflow (release-mode wraparound to a huge reward, or a debug panic
+    // during epoch reward calculation). Behavior is identical to plain
+    // subtraction for every legitimate input, so this is consensus-neutral.
     let earned_credits = if credits_in_stake < initial_epoch_credits {
         // the staker observed the entire epoch
-        final_epoch_credits - initial_epoch_credits
+        final_epoch_credits.saturating_sub(initial_epoch_credits)
     } else if credits_in_stake < final_epoch_credits {
         // the staker registered sometime during the epoch, partial credit
-        final_epoch_credits - *new_credits_observed
+        final_epoch_credits.saturating_sub(*new_credits_observed)
     } else {
         // the staker has already observed or been redeemed this epoch
         //  or was activated after this epoch
