@@ -129,13 +129,13 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-        let check_results = bank.check_transactions(
-            txs,
-            &pre_results,
-            bank.max_processing_age(),
-            &mut error_counters,
-        );
-        let check_results: Vec<_> = check_results
+        let check_results = bank
+            .check_transactions(
+                txs,
+                &pre_results,
+                bank.max_processing_age(),
+                &mut error_counters,
+            )
             .into_iter()
             .zip(txs.iter())
             .map(|(result, tx)| match result {
@@ -147,8 +147,7 @@ impl Consumer {
                     }
                 }
                 Err(err) => Err(err),
-            })
-            .collect();
+            });
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
