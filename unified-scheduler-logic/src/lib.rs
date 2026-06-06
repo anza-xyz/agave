@@ -1677,7 +1677,7 @@ mod tests {
         assert!(state_machine.has_unblocked_task());
         assert_eq!(state_machine.unblocked_task_queue_count(), 1);
 
-        // unblocked_task_count() should be incremented
+        // unblocked_task_count() is incremented when task is scheduled from unblocked queue
         assert_eq!(state_machine.unblocked_task_count(), 0);
         assert_eq!(
             state_machine
@@ -1685,6 +1685,7 @@ mod tests {
                 .map(|t| t.task_id()),
             Some(102)
         );
+         // unblocked_task_count() should be incremented
         assert_eq!(state_machine.unblocked_task_count(), 1);
 
         // there's no blocked task anymore; calling schedule_next_unblocked_task should be noop and
