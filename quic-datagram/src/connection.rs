@@ -8,8 +8,8 @@
 use {
     crate::{
         close_codes,
-        connection_table::IdGeneration,
         error::Error,
+        peer_states::IdGeneration,
         stats::{QuicDatagramStats, record_error},
     },
     bytes::Bytes,
@@ -230,8 +230,6 @@ mod tests {
     fn staked_peer_is_admitted_unstaked_is_rejected() {
         let rt = make_runtime();
 
-        // Lex tiebreaker requires the dialing client's pubkey < server's. Pick
-        // the server keypair first, then derive client A's keypair below it.
         let server_kp = Keypair::new();
         let server_pk = server_kp.pubkey();
         let a_kp = keypair_below(&server_pk);
@@ -243,10 +241,9 @@ mod tests {
             server_kp,
         );
 
-        // Client A - admitted (pubkey < server's, so handshake passes lex check).
+        // Client A - admitted by the allowlist.
         let client_a = spawn_node(&rt, Arc::new(AllowAll), a_kp);
-        // Client B - not admitted. Pick below server so the rejection is by the
-        // allowlist check, not the lex check.
+        // Client B - not admitted by the allowlist.
         let client_b = spawn_node(&rt, Arc::new(AllowAll), keypair_below(&server_pk));
 
         let payload_a = Bytes::from_static(b"hello-from-A");

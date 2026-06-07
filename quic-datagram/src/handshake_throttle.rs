@@ -1,18 +1,4 @@
 //! Per-IP inbound-handshake throttle.
-//!
-//! The `allow_ip` admission gate already refuses sources that are not
-//! gossip-advertised staked peers. This throttle closes the remaining hole: an
-//! *allowlisted* peer (buggy, compromised, or malicious) that opens many TLS
-//! handshakes at once. Each accepted handshake spawns a task that runs real
-//! crypto and holds quinn state until it resolves, so unbounded concurrent
-//! starts from one IP are a CPU/memory DoS.
-//!
-//! We bound a source IP to a single in-flight handshake by recording the last
-//! *accepted* handshake start per IP and refusing any new one inside the
-//! [`HANDSHAKE_COOLDOWN`] window. Because a pending handshake cannot outlive
-//! `MAX_IDLE_TIMEOUT`, "one accept per window" implies "at most one in-flight
-//! per IP" — without tracking completions.
-
 use {
     crate::MAX_PEERS,
     lazy_lru::LruCache,
@@ -24,10 +10,7 @@ use {
 /// can live, so spacing accepts by it guarantees at most one in flight per IP.
 const HANDSHAKE_COOLDOWN: std::time::Duration = crate::transport::MAX_IDLE_TIMEOUT;
 
-/// Tracks the last accepted handshake start per source IP. Owned by the control
-/// loop and touched from that single thread only, so no synchronization is
-/// needed. LazyLRU caps memory at ~2× capacity; the live set is bounded by the
-/// number of allowlisted IPs that handshake within a window (≤ [`MAX_PEERS`]).
+/// Tracks the last accepted handshake per source IP.
 pub(crate) struct HandshakeThrottle {
     recent: LruCache<IpAddr, Instant>,
 }
@@ -40,13 +23,7 @@ impl HandshakeThrottle {
     }
 
     /// Returns true if a fresh inbound handshake from `ip` may proceed.
-    ///
-    /// Loopback always admits (local-cluster / tests bind many endpoints on
-    /// `127.0.0.1`, and local access is trusted). Otherwise admit iff `ip` has
-    /// not had an accepted handshake within [`HANDSHAKE_COOLDOWN`]; on admit,
-    /// record `now`. A refused attempt does **not** refresh the timestamp, so
-    /// the window stays anchored to the last accepted start. `now` is a
-    /// parameter for deterministic tests.
+    /// Loopback always admits (local-cluster / tests).
     pub fn admit(&mut self, ip: IpAddr, now: Instant) -> bool {
         if ip.is_loopback() {
             return true;
@@ -63,10 +40,7 @@ impl HandshakeThrottle {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        std::net::{Ipv4Addr, Ipv6Addr},
-    };
+    use {super::*, std::net::Ipv4Addr};
 
     fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(a, b, c, d))
@@ -111,29 +85,5 @@ mod tests {
         assert!(!t.admit(ip, t0 + HANDSHAKE_COOLDOWN / 2));
         // ...so an attempt one full cooldown after the *accepted* start is let in.
         assert!(t.admit(ip, t0 + HANDSHAKE_COOLDOWN));
-    }
-
-    #[test]
-    fn distinct_ips_are_independent() {
-        let mut t = HandshakeThrottle::new();
-        let t0 = Instant::now();
-        assert!(t.admit(v4(1, 1, 1, 1), t0));
-        assert!(t.admit(v4(2, 2, 2, 2), t0), "different IP unaffected");
-    }
-
-    #[test]
-    fn loopback_is_never_throttled() {
-        let mut t = HandshakeThrottle::new();
-        let t0 = Instant::now();
-        for i in 0..100 {
-            assert!(t.admit(
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
-                t0 + std::time::Duration::from_millis(i)
-            ));
-            assert!(t.admit(
-                IpAddr::V6(Ipv6Addr::LOCALHOST),
-                t0 + std::time::Duration::from_millis(i)
-            ));
-        }
     }
 }

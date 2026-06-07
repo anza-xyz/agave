@@ -1,19 +1,16 @@
 //! QUIC datagram endpoint: public handle ([`QuicDatagramEndpoint`]) plus
-//! its unified control loop ([`EndpointLoop`]). One tokio task handles
-//! server accept, client egress, banlist eviction, identity rotation,
-//! and metrics. Each event source is an arm of a single `tokio::select!`;
-//! heavy per-event work is spawned onto its own task so a slow handshake
-//! or dial does not block dispatch of the next event.
-
+//! its unified control loop ([`EndpointLoop`]).
 use {
     crate::{
-        Banlist, EGRESS_CHANNEL_CAP,
+        Banlist, EGRESS_CHANNEL_CAP, MAX_PEERS,
         allowlist::Allowlist,
         close_codes,
         connection::{ClientConnection, ConnEvent, DialOutcome, ServerConnection},
-        connection_table::{ConnectionTable, EgressDispatch, IdGeneration, InsertOutcome},
         error::Error,
         handshake_throttle::HandshakeThrottle,
+        peer_states::{
+            EgressDispatch, IdGeneration, InsertOutcome, PeerConnectionState, PeerStates,
+        },
         read_loop::read_datagram_loop,
         stats::{self, QuicDatagramStats, add, record_error},
         transport::{new_client_config, new_server_config},
@@ -83,17 +80,14 @@ impl NotifyKeyUpdate for KeyUpdater {
     }
 }
 
-const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
 const METRICS_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Capacity of the task -> control-loop connection-event channel. Sized
 /// generously so that an identity rotation - which closes up to
 /// [`crate::MAX_PEERS`] connections, each of whose read loop then reliably reports
-/// [`ConnEvent::Closed`] - drains without wedging. The loop only ever
-/// *receives* on this channel, so it can never deadlock against itself; a full
-/// channel merely makes the reliable senders (dial outcomes, read-loop exits)
-/// briefly await while the loop catches up.
-const CONN_EVENT_CHANNEL_CAP: usize = 1024;
+/// [`ConnEvent::Closed`] - drains without wedging.
+const CONN_EVENT_CHANNEL_CAP: usize = MAX_PEERS as usize;
 
 /// Datagram envelope used on both directions of the endpoint.
 #[derive(Debug)]
@@ -109,10 +103,7 @@ pub struct Datagram {
 pub struct QuicDatagramEndpoint {
     endpoint: Endpoint,
     pub egress: mpsc::Sender<Datagram>,
-    /// Handle for rotating the local identity (TLS cert / pubkey). Wraps a
-    /// `tokio::sync::watch` channel; the actual swap happens asynchronously
-    /// in the control loop. Implements `solana_tls_utils::NotifyKeyUpdate`
-    /// so it slots into the validator's `KeyUpdaters` registry.
+    /// Handle for rotating the local identity (TLS cert / pubkey).
     pub key_updater: Arc<KeyUpdater>,
     pub task: JoinHandle<()>,
 }
@@ -169,7 +160,7 @@ impl QuicDatagramEndpoint {
             banlist,
             allowlist,
             identity_rx,
-            connections: ConnectionTable::new(),
+            peers: PeerStates::new(),
             conn_events_tx,
             conn_events_rx,
             handshake_throttle: HandshakeThrottle::new(),
@@ -206,14 +197,14 @@ struct EndpointLoop {
     generation: IdGeneration,
     egress_rx: mpsc::Receiver<Datagram>,
     ingress: Sender<Datagram>,
-    banlist: Arc<Banlist<Pubkey>>,
-    /// Policy for which peers may occupy a slot. Consulted by the inbound
-    /// admission gate and handed to each read loop for its periodic re-check.
+    /// Policy consulted by the inbound admission gate and handed to each read
+    /// loop for its periodic re-check.
     allowlist: Arc<dyn Allowlist>,
+    /// Instand ban list, checked per packet.
+    banlist: Arc<Banlist<Pubkey>>,
     identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    /// The per-peer table, owned solely by this loop. All mutations happen
-    /// here, serially; spawned tasks report results via `conn_events_rx`.
-    connections: ConnectionTable,
+    /// The per-peer connection state machines.
+    peers: PeerStates,
     /// Cloned into every spawned task so it can report its lifecycle result.
     conn_events_tx: mpsc::Sender<ConnEvent>,
     conn_events_rx: mpsc::Receiver<ConnEvent>,
@@ -285,7 +276,7 @@ impl EndpointLoop {
                 // when idle we can take care of bookkeeping. If these are delayed
                 // it is usually not a problem.
                 _ = prune.tick() => self.banlist.prune(),
-                _ = metrics.tick() => stats::report(&self.stats, self.connections.len()),
+                _ = metrics.tick() => stats::report(&self.stats, self.peers.len()),
             }
         }
     }
@@ -305,7 +296,7 @@ impl EndpointLoop {
         // point is dropped at the event boundary (its event carries the old
         // generation). Then wipe the table.
         self.generation = self.generation.wrapping_add(1);
-        let evicted = self.connections.clear_for_id_change();
+        let evicted = self.peers.clear_for_id_change();
         self.stats
             .connection_evicted_identity_rotated
             .fetch_add(evicted, Ordering::Relaxed);
@@ -325,47 +316,16 @@ impl EndpointLoop {
         if self.banlist.is_banned(&peer) {
             return;
         }
-        // Lex rule partition connection directions: lex-higher side
-        // only ever holds inbound (server-accepted) entries; lex-lower side
-        // only ever holds outbound (we-dialed) ones.
-        //
-        //  - Higher side: trust whatever inbound conn we have. The peer's
-        //    source addr can legitimately differ from the
-        //    gossip-published addr due to gossip lag, so we ignore the
-        //    addr argument on hit.
-        //
-        //  - Lower side: cached `Established`'s remote addr is exactly the
-        //    addr we dialed. If the caller now wants a different addr (e.g.
-        //    gossip refreshed the peer's published addr), the peer has
-        //    moved - evict and re-dial. `Dialing` placeholder means another
-        //    egress already kicked off a dial for this peer; drop this
-        //    datagram rather than queueing.
-        if self.local_pubkey >= peer {
-            if self
-                .connections
-                .send_over_inbound_connection(&peer, &bytes, &self.stats)
-            {
-                return;
-            }
-            add(&self.stats.egress_dropped_higher_pubkey);
-            return;
-        }
 
-        // Ask the connection table whether we should spawn a dial task.
-        match self
-            .connections
-            .send_over_outbound_connection(peer, addr, &bytes, &self.stats)
-        {
+        match self.peers.try_send(peer, addr, &bytes, &self.stats) {
             EgressDispatch::Sent | EgressDispatch::Dialing => return,
             EgressDispatch::SpawnDialTask => {}
         }
 
-        // Carry the trigger packet into the dial task; the loop sends it on
-        // the new connection the moment the dial resolves (`install_dialed`).
-        // This is what lets a standstill broadcast (one cert every
-        // `DELTA_STANDSTILL`) actually reach a peer whose connection
-        // had died. Followers arriving during `Dialing` still drop on
-        // the floor (see `send_over_outbound_connection`'s `Dialing` arm).
+        // No usable connection yet. Carry the trigger packet into the dial task;
+        // it is sent the moment the connection lands (`install_dialed`). This is
+        // what lets a standstill broadcast reach a peer whose connection had died.
+        // Followers arriving while `Dialing` is in the slot are dropped.
         ClientConnection {
             endpoint: self.endpoint.clone(),
             peer,
@@ -399,12 +359,8 @@ impl EndpointLoop {
         // Post-RETRY (source address is now return-routability-validated): the
         // *only* sources we will spend TLS-handshake CPU on are those whose IP
         // is a gossip-advertised address of a staked peer. Everything else is
-        // refused here, before the handshake - the airtight DoS gate. NAT'd
-        // peers must advertise their external IP in gossip to be admitted.
-        //
-        // Loopback is trusted implicitly (local-cluster / tests). The check is
-        // safe post-RETRY: an attacker cannot borrow a staked validator's IP
-        // because RETRY proves they actually receive at the source address.
+        // refused here, before the handshake.
+        // Loopback is trusted implicitly (local-cluster / tests).
         let ip = remote_addr.ip();
         if !ip.is_loopback() && !self.allowlist.allow_ip(&ip) {
             add(&self.stats.handshake_rejected_unknown_ip);
@@ -413,8 +369,7 @@ impl EndpointLoop {
         }
         // Even an allowlisted source gets at most one in-flight handshake:
         // refuse a fresh start while a prior one from this IP could still be
-        // running (loopback exempt). Bounds handshake-CPU from a misbehaving
-        // staked peer.
+        // running (loopback exempt).
         if !self.handshake_throttle.admit(ip, Instant::now()) {
             add(&self.stats.handshake_rejected_inflight);
             incoming.refuse();
@@ -439,23 +394,18 @@ impl EndpointLoop {
             ConnEvent::Inbound { peer, conn, .. } => self.maybe_admit_inbound(peer, conn),
             ConnEvent::DialDone { peer, outcome, .. } => match outcome {
                 DialOutcome::Established { conn, trigger } => {
-                    self.install_dialed(peer, conn, trigger)
+                    self.maybe_register_dialed(peer, conn, trigger)
                 }
-                DialOutcome::Failed => self.connections.clear_dialing_placeholder(&peer),
+                DialOutcome::Failed => self.peers.clear_dialing_placeholder(&peer),
             },
             ConnEvent::Closed {
                 peer, stable_id, ..
-            } => self.connections.maybe_reap_connection(&peer, stable_id),
+            } => self.peers.maybe_reap_connection(&peer, stable_id),
         }
     }
 
     /// Admission checks for a freshly handshaked inbound connection.
     fn maybe_admit_inbound(&mut self, peer: Pubkey, conn: Connection) {
-        if peer >= self.local_pubkey {
-            close_codes::WRONG_DIRECTION.close(&conn);
-            record_error(&Error::WrongDirection(peer), &self.stats);
-            return;
-        }
         if self.banlist.is_banned(&peer) {
             close_codes::BANNED.close(&conn);
             record_error(&Error::Banned(peer), &self.stats);
@@ -467,51 +417,55 @@ impl EndpointLoop {
             return;
         }
         let remote_addr = conn.remote_address();
-        match self
-            .connections
-            .insert_connection(peer, conn.clone(), &self.stats)
-        {
-            InsertOutcome::Rejected => {
-                close_codes::TABLE_FULL.close(&conn);
-                record_error(&Error::TableFull, &self.stats);
-            }
+        match self.peers.insert_connection(
+            peer,
+            PeerConnectionState::Inbound(conn.clone()),
+            &self.local_pubkey,
+            &self.stats,
+        ) {
             InsertOutcome::Inserted | InsertOutcome::Replaced => {
-                self.stats.record_connection_count(self.connections.len());
+                self.stats.record_connection_count(self.peers.len());
                 self.spawn_read_loop(conn, peer, remote_addr);
+            }
+            InsertOutcome::LexLoser => {
+                // The canonical connection for this peer is already installed.
+                close_codes::WRONG_DIRECTION.close(&conn);
             }
         }
     }
 
-    /// Install a successfully dialed outbound connection: transition the
-    /// `Dialing` placeholder to `Established`, fire the trigger datagram that
-    /// started the dial, and start the read loop.
-    fn install_dialed(&mut self, peer: Pubkey, conn: Connection, trigger: Bytes) {
+    /// Attempt to register a successfully dialed outbound connection,
+    /// on success transition the `Dialing` placeholder to `Established`,
+    /// send the trigger datagram, and start the read loop.
+    fn maybe_register_dialed(&mut self, peer: Pubkey, conn: Connection, trigger: Bytes) {
         let remote_addr = conn.remote_address();
-        match self
-            .connections
-            .insert_connection(peer, conn.clone(), &self.stats)
-        {
-            InsertOutcome::Rejected => {
-                // Unreachable on the dialer side (the slot holds our own
-                // `Dialing` placeholder, so insert never hits the at-cap vacant
-                // arm), but handle defensively.
-                close_codes::TABLE_FULL.close(&conn);
-                record_error(&Error::TableFull, &self.stats);
-                self.connections.clear_dialing_placeholder(&peer);
-                return;
-            }
+        match self.peers.insert_connection(
+            peer,
+            PeerConnectionState::Outbound(conn.clone()),
+            &self.local_pubkey,
+            &self.stats,
+        ) {
             InsertOutcome::Inserted | InsertOutcome::Replaced => {
-                self.stats.record_connection_count(self.connections.len());
+                self.stats.record_connection_count(self.peers.len());
+                match conn.send_datagram(trigger) {
+                    Ok(()) => add(&self.stats.datagrams_sent),
+                    Err(e) => record_error(&Error::from(e), &self.stats),
+                }
+                self.spawn_read_loop(conn, peer, remote_addr);
+            }
+            // The canonical inbound connection arrived first.
+            InsertOutcome::LexLoser => {
+                close_codes::WRONG_DIRECTION.close(&conn);
+                // try_send on an existing Inbound entry always returns Sent
+                let result = self
+                    .peers
+                    .try_send(peer, remote_addr, &trigger, &self.stats);
+                debug_assert!(
+                    matches!(result, EgressDispatch::Sent),
+                    "expected Sent: canonical Inbound connection must be present"
+                );
             }
         }
-        // Send the trigger packet that started this dial. Quinn-level failures
-        // are recorded but not fatal - the connection is healthy and the read
-        // loop should still run.
-        match conn.send_datagram(trigger) {
-            Ok(()) => add(&self.stats.datagrams_sent),
-            Err(e) => record_error(&Error::from(e), &self.stats),
-        }
-        self.spawn_read_loop(conn, peer, remote_addr);
     }
 
     /// Spawn the per-connection read loop for an installed connection. It
@@ -548,41 +502,33 @@ mod tests {
     };
 
     #[test]
-    /// When `local_pubkey >= peer` and no cached
-    /// connection exists, the egress datagram is dropped (counted as
-    /// `egress_dropped_higher_pubkey`). Once the lower-pubkey peer dials in,
-    /// the higher side's egress flows via send_over_inbound on the cached inbound.
-    fn higher_pubkey_drops_egress_until_lower_dials_in() {
+    /// Both sides can initiate connections. The higher-pubkey node dials
+    /// directly instead of waiting for the lower-pubkey peer to call in first.
+    fn both_sides_can_initiate_connection() {
         let rt = make_runtime();
         // B has the higher pubkey, A the lower.
         let b = spawn_node(&rt, Arc::new(AllowAll), Keypair::new());
         let a = spawn_node(&rt, Arc::new(AllowAll), keypair_below(&b.pubkey()));
 
-        // B (higher) tries to send to A (lower) before A has dialed B. Per the
-        // lex rule, B's client drops the datagram silently - A must not receive.
-        let dropped = Bytes::from_static(b"should-be-dropped");
-        rt.block_on(async {
-            b.endpoint
-                .egress
-                .send(crate::endpoint::Datagram {
-                    peer_pubkey: a.pubkey(),
-                    peer_address: a.addr,
-                    message: dropped.clone(),
-                })
-                .await
-                .unwrap();
-        });
-        let stray = a.ingress_rx.recv_timeout(Duration::from_millis(800));
-        assert!(
-            stray.is_err(),
-            "lower-pubkey peer must not receive a higher-pubkey peer's egress without first \
-             dialing in; got {stray:?}"
+        // B (higher pubkey) sends to A (lower pubkey). B dials A directly.
+        let from_b = Bytes::from_static(b"from-B-to-A");
+        send_until_received(
+            &rt,
+            &b.endpoint,
+            a.pubkey(),
+            a.addr,
+            from_b.clone(),
+            &a.ingress_rx,
+            Duration::from_secs(5),
+            |d| (d.message == from_b).then_some(()),
+            "A did not receive B's datagram",
         );
+        drain_matching(&a.ingress_rx, Duration::from_millis(200), |d| {
+            d.message == from_b
+        });
 
-        // A dials B (correct direction per the lex rule). B's server accepts
-        // and caches the inbound from A. Trigger-drop means we need to retry
-        // until the dial completes and a follower lands.
-        let from_a = Bytes::from_static(b"from-A");
+        // A (lower pubkey) can also send to B.
+        let from_a = Bytes::from_static(b"from-A-to-B");
         send_until_received(
             &rt,
             &a.endpoint,
@@ -592,31 +538,7 @@ mod tests {
             &b.ingress_rx,
             Duration::from_secs(5),
             |d| (d.message == from_a).then_some(()),
-            "B did not receive A's dial",
-        );
-        drain_matching(&b.ingress_rx, Duration::from_millis(200), |d| {
-            d.message == from_a
-        });
-
-        // B can now reach A via send_over_inbound on the cached inbound. No
-        // dial needed — single send is enough.
-        let from_b = Bytes::from_static(b"from-B-after-A-dialed");
-        rt.block_on(async {
-            b.endpoint
-                .egress
-                .send(crate::endpoint::Datagram {
-                    peer_pubkey: a.pubkey(),
-                    peer_address: a.addr,
-                    message: from_b.clone(),
-                })
-                .await
-                .unwrap();
-        });
-        recv_until(
-            &a.ingress_rx,
-            Duration::from_secs(5),
-            |d| (d.message == from_b).then_some(()),
-            "A did not receive B's datagram after the inbound established a connection",
+            "B did not receive A's datagram",
         );
     }
 
@@ -743,11 +665,11 @@ mod tests {
     }
 
     #[test]
-    fn higher_side_ignores_caller_addr_on_hit() {
-        // Inbound (server-accepted) connections live on the lex-higher side.
-        // Their cached `remote_address` is the peer's NAT-mapped source addr,
-        // which the caller (working from gossip) may not know. The higher
-        // side must trust the cached conn regardless of caller's addr.
+    fn inbound_connection_ignores_caller_addr_on_send() {
+        // Inbound connections carry the peer's NAT-mapped source addr as their
+        // remote_address, which may differ from the gossip-published addr the
+        // caller provides. send_over_connection must use the cached inbound conn
+        // regardless of the addr argument.
         let rt = make_runtime();
 
         let server = spawn_node(&rt, Arc::new(AllowAll), Keypair::new()); // lex-higher
@@ -769,12 +691,11 @@ mod tests {
             "server did not receive client's probe",
         );
 
-        // Server now sends back to client. The server is lex-higher and
-        // already holds an `Established` for c_pubkey (the inbound from
-        // the client's dial), so `send_over_inbound` goes through the cached
-        // connection without a dial — single send + recv works here.
-        // We deliberately hand a bogus addr to verify the higher side
-        // ignores it on cache hit.
+        // Server now sends back to client. The server already holds an inbound
+        // connection for c_pubkey (from the client's dial), so send_over_connection
+        // uses it without a new dial — single send + recv works here.
+        // We deliberately hand a bogus addr to verify that inbound connections
+        // ignore it on cache hit.
         let bogus_addr: std::net::SocketAddr = "203.0.113.99:65000".parse().unwrap();
         let pay = Bytes::from_static(b"reply");
         rt.block_on(async {

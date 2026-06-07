@@ -9,9 +9,9 @@ pub mod testutils;
 
 pub(crate) mod connection;
 pub(crate) use error::close_codes;
-pub(crate) mod connection_table;
 pub mod endpoint;
 pub(crate) mod handshake_throttle;
+pub(crate) mod peer_states;
 pub(crate) mod read_loop;
 pub(crate) mod stats;
 pub(crate) mod transport;
@@ -28,9 +28,9 @@ pub use {
 /// Not long since peer may legitimately be retrying a hot-spare promotion.
 pub const BAN_DURATION_SHORT: Duration = Duration::from_secs(5);
 
-/// Maximum number of unique peer pubkeys held in the connection table.
+/// Maximum number of unique peer pubkeys held in steady state.
 /// Sized for the maximum expected alpenglow staked-node count.
-pub const MAX_PEERS: u64 = 4000;
+pub const MAX_PEERS: u64 = 2000;
 
 /// Capacity of the egress channel held by [`QuicDatagramEndpoint`]. Senders
 /// must `try_send` and accept drop-on-full.

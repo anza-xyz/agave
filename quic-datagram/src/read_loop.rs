@@ -1,5 +1,4 @@
-//! Per-connection reader task. Shared by server-accepted and client-dialed
-//! connections - both push received datagrams into the same ingress channel.
+//! Per-connection reader task.
 
 use {
     crate::{
@@ -8,9 +7,9 @@ use {
         allowlist::Allowlist,
         close_codes,
         connection::ConnEvent,
-        connection_table::IdGeneration,
         endpoint::Datagram,
         error::Error,
+        peer_states::IdGeneration,
         stats::{QuicDatagramStats, record_error},
     },
     crossbeam_channel::{Sender, TrySendError},

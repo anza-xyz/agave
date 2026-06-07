@@ -48,15 +48,16 @@ The task -> event loop channel is bounded, and every task sends with `send().awa
 This can never deadlock: the event loop is the only consumer and never sends
 into it.
 
-## Connection table
+## Peer state map
 
-A plain `HashMap<Pubkey, ConnectionTableEntry>` **owned exclusively by the
+A plain `HashMap<Pubkey, PeerConnectionState>` **owned exclusively by the
 control loop**, where:
 
 ```text
-enum ConnectionTableEntry {
-    Dialing,                  // placeholder; one dial task in flight
-    Established(Connection),  // live connection for fan-out
+enum PeerConnectionState {
+    Dialing,
+    Inbound(Connection),
+    Outbound(Connection),
 }
 ```
 
@@ -64,28 +65,17 @@ enum ConnectionTableEntry {
 Table serves two objectives:
 * Admission control - we do not allow > 1 connection per peer ID, votor has no need
   to allow more.
-* Dispatch of egress packets - we need to pick a connection to send over irrespective
-  of travel direction.
+* Dispatch of egress packets - we need to pick a connection to send packets over.
 
 We could split the single table into 2 (one for egress, one for ingress) if we
-use each connection in one direction. This not notably simplify the implementation.
+use each connection in one direction. This does not notably simplify the implementation.
 
-## Pubkey based connection direction tiebreaker
+### Pubkey based connection direction tiebreaker
 
-For every peer pair, the node with the **lower** pubkey is the
-dialer; the higher pubkey listens. The rule is enforced on both sides:
-
-- Server closes any inbound from a peer with `pubkey >= local` with
-  `WRONG_DIRECTION`.
-- Client drops egress to peers with `pubkey <= local` when no cached
-  connection exists (counted as `egress_dropped_higher_pubkey`); it
-  waits for the peer to dial in, then `send_over_inbound` finds the
-  inbound and uses it for the higher→lower direction.
-
-This partitions connections cleanly: the lex-higher side only ever holds
-inbound (server-accepted) entries; the lex-lower side only
-ever holds outbound (we-dialed) ones. This avoids races where peers
-try to connect to each other.
+For every peer pair, the node with the **lower** pubkey is the canonical
+dialer; in case connection attempts race, the one in which higher pubkey listens wins.
+The rule is enforced after handshakes complete only, so both handshakes
+race and if one completes before other is initiated, it is kept.
 
 ### Minimal buffering during `Dialing`
 
@@ -125,9 +115,8 @@ the same pubkey (e.g., gossip published a new addr for the peer), the
 slot is atomically swapped to `Dialing`, the displaced connection is
 closed with `PEER_MOVED`, and a fresh dial spawns at the new addr.
 
-The server side **does not** do this per-pubkey addr check (the peer's
-NAT-mapped source addr can legitimately differ from its gossip-published
-one). It does, however, gate inbound on the source *IP* being a
+The server side **does not** do this per-pubkey addr check. It does,
+however, gate inbound on the source *IP* being a
 gossip-advertised address of a staked peer - see the admission gate in the
 Security posture below.
 

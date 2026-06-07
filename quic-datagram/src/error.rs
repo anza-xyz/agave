@@ -48,11 +48,11 @@ pub(crate) mod close_codes {
         reason: b"BANNED",
     };
 
-    pub(crate) const TABLE_FULL: Spec = Spec {
-        code: VarInt::from_u32(5),
-        reason: b"TABLE_FULL",
-    };
-
+    /// Sent to the non-canonical side when both peers dial simultaneously.
+    /// The canonical direction is determined by the lex-pubkey tiebreaker:
+    /// lower-pubkey side holds the Outbound connection, higher-pubkey side
+    /// holds the Inbound. The losing connection is closed with this code; the
+    /// peer routes its traffic through the canonical connection instead.
     pub(crate) const WRONG_DIRECTION: Spec = Spec {
         code: VarInt::from_u32(9),
         reason: b"WRONG_DIRECTION",
@@ -107,17 +107,11 @@ pub enum Error {
     #[error("peer {0} is banned")]
     Banned(Pubkey),
 
-    /// Connection table already holds [`crate::MAX_PEERS`] distinct pubkeys
-    /// and the incoming peer is not among them.
-    #[error("connection table full")]
-    TableFull,
-
-    /// Inbound handshake from a peer whose pubkey is greater than ours.
-    /// Per the lex-pubkey tiebreaker, the lower pubkey dials and the higher
-    /// listens - so a peer with pubkey >= local must not be dialing us. We
-    /// close the inbound; the surviving connection is the one our own client
-    /// dials in the reverse direction.
-    #[error("inbound from {0} rejected: wrong direction (lex tiebreaker)")]
+    /// A connection lost the lex-pubkey tiebreaker. When both peers dial
+    /// simultaneously the canonical connection (outbound for lower pubkey,
+    /// inbound for higher pubkey) is kept and the other is closed with
+    /// `WRONG_DIRECTION`. This error represents the losing side.
+    #[error("connection to/from {0} rejected: lost lex tiebreaker")]
     WrongDirection(Pubkey),
 
     #[error(transparent)]

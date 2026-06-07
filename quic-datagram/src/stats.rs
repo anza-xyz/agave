@@ -21,10 +21,10 @@ pub(crate) struct QuicDatagramStats {
     /// `send_datagram` found the connection already gone. This is normal
     /// churn, not likely to be a fault.
     pub(crate) connection_lost: AtomicU64,
-    /// Egress dropped because local_pubkey >= peer (we are the lex-higher
-    /// side, so we never dial) and no inbound connection from that peer
-    /// has been accepted yet.
-    pub(crate) egress_dropped_higher_pubkey: AtomicU64,
+    /// Connections closed because they lost the lex-pubkey tiebreaker: both
+    /// sides dialed simultaneously and the non-canonical connection was
+    /// replaced by the canonical one.
+    pub(crate) connections_lex_loser_closed: AtomicU64,
     /// Follower egress dropped because a dial is already in flight for the
     /// peer. The egress that *triggered* the dial is carried into the dial
     /// task and sent the moment the connection lands; only subsequent egress
@@ -59,8 +59,6 @@ pub(crate) struct QuicDatagramStats {
     /// Handshake refused because the peer misbehaved at the protocol level:
     /// unrecoverable identity, or wrong dial direction (lex tiebreaker).
     pub(crate) handshake_rejected_protocol: AtomicU64,
-    /// Handshake refused due to a resource limit: connection table full.
-    pub(crate) handshake_rejected_overload: AtomicU64,
     /// Peer's incoming datagram exceeded the per-connection rate.
     pub(crate) datagram_rate_limited: AtomicU64,
 
@@ -126,7 +124,6 @@ pub(crate) fn record_error(err: &Error, stats: &QuicDatagramStats) {
         Error::InvalidIdentity(_) | Error::WrongDirection(_) => {
             add(&stats.handshake_rejected_protocol)
         }
-        Error::TableFull => add(&stats.handshake_rejected_overload),
         Error::IdentityRotated(_) => {
             // The new connection would have been an Established under the
             // rotated identity, so it counts as a rotation-driven eviction
@@ -169,11 +166,6 @@ pub(crate) fn report(stats: &QuicDatagramStats, live_connections: u64) {
             i64
         ),
         (
-            "handshake_rejected_overload",
-            swap!(stats.handshake_rejected_overload),
-            i64
-        ),
-        (
             "datagram_ingress_dropped_channel_full",
             swap!(stats.datagram_ingress_dropped_channel_full),
             i64
@@ -184,8 +176,8 @@ pub(crate) fn report(stats: &QuicDatagramStats, live_connections: u64) {
             i64
         ),
         (
-            "egress_dropped_higher_pubkey",
-            swap!(stats.egress_dropped_higher_pubkey),
+            "connections_lex_loser_closed",
+            swap!(stats.connections_lex_loser_closed),
             i64
         ),
         (

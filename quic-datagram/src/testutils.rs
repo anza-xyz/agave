@@ -156,10 +156,10 @@ pub fn drain_matching(
 
 /// Generate a fresh keypair whose pubkey is strictly less than `upper`.
 ///
-/// Required by client→server tests under the lex-pubkey tiebreaker: the
-/// dialer's pubkey must be lower than the listener's, otherwise the server
-/// rejects the inbound with `WRONG_DIRECTION` and the test would observe a
-/// silent connection failure.
+/// Useful for tests that need to force a specific lex-direction outcome:
+/// the lower-pubkey side holds the canonical outbound connection, the higher
+/// the canonical inbound. Either side can initiate; this helper is only needed
+/// when a test explicitly cares about which direction becomes canonical.
 pub fn keypair_below(upper: &Pubkey) -> Keypair {
     loop {
         let k = Keypair::new();
