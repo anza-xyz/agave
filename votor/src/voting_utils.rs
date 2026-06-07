@@ -264,7 +264,7 @@ fn insert_vote_and_create_bls_message(
     };
     context
         .own_vote_sender
-        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
+        .send(SigVerifiedBatch::Votes(vote_msg.clone().into()))
         .map_err(|_| SendError(()))?;
 
     // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
@@ -433,7 +433,7 @@ mod tests {
         let received_message = own_vote_receiver.recv().unwrap();
         assert_eq!(
             received_message,
-            SigVerifiedBatch::Votes(vec![expected_message])
+            SigVerifiedBatch::Votes(expected_message.into())
         );
     }
 

@@ -1,132 +1,280 @@
 use {
-    crate::common::Stake,
-    agave_votor_messages::consensus_message::VoteMessage,
-    solana_hash::Hash,
-    solana_pubkey::Pubkey,
-    std::{
-        collections::{BTreeMap, BTreeSet},
-        num::NonZero,
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        consensus_message::SigVerifiedVoteBatch,
+        vote::{Vote, VoteType},
     },
+    bitvec::vec::BitVec,
+    solana_bls_signatures::SignatureProjective,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    std::{
+        collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry},
+        num::NonZero,
+        sync::Arc,
+    },
+    thiserror::Error,
 };
 
-/// There are two types of vote pools:
-/// - SimpleVotePool: Tracks all votes of a specfic vote type made by validators for some slot N, but only one vote per block.
-/// - DuplicateBlockVotePool: Tracks all votes of a specfic vote type made by validators for some slot N,
-///   but allows votes for different blocks by the same validator. Only relevant for VotePool's that are of type
-///   Notarization or NotarizationFallback
-pub(super) enum VotePool {
-    SimpleVotePool(SimpleVotePool),
-    DuplicateBlockVotePool(DuplicateBlockVotePool),
+#[derive(Debug, PartialEq, Eq, Error)]
+pub(crate) enum VotePoolAddVoteError {
+    #[error("duplicate vote")]
+    Duplicate,
+    #[error("invalid votes")]
+    Invalid,
 }
 
-#[derive(Default)]
-pub(super) struct SimpleVotePool {
-    votes: Vec<VoteMessage>,
-    total_stake: Stake,
-    prev_voted_validators: BTreeSet<Pubkey>,
+struct NotarVoteEntry {
+    slot: Slot,
+    max_validators: usize,
+    entries: HashMap<Hash, VoteEntry>,
+    ranks: BitVec<u8>,
 }
 
-impl SimpleVotePool {
-    pub(super) fn add_vote(
-        &mut self,
-        validator_vote_key: Pubkey,
-        validator_stake: NonZero<Stake>,
-        vote: VoteMessage,
-    ) -> Option<Stake> {
-        if !self.prev_voted_validators.insert(validator_vote_key) {
-            return None;
-        }
-        self.votes.push(vote);
-        self.total_stake = self.total_stake.saturating_add(validator_stake.get());
-        Some(self.total_stake)
-    }
-
-    pub(super) fn votes(&self) -> &[VoteMessage] {
-        &self.votes
-    }
-
-    pub(super) fn total_stake(&self) -> Stake {
-        self.total_stake
-    }
-
-    pub(super) fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool {
-        self.prev_voted_validators.contains(validator_vote_key)
-    }
-}
-
-#[derive(Default)]
-struct VoteEntry {
-    votes: Vec<VoteMessage>,
-    total_stake_by_key: Stake,
-}
-
-pub(super) struct DuplicateBlockVotePool {
-    max_entries_per_pubkey: usize,
-    vote_entries: BTreeMap<Hash, VoteEntry>,
-    prev_voted_block_ids: BTreeMap<Pubkey, BTreeSet<Hash>>,
-}
-
-impl DuplicateBlockVotePool {
-    pub(super) fn new(max_entries_per_pubkey: usize) -> Self {
+impl NotarVoteEntry {
+    fn new(slot: Slot, max_validators: usize) -> Self {
         Self {
-            max_entries_per_pubkey,
-            vote_entries: BTreeMap::new(),
-            prev_voted_block_ids: BTreeMap::new(),
+            slot,
+            max_validators,
+            entries: HashMap::new(),
+            ranks: BitVec::with_capacity(max_validators),
         }
     }
 
+    fn add_vote(
+        &mut self,
+        batch: &SigVerifiedVoteBatch,
+    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, batch.vote.slot());
+        for entry in self.entries.values() {
+            if has_common_bits(&batch.ranks, &entry.ranks) {
+                return Err(VotePoolAddVoteError::Duplicate);
+            }
+        }
+        let stake = match self.entries.entry(*batch.vote.block_id().unwrap()) {
+            HashMapEntry::Occupied(mut e) => {
+                let vote_pool_entry = e.get_mut();
+                vote_pool_entry.add_vote(batch)?
+            }
+            HashMapEntry::Vacant(e) => {
+                // TODO: initial VoteEntry so that we do not have to modify it.
+                let mut entry = VoteEntry::new(self.max_validators);
+                let stake = entry.add_vote(batch)?;
+                e.insert(entry);
+                stake
+            }
+        };
+        self.ranks |= &batch.ranks;
+        Ok(stake)
+    }
+}
+
+struct GenesisVoteEntry {
+    slot: Slot,
+    max_validators: usize,
+    entries: HashMap<Hash, VoteEntry>,
+}
+
+impl GenesisVoteEntry {
+    fn new(slot: Slot, max_validators: usize) -> Self {
+        Self {
+            slot,
+            max_validators,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn add_vote(
+        &mut self,
+        batch: &SigVerifiedVoteBatch,
+    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, batch.vote.slot());
+        for entry in self.entries.values() {
+            if has_common_bits(&batch.ranks, &entry.ranks) {
+                return Err(VotePoolAddVoteError::Duplicate);
+            }
+        }
+        let stake = match self.entries.entry(*batch.vote.block_id().unwrap()) {
+            HashMapEntry::Occupied(mut e) => {
+                let vote_pool_entry = e.get_mut();
+                vote_pool_entry.add_vote(batch)?
+            }
+            HashMapEntry::Vacant(e) => {
+                // TODO: initial VoteEntry so that we do not have to modify it.
+                let mut entry = VoteEntry::new(self.max_validators);
+                let stake = entry.add_vote(batch)?;
+                e.insert(entry);
+                stake
+            }
+        };
+        Ok(stake)
+    }
+}
+
+struct NotarFallbackVoteEntry {
+    slot: Slot,
+    max_validators: usize,
+    entries: HashMap<Hash, VoteEntry>,
+    ranks: BitVec<u8>,
+}
+
+impl NotarFallbackVoteEntry {
+    fn new(slot: Slot, max_validators: usize) -> Self {
+        Self {
+            slot,
+            max_validators,
+            entries: HashMap::new(),
+            ranks: BitVec::with_capacity(max_validators),
+        }
+    }
+
+    fn add_vote(
+        &mut self,
+        _batch: &SigVerifiedVoteBatch,
+    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+        unimplemented!()
+        // debug_assert_eq!(self.slot, batch.vote.slot());
+        // for entry in self.entries.values() {
+        //     if has_common_bits(&batch.ranks, &entry.ranks) {
+        //         return Err(VotePoolAddVoteError::Duplicate);
+        //     }
+        // }
+        // match self.entries.entry(*batch.vote.block_id().unwrap()) {
+        //     HashMapEntry::Occupied(mut e) => {
+        //         let vote_pool_entry = e.get_mut();
+        //         vote_pool_entry.add_vote(&batch)?;
+        //     }
+        //     HashMapEntry::Vacant(e) => {
+        //         // TODO: initial VoteEntry so that we do not have to modify it.
+        //         let mut entry = VoteEntry::new(self.max_validators);
+        //         entry.add_vote(&batch)?;
+        //         e.insert(entry);
+        //     }
+        // }
+        // self.ranks |= batch.ranks;
+        // Ok(())
+    }
+}
+
+struct VoteEntry {
+    ranks: BitVec<u8>,
+    signature: SignatureProjective,
+    stake: Option<NonZero<u64>>,
+}
+
+impl VoteEntry {
+    fn new(max_validators: usize) -> Self {
+        Self {
+            ranks: BitVec::with_capacity(max_validators),
+            signature: SignatureProjective::identity(),
+            stake: None,
+        }
+    }
+
+    fn add_vote(
+        &mut self,
+        batch: &SigVerifiedVoteBatch,
+    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+        if has_common_bits(&self.ranks, &batch.ranks) {
+            return Err(VotePoolAddVoteError::Duplicate);
+        }
+        self.ranks |= &batch.ranks;
+        // TODO: handle signature error
+        self.signature
+            .aggregate_with(std::iter::once(&batch.signature))
+            .unwrap();
+        match &mut self.stake {
+            None => {
+                self.stake = Some(batch.stake);
+                Ok(batch.stake)
+            }
+            Some(s) => {
+                *s = s.checked_add(batch.stake.get()).unwrap();
+                Ok(*s)
+            }
+        }
+    }
+}
+
+fn has_common_bits(a: &BitVec<u8>, b: &BitVec<u8>) -> bool {
+    assert_eq!(a.len(), b.len());
+    a.as_raw_slice()
+        .iter()
+        .zip(b.as_raw_slice())
+        .any(|(&x, &y)| (x & y) != 0)
+}
+
+pub(super) struct VotePool {
+    max_validators: usize,
+    slot: Slot,
+    skip: VoteEntry,
+    skip_fallback: VoteEntry,
+    finalize: VoteEntry,
+    notar: NotarVoteEntry,
+    notar_fallback: NotarFallbackVoteEntry,
+    genesis: GenesisVoteEntry,
+}
+
+impl VotePool {
+    pub(super) fn new(slot: Slot, max_validators: usize) -> Self {
+        Self {
+            max_validators,
+            slot,
+            skip: VoteEntry::new(max_validators),
+            skip_fallback: VoteEntry::new(max_validators),
+            finalize: VoteEntry::new(max_validators),
+            notar: NotarVoteEntry::new(slot, max_validators),
+            notar_fallback: NotarFallbackVoteEntry::new(slot, max_validators),
+            genesis: GenesisVoteEntry::new(slot, max_validators),
+        }
+    }
+
+    /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
     pub(super) fn add_vote(
         &mut self,
-        validator_vote_key: Pubkey,
-        validator_stake: NonZero<Stake>,
-        vote: VoteMessage,
-    ) -> Option<Stake> {
-        let block_id = *vote.vote.block_id().unwrap();
-        // Check whether the validator_vote_key already used the same voted_block_id or exceeded max_entries_per_pubkey
-        // If so, return false, otherwise add the voted_block_id to the prev_votes
-        let prev_voted_block_ids = self
-            .prev_voted_block_ids
-            .entry(validator_vote_key)
-            .or_default();
-        if prev_voted_block_ids.contains(&block_id)
-            || prev_voted_block_ids.len() >= self.max_entries_per_pubkey
-        {
-            return None;
-        }
-        prev_voted_block_ids.insert(block_id);
-
-        let vote_entry = self.vote_entries.entry(block_id).or_default();
-        vote_entry.votes.push(vote);
-        vote_entry.total_stake_by_key = vote_entry
-            .total_stake_by_key
-            .saturating_add(validator_stake.get());
-        Some(vote_entry.total_stake_by_key)
-    }
-
-    pub(super) fn total_stake_by_block_id(&self, block_id: &Hash) -> Stake {
-        self.vote_entries
-            .get(block_id)
-            .map_or(0, |vote_entries| vote_entries.total_stake_by_key)
-    }
-
-    pub(super) fn votes(&self, block_id: &Hash) -> Option<&[VoteMessage]> {
-        self.vote_entries
-            .get(block_id)
-            .map(|entry| entry.votes.as_slice())
-    }
-
-    pub(super) fn has_prev_validator_vote_for_block(
-        &self,
-        validator_vote_key: &Pubkey,
-        block_id: &Hash,
-    ) -> bool {
-        self.prev_voted_block_ids
-            .get(validator_vote_key)
-            .is_some_and(|vs| vs.contains(block_id))
-    }
-
-    pub(super) fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool {
-        self.prev_voted_block_ids.contains_key(validator_vote_key)
+        batch: &SigVerifiedVoteBatch,
+        _completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, batch.vote.slot());
+        let _stake = match batch.vote {
+            Vote::Notarize(_) => {
+                if has_common_bits(&batch.ranks, &self.skip.ranks) {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                self.notar.add_vote(batch)
+            }
+            Vote::Skip(_) => {
+                if has_common_bits(&self.notar.ranks, &batch.ranks)
+                    || has_common_bits(&self.finalize.ranks, &batch.ranks)
+                {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                self.skip.add_vote(batch)
+            }
+            Vote::SkipFallback(_) => {
+                if has_common_bits(&self.finalize.ranks, &batch.ranks) {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                self.skip_fallback.add_vote(batch)
+            }
+            Vote::Finalize(_) => {
+                if has_common_bits(&self.skip.ranks, &batch.ranks)
+                    || has_common_bits(&self.skip_fallback.ranks, &batch.ranks)
+                    || has_common_bits(&self.notar_fallback.ranks, &batch.ranks)
+                {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                self.finalize.add_vote(batch)
+            }
+            Vote::Genesis(_) => self.genesis.add_vote(batch),
+            Vote::NotarizeFallback(_) => {
+                if has_common_bits(&self.finalize.ranks, &batch.ranks) {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                self.notar_fallback.add_vote(batch)
+            }
+        }?;
+        unimplemented!()
     }
 }
 
@@ -134,152 +282,333 @@ impl DuplicateBlockVotePool {
 mod test {
     use {
         super::*,
-        agave_votor_messages::{
-            consensus_message::{Block, VoteMessage},
-            vote::Vote,
-        },
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        solana_bls_signatures::Signature as BLSSignature,
     };
 
     #[test]
-    fn test_skip_vote_pool() {
-        let mut vote_pool = SimpleVotePool::default();
-        let vote = Vote::new_skip_vote(5);
+    fn test_notar_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = VotePool::new(slot);
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, skip).unwrap();
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, notar),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, notar).unwrap();
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, notar),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, notar.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, notar),
+            Err(VotePoolAddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_notar_fallback_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = VotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize).unwrap();
+        let nf = VoteMessage {
+            vote: Vote::new_notarization_fallback_vote(slot, Hash::default()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, nf),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        for _ in 0..3 {
+            let nf = VoteMessage {
+                vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+                signature,
+                rank,
+            };
+            votes.add_vote(voter, nf).unwrap();
+        }
+        let nf = VoteMessage {
+            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, nf),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let nf = VoteMessage {
+            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, nf.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, nf),
+            Err(VotePoolAddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_skip_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = VotePool::new(slot);
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, notar).unwrap();
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, skip),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize).unwrap();
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, skip),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let skip = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, skip.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, skip),
+            Err(VotePoolAddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_skip_fallback_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = VotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize).unwrap();
+        let sf = VoteMessage {
+            vote: Vote::new_skip_fallback_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, sf),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let sf = VoteMessage {
+            vote: Vote::new_skip_fallback_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, sf.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, sf),
+            Err(VotePoolAddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_finalize_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = VotePool::new(slot);
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, skip).unwrap();
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, finalize),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let sf = VoteMessage {
+            vote: Vote::new_skip_fallback_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, sf).unwrap();
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, finalize),
+            Err(VotePoolAddVoteError::Invalid)
+        ));
+
+        let mut votes = VotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, finalize),
+            Err(VotePoolAddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_stakes() {
+        let slot = 123;
+        let stake = 54321;
+        let mut stakes = Stakes::new(slot);
+        let vote = Vote::new_skip_vote(slot);
+        assert_eq!(stakes.add_stake(stake, &vote), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
+
+        let mut stakes = Stakes::new(slot);
+        let vote = Vote::new_skip_fallback_vote(slot);
+        assert_eq!(stakes.add_stake(stake, &vote), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
+
+        let mut stakes = Stakes::new(slot);
+        let vote = Vote::new_finalization_vote(slot);
+        assert_eq!(stakes.add_stake(stake, &vote), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
+
+        let mut stakes = Stakes::new(slot);
+        let stake0 = 10;
+        let stake1 = 20;
+        let hash0 = Hash::new_unique();
+        let hash1 = Hash::new_unique();
+        let vote0 = Vote::new_notarization_vote(slot, hash0);
+        let vote1 = Vote::new_notarization_vote(slot, hash1);
+        assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
+        assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
+        assert_eq!(stakes.get_stake(&vote0), stake0);
+        assert_eq!(stakes.get_stake(&vote1), stake1);
+
+        let mut stakes = Stakes::new(slot);
+        let stake0 = 10;
+        let stake1 = 20;
+        let hash0 = Hash::new_unique();
+        let hash1 = Hash::new_unique();
+        let vote0 = Vote::new_notarization_fallback_vote(slot, hash0);
+        let vote1 = Vote::new_notarization_fallback_vote(slot, hash1);
+        assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
+        assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
+        assert_eq!(stakes.get_stake(&vote0), stake0);
+        assert_eq!(stakes.get_stake(&vote1), stake1);
+    }
+
+    #[test]
+    fn test_vote_pool() {
+        let slot = 1;
+        let mut vote_pool = VotePool::new(slot);
+
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let vote = Vote::new_finalization_vote(slot);
         let vote_message = VoteMessage {
             vote,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
+            signature,
+            rank,
         };
-        let my_pubkey = Pubkey::new_unique();
-
+        let stake = 12345;
         assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote_message.clone()),
-            Some(10)
+            vote_pool
+                .add_vote(voter, stake, vote_message.clone())
+                .unwrap(),
+            stake
         );
-        assert_eq!(vote_pool.total_stake(), 10);
-
-        // Adding the same key again should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote_message.clone()),
-            None
-        );
-        assert_eq!(vote_pool.total_stake(), 10);
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote_message),
-            Some(70)
-        );
-        assert_eq!(vote_pool.total_stake(), 70);
-    }
-
-    #[test]
-    fn test_notarization_pool() {
-        let mut vote_pool = DuplicateBlockVotePool::new(1);
-        let my_pubkey = Pubkey::new_unique();
-        let block_id = Hash::new_unique();
-        let vote = Vote::new_notarization_vote(Block { slot: 3, block_id });
-        let vote = VoteMessage {
-            vote,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
-        };
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-            Some(10)
-        );
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 10);
-
-        // Adding the same key again should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-            None
-        );
-
-        // Adding a different bankhash should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-            None
-        );
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote),
-            Some(70)
-        );
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 70);
-    }
-
-    #[test]
-    fn test_notarization_fallback_pool() {
-        agave_logger::setup();
-        let mut vote_pool = DuplicateBlockVotePool::new(3);
-        let my_pubkey = Pubkey::new_unique();
-
-        let votes = (0..4)
-            .map(|_| {
-                let vote = Vote::new_notarization_fallback_vote(Block {
-                    slot: 7,
-                    block_id: Hash::new_unique(),
-                });
-                VoteMessage {
-                    vote,
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    rank: 1,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        // Adding the first 3 votes should succeed, but total_stake should remain at 10
-        for vote in votes.iter().take(3).cloned() {
-            assert_eq!(
-                vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-                Some(10)
-            );
-            assert_eq!(
-                vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
-                10
-            );
-        }
-        // Adding the 4th vote should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), votes[3].clone()),
-            None
-        );
-        assert_eq!(
-            vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
-            0
-        );
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        for vote in votes.iter().skip(1).take(2).cloned() {
-            assert_eq!(
-                vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote.clone()),
-                Some(70)
-            );
-            assert_eq!(
-                vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
-                70
-            );
-        }
-
-        // The new key only added 2 votes, so adding block_ids[3] should succeed
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), votes[3].clone()),
-            Some(60)
-        );
-        assert_eq!(
-            vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
-            60
-        );
-
-        // Now if adding the same key again, it should fail
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), votes[0].clone()),
-            None
-        );
+        assert_eq!(vote_pool.get_stake(&vote), stake);
+        let returned_votes = vote_pool.get_votes(&vote);
+        assert_eq!(returned_votes.len(), 1);
+        assert_eq!(returned_votes[0], vote_message);
     }
 }

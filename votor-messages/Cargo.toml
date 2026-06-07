@@ -21,6 +21,7 @@ frozen-abi = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
+bitvec = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true, features = ["curve25519"] }

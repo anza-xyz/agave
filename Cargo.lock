@@ -489,6 +489,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor-messages",
+ "bitvec",
  "log",
  "serde",
  "solana-address 2.6.0",

@@ -1755,7 +1755,7 @@ impl ReplayStage {
                     identity_keypair.pubkey()
                 );
                 // If sending fails that means the channel is disconnected and we are shutting down
-                let _ = own_vote_sender.send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]));
+                let _ = own_vote_sender.send(SigVerifiedBatch::Votes(vote_msg.clone().into()));
                 let _ = bls_sender.send(BLSOp::PushVote {
                     vote: Arc::new(vote_msg),
                     saved_vote_history:

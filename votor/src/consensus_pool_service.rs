@@ -16,7 +16,7 @@ use {
     },
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{Block, ConsensusMessage, SigVerifiedBatch},
+        consensus_message::{Block, SigVerifiedBatch},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -172,61 +172,60 @@ impl ConsensusPoolService {
 
     fn process_batch(
         ctx: &mut ConsensusPoolContext,
-        msgs: impl Iterator<Item = ConsensusMessage>,
+        batch: SigVerifiedBatch,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), AddVoteError> {
-        for msg in msgs {
-            match Self::process_consensus_message(
-                ctx,
-                msg,
-                consensus_pool,
-                events,
-                standstill_timer,
-                stats,
-            ) {
-                Ok(()) => {}
-                Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                    return Err(AddVoteError::ChannelDisconnected(channel_name));
-                }
-                Err(e) => {
-                    // This is a non critical error, a duplicate vote for example
-                    trace!(
-                        "{}: unable to push vote into pool {}",
-                        ctx.cluster_info.id(),
-                        e
-                    );
-                    stats.add_message_failed += 1;
-                }
+        match Self::process_consensus_message(
+            ctx,
+            batch,
+            consensus_pool,
+            events,
+            standstill_timer,
+            stats,
+        ) {
+            Ok(()) => Ok(()),
+            Err(AddVoteError::ChannelDisconnected(channel_name)) => {
+                Err(AddVoteError::ChannelDisconnected(channel_name))
+            }
+            Err(e) => {
+                // This is a non critical error, a duplicate vote for example
+                trace!(
+                    "{}: unable to push vote into pool {}",
+                    ctx.cluster_info.id(),
+                    e
+                );
+                stats.add_message_failed += 1;
+                Ok(())
             }
         }
-        Ok(())
     }
 
     fn process_consensus_message(
         ctx: &mut ConsensusPoolContext,
-        message: ConsensusMessage,
+        batch: SigVerifiedBatch,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), AddVoteError> {
-        match message {
-            ConsensusMessage::Certificate(_) => {
-                stats.received_certificates += 1;
-            }
-            ConsensusMessage::Vote(_) => {
-                stats.received_votes += 1;
-            }
-        }
+        // TODO: increment stats properly
+        // match message {
+        //     ConsensusMessage::Certificate(_) => {
+        //         stats.received_certificates += 1;
+        //     }
+        //     ConsensusMessage::Vote(_) => {
+        //         stats.received_votes += 1;
+        //     }
+        // }
         let root_bank = ctx.sharable_banks.root();
         let (new_finalized_slot, new_certificates_to_send) = Self::add_message(
             &root_bank,
             &ctx.cluster_info.id(),
             &ctx.my_vote_pubkey,
-            message,
+            batch,
             consensus_pool,
             events,
             stats,
@@ -421,24 +420,14 @@ impl ConsensusPoolService {
             };
 
             for batch in batches {
-                let ret = match batch {
-                    SigVerifiedBatch::Votes(votes) => Self::process_batch(
-                        &mut ctx,
-                        votes.into_iter().map(ConsensusMessage::Vote),
-                        &mut consensus_pool,
-                        &mut events,
-                        &mut standstill_timer,
-                        &mut stats,
-                    ),
-                    SigVerifiedBatch::Certificates(certs) => Self::process_batch(
-                        &mut ctx,
-                        certs.into_iter().map(ConsensusMessage::Certificate),
-                        &mut consensus_pool,
-                        &mut events,
-                        &mut standstill_timer,
-                        &mut stats,
-                    ),
-                };
+                let ret = Self::process_batch(
+                    &mut ctx,
+                    batch,
+                    &mut consensus_pool,
+                    &mut events,
+                    &mut standstill_timer,
+                    &mut stats,
+                );
                 match ret {
                     Ok(()) => {}
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
@@ -462,13 +451,13 @@ impl ConsensusPoolService {
         root_bank: &Bank,
         my_pubkey: &Pubkey,
         my_vote_pubkey: &Pubkey,
-        message: ConsensusMessage,
+        batch: SigVerifiedBatch,
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let (new_finalized_slot, new_certificates_to_send) =
-            consensus_pool.add_message(root_bank, my_vote_pubkey, message, votor_events)?;
+            consensus_pool.add_message(root_bank, my_vote_pubkey, batch, votor_events)?;
         let Some(new_finalized_slot) = new_finalized_slot else {
             return Ok((None, new_certificates_to_send));
         };
