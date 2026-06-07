@@ -158,6 +158,35 @@ impl RewardsAccumulator {
     }
 }
 
+fn total_calculated_reward_lamports(
+    reward_commissions: &RewardCommissions,
+    stake_rewards: &StakeRewardCalculation,
+) -> u64 {
+    reward_commissions.values().fold(
+        stake_rewards.total_stake_rewards_lamports,
+        |total_rewards, reward_commission| {
+            total_rewards
+                .saturating_add(reward_commission.commission_lamports)
+                .saturating_add(reward_commission.burned_lamports)
+        },
+    )
+}
+
+fn point_value_for_rewards_sysvar(
+    mut point_value: PointValue,
+    ag_epoch_type: &AlpenglowEpochType,
+    reward_commissions: &RewardCommissions,
+    stake_rewards: &StakeRewardCalculation,
+) -> PointValue {
+    if matches!(ag_epoch_type, AlpenglowEpochType::Alpenglow { .. }) {
+        // In full Alpenglow epochs, reward "points" are already lamports to pay
+        // and are not scaled by `point_value.rewards`. The epoch rewards sysvar
+        // still needs to cap all calculated rewards, so record the actual total.
+        point_value.rewards = total_calculated_reward_lamports(reward_commissions, stake_rewards);
+    }
+    point_value
+}
+
 impl Bank {
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
@@ -469,6 +498,12 @@ impl Bank {
                     reward_calc_tracer,
                     metrics,
                 );
+            let point_value = point_value_for_rewards_sysvar(
+                point_value,
+                &ag_epoch_type,
+                &reward_commissions,
+                &stake_reward_calculation,
+            );
             CalculateValidatorRewardsResult {
                 reward_commissions,
                 stake_reward_calculation,
@@ -1622,6 +1657,66 @@ mod tests {
         }
 
         bank
+    }
+
+    #[test]
+    fn test_full_alpenglow_point_value_uses_actual_calculated_rewards() {
+        let mut reward_commissions = RewardCommissions::default();
+        reward_commissions.insert(
+            Pubkey::new_unique(),
+            RewardCommission {
+                commission_bps: None,
+                commission_lamports: 40,
+                burned_lamports: 2,
+                is_vote_account: false,
+            },
+        );
+        reward_commissions.insert(
+            Pubkey::new_unique(),
+            RewardCommission {
+                commission_bps: None,
+                commission_lamports: 50,
+                burned_lamports: 3,
+                is_vote_account: true,
+            },
+        );
+        let stake_rewards = StakeRewardCalculation {
+            stake_rewards: Arc::new(PartitionedStakeRewards::default()),
+            total_stake_rewards_lamports: 30,
+        };
+        let point_value = PointValue {
+            rewards: 1,
+            points: 0,
+        };
+
+        let full_alpenglow_point_value = point_value_for_rewards_sysvar(
+            point_value.clone(),
+            &AlpenglowEpochType::Alpenglow { migration_epoch: 0 },
+            &reward_commissions,
+            &stake_rewards,
+        );
+        assert_eq!(full_alpenglow_point_value.rewards, 125);
+        assert_eq!(full_alpenglow_point_value.points, point_value.points);
+
+        let tower_point_value = point_value_for_rewards_sysvar(
+            point_value.clone(),
+            &AlpenglowEpochType::Tower,
+            &reward_commissions,
+            &stake_rewards,
+        );
+        assert_eq!(tower_point_value, point_value);
+
+        let migration_point_value = point_value_for_rewards_sysvar(
+            point_value.clone(),
+            &AlpenglowEpochType::MigrationEpoch {
+                num_tower_slots: 1,
+                num_ag_slots: 1,
+                migration_epoch: 0,
+            },
+            &reward_commissions,
+            &stake_rewards,
+        );
+        assert_eq!(migration_point_value, point_value);
     }
 
     #[test_case(true; "delay_commission_updates")]
@@ -3412,6 +3507,111 @@ mod tests {
             epoch_rewards.total_rewards,
             epoch_rewards.distributed_rewards
         );
+    }
+
+    #[test_case(true; "external collector")]
+    #[test_case(false; "vote account collector")]
+    fn test_full_alpenglow_rewards_can_exceed_epoch_inflation_rewards(
+        use_external_collector: bool,
+    ) {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = genesis_utils::create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+
+        genesis_config.rent = Rent::default();
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let vote_address = Pubkey::new_unique();
+        let external_collector_address = use_external_collector.then(Pubkey::new_unique);
+        let vote_balance = genesis_utils::minimum_vote_account_balance_for_vat(10);
+        let expected_collector_address = external_collector_address.unwrap_or(vote_address);
+
+        let bank = apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch: 0,
+                vote_operations: vec![(
+                    vote_address,
+                    VoteOperations {
+                        create_with_balance: Some(vote_balance),
+                        new_commission: Some(100),
+                        delegate_stake_amount: Some(LAMPORTS_PER_SOL),
+                        new_inflation_rewards_collector: external_collector_address,
+                        ..VoteOperations::default()
+                    },
+                )],
+            },
+        );
+
+        let bank = apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch: 1,
+                vote_operations: vec![],
+            },
+        );
+
+        let epoch_inflation_rewards =
+            bank.calculate_epoch_inflation_rewards(bank.capitalization(), bank.epoch());
+        let ag_reward_credits = epoch_inflation_rewards.saturating_add(LAMPORTS_PER_SOL);
+
+        assert_eq!(bank.epoch(), 2);
+        let mut vote_account = bank.get_account(&vote_address).unwrap();
+        let vote_state_versions = vote_account
+            .deserialize_data::<VoteStateVersions>()
+            .unwrap();
+        let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
+            panic!("unexpected version");
+        };
+        let last_credits = vote_state
+            .epoch_credits
+            .last()
+            .map(|(_epoch, credits, _)| *credits)
+            .unwrap_or(0);
+        vote_state.epoch_credits.push((
+            bank.epoch(),
+            last_credits + ag_reward_credits,
+            last_credits,
+        ));
+        vote_account
+            .serialize_data(&VoteStateVersions::V4(vote_state))
+            .unwrap();
+        bank.store_account(&vote_address, &vote_account);
+        let pre_collector_balance = bank.get_balance(&expected_collector_address);
+
+        let slot = bank.slot() + SLOTS_PER_EPOCH;
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::new_unique(),
+            slot,
+        );
+
+        let epoch_rewards = bank.get_epoch_rewards_sysvar();
+        assert!(epoch_rewards.total_rewards > epoch_inflation_rewards);
+        assert_eq!(epoch_rewards.total_rewards, ag_reward_credits);
+        assert_eq!(
+            epoch_rewards.total_rewards,
+            epoch_rewards.distributed_rewards
+        );
+        assert!(bank.rewards.read().unwrap().iter().any(|(pubkey, reward)| {
+            *pubkey == expected_collector_address && reward.lamports == ag_reward_credits as i64
+        }));
+        if use_external_collector {
+            assert_eq!(
+                bank.get_balance(&expected_collector_address),
+                pre_collector_balance.saturating_add(ag_reward_credits)
+            );
+        }
     }
 
     #[test]
