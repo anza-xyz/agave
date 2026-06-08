@@ -129,7 +129,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
     #[cfg(feature = "dev-context-only-utils")]
     #[inline(always)]
     pub fn stored_size(&self) -> usize {
-        crate::append_vec::AppendVec::calculate_stored_size(self.meta.data_len as usize)
+        super::AppendVec::calculate_stored_size(self.meta.data_len as usize)
     }
 
     #[inline(always)]
