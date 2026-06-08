@@ -14,7 +14,10 @@ use {
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
-        voting_utils::{VoteError, VotingContext, generate_vote_message},
+        voting_utils::{
+            VoteError, VotingContext, generate_refresh_vote_message,
+            insert_vote_and_create_bls_message,
+        },
         votor::SharedContext,
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
@@ -399,9 +402,10 @@ impl EventHandler {
                     return Ok(votes);
                 }
                 info!("{my_pubkey}: Voting notarize-fallback for {block:?}");
-                if let Some(bls_op) =
-                    generate_vote_message(Vote::new_notarization_fallback_vote(block), false, vctx)?
-                {
+                if let Some(bls_op) = insert_vote_and_create_bls_message(
+                    Vote::new_notarization_fallback_vote(block),
+                    vctx,
+                )? {
                     votes.push(bls_op);
                 }
             }
@@ -415,7 +419,7 @@ impl EventHandler {
                 }
                 info!("{my_pubkey}: Voting skip-fallback for {slot}");
                 if let Some(bls_op) =
-                    generate_vote_message(Vote::new_skip_fallback_vote(slot), false, vctx)?
+                    insert_vote_and_create_bls_message(Vote::new_skip_fallback_vote(slot), vctx)?
                 {
                     votes.push(bls_op);
                 }
@@ -674,9 +678,8 @@ impl EventHandler {
         }
 
         info!("{my_pubkey}: Voting notarize for {slot} {block_id}");
-        if let Some(bls_op) = generate_vote_message(
+        if let Some(bls_op) = insert_vote_and_create_bls_message(
             Vote::new_notarization_vote(Block { slot, block_id }),
-            false,
             voting_context,
         )? {
             votes.push(bls_op);
@@ -750,9 +753,8 @@ impl EventHandler {
         }
 
         info!("{my_pubkey}: Voting finalize for {}", block.slot);
-        if let Some(bls_op) = generate_vote_message(
+        if let Some(bls_op) = insert_vote_and_create_bls_message(
             Vote::new_finalization_vote(block.slot),
-            false,
             voting_context,
         )? {
             votes.push(bls_op);
@@ -783,7 +785,7 @@ impl EventHandler {
             }
             info!("{my_pubkey}: Voting skip for {s}");
             if let Some(bls_op) =
-                generate_vote_message(Vote::new_skip_vote(s), false, voting_context)?
+                insert_vote_and_create_bls_message(Vote::new_skip_vote(s), voting_context)?
             {
                 votes.push(bls_op);
             }
@@ -798,14 +800,20 @@ impl EventHandler {
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
     ) -> Result<(), VoteError> {
+        let mut refreshed_votes = Vec::new();
         for vote in voting_context
             .vote_history
             .votes_cast_since(highest_finalized_slot)
         {
             info!("{my_pubkey}: Refreshing vote {vote:?}");
-            if let Some(bls_op) = generate_vote_message(vote, true, voting_context)? {
-                votes.push(bls_op);
+            if let Some(vote_msg) = generate_refresh_vote_message(vote, voting_context)? {
+                refreshed_votes.push(Arc::new(vote_msg));
             }
+        }
+        if !refreshed_votes.is_empty() {
+            votes.push(BLSOp::RefreshVotes {
+                votes: refreshed_votes,
+            });
         }
         Ok(())
     }
@@ -1353,14 +1361,22 @@ mod tests {
                     rank: 0,
                     signature,
                 };
-                let prev_length = self.bls_ops.len();
-                self.bls_ops.retain(
-                    |bls_op| !matches!(bls_op, BLSOp::PushVote{ vote, .. } if **vote == expected_message),
-                );
-                assert!(
-                    self.bls_ops.len() < prev_length,
-                    "Did not find expected vote: {expected_message:?}",
-                );
+                let mut found = false;
+                self.bls_ops.retain_mut(|bls_op| match bls_op {
+                    BLSOp::PushVote { vote, .. } => {
+                        let keep = vote.as_ref() != &expected_message;
+                        found |= !keep;
+                        keep
+                    }
+                    BLSOp::RefreshVotes { votes } => {
+                        let previous_len = votes.len();
+                        votes.retain(|vote| vote.as_ref() != &expected_message);
+                        found |= votes.len() != previous_len;
+                        !votes.is_empty()
+                    }
+                    BLSOp::PushCertificates { .. } => true,
+                });
+                assert!(found, "Did not find expected vote: {expected_message:?}");
             }
         }
 
@@ -1373,14 +1389,22 @@ mod tests {
                 rank: 0,
                 signature,
             };
-            let prev_length = self.bls_ops.len();
-            self.bls_ops.retain(
-                |bls_op| !matches!(bls_op, BLSOp::PushVote { vote, .. } if **vote == expected_message),
-            );
-            assert!(
-                self.bls_ops.len() < prev_length,
-                "Did not find expected vote: {expected_message:?}",
-            );
+            let mut found = false;
+            self.bls_ops.retain_mut(|bls_op| match bls_op {
+                BLSOp::PushVote { vote, .. } => {
+                    let keep = vote.as_ref() != &expected_message;
+                    found |= !keep;
+                    keep
+                }
+                BLSOp::RefreshVotes { votes } => {
+                    let previous_len = votes.len();
+                    votes.retain(|vote| vote.as_ref() != &expected_message);
+                    found |= votes.len() != previous_len;
+                    !votes.is_empty()
+                }
+                BLSOp::PushCertificates { .. } => true,
+            });
+            assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
             assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
