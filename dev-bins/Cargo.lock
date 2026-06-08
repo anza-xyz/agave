@@ -6653,6 +6653,7 @@ dependencies = [
  "bitvec",
  "bytes",
  "chrono",
+ "clap 2.34.0",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.32",
