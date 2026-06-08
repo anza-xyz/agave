@@ -577,7 +577,7 @@ mod tests {
             tests::{create_slow_genesis_config, sanitize_transactions},
             vote_storage::tests::packet_from_slots,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::BytesPacket,
         solana_poh::record_channels::record_channels,
@@ -764,7 +764,7 @@ mod tests {
         let recorder = solana_poh::transaction_recorder::TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 

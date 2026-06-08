@@ -292,7 +292,7 @@ mod test {
             scheduler_messages::{MaxAge, TransactionId},
             transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
@@ -316,8 +316,8 @@ mod test {
         Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
-            (0..num_threads).map(|_| unbounded()).unzip();
-        let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
+            (0..num_threads).map(|_| bounded(1024)).unzip();
+        let (finished_consume_work_sender, finished_consume_work_receiver) = bounded(1024);
         let scheduler =
             GreedyScheduler::new(consume_work_senders, finished_consume_work_receiver, config);
         (

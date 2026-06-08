@@ -499,6 +499,7 @@ impl WindowService {
 mod test {
     use {
         super::*,
+        crossbeam_channel::bounded,
         rand::Rng,
         solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
@@ -558,8 +559,8 @@ mod test {
         let genesis_config = create_genesis_config(10_000).genesis_config;
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (sender, receiver) = unbounded();
-        let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
+        let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let (shreds, _) = make_many_slot_entries(5, 5, 10);
         blockstore
             .insert_shreds(shreds.clone(), None, false)
@@ -608,8 +609,8 @@ mod test {
     fn test_store_duplicate_shreds_same_batch() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (duplicate_shred_sender, duplicate_shred_receiver) = unbounded();
-        let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+        let (duplicate_shred_sender, duplicate_shred_receiver) = bounded(1024);
+        let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());

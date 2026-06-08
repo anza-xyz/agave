@@ -830,7 +830,7 @@ mod tests {
             validator::SchedulerPacing,
         },
         agave_banking_stage_ingress_types::BankingPacketBatch,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_entry::{
             entry::{self, EntrySlice},
@@ -896,7 +896,7 @@ mod tests {
             poh_service,
             _entry_receiever,
         ) = create_test_recorder(bank, blockstore, None, None);
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -958,7 +958,7 @@ mod tests {
             poh_service,
             entry_receiver,
         ) = create_test_recorder(bank, blockstore, None, None);
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -1104,7 +1104,7 @@ mod tests {
                 .expect("Expected to be able to open database ledger"),
         );
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
             let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -1269,7 +1269,7 @@ mod tests {
             poh_service,
             _entry_receiver,
         ) = create_test_recorder(bank.clone(), blockstore, None, None);
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
