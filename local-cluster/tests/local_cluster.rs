@@ -4,7 +4,9 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
+    agave_votor::voting_service::{
+        AdditionalListener, AlpenglowPortOverride, VotingServiceOverride,
+    },
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     assert_matches::assert_matches,
     crossbeam_channel::{Receiver, unbounded},
@@ -5990,7 +5992,10 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
     validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
+        additional_listeners: vec![AdditionalListener {
+            pubkey: Pubkey::new_unique(),
+            addr: vote_listener_addr.local_addr().unwrap(),
+        }],
         alpenglow_port_override: AlpenglowPortOverride::default(),
     });
     validator_config.wait_for_supermajority = Some(0);
@@ -6177,7 +6182,10 @@ fn test_alpenglow_migration(
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
+        additional_listeners: vec![AdditionalListener {
+            pubkey: Pubkey::new_unique(),
+            addr: vote_listener_addr.local_addr().unwrap(),
+        }],
         alpenglow_port_override: AlpenglowPortOverride::default(),
     });
     validator_config.wait_for_supermajority = Some(0);
