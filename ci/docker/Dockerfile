@@ -126,7 +126,7 @@ RUN \
   chmod -R a+w /.npm && \
   # grcov
   curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" && \
-  curl -LsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/checksums.sha256" | sha256sum -c --ignore-missing - && \
+  curl -LsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/checksums.sha256" | grep 'grcov-x86_64-unknown-linux-musl.tar.bz2$' | sha256sum -c - && \
   tar -xf grcov-x86_64-unknown-linux-musl.tar.bz2 && \
   mv ./grcov $CARGO_HOME/bin && \
   rm grcov-x86_64-unknown-linux-musl.tar.bz2 && \
