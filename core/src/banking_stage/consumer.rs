@@ -514,7 +514,7 @@ mod tests {
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
-        solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+        solana_cost_model::cost_model::CostModel,
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
@@ -969,10 +969,9 @@ mod tests {
                 };
 
             let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-            if let TransactionCost::Transaction(ref mut usage_cost) = cost {
-                usage_cost.programs_execution_cost = actual_programs_execution_cost;
-                usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
-            }
+            let usage_cost = cost.usage_cost_details_mut();
+            usage_cost.programs_execution_cost = actual_programs_execution_cost;
+            usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
 
             block_cost + cost.sum()
         };

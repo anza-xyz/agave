@@ -9,7 +9,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_votor_messages::{consensus_message::ConsensusMessage, migration::MigrationStatus},
+    agave_votor_messages::{consensus_message::SigVerifiedBatch, migration::MigrationStatus},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
@@ -1089,6 +1089,15 @@ fn verify_ticks(
     }
 
     if migration_status.should_have_alpenglow_ticks(bank.slot()) {
+        // When alpenglow is active, PoH MUST be in low power mode.
+        // We require that each block only has 1 tick at the very end
+        if entries.iter().any(|entry| entry.num_hashes != 1) {
+            warn!(
+                "Alpenglow entry with invalid num_hashes found in slot: {}",
+                bank.slot()
+            );
+            return Err(BlockError::InvalidTickHashCount);
+        }
         return Ok(());
     }
 
@@ -1666,7 +1675,7 @@ pub fn confirm_slot(
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<Vec<ConsensusMessage>>>,
+    finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
@@ -1769,7 +1778,7 @@ fn confirm_slot_with_components(
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<Vec<ConsensusMessage>>>,
+    finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
@@ -2580,11 +2589,7 @@ fn load_frozen_forks(
                 root = new_root_bank.slot();
 
                 leader_schedule_cache.set_root(new_root_bank);
-                new_root_bank.prune_program_cache(
-                    root,
-                    new_root_bank.epoch(),
-                    &bank_forks.read().unwrap(),
-                );
+                new_root_bank.prune_program_cache(&bank_forks.read().unwrap());
                 let _ = bank_forks
                     .write()
                     .unwrap()
@@ -2708,7 +2713,9 @@ pub fn check_chained_block_id(
     bank: &Bank,
     migration_status: &MigrationStatus,
 ) -> ChainedBlockIdCheck {
-    if !bank.feature_set.snapshot().validate_chained_block_id {
+    let feature_snapshot = bank.feature_set.snapshot();
+    if !(feature_snapshot.validate_chained_block_id || feature_snapshot.validate_chained_block_id_2)
+    {
         return ChainedBlockIdCheck::Inactive;
     }
 
@@ -2954,20 +2961,22 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            blockstore::hashes_per_tick_for_ledger,
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
-        agave_votor_messages::certificate::{Certificate, CertificateType},
+        agave_votor_messages::{
+            certificate::{Certificate, CertificateType},
+            consensus_message::Block,
+        },
         assert_matches::assert_matches,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_cost_model::transaction_cost::TransactionCost,
+        solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_entry::{
             block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
             entry::{create_ticks, next_entry, next_entry_mut},
@@ -3014,30 +3023,32 @@ pub mod tests {
     };
 
     /// Generate a dummy alpenglow genesis certificate
-    fn genesis_certificate(slot: Slot, block_id: Hash) -> Arc<Certificate> {
+    fn genesis_certificate(genesis_block: Block) -> Arc<Certificate> {
         Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(slot, block_id),
+            cert_type: CertificateType::Genesis(genesis_block),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         })
     }
 
     /// Generate a dummy `MigrationStatus` in the `ReadyToEnable` phase
-    fn ready_to_enable_migration_status(genesis_slot: Slot, block_id: Hash) -> MigrationStatus {
+    fn ready_to_enable_migration_status(genesis_block: Block) -> MigrationStatus {
         let migration_status = MigrationStatus::default();
         let migration_slot = migration_status.record_feature_activation(0);
-        assert!(genesis_slot < migration_slot);
-        migration_status.set_genesis_block((genesis_slot, block_id));
-        migration_status.set_genesis_certificate(genesis_certificate(genesis_slot, block_id));
+        assert!(genesis_block.slot < migration_slot);
+        migration_status.set_genesis_block(genesis_block);
+        migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
         assert!(migration_status.is_ready_to_enable());
         migration_status
     }
 
     #[test]
     fn test_startup_replay_enable_waits_for_poh_service_when_started() {
-        let genesis_slot = 1;
-        let block_id = Hash::new_from_array([7; solana_hash::HASH_BYTES]);
-        let migration_status = Arc::new(ready_to_enable_migration_status(genesis_slot, block_id));
+        let genesis_block = Block {
+            slot: 1,
+            block_id: Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+        };
+        let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
         let poh_service = {
             let migration_status = Arc::clone(&migration_status);
             migration_status.set_poh_service_started();
@@ -3051,14 +3062,14 @@ pub mod tests {
 
         assert_eq!(
             migration_status.enable_alpenglow_during_startup(),
-            genesis_slot
+            genesis_block.slot
         );
         poh_service.join().unwrap();
 
         assert!(migration_status.is_alpenglow_enabled());
         assert_eq!(
             migration_status.wait_for_migration_or_exit(&AtomicBool::new(false)),
-            Some((genesis_slot, block_id))
+            Some(genesis_block)
         );
     }
 
@@ -3858,7 +3869,7 @@ pub mod tests {
             entries.push(entry);
         }
 
-        let hashes_per_tick = hashes_per_tick_for_ledger(&genesis_config);
+        let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
         let remaining_hashes = hashes_per_tick - entries.len() as u64;
         let tick_entry = next_entry_mut(&mut last_entry_hash, remaining_hashes, vec![]);
         entries.push(tick_entry);
@@ -6101,17 +6112,17 @@ pub mod tests {
         let keypair = Arc::new(Keypair::new());
         let reed_solomon_cache = ReedSolomonCache::default();
 
-        let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+        let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
             parent_block_id: Hash::default(),
         });
         let header_component = BlockComponent::new_block_marker(header);
 
-        let footer = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let footer = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 1_000_000_000,
             block_user_agent: b"test".to_vec(),
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -6272,9 +6283,7 @@ pub mod tests {
         let mut tx_cost = CostModel::calculate_cost(&tx, &bank.feature_set);
         let actual_execution_cu = 1;
         let actual_loaded_accounts_data_size = 64 * 1024;
-        let TransactionCost::Transaction(ref mut usage_cost_details) = tx_cost else {
-            unreachable!("test tx is non-vote tx");
-        };
+        let usage_cost_details = tx_cost.usage_cost_details_mut();
         usage_cost_details.programs_execution_cost = actual_execution_cu;
         usage_cost_details.loaded_accounts_data_size_cost =
             CostModel::calculate_loaded_accounts_data_size_cost(
@@ -6285,7 +6294,7 @@ pub mod tests {
         let block_limit = tx_cost.sum();
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(u64::MAX, block_limit, u64::MAX, u64::MAX);
+            .set_limits(CostTrackerLimits::new(u64::MAX, block_limit, u64::MAX));
 
         let tx_costs = vec![None, Some(tx_cost), None];
         // The transaction will fit when added the first time
@@ -6367,6 +6376,27 @@ pub mod tests {
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 3a: With only the replacement feature active, replay should
+        // still run the existing inter-slot SIMD-0340 check.
+        insert_shreds_with_chained_merkle_root(14, 0, Hash::new_unique());
+        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
+        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
+        child_bank.activate_feature(&agave_feature_set::validate_chained_block_id_2::id());
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 3b: With both feature gates inactive, replay should not run the
+        // chained block ID check.
+        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
+        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
+        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id_2::id());
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
+            ChainedBlockIdCheck::Inactive
         ));
 
         // Case 4: UpdateParent metadata does not bypass Tower validation.

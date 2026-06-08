@@ -27,6 +27,10 @@ Release channels have their own copy of this changelog:
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
   backward compatibility, but account storages are always accessed via file I/O.
 #### Changes
+### CLI
+#### Breaking
+#### Changes
+* `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
 
 ## 4.1.0
 ### RPC

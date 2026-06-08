@@ -1,6 +1,5 @@
 use {
     crate::serde_snapshot::SerializedAccountsFileId,
-    dashmap::DashMap,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     serde::Serialize,
     solana_accounts_db::{
@@ -8,12 +7,12 @@ use {
         account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId,
     },
     solana_clock::Slot,
-    std::sync::Arc,
+    std::{collections::HashMap, sync::Arc},
     wincode::{SchemaRead, SchemaWrite},
 };
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, SchemaRead, SchemaWrite, Serialize)]
 pub struct SerdeObsoleteAccountItem {
     /// Offset of the account in the account storage entry
@@ -24,7 +23,7 @@ pub struct SerdeObsoleteAccountItem {
     pub slot: Slot,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccounts {
     /// The ID of the associated account file. Used for verification to ensure the restored
@@ -90,8 +89,12 @@ impl SerdeObsoleteAccounts {
 /// to capture and restore obsolete accounts information for account storages.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "FbAP5pg2FLgSkMWiv3eMwEh433qMoNRbaJij9aLtG2NH")
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        api_digest = "FbAP5pg2FLgSkMWiv3eMwEh433qMoNRbaJij9aLtG2NH",
+        abi_digest = "5AMjJ751HYUj4rCtZgAsjVi9q5NgdYYZ11YEp9W7cB86",
+        abi_serializer = "wincode"
+    )
 )]
 #[derive(Serialize, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccountsMap {
@@ -116,7 +119,7 @@ impl SerdeObsoleteAccountsMap {
         SerdeObsoleteAccountsMap { map }
     }
 
-    pub(crate) fn into_dashmap(self) -> DashMap<Slot, SerdeObsoleteAccounts> {
+    pub(crate) fn into_hashmap(self) -> HashMap<Slot, SerdeObsoleteAccounts> {
         self.map.into_iter().collect()
     }
 }
@@ -139,7 +142,7 @@ mod test {
         num_obsolete_accounts_per_storage: usize,
     ) {
         // Create a set of obsolete accounts
-        let obsolete_accounts = DashMap::<Slot, ObsoleteAccounts>::new();
+        let mut obsolete_accounts = HashMap::<Slot, ObsoleteAccounts>::new();
         for slot in 1..=num_storages {
             let obsolete_accounts_list = ObsoleteAccounts {
                 accounts: (0..num_obsolete_accounts_per_storage)
@@ -157,15 +160,13 @@ mod test {
         // Convert the obsolete accounts into a SerdeObsoleteAccountsMap
         let map = obsolete_accounts
             .iter()
-            .map(|entry| {
+            .map(|(slot, accounts)| {
                 let serde_obsolete_accounts = SerdeObsoleteAccounts {
-                    id: *entry.key() as SerializedAccountsFileId,
+                    id: *slot as SerializedAccountsFileId,
                     bytes: num_obsolete_accounts_per_storage as u64 * 1000,
-                    accounts: SerdeObsoleteAccounts::items_from_obsolete_accounts(
-                        entry.value().clone(),
-                    ),
+                    accounts: SerdeObsoleteAccounts::items_from_obsolete_accounts(accounts.clone()),
                 };
-                (*entry.key(), serde_obsolete_accounts)
+                (*slot, serde_obsolete_accounts)
             })
             .collect();
         let obsolete_accounts_map = SerdeObsoleteAccountsMap { map };
@@ -178,7 +179,7 @@ mod test {
         let cursor = Cursor::new(buf.as_slice());
         let deserialized_obsolete_accounts: SerdeObsoleteAccountsMap =
             deserialize_wincode_from(cursor).unwrap();
-        let map = deserialized_obsolete_accounts.into_dashmap();
+        let mut map = deserialized_obsolete_accounts.into_hashmap();
 
         // Verify the deserialized data matches the original obsolete accounts
         assert_eq!(map.len(), obsolete_accounts.len());
@@ -186,7 +187,7 @@ mod test {
             let deserialized_obsolete_accounts = map.remove(&slot).unwrap();
             assert_eq!(
                 obsolete_accounts,
-                deserialized_obsolete_accounts.1.into_tuple().0
+                deserialized_obsolete_accounts.into_tuple().0
             );
         }
     }

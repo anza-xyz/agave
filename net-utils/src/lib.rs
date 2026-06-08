@@ -5,6 +5,7 @@ pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
+pub mod pinned_xdp_sender;
 pub mod socket_addr_space;
 pub mod sockets;
 #[cfg(any(target_os = "android", target_os = "windows"))]
@@ -22,6 +23,7 @@ pub use {
     ip_echo_server::{
         DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
     },
+    pinned_xdp_sender::PinnedXdpSender,
     socket_addr_space::SocketAddrSpace,
 };
 use {

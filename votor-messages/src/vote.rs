@@ -1,5 +1,6 @@
 //! Vote data types for use by clients
 use {
+    crate::consensus_message::Block,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
@@ -11,7 +12,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "AgKoR2cpjUSVCW7Cpihob5nDiPcFt1PXmoPKWJg3zuSB")
+    frozen_abi(digest = "Fd13KXQMkc1mCJEoHwyXWkcewqBCdRcAiMhS7Aqe4sm1")
 )]
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead,
@@ -50,8 +51,8 @@ pub enum VoteType {
 
 impl Vote {
     /// Create a new notarization vote
-    pub fn new_notarization_vote(slot: Slot, block_id: Hash) -> Self {
-        Self::from(NotarizationVote { slot, block_id })
+    pub fn new_notarization_vote(block: Block) -> Self {
+        Self::from(NotarizationVote { block })
     }
 
     /// Create a new finalization vote
@@ -65,8 +66,8 @@ impl Vote {
     }
 
     /// Create a new notarization fallback vote
-    pub fn new_notarization_fallback_vote(slot: Slot, block_id: Hash) -> Self {
-        Self::from(NotarizationFallbackVote { slot, block_id })
+    pub fn new_notarization_fallback_vote(block: Block) -> Self {
+        Self::from(NotarizationFallbackVote { block })
     }
 
     /// Create a new skip fallback vote
@@ -75,28 +76,28 @@ impl Vote {
     }
 
     /// Create a new genesis vote
-    pub fn new_genesis_vote(slot: Slot, block_id: Hash) -> Self {
-        Self::from(GenesisVote { slot, block_id })
+    pub fn new_genesis_vote(block: Block) -> Self {
+        Self::from(GenesisVote { block })
     }
 
     /// The slot which was voted for
     pub fn slot(&self) -> Slot {
         match self {
-            Self::Notarize(vote) => vote.slot,
+            Self::Notarize(vote) => vote.block.slot,
             Self::Finalize(vote) => vote.slot,
             Self::Skip(vote) => vote.slot,
-            Self::NotarizeFallback(vote) => vote.slot,
+            Self::NotarizeFallback(vote) => vote.block.slot,
             Self::SkipFallback(vote) => vote.slot,
-            Self::Genesis(vote) => vote.slot,
+            Self::Genesis(vote) => vote.block.slot,
         }
     }
 
     /// The block id associated with the block which was voted for
     pub fn block_id(&self) -> Option<&Hash> {
         match self {
-            Self::Notarize(vote) => Some(&vote.block_id),
-            Self::NotarizeFallback(vote) => Some(&vote.block_id),
-            Self::Genesis(vote) => Some(&vote.block_id),
+            Self::Notarize(vote) => Some(&vote.block.block_id),
+            Self::NotarizeFallback(vote) => Some(&vote.block.block_id),
+            Self::Genesis(vote) => Some(&vote.block.block_id),
             Self::Finalize(_) | Self::Skip(_) | Self::SkipFallback(_) => None,
         }
     }
@@ -184,7 +185,7 @@ impl From<GenesisVote> for Vote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
+    frozen_abi(digest = "F9veHPmSwMyrYNSVuBLcvLGYSLgc7voTD3kUhxUHUTRU")
 )]
 #[derive(
     Clone,
@@ -200,10 +201,8 @@ impl From<GenesisVote> for Vote {
     SchemaRead,
 )]
 pub struct NotarizationVote {
-    /// The slot this vote is cast for.
-    pub slot: Slot,
-    /// The block id this vote is for.
-    pub block_id: Hash,
+    /// The block this vote is cast for
+    pub block: Block,
 }
 
 /// A finalization vote
@@ -260,7 +259,7 @@ pub struct SkipVote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
+    frozen_abi(digest = "6UW4zutbRvyri4z8WAyKx8aUZkJrZX4XoiqC4XMUnUZk")
 )]
 #[derive(
     Clone,
@@ -276,10 +275,8 @@ pub struct SkipVote {
     SchemaRead,
 )]
 pub struct NotarizationFallbackVote {
-    /// The slot this vote is cast for.
-    pub slot: Slot,
-    /// The block id this vote is for.
-    pub block_id: Hash,
+    /// The block this vote is cast for
+    pub block: Block,
 }
 
 /// A skip fallback vote
@@ -310,7 +307,7 @@ pub struct SkipFallbackVote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "2JAiHmnnKHCzhkyCY3Bej6rAaVkMHsXgRcz1TPCNqAJ9")
+    frozen_abi(digest = "8ty2gETfpyVGPNMYrEFS1YXeDRprfZaisSAmJwoAYusb")
 )]
 #[derive(
     Clone,
@@ -326,8 +323,6 @@ pub struct SkipFallbackVote {
     SchemaRead,
 )]
 pub struct GenesisVote {
-    /// The slot this vote is cast for.
-    pub slot: Slot,
-    /// The block id this vote is for.
-    pub block_id: Hash,
+    /// The block this vote is cast for
+    pub block: Block,
 }

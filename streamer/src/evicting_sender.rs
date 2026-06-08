@@ -1,6 +1,6 @@
 use {
     crate::streamer::ChannelSend,
-    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError, bounded},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
 };
 
 /// A sender implementation that evicts the oldest message when the channel is full.
@@ -38,11 +38,6 @@ impl<T> ChannelSend<T> for EvictingSender<T>
 where
     T: Send + 'static,
 {
-    #[inline]
-    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
-        self.sender.send(msg)
-    }
-
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         let Err(e) = self.sender.try_send(msg) else {
             return Ok(());

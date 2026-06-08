@@ -16,7 +16,10 @@ mod tests {
             stake_utils,
         },
         agave_feature_set::FeatureSet,
-        agave_votor_messages::certificate::{Certificate, CertificateType},
+        agave_votor_messages::{
+            certificate::{Certificate, CertificateType},
+            consensus_message::Block,
+        },
         solana_account::{Account, ReadableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,
@@ -441,7 +444,10 @@ mod tests {
         let bank_with_tower_rewards = state.add_tower_rewards(bank_at_migration0);
 
         let genesis_cert = Certificate {
-            cert_type: CertificateType::Genesis(bank_with_tower_rewards.slot(), Hash::default()),
+            cert_type: CertificateType::Genesis(Block {
+                slot: bank_with_tower_rewards.slot(),
+                block_id: Hash::default(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };

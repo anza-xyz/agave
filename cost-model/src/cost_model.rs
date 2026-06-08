@@ -37,24 +37,18 @@ impl CostModel {
         transaction: &'a Tx,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
-        let remove_simple_vote_from_cost_model =
-            feature_set.snapshot().remove_simple_vote_from_cost_model;
-        if transaction.is_simple_vote_transaction() && !remove_simple_vote_from_cost_model {
-            TransactionCost::SimpleVote { transaction }
-        } else {
-            let (programs_execution_cost, loaded_accounts_data_size_cost) =
-                Self::get_estimated_execution_cost(transaction, feature_set);
-            let data_bytes_cost = Self::get_instructions_data_cost(transaction);
-            Self::calculate_non_vote_transaction_cost(
-                transaction,
-                transaction.program_instructions_iter(),
-                transaction.num_write_locks(),
-                programs_execution_cost,
-                loaded_accounts_data_size_cost,
-                data_bytes_cost,
-                feature_set,
-            )
-        }
+        let (programs_execution_cost, loaded_accounts_data_size_cost) =
+            Self::get_estimated_execution_cost(transaction, feature_set);
+        let data_bytes_cost = Self::get_instructions_data_cost(transaction);
+        Self::calculate_transaction_cost(
+            transaction,
+            transaction.program_instructions_iter(),
+            transaction.num_write_locks(),
+            programs_execution_cost,
+            loaded_accounts_data_size_cost,
+            data_bytes_cost,
+            feature_set,
+        )
     }
 
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
@@ -65,27 +59,21 @@ impl CostModel {
         actual_loaded_accounts_data_size_bytes: u32,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
-        let remove_simple_vote_from_cost_model =
-            feature_set.snapshot().remove_simple_vote_from_cost_model;
-        if transaction.is_simple_vote_transaction() && !remove_simple_vote_from_cost_model {
-            TransactionCost::SimpleVote { transaction }
-        } else {
-            let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
-                actual_loaded_accounts_data_size_bytes,
-                feature_set,
-            );
-            let instructions_data_cost = Self::get_instructions_data_cost(transaction);
+        let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
+            actual_loaded_accounts_data_size_bytes,
+            feature_set,
+        );
+        let instructions_data_cost = Self::get_instructions_data_cost(transaction);
 
-            Self::calculate_non_vote_transaction_cost(
-                transaction,
-                transaction.program_instructions_iter(),
-                transaction.num_write_locks(),
-                actual_programs_execution_cost,
-                loaded_accounts_data_size_cost,
-                instructions_data_cost,
-                feature_set,
-            )
-        }
+        Self::calculate_transaction_cost(
+            transaction,
+            transaction.program_instructions_iter(),
+            transaction.num_write_locks(),
+            actual_programs_execution_cost,
+            loaded_accounts_data_size_cost,
+            instructions_data_cost,
+            feature_set,
+        )
     }
 
     /// Return an estimated total cost for a transaction given its':
@@ -98,15 +86,10 @@ impl CostModel {
         num_write_locks: u64,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
-        let remove_simple_vote_from_cost_model =
-            feature_set.snapshot().remove_simple_vote_from_cost_model;
-        if transaction.is_simple_vote_transaction() && !remove_simple_vote_from_cost_model {
-            return TransactionCost::SimpleVote { transaction };
-        }
         let (programs_execution_cost, loaded_accounts_data_size_cost) =
             Self::get_estimated_execution_cost(transaction, feature_set);
         let data_bytes_cost = Self::get_instructions_data_cost(transaction);
-        Self::calculate_non_vote_transaction_cost(
+        Self::calculate_transaction_cost(
             transaction,
             instructions,
             num_write_locks,
@@ -117,7 +100,7 @@ impl CostModel {
         )
     }
 
-    fn calculate_non_vote_transaction_cost<'a, Tx: TransactionMeta>(
+    fn calculate_transaction_cost<'a, Tx: TransactionMeta>(
         transaction: &'a Tx,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
@@ -142,7 +125,7 @@ impl CostModel {
             allocated_accounts_data_size,
         };
 
-        TransactionCost::Transaction(usage_cost_details)
+        TransactionCost::new(usage_cost_details)
     }
 
     /// Returns signature details and the total signature cost

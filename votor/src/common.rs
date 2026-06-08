@@ -41,17 +41,17 @@ pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
 pub fn vote_to_cert_types(vote: &Vote) -> Vec<CertificateType> {
     match vote {
         Vote::Notarize(vote) => vec![
-            CertificateType::Notarize(vote.slot, vote.block_id),
-            CertificateType::NotarizeFallback(vote.slot, vote.block_id),
-            CertificateType::FinalizeFast(vote.slot, vote.block_id),
+            CertificateType::Notarize(vote.block),
+            CertificateType::NotarizeFallback(vote.block),
+            CertificateType::FinalizeFast(vote.block),
         ],
         Vote::NotarizeFallback(vote) => {
-            vec![CertificateType::NotarizeFallback(vote.slot, vote.block_id)]
+            vec![CertificateType::NotarizeFallback(vote.block)]
         }
         Vote::Finalize(vote) => vec![CertificateType::Finalize(vote.slot)],
         Vote::Skip(vote) => vec![CertificateType::Skip(vote.slot)],
         Vote::SkipFallback(vote) => vec![CertificateType::Skip(vote.slot)],
-        Vote::Genesis(vote) => vec![CertificateType::Genesis(vote.slot, vote.block_id)],
+        Vote::Genesis(vote) => vec![CertificateType::Genesis(vote.block)],
     }
 }
 

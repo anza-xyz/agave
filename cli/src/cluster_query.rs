@@ -1109,7 +1109,7 @@ pub async fn process_get_ag_genesis_info(
             CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
                 epoch,
                 slot: cert_type.slot(),
-                block_id: cert_type.to_block().unwrap().1,
+                block_id: cert_type.to_block().unwrap().block_id,
                 bitvec,
                 signature,
             })
@@ -1700,9 +1700,11 @@ pub async fn process_show_stakes(
         .await?;
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
+    let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
     })?;
+    let rent: Rent = rent_account.deserialize_data()?;
     let stake_history: StakeHistory =
         bincode::deserialize(&stake_history_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize stake history".to_string())
@@ -1712,6 +1714,13 @@ pub async fn process_show_stakes(
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
     )
     .await?;
+    let fixed_point_activation_epoch = get_feature_activation_epoch(
+        rpc_client,
+        &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id(),
+    )
+    .await?;
+    let use_fixed_point_stake_math = fixed_point_activation_epoch
+        .is_some_and(|activation_epoch| clock.epoch >= activation_epoch);
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
@@ -1721,9 +1730,7 @@ pub async fn process_show_stakes(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(stake_state) = stake_account.state() {
-            let rent_exempt_balance = rpc_client
-                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
-                .await?;
+            let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
 
             match stake_state {
                 StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
@@ -1738,6 +1745,7 @@ pub async fn process_show_stakes(
                             new_rate_activation_epoch,
                             rent_exempt_balance,
                             false,
+                            use_fixed_point_stake_math,
                         ),
                     });
                 }
@@ -1756,6 +1764,7 @@ pub async fn process_show_stakes(
                             new_rate_activation_epoch,
                             rent_exempt_balance,
                             false,
+                            use_fixed_point_stake_math,
                         ),
                     });
                 }

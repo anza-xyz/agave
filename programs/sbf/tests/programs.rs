@@ -78,8 +78,7 @@ use {
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
     solana_svm::conformance::{
-        context::InstrContext,
-        harness::execute_instr,
+        instr::{context::InstrContext, harness::execute_instr},
         programs::{
             add_program_to_program_cache, keyed_account_for_system_program,
             new_program_cache_with_builtins,

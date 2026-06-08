@@ -6,7 +6,7 @@ use {
         Arg, ArgAction, ArgMatches, Command, builder::ValueParser, crate_description, crate_name,
         value_parser,
     },
-    solana_bls_signatures::{Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair},
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_v3_utils::{
         DisplayError,
         input_parsers::{
@@ -394,7 +394,7 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
         )
         .subcommand(
             Command::new("bls_pubkey")
-                .about("Display the BLS pubkey derived from given ed25519 keypair file")
+                .about("Display the compressed BLS pubkey derived from given ed25519 keypair file")
                 .disable_version_flag(true)
                 .arg(
                     Arg::new("keypair")
@@ -485,13 +485,17 @@ fn write_pubkey_file(outfile: &str, pubkey: Pubkey) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+fn format_bls_pubkey_compressed(bls_pubkey_compressed: &[u8]) -> String {
+    bs58::encode(bls_pubkey_compressed).into_string()
+}
+
 fn write_bls_pubkey_file(
     outfile: &str,
-    bls_pubkey: BLSPubkey,
+    bls_pubkey_compressed: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
 
-    let printable = format!("{bls_pubkey}");
+    let printable = format_bls_pubkey_compressed(bls_pubkey_compressed);
     let serialized = serde_json::to_string(&printable)?;
 
     if let Some(outdir) = std::path::Path::new(&outfile).parent() {
@@ -538,14 +542,14 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
         ("bls_pubkey", matches) => {
             let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
             let bls_keypair = BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?;
-            let bls_pubkey: BLSPubkey = bls_keypair.public.into_inner().into();
+            let bls_pubkey_compressed = bls_keypair.public.to_bytes_compressed();
 
             if matches.try_contains_id("outfile")? {
                 let outfile = matches.get_one::<String>("outfile").unwrap();
                 check_for_overwrite(outfile, matches)?;
-                write_bls_pubkey_file(outfile, bls_pubkey)?;
+                write_bls_pubkey_file(outfile, &bls_pubkey_compressed)?;
             } else {
-                println!("{bls_pubkey}");
+                println!("{}", format_bls_pubkey_compressed(&bls_pubkey_compressed));
             }
         }
         ("new", matches) => {
@@ -907,12 +911,11 @@ mod tests {
         Ok(Pubkey::from_str(&printable)?)
     }
 
-    fn read_bls_pubkey_file(infile: &str) -> Result<BLSPubkey, Box<dyn std::error::Error>> {
+    fn read_bls_pubkey_file(infile: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let f = std::fs::File::open(infile)?;
         let printable: String = serde_json::from_reader(f)?;
 
-        use std::str::FromStr;
-        Ok(BLSPubkey::from_str(&printable)?)
+        Ok(bs58::decode(printable).into_vec()?)
     }
 
     fn process_test_command(args: &[&str]) -> Result<(), Box<dyn error::Error>> {
@@ -1292,8 +1295,8 @@ mod tests {
     fn test_read_write_bls_pubkey() -> Result<(), std::boxed::Box<dyn std::error::Error>> {
         let filename = "test_bls_pubkey.json";
         let bls_keypair = BLSKeypair::new();
-        let bls_pubkey: BLSPubkey = bls_keypair.public.into_inner().into();
-        write_bls_pubkey_file(filename, bls_pubkey)?;
+        let bls_pubkey = bls_keypair.public.to_bytes_compressed();
+        write_bls_pubkey_file(filename, &bls_pubkey)?;
         let read = read_bls_pubkey_file(filename)?;
         assert_eq!(read, bls_pubkey);
         std::fs::remove_file(filename)?;
@@ -1323,7 +1326,7 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&my_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let read_bls_pubkey = read_bls_pubkey_file(&outfile_path).unwrap();
-        assert_eq!(read_bls_pubkey, bls_keypair.public.into_inner().into());
+        assert_eq!(read_bls_pubkey, bls_keypair.public.to_bytes_compressed());
     }
 
     #[test]

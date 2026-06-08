@@ -300,7 +300,7 @@ pub(super) fn handle_abandoned_bank(
     bank: &Arc<Bank>,
     bank_slot: Slot,
     update_parent: &VersionedUpdateParent,
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: &RwLock<BankForks>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
@@ -367,7 +367,7 @@ pub(super) fn handle_abandoned_bank(
     // parent by generate_new_bank_forks on the next iteration.
     ReplayStage::clear_banks(
         &BTreeSet::from([bank_slot]),
-        bank_forks.as_ref(),
+        bank_forks,
         progress,
         async_verification_freelist,
     );

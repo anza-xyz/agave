@@ -9,6 +9,7 @@ use {
             partitioned_epoch_rewards::EpochRewardPhase,
         },
         stake_account::StakeAccount,
+        stake_delegation::delegation_effective_stake,
     },
     log::error,
     serde::{Deserialize, Serialize},
@@ -202,6 +203,7 @@ impl Bank {
         partitioned_stake_reward: &PartitionedStakeReward,
         rent: &Rent,
         adjust_delegations_for_rent: bool,
+        use_fixed_point_stake_math: bool,
     ) -> Result<StakeReward, DistributionError> {
         let stake_account = stakes_cache_accounts
             .get(&partitioned_stake_reward.stake_pubkey)
@@ -246,11 +248,12 @@ impl Bank {
             ))
             .map_err(|_| DistributionError::UnableToSetState)?;
 
-        #[allow(deprecated)]
-        let stake_at_distribution_epoch = partitioned_stake_reward.stake.delegation.stake(
+        let stake_at_distribution_epoch = delegation_effective_stake(
+            &partitioned_stake_reward.stake.delegation,
             distribution_epoch,
             stake_history,
             new_warmup_cooldown_rate_epoch,
+            use_fixed_point_stake_math,
         );
         let reward_type = if stake_at_distribution_epoch == 0 {
             RewardType::DeactivatedStake
@@ -287,6 +290,7 @@ impl Bank {
         // Name intentionally doesn't match -- "adjust delegations for rent" is
         // part of relaxing post-exec min balance checks.
         let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
+        let use_fixed_point_stake_math = feature_snapshot.upgrade_bpf_stake_program_to_v5_1;
 
         let mut lamports_distributed = 0;
         let mut lamports_burned = 0;
@@ -329,6 +333,7 @@ impl Bank {
                 partitioned_stake_reward,
                 rent,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math,
             ) {
                 Ok(stake_reward) => {
                     lamports_distributed += reward_amount;
@@ -725,6 +730,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
+                true,
             )
             .unwrap_err(),
             DistributionError::AccountNotFound
@@ -762,6 +768,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
+                true,
             )
             .unwrap_err(),
             DistributionError::ArithmeticOverflow
@@ -833,6 +840,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
+                true,
             )
             .unwrap(),
             expected_stake_reward
@@ -914,6 +922,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
+                true,
             )
             .unwrap(),
             expected_stake_reward

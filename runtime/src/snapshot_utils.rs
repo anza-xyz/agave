@@ -547,8 +547,12 @@ pub fn serialize_snapshot(
         let status_cache_path =
             bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
         let (status_cache_consumed_size, status_cache_serialize_us) = measure_us!(
-            serde_snapshot::serialize_status_cache(status_cache_slot_deltas, &status_cache_path)
-                .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
+            serde_snapshot::serialize_status_cache(
+                status_cache_slot_deltas,
+                &status_cache_path,
+                io_setup,
+            )
+            .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
         );
 
         let version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
@@ -1246,7 +1250,6 @@ fn unarchive_snapshot(
             io_setup,
         );
 
-        let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
         let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
             |SnapshotFieldsBundle {
                  snapshot_version,
@@ -1258,11 +1261,9 @@ fn unarchive_snapshot(
                 let snapshot_storage_lengths =
                     accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
                 let (storage, measure_untar) = measure_time!(
-                    SnapshotStorageRebuilder::spawn_rebuilder_threads(
+                    SnapshotStorageRebuilder::rebuild_storages(
                         snapshot_storage_lengths,
-                        append_vec_files,
-                        file_receiver,
-                        num_rebuilder_threads,
+                        append_vec_files.into_iter().chain(file_receiver),
                         next_append_vec_id,
                         SnapshotFrom::Archive,
                         None,
@@ -1285,8 +1286,15 @@ fn unarchive_snapshot(
                 })
             },
         );
-        unarchive_handle.join().unwrap()?;
-        snapshot_result
+        // Producer errors are usually the root cause (no files -> no reception).
+        let unarchive_result = unarchive_handle.join().expect("must join unarchive thread");
+        match (unarchive_result, snapshot_result) {
+            // Rebuilder closed the receiver early; the producer's send failure is just the
+            // downstream symptom — surface the rebuilder's error instead.
+            (Err(SnapshotError::CrossbeamSend(_)), snap @ Err(_)) => snap,
+            (Err(err), _) => Err(err),
+            (Ok(()), snap) => snap,
+        }
     })
 }
 
@@ -1521,30 +1529,35 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         account_paths,
     );
 
-    let SnapshotFieldsBundle {
-        bank_fields,
-        accounts_db_fields,
-        append_vec_files,
-        ..
-    } = snapshot_fields_from_files(&file_receiver)?;
+    let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
+        |SnapshotFieldsBundle {
+             bank_fields,
+             accounts_db_fields,
+             append_vec_files,
+             ..
+         }| {
+            let snapshot_storage_lengths =
+                accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
+            let storage = SnapshotStorageRebuilder::rebuild_storages(
+                snapshot_storage_lengths,
+                append_vec_files.into_iter().chain(file_receiver),
+                next_append_vec_id,
+                SnapshotFrom::Dir,
+                obsolete_accounts,
+            )?;
+            Ok((storage, bank_fields, accounts_db_fields))
+        },
+    );
 
-    let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-
-    let snapshot_storage_lengths =
-        accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
-    let storage = SnapshotStorageRebuilder::spawn_rebuilder_threads(
-        snapshot_storage_lengths,
-        append_vec_files,
-        file_receiver,
-        num_rebuilder_threads,
-        next_append_vec_id,
-        SnapshotFrom::Dir,
-        obsolete_accounts,
-    )?;
-    stream_files_handle
-        .join()
-        .expect("should join file stream thread")?;
-    Ok((storage, bank_fields, accounts_db_fields))
+    // Producer errors are usually the root cause (no files -> no reception).
+    let stream_files_result = stream_files_handle.join().expect("must join dir thread");
+    match (stream_files_result, snapshot_result) {
+        // Rebuilder closed the receiver early; the producer's send failure is just the
+        // downstream symptom — surface the rebuilder's error instead.
+        (Err(SnapshotError::CrossbeamSend(_)), snap @ Err(_)) => snap,
+        (Err(err), _) => Err(err),
+        (Ok(()), snap) => snap,
+    }
 }
 
 /// Reads the `snapshot_version` from a file. Before opening the file, its size
@@ -2705,14 +2718,14 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let deserialized_accounts =
+        let mut deserialized_accounts =
             deserialize_obsolete_accounts(bank_snapshot_dir, MAX_OBSOLETE_ACCOUNTS_FILE_SIZE)
                 .unwrap()
-                .into_dashmap();
+                .into_hashmap();
 
         // Verify
         for storage in &snapshot_storages {
-            let obsolete_accounts = deserialized_accounts.remove(&storage.slot()).unwrap().1;
+            let obsolete_accounts = deserialized_accounts.remove(&storage.slot()).unwrap();
             assert!(obsolete_accounts.into_tuple().2 == 0);
         }
     }

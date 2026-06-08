@@ -1165,6 +1165,134 @@ fn test_shrink_zero_lamport_single_ref_account() {
     }
 }
 
+/// Ensure that `shrink` marks zero lamport single ref accounts in the new storage.
+#[test]
+fn test_shrink_marks_zero_lamport_single_ref_account_in_new_storage() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let slot0 = 0;
+    let slot1 = slot0 + 1;
+    // latest full snapshot must be older than the slot(s) we plan to shrink,
+    // otherwise zero lamport single ref accounts will be purged
+    accounts_db.set_latest_full_snapshot_slot(slot0);
+
+    let obsolete_pubkey = Pubkey::new_unique();
+    let obsolete_zero_lamport_pubkey = Pubkey::new_unique();
+    let zero_lamport_single_ref_pubkey = Pubkey::new_unique();
+    let zero_lamport_multi_ref_pubkey = Pubkey::new_unique();
+    let alive_pubkey = Pubkey::new_unique();
+    let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let open_account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
+    let storage1 = Arc::new(AccountStorageEntry::new(
+        &paths[0],
+        slot1,
+        10,
+        DEFAULT_FILE_SIZE,
+        AccountsFileProvider::AppendVec,
+    ));
+    // store an obsolete account; it should not be marked ZLSR
+    append_single_account_with_default_hash(
+        &storage1,
+        &obsolete_pubkey,
+        &open_account,
+        true,
+        Some(&accounts_db.accounts_index),
+    );
+    // store an obsolete zero lamport account; it should not be marked ZLSR
+    append_single_account_with_default_hash(
+        &storage1,
+        &obsolete_zero_lamport_pubkey,
+        &closed_account,
+        true,
+        Some(&accounts_db.accounts_index),
+    );
+    // store a zero lamport single ref account; it *should* be marked ZLSR
+    append_single_account_with_default_hash(
+        &storage1,
+        &zero_lamport_single_ref_pubkey,
+        &closed_account,
+        true,
+        Some(&accounts_db.accounts_index),
+    );
+    // store a zero lamport multi ref account; it should not be marked ZLSR
+    append_single_account_with_default_hash(
+        &storage1,
+        &zero_lamport_multi_ref_pubkey,
+        &closed_account,
+        true,
+        Some(&accounts_db.accounts_index),
+    );
+    // store an alive account; it should not be marked ZLSR
+    append_single_account_with_default_hash(
+        &storage1,
+        &alive_pubkey,
+        &open_account,
+        true,
+        Some(&accounts_db.accounts_index),
+    );
+    insert_store(&accounts_db, Arc::clone(&storage1));
+    accounts_db.add_root(slot1);
+
+    // we manually created the storage, so nothing got marked
+    assert_eq!(storage1.num_zero_lamport_single_ref_accounts(), 0);
+
+    // store the multi ref account again, in slot 2, so it becomes multi ref
+    let slot2 = slot1 + 1;
+    accounts_db.store_for_tests((
+        slot2,
+        [(&zero_lamport_multi_ref_pubkey, &closed_account)].as_slice(),
+    ));
+    accounts_db.add_root(slot2);
+    // flush without clean so the ZLMR account isn't marked obsolete in slot 1
+    accounts_db.flush_rooted_accounts_cache_without_clean();
+
+    // mark the obsolete accounts as obsolete
+    let ancestors = Ancestors::from(vec![slot2]);
+    for pubkey in [obsolete_pubkey, obsolete_zero_lamport_pubkey] {
+        let account_info = accounts_db
+            .accounts_index
+            .get_with_and_then(&pubkey, &ancestors, false, |account_info| account_info)
+            .unwrap();
+        accounts_db.remove_dead_accounts(
+            [account_info].iter(),
+            None,
+            MarkAccountsObsolete::Yes(slot1),
+        );
+    }
+
+    accounts_db.shrink_slot_forced(slot1);
+
+    let new_storage1 = accounts_db.get_and_assert_single_storage(slot1);
+    let new_zero_lamport_single_ref_info = accounts_db
+        .accounts_index
+        .get_with_and_then(
+            &zero_lamport_single_ref_pubkey,
+            &ancestors,
+            false,
+            |(_slot, account_info)| account_info,
+        )
+        .unwrap();
+
+    // ensure ids are different, to indicate shrink ran
+    assert_ne!(new_storage1.id(), storage1.id());
+    // ensure there are three accounts in the storage now, removing the two obsolete ones
+    assert_eq!(new_storage1.count(), 3);
+    // ensure the zlsr account info has the correct id for the new shrunk storage
+    assert_eq!(
+        new_zero_lamport_single_ref_info.store_id(),
+        new_storage1.id(),
+    );
+    // ensure the new shrunk storage does have a marked zlsr account
+    assert_eq!(new_storage1.num_zero_lamport_single_ref_accounts(), 1);
+    let new_storage_zlsr_offsets = new_storage1
+        .zero_lamport_single_ref_offsets()
+        .read()
+        .unwrap();
+    // ensure the storage's zlsr offset list contains the zlsr account info's
+    assert!(new_storage_zlsr_offsets.contains(&new_zero_lamport_single_ref_info.offset()));
+}
+
 /// unit test for `alive_bytes_after_shrink()`
 ///
 /// Check all the permutations of latest full snapshot slot w.r.t. if/how
@@ -3600,6 +3728,78 @@ define_accounts_db_test!(
         }
     }
 );
+
+/// When the full snapshot advances past slots that still hold zero-lamport single-ref
+/// accounts, the next clean's range sweep must re-queue those slots for shrink so the
+/// zero lamport single ref accounts can be removed by shrink.
+#[test_case(false; "without_last_swept_set_queues_both_slots")]
+#[test_case(true; "with_last_swept_set_skips_only_at_last_swept")]
+fn test_zero_lamport_single_ref_resweep_respects_last_swept(set_last_swept: bool) {
+    let db = AccountsDb::new_single_for_tests();
+
+    let one_lamport_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let slot_at_last_swept = 2;
+    let slot_above_last_swept = 3;
+    let full_snapshot_slot = 4;
+
+    // Seed the snapshot at slot 0 to avoid cleaning zero lamport single ref accounts
+    db.set_latest_full_snapshot_slot(0);
+
+    // slot 1: older non-zero versions of both keys. Both entries are overwritten by the
+    // stores below, so slot1 is reclaimed
+    let key_zero_at_last_swept = Pubkey::new_unique();
+    let key_zero_above_last_swept = Pubkey::new_unique();
+    db.store_for_tests((
+        1,
+        &[
+            (&key_zero_at_last_swept, &one_lamport_account),
+            (&key_zero_above_last_swept, &one_lamport_account),
+        ][..],
+    ));
+    db.add_root_and_flush_write_cache(1);
+
+    // slot 2: zero-lamport account plus an unrelated live account so the storage still
+    // has alive bytes now that key_zero is a single-ref zero-lamport.
+    db.store_for_tests((
+        slot_at_last_swept,
+        &[
+            (&key_zero_at_last_swept, &zero_lamport_account),
+            (&Pubkey::new_unique(), &one_lamport_account),
+        ][..],
+    ));
+    db.add_root_and_flush_write_cache(slot_at_last_swept);
+
+    // slot 3: same pattern, but for a key whose slot sits *above* the seeded
+    // last-swept slot, so it must be queued in both variants — proving the sweep
+    // walks past the last-swept slot.
+    db.store_for_tests((
+        slot_above_last_swept,
+        &[
+            (&key_zero_above_last_swept, &zero_lamport_account),
+            (&Pubkey::new_unique(), &one_lamport_account),
+        ][..],
+    ));
+    db.add_root_and_flush_write_cache(slot_above_last_swept);
+
+    // Optionally mark slot 2 as already swept. `set_last_swept_full_snapshot_slot`
+    // requires `last_swept <= latest`, so advance latest to slot 2 first (it gets
+    // advanced again to `full_snapshot_slot` below).
+    if set_last_swept {
+        db.set_latest_full_snapshot_slot(slot_at_last_swept);
+        db.set_last_swept_full_snapshot_slot(slot_at_last_swept);
+    }
+
+    // Advance the snapshot past both ZLSR slots and clean
+    // The sweep range is (0, 4] when not set, queueing both slot 2 and slot 3.
+    // The sweep range is (2, 4] when set, queueing only slot 3.
+    db.set_latest_full_snapshot_slot(full_snapshot_slot);
+    db.clean_accounts(Some(full_snapshot_slot), false);
+
+    let queued = db.shrink_candidate_slots.lock().unwrap();
+    assert_eq!(queued.contains(&slot_at_last_swept), !set_last_swept);
+    assert!(queued.contains(&slot_above_last_swept));
+}
 
 fn setup_accounts_db_cache_clean(
     num_slots: usize,

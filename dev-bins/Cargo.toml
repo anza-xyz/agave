@@ -83,12 +83,12 @@ solana-cost-model = { path = "../cost-model", version = "=4.2.0-alpha.0", featur
 solana-entry = { path = "../entry", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-faucet = { path = "../faucet", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
-solana-fee-calculator = "3.2.0"
+solana-fee-calculator = "3.2.1"
 solana-genesis = { path = "../genesis", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hash = "4.3.0"
+solana-hash = "4.4.0"
 solana-inflation = "3.1.0"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.3.0"
@@ -116,7 +116,7 @@ solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.2.
 solana-sbpf = { version = "=0.21.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
-solana-signature = { version = "3.4.0", default-features = false }
+solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.0"
 solana-stake-interface = "4.2.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

@@ -32,10 +32,6 @@ pub const MAX_BLOCK_UNITS_SIMD_0286: u64 = 100_000_000;
 /// reduce block's parallelism.
 pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 24_000_000;
 
-/// Number of compute units that a block can have for vote transactions,
-/// set to less than MAX_BLOCK_UNITS to leave room for non-vote transactions
-pub const MAX_VOTE_UNITS: u64 = 36_000_000;
-
 /// The maximum allowed size, in bytes, that accounts data can grow, per block.
 /// This can also be thought of as the maximum size of new allocations per block.
 pub const MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA: u64 = 100_000_000;

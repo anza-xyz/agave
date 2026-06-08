@@ -343,14 +343,14 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::vote::{SkipVote, Vote},
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_keypair::Keypair,
         solana_signer::Signer,
         std::thread::sleep,
     };
 
     fn new_metrics() -> ConsensusMetrics {
-        let (_, rx) = unbounded();
+        let (_, rx) = bounded(1024);
         ConsensusMetrics::new(EpochSchedule::custom(100, 100, false), rx) // 100 slots/epoch
     }
 

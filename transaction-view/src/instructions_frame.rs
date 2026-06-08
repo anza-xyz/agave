@@ -558,9 +558,9 @@ mod tests {
             ..solana_message::v1::Message::default()
         };
 
-        let serialized = solana_message::v1::serialize(&message);
+        let serialized = solana_message::v1::Message::serialize(&message);
 
-        let mut offset = 41; // instruction headers starts at offset 41 for no config, 0 addresses, per spec
+        let mut offset = 42; // 1-byte V1_PREFIX + 41-byte header (no config, 0 addresses), per spec
         let instructions_frame =
             InstructionsFrame::try_new_for_v1(&serialized, &mut offset, 2).unwrap();
 

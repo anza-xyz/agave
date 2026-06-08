@@ -11,7 +11,10 @@ use {
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
-    agave_votor_messages::certificate::{Certificate, CertificateType},
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        consensus_message::Block,
+    },
     blockstore_processor::{
         ConfirmationProgress, ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks,
         process_bank_0,
@@ -127,9 +130,12 @@ impl ProcessActiveBanksContext {
 fn post_migration_status_for_tests() -> MigrationStatus {
     let migration_status = MigrationStatus::default();
     migration_status.record_feature_activation(0);
-    let genesis_block = (0, Hash::default());
+    let genesis_block = Block {
+        slot: 0,
+        block_id: Hash::default(),
+    };
     let genesis_certificate = Arc::new(Certificate {
-        cert_type: CertificateType::Genesis(genesis_block.0, genesis_block.1),
+        cert_type: CertificateType::Genesis(genesis_block),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: vec![],
     });
@@ -185,11 +191,11 @@ fn insert_update_parent_slot(
     update_parent_block_id: Hash,
     replay_fec_set_index: u32,
 ) {
-    let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+    let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: block_header_parent_slot,
         parent_block_id: Hash::new_unique(),
     });
-    let update_parent = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: update_parent_slot,
         new_parent_block_id: update_parent_block_id,
     });
@@ -2895,16 +2901,16 @@ fn test_headerless_update_parent() {
     let migration_status = post_migration_status_for_tests();
 
     let footer_marker = || {
-        VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 0,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         })
     };
-    let update_parent = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
         new_parent_block_id: Hash::default(),
     });
@@ -3220,11 +3226,11 @@ fn test_before_update_soft_dead() {
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
     let bank = bank_forks.write().unwrap().insert(bank);
-    let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+    let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
         parent_block_id: Hash::default(),
     });
-    let update_parent = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
         new_parent_block_id: Hash::default(),
     });
@@ -3364,7 +3370,10 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 8,
             end_slot: 11,
-            parent_block: (7, Hash::new_unique()),
+            parent_block: Block {
+                slot: 7,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3375,7 +3384,10 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 12,
             end_slot: 15,
-            parent_block: (11, Hash::new_unique()),
+            parent_block: Block {
+                slot: 11,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         },
     );
@@ -3389,7 +3401,10 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 20,
             end_slot: 22,
-            parent_block: (19, Hash::new_unique()),
+            parent_block: Block {
+                slot: 19,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3400,7 +3415,10 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 20,
             end_slot: 23,
-            parent_block: (19, Hash::new_unique()),
+            parent_block: Block {
+                slot: 19,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         },
     );
@@ -3414,7 +3432,10 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 20,
             end_slot: 23,
-            parent_block: (19, Hash::new_unique()),
+            parent_block: Block {
+                slot: 19,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3425,7 +3446,10 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 16,
             end_slot: 19,
-            parent_block: (15, Hash::new_unique()),
+            parent_block: Block {
+                slot: 15,
+                block_id: Hash::new_unique(),
+            },
             block_timer: Instant::now(),
         },
     );
