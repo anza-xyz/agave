@@ -1,6 +1,6 @@
 use {
     crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount, solana_clock::Epoch,
-    solana_pubkey::Pubkey, std::ptr,
+    solana_pubkey::Pubkey,
 };
 
 /// Meta contains enough context to recover the index from storage itself
@@ -96,7 +96,6 @@ pub struct StoredAccountNoData<'append_vec> {
     pub meta: &'append_vec StoredMeta,
     pub account_meta: &'append_vec AccountMeta,
     pub offset: usize,
-    pub stored_size: usize,
 }
 
 impl<'append_vec> StoredAccountNoData<'append_vec> {
@@ -115,6 +114,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
         &self.meta.pubkey
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn sanitize(&self) -> bool {
         self.sanitize_executable() && self.sanitize_lamports()
     }
@@ -124,9 +124,12 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
         self.offset
     }
 
+    /// The on-disk size of this account, derived from its data length. The view is transient and
+    /// not persisted, so the size is computed on demand rather than stored.
+    #[cfg(feature = "dev-context-only-utils")]
     #[inline(always)]
     pub fn stored_size(&self) -> usize {
-        self.stored_size
+        crate::append_vec::AppendVec::calculate_stored_size(self.meta.data_len as usize)
     }
 
     #[inline(always)]
@@ -144,6 +147,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
         self.account_meta.rent_epoch
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn sanitize_executable(&self) -> bool {
         // Sanitize executable to ensure higher 7-bits are cleared correctly.
         self.ref_executable_byte() & !1 == 0
@@ -153,6 +157,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
     ///
     /// Note that we are not comparing against AccountSharedData::default() because we do not have access to the account data,
     /// so we compare data _length_ in lieu of actual data. This check otherwise identical to AccountSharedData::default().
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn is_default_account(&self) -> bool {
         self.account_meta.lamports == 0
             && self.meta.data_len == 0
@@ -161,12 +166,15 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
             && self.account_meta.owner == Pubkey::default()
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn sanitize_lamports(&self) -> bool {
         // Check if the account data matches that of a default account if it has 0 lamports.
         self.account_meta.lamports != 0 || self.is_default_account()
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn ref_executable_byte(&self) -> &u8 {
+        use std::ptr;
         // Use extra references to avoid value silently clamped to 1 (=true) and 0 (=false)
         // Yes, this really happens; see test_new_from_file_crafted_executable
         let executable_bool: &bool = &self.account_meta.executable;

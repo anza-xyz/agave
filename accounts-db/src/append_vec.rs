@@ -612,13 +612,13 @@ impl AppendVec {
             ValidSlice(unsafe { slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read) });
         let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
         let (account_meta, _) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
-        let stored_size = Self::calculate_stored_size_checked(meta.data_len as usize)?;
+        // Guard against a corrupt `data_len` whose stored size would overflow.
+        Self::calculate_stored_size_checked(meta.data_len as usize)?;
 
         Some(callback(StoredAccountNoData {
             meta,
             account_meta,
             offset,
-            stored_size,
         }))
     }
 
@@ -968,7 +968,6 @@ impl AppendVec {
                 meta: stored_meta,
                 account_meta,
                 offset,
-                stored_size,
             });
             reader.consume_or_skip(stored_size);
         }
@@ -1985,7 +1984,7 @@ mod tests {
                         let offset = account_offsets.get(i).unwrap();
 
                         assert_eq!(
-                            stored_account.stored_size,
+                            stored_account.stored_size(),
                             AppendVec::calculate_stored_size(account.data().len()),
                         );
                         assert_eq!(stored_account.offset(), *offset);
