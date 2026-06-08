@@ -13,6 +13,8 @@ pub struct BlockstoreOptions {
     pub access_type: AccessType,
     // Whether to open a blockstore under a recovery mode. Default: None.
     pub recovery_mode: Option<BlockstoreRecoveryMode>,
+    // Whether to disable the write ahead log (WAL) for shred insertion
+    pub disable_wal: bool,
     pub column_options: LedgerColumnOptions,
     pub num_rocksdb_compaction_threads: NonZeroUsize,
     pub num_rocksdb_flush_threads: NonZeroUsize,
@@ -26,6 +28,7 @@ impl Default for BlockstoreOptions {
         Self {
             access_type: AccessType::Primary,
             recovery_mode: None,
+            disable_wal: false,
             column_options: LedgerColumnOptions::default(),
             num_rocksdb_compaction_threads: default_num_compaction_threads(),
             num_rocksdb_flush_threads: default_num_flush_threads(),

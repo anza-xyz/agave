@@ -47,6 +47,7 @@ impl FromClapArgMatches for BlockstoreOptions {
         let recovery_mode = matches
             .value_of("wal_recovery_mode")
             .map(BlockstoreRecoveryMode::from);
+        let disable_wal = !matches.is_present("enable_rocksdb_wal");
 
         let column_options = LedgerColumnOptions {
             compression_type: match matches.value_of("rocksdb_ledger_compression") {
@@ -75,6 +76,7 @@ impl FromClapArgMatches for BlockstoreOptions {
 
         Ok(BlockstoreOptions {
             recovery_mode,
+            disable_wal,
             column_options,
             // The validator needs primary (read/write)
             access_type: AccessType::Primary,
@@ -97,6 +99,15 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "skip_any_corrupted_record",
             ])
             .help("Mode to recovery the ledger db write ahead log."),
+        Arg::with_name("enable_rocksdb_wal")
+            .hidden(hidden_unless_forced())
+            .long("enable-rocksdb-wal")
+            .takes_value(false)
+            .help(
+                "Enable the rocksdb write-ahead-log (WAL). The WAL provides the ability to \
+                 recover non-persisted data in the event of a crash. This comes at the cost of \
+                 additional I/O.",
+            ),
         Arg::with_name("rocksdb_ledger_compression")
             .hidden(hidden_unless_forced())
             .long("rocksdb-ledger-compression")

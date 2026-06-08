@@ -13,6 +13,7 @@ use {
         convert::Into,
         env,
         fmt::Write,
+        panic::PanicHookInfo,
         sync::{Arc, Barrier, Mutex, Once, RwLock},
         thread,
         time::{Duration, Instant, UNIX_EPOCH},
@@ -496,6 +497,37 @@ pub fn flush() {
     agent.flush();
 }
 
+pub fn submit_panic_datapoint(
+    program: &'static str,
+    version: &Option<String>,
+    panic_info: &PanicHookInfo,
+) {
+    let thread = thread::current().name().unwrap_or("unknown").to_string();
+    let location = panic_info
+        .location()
+        .map(|location| location.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let message = panic_info.to_string();
+    let version = version.clone().unwrap_or("unknown".to_string());
+
+    submit(
+        DataPoint::new("panic")
+            .add_field_str("program", program)
+            .add_field_str("thread", &thread)
+            // The 'one' field exists to give Kapacitor Alerts a numerical value
+            // to filter on
+            .add_field_i64("one", 1)
+            .add_field_str("message", &message)
+            .add_field_str("location", &location)
+            .add_field_str("version", &version)
+            .to_owned(),
+        Level::Error,
+    );
+
+    // Flush metrics immediately
+    flush();
+}
+
 /// Hook the panic handler to generate a data point on each panic
 pub fn set_panic_hook(program: &'static str, version: Option<String>) {
     static SET_HOOK: Once = Once::new();
@@ -503,25 +535,8 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |ono| {
             default_hook(ono);
-            let location = match ono.location() {
-                Some(location) => location.to_string(),
-                None => "?".to_string(),
-            };
-            submit(
-                DataPoint::new("panic")
-                    .add_field_str("program", program)
-                    .add_field_str("thread", thread::current().name().unwrap_or("?"))
-                    // The 'one' field exists to give Kapacitor Alerts a numerical value
-                    // to filter on
-                    .add_field_i64("one", 1)
-                    .add_field_str("message", &ono.to_string())
-                    .add_field_str("location", &location)
-                    .add_field_str("version", version.as_ref().unwrap_or(&"".to_string()))
-                    .to_owned(),
-                Level::Error,
-            );
-            // Flush metrics immediately
-            flush();
+
+            submit_panic_datapoint(program, &version, ono);
 
             // Exit cleanly so the process don't limp along in a half-dead state
             std::process::exit(1);

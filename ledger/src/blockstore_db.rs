@@ -21,7 +21,7 @@ use {
     rocksdb::{
         self, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DB, DBCompressionType,
         DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode as RocksIteratorMode, LiveFile,
-        Options, WriteBatch as RWriteBatch,
+        Options, WriteBatch as RWriteBatch, WriteOptions,
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties,
@@ -326,6 +326,10 @@ impl Rocks {
         }
     }
 
+    pub(crate) fn flush(&self) -> Result<()> {
+        Ok(self.db.flush()?)
+    }
+
     pub(crate) fn destroy(path: &Path) -> Result<()> {
         DB::destroy(&Options::default(), path)?;
 
@@ -406,12 +410,16 @@ impl Rocks {
         })
     }
 
-    pub(crate) fn write(&self, batch: WriteBatch) -> Result<()> {
+    pub(crate) fn write(&self, batch: WriteBatch, disable_wal: bool) -> Result<()> {
         let op_start_instant = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_batch_perf_status,
         );
-        let result = self.db.write(batch.write_batch);
+
+        let mut options = WriteOptions::default();
+        options.disable_wal(disable_wal);
+        let result = self.db.write_opt(batch.write_batch, &options);
+
         if let Some(op_start_instant) = op_start_instant {
             report_rocksdb_write_perf(
                 PERF_METRIC_OP_NAME_WRITE_BATCH, // We use write_batch as cf_name for write batch.
