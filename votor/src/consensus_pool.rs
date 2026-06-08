@@ -1,7 +1,6 @@
 //! Defines ConsensusPool to store received and generated votes and certificates.
 use {
     crate::{
-        commitment::CommitmentError,
         common::{
             MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
             Stake, conflicting_types, vote_to_cert_types,
@@ -56,20 +55,8 @@ pub(crate) enum AddVoteError {
     #[error("Certificate error: {0}")]
     Certificate(#[from] CertificateBuildError),
 
-    #[error("{0} channel disconnected")]
-    ChannelDisconnected(String),
-
-    #[error("Voting Service queue full")]
-    VotingServiceQueueFull,
-
     #[error("Invalid rank: {0}")]
     InvalidRank(u16),
-}
-
-impl From<CommitmentError> for AddVoteError {
-    fn from(_: CommitmentError) -> Self {
-        AddVoteError::ChannelDisconnected("CommitmentSender".to_string())
-    }
 }
 
 fn get_key_and_stakes(

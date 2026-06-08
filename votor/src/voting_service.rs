@@ -37,15 +37,15 @@ pub enum BLSOp {
         vote: Arc<VoteMessage>,
         saved_vote_history: SavedVoteHistoryVersions,
     },
-    PushCertificate {
-        certificate: Arc<Certificate>,
+    PushCertificates {
+        certificates: Vec<Arc<Certificate>>,
     },
 }
 
 fn send_message(
     buf: Vec<u8>,
     socket: &SocketAddr,
-    connection_cache: &Arc<ConnectionCache>,
+    connection_cache: &ConnectionCache,
 ) -> Result<(), TransportError> {
     let client = connection_cache.get_connection(socket);
 
@@ -151,7 +151,7 @@ impl VotingService {
                         &cluster_info,
                         vote_history_storage.as_ref(),
                         bls_op,
-                        connection_cache.clone(),
+                        &connection_cache,
                         &additional_listeners,
                         &mut staked_validators_cache,
                     );
@@ -166,7 +166,7 @@ impl VotingService {
         slot: Slot,
         cluster_info: &ClusterInfo,
         message: &ConsensusMessage,
-        connection_cache: Arc<ConnectionCache>,
+        connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
@@ -188,7 +188,7 @@ impl VotingService {
         // will cause a packet spike and overwhelm the network. If we later find out that this is
         // not an issue, we can optimize this by using multi_targret_send or similar methods.
         for socket in sockets {
-            if let Err(e) = send_message(buf.clone(), socket, &connection_cache) {
+            if let Err(e) = send_message(buf.clone(), socket, connection_cache) {
                 warn!("Failed to send alpenglow message to {socket}: {e:?}");
             }
         }
@@ -198,7 +198,7 @@ impl VotingService {
         cluster_info: &ClusterInfo,
         vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
-        connection_cache: Arc<ConnectionCache>,
+        connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
@@ -225,17 +225,19 @@ impl VotingService {
                     staked_validators_cache,
                 );
             }
-            BLSOp::PushCertificate { certificate } => {
-                let slot = certificate.cert_type.slot();
-                let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
-                Self::broadcast_consensus_message(
-                    slot,
-                    cluster_info,
-                    &message,
-                    connection_cache,
-                    additional_listeners,
-                    staked_validators_cache,
-                );
+            BLSOp::PushCertificates { certificates } => {
+                for certificate in certificates {
+                    let slot = certificate.cert_type.slot();
+                    let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
+                    Self::broadcast_consensus_message(
+                        slot,
+                        cluster_info,
+                        &message,
+                        connection_cache,
+                        additional_listeners,
+                        staked_validators_cache,
+                    );
+                }
             }
         }
     }
@@ -336,12 +338,12 @@ mod tests {
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
     }))]
-    #[test_case(BLSOp::PushCertificate {
-        certificate: Arc::new(Certificate {
+    #[test_case(BLSOp::PushCertificates {
+        certificates: vec![Arc::new(Certificate {
             cert_type: CertificateType::Skip(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: Vec::new(),
-        }),
+        })],
     }, ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
