@@ -937,7 +937,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
+        crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -1035,15 +1035,15 @@ mod tests {
     }
 
     fn setup() -> EventHandlerTestContext {
-        let (bls_sender, bls_receiver) = unbounded();
-        let (commitment_sender, commitment_receiver) = unbounded();
-        let (own_vote_sender, own_vote_receiver) = unbounded();
-        let (drop_bank_sender, drop_bank_receiver) = unbounded();
+        let (bls_sender, bls_receiver) = bounded(1024);
+        let (commitment_sender, commitment_receiver) = bounded(1024);
+        let (own_vote_sender, own_vote_receiver) = bounded(1024);
+        let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
-        let (event_sender, _event_receiver) = unbounded();
-        let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
-        let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
-        let (repair_event_sender, repair_event_receiver) = unbounded();
+        let (event_sender, _event_receiver) = bounded(1024);
+        let (consensus_metrics_sender, consensus_metrics_receiver) = bounded(1024);
+        let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
+        let (repair_event_sender, repair_event_receiver) = bounded(1024);
         let latest_switch_request = LatestSwitchRequest::default();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender,

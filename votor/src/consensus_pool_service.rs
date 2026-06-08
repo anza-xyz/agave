@@ -655,7 +655,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, keypair::Keypair as BLSKeypair,
             signature::Signature as BLSSignature,
@@ -690,7 +690,7 @@ mod tests {
 
     impl Default for TestContext {
         fn default() -> Self {
-            let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
+            let (bls_sender, bls_receiver) = bounded(1024);
             // Create 10 node validatorvotekeypairs vec
             let validator_keypairs = (0..10)
                 .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -895,7 +895,7 @@ mod tests {
     #[test]
     fn test_send_produce_block_event() {
         let mut ctx = TestContext::default();
-        let (repair_event_sender, _repair_event_receiver) = unbounded();
+        let (repair_event_sender, _repair_event_receiver) = bounded(1024);
 
         // Find when is the next leader slot for me (validator 0)
         let next_leader_slot = ctx
@@ -939,9 +939,9 @@ mod tests {
             sharable_banks: ctx.sharable_banks.clone(),
             leader_schedule_cache: ctx.leader_schedule_cache.clone(),
             vote_history_highest_parent_ready: None,
-            consensus_message_receiver: crossbeam_channel::unbounded().1,
+            consensus_message_receiver: bounded(1024).1,
             bls_sender: ctx.bls_sender.clone(),
-            event_sender: crossbeam_channel::unbounded().0,
+            event_sender: bounded(1024).0,
             highest_finalized: ctx.highest_finalized.clone(),
             repair_event_sender,
         };
@@ -980,9 +980,9 @@ mod tests {
     #[test]
     fn test_can_produce_window_immediately_on_restart() {
         let ctx = TestContext::default();
-        let (repair_event_sender, _repair_event_receiver) = unbounded();
-        let (event_sender, event_receiver) = unbounded();
-        let (consensus_message_sender, consensus_message_receiver) = unbounded();
+        let (repair_event_sender, _repair_event_receiver) = bounded(1024);
+        let (event_sender, event_receiver) = bounded(1024);
+        let (consensus_message_sender, consensus_message_receiver) = bounded(1024);
 
         let root_bank = ctx.sharable_banks.root();
         let next_leader_slot = ctx

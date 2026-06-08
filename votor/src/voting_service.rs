@@ -257,6 +257,7 @@ mod tests {
             consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
         },
+        crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
@@ -349,7 +350,7 @@ mod tests {
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
+        let (bls_sender, bls_receiver) = bounded(1024);
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
         // Bind to a random UDP port
@@ -363,7 +364,7 @@ mod tests {
         assert!(bls_sender.send(bls_op).is_ok());
 
         // Start a quick streamer to handle quick control packets
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = bounded(1024);
         let stakes = validator_keypairs
             .iter()
             .map(|x| (x.node_keypair.pubkey(), 100))
