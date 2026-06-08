@@ -56,7 +56,7 @@ use {
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
         },
-        inflation_rewards::points::InflationPointCalculationEvent,
+        inflation_rewards::points::{InflationPointCalculationEvent, get_total_stake},
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
@@ -1728,6 +1728,7 @@ impl Bank {
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = stakes.stake_delegations_vec();
+
         let (
             (stake_history, unfiltered_distribution_vote_accounts),
             calculate_activated_stake_time_us,
@@ -1738,6 +1739,22 @@ impl Bank {
             &stake_delegations,
             self.use_fixed_point_stake_math(),
         ));
+
+        let mut map = HashMap::new();
+        for (_staker_pubkey, stake_account) in &stake_delegations {
+            let vote_pubkey = stake_account.delegation().voter_pubkey;
+            #[allow(deprecated)]
+            let effective_stake = stake_account.delegation().stake(12, &stake_history, None);
+            let seen_stake = map.entry(vote_pubkey).or_insert(0);
+            *seen_stake += effective_stake;
+        }
+
+        for (vote_pubkey, seen_stake) in map {
+            info!(
+                "bank_tally: vote={vote_pubkey} seen_stake={seen_stake} total_stake={}",
+                get_total_stake(vote_pubkey, &self.epoch_stakes, 12).unwrap()
+            );
+        }
 
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.

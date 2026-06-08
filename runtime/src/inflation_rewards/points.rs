@@ -6,7 +6,7 @@ use {
         stake_delegation::delegation_effective_stake,
     },
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
-    log::{error, trace},
+    log::{error, info, trace},
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -15,7 +15,11 @@ use {
         state::{Delegation, Stake, StakeStateV2},
     },
     solana_vote::vote_state_view::VoteStateView,
-    std::{cmp::Ordering, collections::HashMap},
+    std::{
+        cmp::Ordering,
+        collections::HashMap,
+        sync::{LazyLock, Mutex},
+    },
 };
 
 /// captures a rewards round as lamports to be awarded
@@ -150,7 +154,7 @@ fn calculate_stake_points_for_tower(
 }
 
 /// Returns the total stake delegated to `vote_pubkey` in the given `epoch`.
-fn get_total_stake(
+pub(crate) fn get_total_stake(
     vote_pubkey: Pubkey,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     epoch: Epoch,
@@ -334,10 +338,52 @@ fn ag_epoch_credits_iter(
                         force_credits_update_with_skipped_reward: true,
                     });
                 };
-                earned_credits * stake_amount / total_stake as u128
+                earned_credits
+                    .checked_mul(stake_amount)
+                    .unwrap()
+                    .checked_div(total_stake as u128)
+                    .unwrap()
             }
         };
         points += earned_points;
+
+        #[derive(Debug)]
+        struct State {
+            total_points: u128,
+            stakes: HashMap<Pubkey, (Vec<u128>, u64)>,
+        }
+
+        static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| {
+            Mutex::new(State {
+                total_points: 0,
+                stakes: HashMap::new(),
+            })
+        });
+        if epoch == 12 {
+            let mut state = STATE.lock().unwrap();
+            state.total_points += points;
+            let (seen_stake, total_stake) = state
+                .stakes
+                .entry(stake.delegation.voter_pubkey)
+                .or_insert_with(|| {
+                    (
+                        vec![],
+                        get_total_stake(stake.delegation.voter_pubkey, epoch_stakes, 12).unwrap(),
+                    )
+                });
+            seen_stake.push(stake_amount);
+            if seen_stake.iter().sum::<u128>() > *total_stake as u128 {
+                info!(
+                    "buggy: voter={} total_stake={total_stake} seen_stake={seen_stake:?}",
+                    stake.delegation.voter_pubkey
+                );
+            }
+        }
+        if earned_credits != 0 && epoch != 12 {
+            info!(
+                "akhi: epoch={epoch} earned_credits={earned_credits} earned_points={earned_points} points={points}"
+            );
+        }
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(&InflationPointCalculationEvent::CalculatedPoints(
                 epoch,
@@ -347,6 +393,7 @@ fn ag_epoch_credits_iter(
             ));
         }
     }
+
     Ok((points, new_credits_observed))
 }
 
