@@ -72,6 +72,11 @@ static CORE_BPF_PROGRAMS: &[(Pubkey, Option<Pubkey>, &[u8])] = &[
         None,
         include_bytes!("programs/core_bpf_feature_gate-0.0.1.so"),
     ),
+    (
+        solana_sdk_ids::stake::ID,
+        None,
+        include_bytes!("programs/core_bpf_stake-5.1.0.so"),
+    ),
     // Add more programs here post-migration...
 ];
 
@@ -168,7 +173,7 @@ pub fn core_bpf_programs<F>(rent: &Rent, is_feature_active: F) -> Vec<(Pubkey, A
 where
     F: Fn(&Pubkey) -> bool,
 {
-    let mut accounts: Vec<_> = CORE_BPF_PROGRAMS
+    CORE_BPF_PROGRAMS
         .iter()
         .flat_map(|(program_id, feature_id, elf)| {
             let mut accounts = vec![];
@@ -180,23 +185,7 @@ where
             }
             accounts
         })
-        .collect();
-
-    let stake_elf = if is_feature_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id())
-    {
-        include_bytes!("programs/core_bpf_stake-5.1.0.so").as_slice()
-    } else if is_feature_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()) {
-        include_bytes!("programs/core_bpf_stake-5.0.0.so").as_slice()
-    } else {
-        include_bytes!("programs/core_bpf_stake-4.0.0.so").as_slice()
-    };
-    for (key, account) in
-        bpf_loader_upgradeable_program_accounts(&solana_sdk_ids::stake::ID, stake_elf, rent)
-    {
-        accounts.push((key, AccountSharedData::from(account)));
-    }
-
-    accounts
+        .collect()
 }
 
 pub fn by_id(program_id: &Pubkey, rent: &Rent) -> Option<Vec<(Pubkey, AccountSharedData)>> {
@@ -220,63 +209,5 @@ fn num_accounts(owner_id: &Pubkey) -> usize {
         2
     } else {
         1
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn stake_program_data(programs: &[(Pubkey, AccountSharedData)]) -> &[u8] {
-        let stake_program_data_address = get_program_data_address(&solana_sdk_ids::stake::ID);
-        let stake_program_data_account = programs
-            .iter()
-            .find_map(|(pubkey, account)| {
-                (*pubkey == stake_program_data_address).then_some(account)
-            })
-            .unwrap();
-        &stake_program_data_account.data()[UpgradeableLoaderState::size_of_programdata_metadata()..]
-    }
-
-    #[test]
-    fn core_bpf_stake_program_tracks_v5_and_v5_1_features() {
-        let rent = Rent::default();
-        let inactive_programs = core_bpf_programs(&rent, |_| false);
-        assert_eq!(
-            stake_program_data(&inactive_programs),
-            include_bytes!("programs/core_bpf_stake-4.0.0.so"),
-        );
-
-        let v5_programs = core_bpf_programs(&rent, |feature_id| {
-            feature_id == &agave_feature_set::upgrade_bpf_stake_program_to_v5::id()
-        });
-        assert_eq!(
-            stake_program_data(&v5_programs),
-            include_bytes!("programs/core_bpf_stake-5.0.0.so"),
-        );
-
-        let v5_1_programs = core_bpf_programs(&rent, |feature_id| {
-            feature_id == &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id()
-        });
-        assert_eq!(
-            stake_program_data(&v5_1_programs),
-            include_bytes!("programs/core_bpf_stake-5.1.0.so"),
-        );
-
-        // v5.1 supersedes v5.0 when both are active.
-        let v5_and_v5_1_programs = core_bpf_programs(&rent, |feature_id| {
-            feature_id == &agave_feature_set::upgrade_bpf_stake_program_to_v5::id()
-                || feature_id == &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id()
-        });
-        assert_eq!(
-            stake_program_data(&v5_and_v5_1_programs),
-            include_bytes!("programs/core_bpf_stake-5.1.0.so"),
-        );
-
-        let by_id_programs = by_id(&solana_sdk_ids::stake::ID, &rent).unwrap();
-        assert_eq!(
-            stake_program_data(&by_id_programs),
-            include_bytes!("programs/core_bpf_stake-5.1.0.so"),
-        );
     }
 }
