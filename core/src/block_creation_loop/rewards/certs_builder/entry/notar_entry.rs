@@ -3,8 +3,7 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
-    crate::consensus_rewards::BuildRewardCertsRespError,
-    agave_votor_messages::reward_certificate::NotarRewardCertificate,
+    agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -95,10 +94,13 @@ impl NotarEntry {
 mod tests {
     use {
         super::*,
-        crate::consensus_rewards::entry::tests::{
+        crate::block_creation_loop::rewards::certs_builder::entry::tests::{
             get_rank_map_keypairs, new_vote, validate_bitmap,
         },
-        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        agave_votor_messages::{
+            consensus_message::{Block, VoteMessage},
+            vote::Vote,
+        },
         solana_bls_signatures::signature::BLS_SIGNATURE_AFFINE_SIZE,
         solana_hash::Hash,
     };
@@ -112,7 +114,10 @@ mod tests {
         let mut entry = NotarEntry::new(max_validators);
 
         let blockid0 = Hash::new_unique();
-        let notar = Vote::new_notarization_vote(slot, blockid0);
+        let notar = Vote::new_notarization_vote(Block {
+            slot,
+            block_id: blockid0,
+        });
         let invalid_vote = VoteMessage {
             vote: notar,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
@@ -163,7 +168,10 @@ mod tests {
         let blockid1 = Hash::new_unique();
 
         for rank in 0..2 {
-            let notar = Vote::new_notarization_vote(slot, blockid0);
+            let notar = Vote::new_notarization_vote(Block {
+                slot,
+                block_id: blockid0,
+            });
             let vote = new_vote(notar, rank, &keypairs);
             entry
                 .add_vote(
@@ -176,7 +184,10 @@ mod tests {
                 .unwrap();
         }
         for rank in 2..5 {
-            let notar = Vote::new_notarization_vote(slot, blockid1);
+            let notar = Vote::new_notarization_vote(Block {
+                slot,
+                block_id: blockid1,
+            });
             let vote = new_vote(notar, rank, &keypairs);
             entry
                 .add_vote(

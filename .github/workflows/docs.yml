@@ -14,7 +14,7 @@ on:
 
 jobs:
   check:
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository_owner == 'anza-xyz'
     outputs:
       continue: ${{ steps.check.outputs.need_to_build }}
     runs-on: ubuntu-22.04
@@ -70,7 +70,7 @@ jobs:
     needs:
       - check
     if: >
-      github.repository == 'anza-xyz/agave' &&
+      github.repository_owner == 'anza-xyz' &&
       needs.check.outputs.continue == 1
     runs-on: ubuntu-22.04
     steps:
@@ -106,7 +106,7 @@ jobs:
     needs:
       - build
     if: >
-      github.repository == 'anza-xyz/agave' &&
+      github.repository_owner == 'anza-xyz' &&
       github.event_name == 'push'
     runs-on: ubuntu-22.04
     steps:

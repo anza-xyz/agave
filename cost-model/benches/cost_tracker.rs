@@ -49,7 +49,7 @@ fn get_costs(
     transactions
         .iter()
         .map(|transaction| {
-            TransactionCost::Transaction(UsageCostDetails {
+            TransactionCost::new(UsageCostDetails {
                 transaction,
                 signature_cost: 0,
                 write_lock_cost: 0,

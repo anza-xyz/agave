@@ -821,6 +821,8 @@ struct CleanKeyTimings {
     delta_key_count: u64,
     dirty_pubkeys_count: u64,
     oldest_dirty_slot: Slot,
+    zero_lamport_single_ref_slots_added_to_shrink_count: u64,
+    zero_lamport_sweep_us: u64,
 }
 
 pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
@@ -989,6 +991,10 @@ pub struct AccountsDb {
     /// Note, this is None if we're told to *not* take snapshots
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
 
+    /// The full snapshot slot we last swept for zero-lamport-single-ref shrink
+    /// eligibility.
+    last_swept_full_snapshot_slot: AtomicU64,
+
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -1154,6 +1160,7 @@ impl AccountsDb {
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
+            last_swept_full_snapshot_slot: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
         };
 
@@ -1607,8 +1614,9 @@ impl AccountsDb {
              be empty"
         );
 
-        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be retained
-        // for incremental snapshots. Once a snapshot occurs, drain the list
+        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
+        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and
+        // search for newly shrinkable storages.
         if self
             .latest_full_snapshot_slot_advanced_since_clean
             .swap(false, Ordering::Acquire)
@@ -1623,10 +1631,56 @@ impl AccountsDb {
                         }
                         !is_candidate_for_clean
                     });
+
+                let last_swept_full_snapshot_slot =
+                    self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
+                let (added_to_shrink_count, sweep_us) =
+                    measure_us!(self.check_shrink_eligibility_after_snapshot(
+                        last_swept_full_snapshot_slot,
+                        latest_full_snapshot_slot
+                    ));
+                timings.zero_lamport_single_ref_slots_added_to_shrink_count +=
+                    added_to_shrink_count;
+                timings.zero_lamport_sweep_us += sweep_us;
             }
         }
 
         (candidates, min_dirty_slot)
+    }
+
+    /// Loop through slots in `[last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
+    /// check each storage to determine if it is eligible for shrink, since zero-lamport single-ref
+    /// accounts become shrinkable after a full snapshot advances past their slot. Advances the
+    /// `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    ///
+    /// Returns the count of storages that were added to the shrink candidates set
+    fn check_shrink_eligibility_after_snapshot(
+        &self,
+        last_swept_full_snapshot_slot: Slot,
+        latest_full_snapshot_slot: Slot,
+    ) -> u64 {
+        let start = last_swept_full_snapshot_slot.saturating_add(1);
+
+        let mut added_to_shrink_count = 0;
+        // Held for the full scan. Safe because the only paths that take this lock in production
+        // validator code run in earlier/later phases of the same AccountsBackgroundService
+        // iteration, never concurrently with clean_accounts.
+        let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
+        for slot in start..=latest_full_snapshot_slot {
+            if let Some(store) = self.storage.get_slot_storage_entry(slot)
+                && self.is_shrinking_productive(&store)
+                && self.is_candidate_for_shrink(&store)
+            {
+                if shrink_candidates.insert(slot) {
+                    added_to_shrink_count += 1;
+                }
+            }
+        }
+        drop(shrink_candidates);
+
+        self.last_swept_full_snapshot_slot
+            .store(latest_full_snapshot_slot, Ordering::Relaxed);
+        added_to_shrink_count
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -2072,6 +2126,12 @@ impl AccountsDb {
             ("delta_insert_us", key_timings.delta_insert_us, i64),
             ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
+            (
+                "zero_lamport_single_ref_slots_added_to_shrink_count",
+                key_timings.zero_lamport_single_ref_slots_added_to_shrink_count,
+                i64
+            ),
+            ("zero_lamport_sweep_us", key_timings.zero_lamport_sweep_us, i64),
             ("useful_keys", useful_accum.load(Ordering::Relaxed), i64),
             ("total_keys_count", num_candidates, i64),
             ("retained_keys_count", retained_keys_count, i64),
@@ -2624,6 +2684,7 @@ impl AccountsDb {
 
     /// These accounts were found during shrink of `slot` to be slot_list=[slot] and ref_count == 1 and lamports = 0.
     /// This means this slot contained the only account data for this pubkey and it is zero lamport.
+    /// And also `slot` is <= the latest full snapshot slot, and can purge zero lamport accounts.
     /// Thus, we did NOT treat this as an alive account, so we did NOT copy the zero lamport account to the new
     /// storage. So, the account will no longer be alive or exist at `slot`.
     /// So, first, remove the ref count since this newly shrunk storage will no longer access it.
@@ -4855,6 +4916,7 @@ impl AccountsDb {
     ///
     /// Only intended to be called at startup (or by tests).
     /// Only intended to be used while testing the experimental accumulator hash.
+    /// NOT safe to call concurrently with flush operations
     pub fn calculate_accounts_lt_hash_at_startup_from_index(
         &self,
         ancestors: &Ancestors,
@@ -4866,7 +4928,7 @@ impl AccountsDb {
         // A different parallel implementation that iterated over the bins *sequentially* and then
         // hashed the accounts *within* a bin in parallel took about 600 seconds.  That impl uses
         // less memory, as only a single index bin is loaded into mem at a time.
-        let lt_hash = self
+        let mut lt_hash = self
             .accounts_index
             .account_maps
             .par_iter()
@@ -4904,6 +4966,36 @@ impl AccountsDb {
                 accum
             });
 
+        let cache_lt_hash = {
+            let mut cache_lt_hash = LtHash::identity();
+            for pubkey in self.accounts_cache.cached_pubkeys().iter() {
+                // mix out whatever older version the index walk produced (if any)
+                self.accounts_index.get_with_and_then(
+                    pubkey,
+                    ancestors,
+                    false,
+                    |(slot, account_info)| {
+                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                            .get_loaded_account(|loaded_account| {
+                                cache_lt_hash
+                                    .mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
+                            });
+                    },
+                );
+                // mix in the cache version
+                if let Some((account, _slot)) = self.load(
+                    ancestors,
+                    pubkey,
+                    LoadHint::FixedMaxRoot,
+                    PopulateReadCache::False,
+                ) {
+                    cache_lt_hash.mix_in(&Self::lt_hash_account(&account, pubkey).0);
+                }
+            }
+            cache_lt_hash
+        };
+        lt_hash.mix_in(&cache_lt_hash);
+
         AccountsLtHash(lt_hash)
     }
 
@@ -4916,34 +5008,66 @@ impl AccountsDb {
     ///
     /// Only intended to be called at startup by ledger-tool or tests.
     pub fn calculate_capitalization_at_startup_from_index(&self, ancestors: &Ancestors) -> u64 {
-        self.accounts_index
+        let stored_lamports = |pubkey: &Pubkey| {
+            self.accounts_index
+                .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
+                    (!account_info.is_zero_lamport()).then(|| {
+                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                            .get_loaded_account(|loaded_account| loaded_account.lamports())
+                            // SAFETY: The index said this pubkey exists, so
+                            // there must be an account to load.
+                            .unwrap()
+                    })
+                })
+                .flatten()
+                .unwrap_or(0)
+        };
+
+        let storage_capitialization = self
+            .accounts_index
             .account_maps
             .par_iter()
             .map(|accounts_index_bin| {
                 accounts_index_bin
                     .keys()
                     .into_iter()
-                    .map(|pubkey| {
-                        self.accounts_index
-                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
-                                (!account_info.is_zero_lamport()).then(|| {
-                                    self.get_account_accessor(
-                                        slot,
-                                        &pubkey,
-                                        &account_info.storage_location(),
-                                    )
-                                    .get_loaded_account(|loaded_account| loaded_account.lamports())
-                                    // SAFETY: The index said this pubkey exists, so
-                                    // there must be an account to load.
-                                    .unwrap()
-                                })
-                            })
-                            .flatten()
-                            .unwrap_or(0)
-                    })
+                    .map(|pubkey| stored_lamports(&pubkey))
                     .try_fold(0, u64::checked_add)
             })
             .try_reduce(|| 0, u64::checked_add)
+            .expect("capitalization cannot overflow");
+
+        // Sum as i128 because there is potential (although unlikely) for the cache updates to
+        // overflow i64::MAX. For example, if the cache has multiple transactions that transfer a
+        // large amount of lamports from one account to another, it could sum all of the transfers
+        // from accounts first, overflow i128. Wrapping logic could also handle this properly (ie.
+        // come to the correct answer), but then detection of overflow would be broken.
+        let cached_update = self
+            .accounts_cache
+            .cached_pubkeys()
+            .iter()
+            .map(|pubkey| {
+                // subtract out whatever older version the index walk produced (if any)
+                let stored_lamports = stored_lamports(pubkey);
+
+                // add in the cached amount of lamports
+                let cached_lamports = self
+                    .load(
+                        ancestors,
+                        pubkey,
+                        LoadHint::FixedMaxRoot,
+                        PopulateReadCache::False,
+                    )
+                    .map(|(account, _slot)| account.lamports())
+                    .unwrap_or(0);
+
+                cached_lamports as i128 - stored_lamports as i128
+            })
+            .sum::<i128>();
+
+        i128::from(storage_capitialization)
+            .checked_add(cached_update)
+            .and_then(|result| u64::try_from(result).ok())
             .expect("capitalization cannot overflow")
     }
 
@@ -5145,7 +5269,7 @@ impl AccountsDb {
     /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
     fn update_index_for_shrink<'a>(
         &self,
-        infos: Vec<AccountInfo>,
+        infos: &[AccountInfo],
         accounts: &impl StorableAccounts<'a>,
         update_index_thread_selection: UpdateIndexThreadSelection,
         thread_pool: &ThreadPool,
@@ -5606,9 +5730,14 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
+        let mark_zero_lamport_single_ref_time = Measure::start("mark_zero_lamport_single_ref");
+        let num_zero_lamport_single_ref_accounts_marked =
+            self.mark_zero_lamport_single_ref_accounts_for_shrink(&infos, &accounts, storage);
+        let mark_zero_lamport_single_ref_us = mark_zero_lamport_single_ref_time.end_as_us();
+
         let update_index_time = Measure::start("update_index");
         self.update_index_for_shrink(
-            infos,
+            &infos,
             &accounts,
             update_index_thread_selection,
             &self.thread_pool_background,
@@ -5622,11 +5751,18 @@ impl AccountsDb {
             .write_to_storage_us
             .fetch_add(write_accounts_us, Ordering::Relaxed);
         stats
+            .mark_zero_lamport_single_ref_accounts_us
+            .fetch_add(mark_zero_lamport_single_ref_us, Ordering::Relaxed);
+        stats
             .update_index_us
             .fetch_add(update_index_us, Ordering::Relaxed);
         stats
             .num_accounts_stored
             .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
+        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
+            num_zero_lamport_single_ref_accounts_marked,
+            Ordering::Relaxed,
+        );
         stats.report();
 
         StoreAccountsTiming {
@@ -5661,7 +5797,7 @@ impl AccountsDb {
 
         let mark_zero_lamport_time = Measure::start("mark_zero_lamport");
         let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling);
+            self.mark_zero_lamport_single_ref_accounts_for_flush(&infos, storage, reclaim_handling);
         let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
@@ -5871,7 +6007,7 @@ impl AccountsDb {
     /// Marks zero lamport single reference accounts in the storage during store_accounts_for_flush
     ///
     /// Returns the number of accounts marked.
-    fn mark_zero_lamport_single_ref_accounts(
+    fn mark_zero_lamport_single_ref_accounts_for_flush(
         &self,
         account_infos: &[AccountInfo],
         storage: &AccountStorageEntry,
@@ -5903,6 +6039,39 @@ impl AccountsDb {
             }
         }
 
+        num_marked
+    }
+
+    /// Marks zero lamport single reference accounts in the storage during store_accounts_for_shrink
+    ///
+    /// Returns the number of accounts marked.
+    fn mark_zero_lamport_single_ref_accounts_for_shrink<'a>(
+        &self,
+        account_infos: &[AccountInfo],
+        accounts: &impl StorableAccounts<'a>,
+        storage: &AccountStorageEntry,
+    ) -> u64 {
+        debug_assert_eq!(account_infos.len(), accounts.len());
+        let mut num_marked = 0;
+        for (i, account_info) in account_infos.iter().enumerate() {
+            if account_info.is_zero_lamport() {
+                let pubkey = accounts.pubkey(i);
+                let is_single_ref = self.accounts_index.get_and_then(pubkey, |entry| {
+                    let is_single_ref = entry.is_some_and(|entry| {
+                        entry.ref_count() == 1 && entry.slot_list_lock_read_len() == 1
+                    });
+                    (false, is_single_ref)
+                });
+                if is_single_ref {
+                    debug_assert!(!account_info.is_cached());
+                    debug_assert_eq!(account_info.store_id(), storage.id());
+                    if storage.insert_zero_lamport_single_ref_account_offset(account_info.offset())
+                    {
+                        num_marked += 1;
+                    }
+                }
+            }
+        }
         num_marked
     }
 
@@ -6040,6 +6209,21 @@ impl AccountsDb {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
         self.latest_full_snapshot_slot_advanced_since_clean
             .store(true, Ordering::Release);
+    }
+
+    /// Marks slots <= slot as already swept for zero-lamport-single-ref shrink eligibility
+    pub fn set_last_swept_full_snapshot_slot(&self, slot: Slot) {
+        // Prior to setting this, the latest full snapshot slot must be set, and
+        // last_swept_full_snapshot_slot value must be less than or equal to it.
+        assert!(
+            self.latest_full_snapshot_slot()
+                .is_some_and(|snapshot_slot| slot <= snapshot_slot),
+            "last swept full snapshot slot {slot} cannot be greater than latest full snapshot \
+             slot {:?}",
+            self.latest_full_snapshot_slot()
+        );
+        self.last_swept_full_snapshot_slot
+            .store(slot, Ordering::Relaxed);
     }
 
     fn generate_index_for_slot<'a>(

@@ -30,8 +30,8 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        CliEpochVotingHistory, CliLandedVote, CliVoteAccount, ReturnSignersConfig,
-        display::build_balance_message, return_signers_with_config,
+        CliVoteAccount, ReturnSignersConfig, VotesObserved, display::build_balance_message,
+        get_epoch_history, return_signers_with_config,
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
@@ -47,8 +47,8 @@ use {
         vote_error::VoteError,
         vote_instruction::{self, CreateVoteAccountConfig, withdraw},
         vote_state::{
-            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
-            VoterWithBLSArgs, create_bls_proof_of_possession,
+            VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoterWithBLSArgs,
+            create_bls_proof_of_possession,
         },
     },
     std::rc::Rc,
@@ -1616,31 +1616,14 @@ pub async fn process_show_vote_account(
         .and_then(|feature| feature.activated_at);
     let tvc_activation_epoch = tvc_activation_slot.map(|s| epoch_schedule.get_epoch(s));
 
-    let mut votes: Vec<CliLandedVote> = vec![];
-    let mut epoch_voting_history: Vec<CliEpochVotingHistory> = vec![];
-    if !vote_state.votes.is_empty() {
-        for vote in &vote_state.votes {
-            votes.push(vote.into());
-        }
-        for (epoch, credits, prev_credits) in vote_state.epoch_credits.iter().copied() {
-            let credits_earned = credits.saturating_sub(prev_credits);
-            let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-            let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
-            let max_credits_per_slot = if is_tvc_active {
-                VOTE_CREDITS_MAXIMUM_PER_SLOT
-            } else {
-                1
-            };
-            epoch_voting_history.push(CliEpochVotingHistory {
-                epoch,
-                slots_in_epoch,
-                credits_earned,
-                credits,
-                prev_credits,
-                max_credits_per_slot,
-            });
-        }
-    }
+    let ag_genesis_cert = rpc_client.get_ag_genesis_cert().await?;
+    let votes_observed = VotesObserved::new(&vote_state, &ag_genesis_cert);
+    let epoch_voting_history = get_epoch_history(
+        &epoch_schedule,
+        &vote_state,
+        &ag_genesis_cert,
+        tvc_activation_epoch,
+    );
 
     let epoch_rewards = if let Some(num_epochs) = with_rewards {
         match crate::stake::fetch_epoch_rewards(
@@ -1673,7 +1656,7 @@ pub async fn process_show_vote_account(
             .min(u8::MAX as u16) as u8,
         root_slot: vote_state.root_slot,
         recent_timestamp: vote_state.last_timestamp.clone(),
-        votes,
+        votes_observed,
         epoch_voting_history,
         use_lamports_unit,
         use_csv,

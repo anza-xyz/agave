@@ -10,10 +10,11 @@ use {
     agave_votor_messages::{
         self,
         certificate::{Certificate, CertificateType},
-        consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
     bincode::serialize,
+    bitvec::vec::BitVec,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
@@ -34,6 +35,7 @@ use {
     solana_sdk_ids::{stake as stake_program, sysvar},
     solana_seed_derivable::SeedDerivable,
     solana_signer::Signer,
+    solana_signer_store::encode_base2,
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
     solana_sysvar::{
@@ -320,12 +322,18 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<true>(genesis_config);
 
+    // PoH is in low power mode
+    genesis_config.poh_config.hashes_per_tick = None;
+
     // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
     // so we add a fake genesis certificate.
     let cert = Certificate {
-        cert_type: CertificateType::Genesis(0, Hash::default()),
+        cert_type: CertificateType::Genesis(Block {
+            slot: 0,
+            block_id: Hash::default(),
+        }),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        bitmap: Vec::default(),
+        bitmap: encode_base2(&BitVec::new()).unwrap(),
     };
     let cert_size = bincode::serialized_size(&cert).unwrap();
     let lamports = Rent::default().minimum_balance(cert_size as usize);

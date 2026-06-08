@@ -6,6 +6,7 @@ use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
     agave_votor_messages::consensus_message::ConsensusMessage,
+    crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
     solana_client::connection_cache::ConnectionCache,
@@ -124,12 +125,10 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
 pub fn verify_balances<S: ::std::hash::BuildHasher>(
     expected_balances: HashMap<Pubkey, u64, S>,
     node: &ContactInfo,
-    connection_cache: Arc<ConnectionCache>,
 ) {
-    let client = new_tpu_quic_client(node, connection_cache.clone()).unwrap();
+    let rpc_client = RpcClient::new(format!("http://{}", node.rpc().unwrap()));
     for (pk, b) in expected_balances {
-        let bal = client
-            .rpc_client()
+        let bal = rpc_client
             .poll_get_balance_with_commitment(&pk, CommitmentConfig::processed())
             .expect("balance in source");
         assert_eq!(bal, b);
@@ -350,20 +349,14 @@ pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, to
     tower_storage.store(&saved_tower).unwrap();
 }
 
-pub fn check_min_slot_is_rooted(
-    min_slot: Slot,
-    contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
-    test_name: &str,
-) {
+pub fn check_min_slot_is_rooted(min_slot: Slot, contact_infos: &[ContactInfo], test_name: &str) {
     let mut last_print = Instant::now();
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
     for ingress_node in contact_infos.iter() {
-        let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
         loop {
-            let root_slot = client
-                .rpc_client()
+            let root_slot = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap_or(0);
             if root_slot >= min_slot || last_print.elapsed().as_secs() > 3 {
@@ -388,7 +381,6 @@ pub fn check_min_slot_is_rooted(
 fn check_for_new_slots_with_commitment(
     num_new_slots: usize,
     contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
     commitment: CommitmentConfig,
 ) {
@@ -402,11 +394,8 @@ fn check_for_new_slots_with_commitment(
         assert!(loop_start.elapsed() < loop_timeout);
 
         for (i, ingress_node) in contact_infos.iter().enumerate() {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let slot = client
-                .rpc_client()
-                .get_slot_with_commitment(commitment)
-                .unwrap_or(0);
+            let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
+            let slot = rpc_client.get_slot_with_commitment(commitment).unwrap_or(0);
             slots[i].insert(slot);
             num_slots_map.insert(*ingress_node.pubkey(), slots[i].len());
             let num_slots = slots.iter().map(|r| r.len()).min().unwrap();
@@ -424,16 +413,10 @@ fn check_for_new_slots_with_commitment(
     }
 }
 
-pub fn check_for_new_roots(
-    num_new_roots: usize,
-    contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
-    test_name: &str,
-) {
+pub fn check_for_new_roots(num_new_roots: usize, contact_infos: &[ContactInfo], test_name: &str) {
     check_for_new_slots_with_commitment(
         num_new_roots,
         contact_infos,
-        connection_cache,
         test_name,
         CommitmentConfig::finalized(),
     );
@@ -442,13 +425,11 @@ pub fn check_for_new_roots(
 pub fn check_for_new_processed(
     num_new_processed: usize,
     contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
     check_for_new_slots_with_commitment(
         num_new_processed,
         contact_infos,
-        connection_cache,
         test_name,
         CommitmentConfig::processed(),
     );
@@ -465,7 +446,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     JoinHandle<()>,
     crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
 ) {
-    let (sender, receiver) = crossbeam_channel::unbounded();
+    let (sender, receiver) = bounded(1024);
     let cancel = CancellationToken::new();
     let stakes = validator_keys
         .iter()
@@ -495,7 +476,6 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
 pub fn check_for_new_notarized_votes(
     num_new_votes: usize,
     contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
     vote_listener_socket: UdpSocket,
     validator_keys: &[Arc<Keypair>],
@@ -507,10 +487,7 @@ pub fn check_for_new_notarized_votes(
     let Some(current_slot) = contact_infos
         .iter()
         .map(|ingress_node| {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-
-            client
-                .rpc_client()
+            RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()))
                 .get_slot_with_commitment(CommitmentConfig::processed())
                 .unwrap_or(0)
         })
@@ -593,7 +570,6 @@ pub fn check_for_new_notarized_votes(
 pub fn check_no_new_roots(
     num_slots_to_wait: usize,
     contact_infos: &[&ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
     assert!(!contact_infos.is_empty());
@@ -602,14 +578,12 @@ pub fn check_no_new_roots(
         .iter()
         .enumerate()
         .map(|(i, ingress_node)| {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let initial_root = client
-                .rpc_client()
+            let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
+            let initial_root = rpc_client
                 .get_slot()
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey()));
             roots[i] = initial_root;
-            client
-                .rpc_client()
+            rpc_client
                 .get_slot_with_commitment(CommitmentConfig::processed())
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey()))
         })
@@ -622,9 +596,8 @@ pub fn check_no_new_roots(
     let mut reached_end_slot = false;
     loop {
         for contact_info in contact_infos {
-            let client = new_tpu_quic_client(contact_info, connection_cache.clone()).unwrap();
-            current_slot = client
-                .rpc_client()
+            let rpc_client = RpcClient::new(format!("http://{}", contact_info.rpc().unwrap()));
+            current_slot = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::processed())
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", contact_infos[0].pubkey()));
             if current_slot > end_slot {
@@ -648,10 +621,9 @@ pub fn check_no_new_roots(
     }
 
     for (i, ingress_node) in contact_infos.iter().enumerate() {
-        let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
         assert_eq!(
-            client
-                .rpc_client()
+            rpc_client
                 .get_slot()
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey())),
             roots[i]

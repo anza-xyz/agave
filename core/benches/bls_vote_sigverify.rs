@@ -4,7 +4,10 @@
 */
 
 use {
-    agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+    agave_votor_messages::{
+        consensus_message::{Block, VoteMessage},
+        vote::Vote,
+    },
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
@@ -54,7 +57,10 @@ fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<Vo
     let base_payloads: Vec<Arc<Vec<u8>>> = (0..num_distinct_messages)
         .map(|i| {
             let slot = (i as u64).saturating_add(100);
-            let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
+            let vote = Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::new_unique(),
+            });
             Arc::new(bincode::serialize(&vote).unwrap())
         })
         .collect();

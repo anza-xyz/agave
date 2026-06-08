@@ -205,6 +205,7 @@ impl LocalCluster {
     }
 
     pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        config.poh_config.hashes_per_tick = None;
         Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
     }
 
@@ -873,12 +874,7 @@ impl LocalCluster {
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         info!("{test_name} looking minimum root {min_root} on all nodes");
-        cluster_tests::check_min_slot_is_rooted(
-            min_root,
-            &alive_node_contact_infos,
-            &self.connection_cache,
-            test_name,
-        );
+        cluster_tests::check_min_slot_is_rooted(min_root, &alive_node_contact_infos, test_name);
         info!("{test_name} done waiting for roots");
     }
 
@@ -890,12 +886,7 @@ impl LocalCluster {
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         info!("{test_name} looking for new roots on all nodes");
-        cluster_tests::check_for_new_roots(
-            num_new_roots,
-            &alive_node_contact_infos,
-            &self.connection_cache,
-            test_name,
-        );
+        cluster_tests::check_for_new_roots(num_new_roots, &alive_node_contact_infos, test_name);
         info!("{test_name} done waiting for roots");
     }
 
@@ -910,7 +901,6 @@ impl LocalCluster {
         cluster_tests::check_for_new_processed(
             num_new_processed,
             &alive_node_contact_infos,
-            &self.connection_cache,
             test_name,
         );
         info!("{test_name} done waiting for processed slots");
@@ -930,7 +920,6 @@ impl LocalCluster {
         cluster_tests::check_for_new_notarized_votes(
             num_new_notarized_votes,
             &alive_node_contact_infos,
-            &self.connection_cache,
             test_name,
             vote_listener_addr,
             validator_keys,
@@ -961,12 +950,7 @@ impl LocalCluster {
         .unwrap();
         info!("{} discovered {} nodes", test_name, cluster_nodes.len());
         info!("{test_name} making sure no new roots on any nodes");
-        cluster_tests::check_no_new_roots(
-            num_slots_to_wait,
-            &alive_node_contact_infos,
-            &self.connection_cache,
-            test_name,
-        );
+        cluster_tests::check_no_new_roots(num_slots_to_wait, &alive_node_contact_infos, test_name);
         info!("{test_name} done waiting for roots");
     }
 

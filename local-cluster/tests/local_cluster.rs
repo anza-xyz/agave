@@ -7,7 +7,7 @@ use {
     agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     assert_matches::assert_matches,
-    crossbeam_channel::{Receiver, unbounded},
+    crossbeam_channel::{Receiver, bounded},
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
@@ -16,9 +16,7 @@ use {
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
-    solana_clock::{
-        self as clock, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot,
-    },
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
@@ -1469,11 +1467,7 @@ fn test_snapshots_restart_validity() {
 
         // Verify account balances on validator
         trace!("Verifying balances");
-        cluster_tests::verify_balances(
-            expected_balances.clone(),
-            &cluster.entry_point_info,
-            cluster.connection_cache.clone(),
-        );
+        cluster_tests::verify_balances(expected_balances.clone(), &cluster.entry_point_info);
 
         // Check that we can still push transactions
         trace!("Spending and verifying");
@@ -1760,7 +1754,6 @@ fn test_optimistic_confirmation_violation_detection() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&node_to_restart).unwrap().clone()],
-        &cluster.connection_cache,
         "test_optimistic_confirmation_violation",
     );
 }
@@ -2546,8 +2539,8 @@ fn test_run_test_load_program_accounts_partition_root() {
         num_slots_per_validator,
     ]);
 
-    let (update_client_sender, update_client_receiver) = unbounded();
-    let (scan_client_sender, scan_client_receiver) = unbounded();
+    let (update_client_sender, update_client_receiver) = bounded(1024);
+    let (scan_client_sender, scan_client_receiver) = bounded(1024);
     let exit = Arc::new(AtomicBool::new(false));
 
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
@@ -2987,8 +2980,8 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
 
     let num_starting_accounts = 100;
     let exit = Arc::new(AtomicBool::new(false));
-    let (update_client_sender, update_client_receiver) = unbounded();
-    let (scan_client_sender, scan_client_receiver) = unbounded();
+    let (update_client_sender, update_client_receiver) = bounded(1024);
+    let (scan_client_sender, scan_client_receiver) = bounded(1024);
 
     // Setup the update/scan threads
     let (t_update, t_scan, starting_accounts) = setup_transfer_scan_threads(
@@ -3833,7 +3826,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     // for the partition.
     assert!(partition_node_stake < our_node_stake && partition_node_stake < good_node_stake);
 
-    let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+    let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
 
     // 1) Set up the cluster
     let (mut cluster, validator_keys) = test_faulty_node(
@@ -4506,7 +4499,6 @@ fn test_slot_hash_expiry() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&a_pubkey).unwrap().clone()],
-        &cluster.connection_cache,
         "test_slot_hashes_expiry",
     );
 }
@@ -4777,7 +4769,6 @@ fn test_duplicate_with_pruned_ancestor() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&our_node_pubkey).unwrap().clone()],
-        &cluster.connection_cache,
         "test_duplicate_with_pruned_ancestor",
     );
 }
@@ -5380,7 +5371,7 @@ fn test_duplicate_shreds_switch_failure() {
     let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
 
     // 1) Set up the cluster
-    let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+    let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
     let validator_configs = validator_keypairs
         .into_iter()
         .map(|(validator_keys, in_genesis)| {
@@ -5858,7 +5849,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
             target_tick_duration: PohConfig::default().target_tick_duration,
-            hashes_per_tick: Some(clock::DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick: None,
             target_tick_count: None,
         },
         ..ClusterConfig::default()

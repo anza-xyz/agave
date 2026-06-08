@@ -2,7 +2,6 @@ use {
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_runtime::bank::Bank,
     std::{
         sync::{Arc, Mutex},
@@ -86,10 +85,25 @@ impl VotorEvent {
             | VotorEvent::SafeToSkip(s)
             | VotorEvent::TimeoutCrashedLeader(s)
             | VotorEvent::FirstShred(s)
-            | VotorEvent::SafeToNotar((s, _))
-            | VotorEvent::Finalized((s, _), _)
-            | VotorEvent::BlockNotarized((s, _))
-            | VotorEvent::BlockNotarFallback((s, _))
+            | VotorEvent::SafeToNotar(Block {
+                slot: s,
+                block_id: _,
+            })
+            | VotorEvent::Finalized(
+                Block {
+                    slot: s,
+                    block_id: _,
+                },
+                _,
+            )
+            | VotorEvent::BlockNotarized(Block {
+                slot: s,
+                block_id: _,
+            })
+            | VotorEvent::BlockNotarFallback(Block {
+                slot: s,
+                block_id: _,
+            })
             | VotorEvent::ParentReady {
                 slot: s,
                 parent_block: _,
@@ -111,13 +125,13 @@ pub enum RepairEvent {
     /// - The block has received a NotarizeFallback certificate or stronger
     /// - An intrawindow block has reached the SafeToNotar threshold, however we need
     ///   to check that the parent has reached notarize-fallback requiring us to fetch this block
-    FetchBlock { slot: Slot, block_id: Hash },
+    FetchBlock { block: Block },
 }
 
 impl RepairEvent {
     pub fn slot(&self) -> Slot {
         match self {
-            RepairEvent::FetchBlock { slot, .. } => *slot,
+            RepairEvent::FetchBlock { block } => block.slot,
         }
     }
 }
@@ -126,13 +140,13 @@ impl RepairEvent {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SwitchBankEvent {
     /// We need to switch any existing banks to this bank including ancestors.
-    Switch { slot: Slot, block_id: Hash },
+    Switch { block: Block },
 }
 
 impl SwitchBankEvent {
     pub fn block(&self) -> Block {
         match self {
-            SwitchBankEvent::Switch { slot, block_id } => (*slot, *block_id),
+            SwitchBankEvent::Switch { block } => *block,
         }
     }
 }

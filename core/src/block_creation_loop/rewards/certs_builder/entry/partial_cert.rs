@@ -104,7 +104,7 @@ impl PartialCert {
 mod tests {
     use {
         super::*,
-        crate::consensus_rewards::entry::tests::{
+        crate::block_creation_loop::rewards::certs_builder::entry::tests::{
             get_rank_map_keypairs, new_vote, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},

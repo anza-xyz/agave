@@ -8,10 +8,7 @@ use {
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{self, BankingTracer, TraceError},
-        block_creation_loop::{
-            BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen,
-            reward_certs_handler::RewardCertsHandler,
-        },
+        block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -37,7 +34,7 @@ use {
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
     },
     agave_votor::{
-        vote_history::VoteHistory,
+        vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
         voting_service::VotingServiceOverride,
     },
@@ -147,7 +144,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, XdpSender as TurbineXdpSender, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
@@ -933,7 +930,7 @@ impl Validator {
 
         let migration_status = bank_forks.read().unwrap().migration_status();
 
-        if !config.no_poh_speed_test {
+        if !config.no_poh_speed_test && !migration_status.is_alpenglow_enabled() {
             check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
         }
 
@@ -1359,7 +1356,7 @@ impl Validator {
 
             let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history {
                 Some(SamplePerformanceService::new(
-                    &bank_forks,
+                    bank_forks.clone(),
                     blockstore.clone(),
                     exit.clone(),
                 ))
@@ -1486,8 +1483,6 @@ impl Validator {
         // debug if things go off the rails.
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
 
-        let (reward_certs_handler, build_reward_certs_receiver) = RewardCertsHandler::new();
-
         let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
 
         let block_creation_loop_config = BlockCreationLoopConfig {
@@ -1507,10 +1502,11 @@ impl Validator {
             record_receiver_receiver,
             optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
-            reward_certs_handler,
             banking_stage_sender: banking_stage_sender_for_bcl,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         };
-        let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
+        let (block_creation_loop, reward_votes_sender) =
+            BlockCreationLoop::new(block_creation_loop_config);
 
         assert_eq!(
             blockstore.get_new_shred_signals_len(),
@@ -1537,19 +1533,14 @@ impl Validator {
             exit.clone(),
         );
 
-        let tower = match process_blockstore.process_to_create_tower() {
-            Ok(tower) => {
-                info!("Tower state: {tower:?}");
-                tower
-            }
-            Err(e) => {
-                warn!("Unable to retrieve tower: {e:?} creating default tower....");
-                Tower::default()
-            }
-        };
-        // Future upstream PR will handle reconciliation of VoteHistory against hard forks
-        let vote_history =
-            restore_vote_history(config, &bank_forks, &cluster_info.id(), vote_account);
+        let (tower, vote_history) = process_blockstore.process().map_err(|e| {
+            ValidatorError::Other(format!(
+                "Unable to restore Tower or VoteHistory and either --require-tower was specified \
+                 or --do-not-require-vote-history was not specified. Aborting {e}"
+            ))
+        })?;
+        info!("Tower state: {tower:?}, Vote History state: {vote_history:?}");
+
         migration_status.log_phase();
 
         let outstanding_repair_requests =
@@ -1569,7 +1560,7 @@ impl Validator {
                 let (transmitter, sender) = xdp_transmit_builder.build();
                 (
                     Some(transmitter),
-                    Some(XdpSender::new(sender.clone(), src_addr)),
+                    Some(TurbineXdpSender::new(sender.clone(), src_addr)),
                     Some((sender, *src_addr.ip())),
                 )
             } else {
@@ -1588,7 +1579,7 @@ impl Validator {
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
-            &bank_forks,
+            bank_forks.clone(),
             &cluster_info,
             TvuSockets {
                 repair: node.sockets.repair.try_clone().unwrap(),
@@ -1662,8 +1653,8 @@ impl Validator {
                 bls_connection_cache,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
-                build_reward_certs_receiver,
             },
+            reward_votes_sender,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1997,53 +1988,68 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
     false
 }
 
-pub fn active_vote_account_exists_in_bank_alpenglow(bank: &Bank, vote_account: &Pubkey) -> bool {
+/// Should we require that a vote history file is present
+pub fn should_require_vote_history_file(
+    bank: &Bank,
+    vote_account: &Pubkey,
+    identity: &Pubkey,
+) -> bool {
     let Some(genesis_certificate) = bank.get_alpenglow_genesis_certificate() else {
+        // Vote history is only used when Alpenglow is active
         return false;
     };
+
     let Some(Ok(vote_state)) = bank
         .get_account(vote_account)
         .map(|acct| acct.deserialize_data())
     else {
+        // Must have a vote account
         return false;
     };
+
     let Ok(vote_state_handler) = VoteStateHandler::try_new_from_vote_state_versions(vote_state)
     else {
         return false;
     };
 
+    if vote_state_handler.node_pubkey() != identity {
+        // We are starting up or set-identity with a dummy keypair
+        // We don't need to require the vote history file
+        return false;
+    }
+
     let Some(last_voted_slot) = vote_state_handler.last_voted_slot() else {
+        // New vote account
         return false;
     };
     let genesis_slot = genesis_certificate.cert_type.slot();
 
+    // We've voted past the alpenglow genesis
     last_voted_slot > genesis_slot
 }
 
 fn restore_vote_history(
     config: &ValidatorConfig,
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: &RwLock<BankForks>,
     identity: &Pubkey,
     vote_account: &Pubkey,
-) -> VoteHistory {
+) -> Result<VoteHistory, String> {
     match VoteHistory::restore(config.vote_history_storage.as_ref(), identity) {
-        Ok(vote_history) => vote_history,
+        Ok(vote_history) => Ok(vote_history),
         Err(err) => {
-            let voting_has_been_active = {
+            let should_require_vote_history = {
                 let bank_forks = bank_forks.read().unwrap();
-                active_vote_account_exists_in_bank_alpenglow(
-                    &bank_forks.working_bank(),
-                    vote_account,
-                )
+                should_require_vote_history_file(&bank_forks.working_bank(), vote_account, identity)
             };
-            if config.require_vote_history && voting_has_been_active {
-                panic!(
+            if config.require_vote_history && should_require_vote_history {
+                return Err(format!(
                     "Unable to retrieve vote history for identity {identity}. The vote account \
                      {vote_account} has prior Alpenglow votes. If this is intentional, use \
                      --do-not-require-vote-history: {err:?}"
-                );
+                )
+                .to_string());
             }
-            if err.is_file_missing() && !voting_has_been_active {
+            if err.is_file_missing() && !should_require_vote_history {
                 info!(
                     "Ignoring expected failed vote history restore because this vote account has \
                      not voted before"
@@ -2051,7 +2057,7 @@ fn restore_vote_history(
             } else {
                 warn!("Unable to retrieve vote history: {err:?} creating default vote history...");
             }
-            VoteHistory::new(*identity, 0)
+            Ok(VoteHistory::new(*identity, 0))
         }
     }
 }
@@ -2180,6 +2186,75 @@ fn post_process_restored_tower(
     };
 
     Ok(restored_tower)
+}
+
+fn post_process_restored_vote_history(
+    mut vote_history: VoteHistory,
+    validator_identity: &Pubkey,
+    config: &ValidatorConfig,
+    bank_forks: &BankForks,
+) -> Result<VoteHistory, String> {
+    let mut should_require_vote_history = config.require_vote_history;
+
+    let restored_vote_history = {
+        let root_bank = bank_forks.root_bank();
+
+        if vote_history.root() < root_bank.slot() {
+            // Vote history is old, update
+            vote_history.set_root(root_bank.slot());
+        }
+
+        if let Some(hard_fork_restart_slot) =
+            maybe_cluster_restart_with_hard_fork(config, root_bank.slot())
+        {
+            // intentionally fail to restore vote_history; we're supposedly in a new hard fork; past
+            // out-of-chain votor state doesn't make sense at all
+            // what if --wait-for-supermajority again if the validator restarted?
+            let message = format!(
+                "Hard fork is detected; discarding vote_history restoration result: \
+                 {vote_history:?}"
+            );
+            datapoint_error!("vote_history_error", ("error", message, String),);
+            error!("{message}");
+
+            // unconditionally relax vote_history requirement
+            should_require_vote_history = false;
+            Err(VoteHistoryError::HardFork(hard_fork_restart_slot))
+        } else if let Some(warp_slot) = config.warp_slot {
+            // unconditionally relax vote_history requirement
+            should_require_vote_history = false;
+            Err(VoteHistoryError::HardFork(warp_slot))
+        } else {
+            Ok(vote_history)
+        }
+    };
+
+    let restored_vote_history = match restored_vote_history {
+        Ok(vote_history) => vote_history,
+        Err(err) => {
+            if !err.is_file_missing() {
+                datapoint_error!(
+                    "vote_history_error",
+                    (
+                        "error",
+                        format!("Unable to restore vote_history: {err}"),
+                        String
+                    ),
+                );
+            }
+            if should_require_vote_history {
+                return Err(format!(
+                    "Requested mandatory vote_history restore failed: {err}. Ensure that the vote \
+                     history storage file has been copied to the correct directory. Aborting"
+                ));
+            }
+            error!("Rebuilding an empty vote_history from root slot due to failed restore: {err}");
+
+            VoteHistory::new(*validator_identity, bank_forks.root())
+        }
+    };
+
+    Ok(restored_vote_history)
 }
 
 fn load_genesis(
@@ -2375,6 +2450,7 @@ pub struct ProcessBlockStore<'a> {
     snapshot_controller: &'a SnapshotController,
     config: &'a ValidatorConfig,
     tower: Option<Tower>,
+    vote_history: Option<VoteHistory>,
 }
 
 impl<'a> ProcessBlockStore<'a> {
@@ -2409,94 +2485,119 @@ impl<'a> ProcessBlockStore<'a> {
             snapshot_controller,
             config,
             tower: None,
+            vote_history: None,
         }
     }
 
-    pub(crate) fn process(&mut self) -> Result<(), String> {
-        if self.tower.is_none() {
-            let previous_start_process = *self.start_progress.read().unwrap();
-            *self.start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
+    pub(crate) fn process(&mut self) -> Result<(Tower, VoteHistory), String> {
+        if let (Some(tower), Some(vote_history)) = (self.tower.as_ref(), self.vote_history.as_ref())
+        {
+            return Ok((tower.clone(), vote_history.clone()));
+        }
 
-            let exit = Arc::new(AtomicBool::new(false));
-            if let Ok(Some(max_slot)) = self.blockstore.highest_slot() {
-                let bank_forks = self.bank_forks.clone();
-                let exit = exit.clone();
-                let start_progress = self.start_progress.clone();
+        // This means we have not fully processed blockstore yet. Attempt to load and process
+        let previous_start_process = *self.start_progress.read().unwrap();
+        *self.start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
-                let _ = Builder::new()
-                    .name("solRptLdgrStat".to_string())
-                    .spawn(move || {
-                        while !exit.load(Ordering::Relaxed) {
-                            let slot = bank_forks.read().unwrap().working_bank().slot();
-                            *start_progress.write().unwrap() =
-                                ValidatorStartProgress::ProcessingLedger { slot, max_slot };
-                            thread::sleep(Duration::from_secs(2));
-                        }
-                    })
-                    .unwrap();
-            }
-            blockstore_processor::process_blockstore_from_root(
-                self.blockstore,
-                self.bank_forks,
-                self.leader_schedule_cache,
-                self.process_options,
-                self.transaction_status_sender,
-                self.entry_notification_sender,
-                Some(self.snapshot_controller),
-            )
-            .map_err(|err| {
-                exit.store(true, Ordering::Relaxed);
-                format!("Failed to load ledger: {err:?}")
-            })?;
+        let exit = Arc::new(AtomicBool::new(false));
+        if let Ok(Some(max_slot)) = self.blockstore.highest_slot() {
+            let bank_forks = self.bank_forks.clone();
+            let exit = exit.clone();
+            let start_progress = self.start_progress.clone();
+
+            let _ = Builder::new()
+                .name("solRptLdgrStat".to_string())
+                .spawn(move || {
+                    while !exit.load(Ordering::Relaxed) {
+                        let slot = bank_forks.read().unwrap().working_bank().slot();
+                        *start_progress.write().unwrap() =
+                            ValidatorStartProgress::ProcessingLedger { slot, max_slot };
+                        thread::sleep(Duration::from_secs(2));
+                    }
+                })
+                .unwrap();
+        }
+
+        blockstore_processor::process_blockstore_from_root(
+            self.blockstore,
+            self.bank_forks,
+            self.leader_schedule_cache,
+            self.process_options,
+            self.transaction_status_sender,
+            self.entry_notification_sender,
+            Some(self.snapshot_controller),
+        )
+        .map_err(|err| {
             exit.store(true, Ordering::Relaxed);
+            format!("Failed to load ledger: {err:?}")
+        })?;
+        exit.store(true, Ordering::Relaxed);
 
-            if let Some(blockstore_root_scan) = self.blockstore_root_scan.take() {
-                blockstore_root_scan.join();
-            }
+        if let Some(blockstore_root_scan) = self.blockstore_root_scan.take() {
+            blockstore_root_scan.join();
+        }
 
-            self.tower = Some({
-                let restored_tower = Tower::restore(self.config.tower_storage.as_ref(), self.id);
-                if let Ok(tower) = &restored_tower {
-                    // reconciliation attempt 1 of 2 with tower
-                    reconcile_blockstore_roots_with_external_source(
-                        ExternalRootSource::Tower(tower.root()),
-                        self.blockstore,
-                        &mut self.original_blockstore_root,
-                    )
-                    .map_err(|err| format!("Failed to reconcile blockstore with tower: {err:?}"))?;
-                }
-
-                post_process_restored_tower(
-                    restored_tower,
-                    self.id,
-                    self.vote_account,
-                    self.config,
-                    &self.bank_forks.read().unwrap(),
-                )?
-            });
-
-            if let Some(hard_fork_restart_slot) = maybe_cluster_restart_with_hard_fork(
-                self.config,
-                self.bank_forks.read().unwrap().root(),
-            ) {
-                // reconciliation attempt 2 of 2 with hard fork
-                // this should be #2 because hard fork root > tower root in almost all cases
+        // Load and post process tower
+        let tower = {
+            let restored_tower = Tower::restore(self.config.tower_storage.as_ref(), self.id);
+            if let Ok(tower) = &restored_tower {
+                // reconciliation attempt 1 of 2 with tower
                 reconcile_blockstore_roots_with_external_source(
-                    ExternalRootSource::HardFork(hard_fork_restart_slot),
+                    ExternalRootSource::Tower(tower.root()),
                     self.blockstore,
                     &mut self.original_blockstore_root,
                 )
-                .map_err(|err| format!("Failed to reconcile blockstore with hard fork: {err:?}"))?;
+                .map_err(|err| format!("Failed to reconcile blockstore with tower: {err:?}"))?;
             }
 
-            *self.start_progress.write().unwrap() = previous_start_process;
-        }
-        Ok(())
-    }
+            post_process_restored_tower(
+                restored_tower,
+                self.id,
+                self.vote_account,
+                self.config,
+                &self.bank_forks.read().unwrap(),
+            )?
+        };
 
-    pub(crate) fn process_to_create_tower(mut self) -> Result<Tower, String> {
-        self.process()?;
-        Ok(self.tower.unwrap())
+        // Load and post process vote history
+        let vote_history = {
+            let vote_history =
+                restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account)?;
+            // reconciliation attempt 1 of 2 with vote history
+            reconcile_blockstore_roots_with_external_source(
+                ExternalRootSource::VoteHistory(vote_history.root()),
+                self.blockstore,
+                &mut self.original_blockstore_root,
+            )
+            .map_err(|err| format!("Failed to reconcile blockstore with vote history: {err:?}"))?;
+
+            post_process_restored_vote_history(
+                vote_history,
+                self.id,
+                self.config,
+                &self.bank_forks.read().unwrap(),
+            )?
+        };
+
+        if let Some(hard_fork_restart_slot) = maybe_cluster_restart_with_hard_fork(
+            self.config,
+            self.bank_forks.read().unwrap().root(),
+        ) {
+            // reconciliation attempt 2 of 2 with hard fork
+            // it is intentional that we do this second, as having the hard fork root < tower/vote_history root
+            // is invalid! This means we've hard forked and missed a finalized slot
+            reconcile_blockstore_roots_with_external_source(
+                ExternalRootSource::HardFork(hard_fork_restart_slot),
+                self.blockstore,
+                &mut self.original_blockstore_root,
+            )
+            .map_err(|err| format!("Failed to reconcile blockstore with hard fork: {err:?}"))?;
+        }
+
+        *self.start_progress.write().unwrap() = previous_start_process;
+        self.tower = Some(tower.clone());
+        self.vote_history = Some(vote_history.clone());
+        Ok((tower, vote_history))
     }
 }
 
@@ -3010,9 +3111,12 @@ mod tests {
     };
 
     #[test]
-    fn active_vote_account_exists_in_bank_alpenglow_checks_genesis_certificate_and_votes() {
+    fn test_should_require_vote_history_file() {
         use {
-            agave_votor_messages::certificate::{Certificate, CertificateType},
+            agave_votor_messages::{
+                certificate::{Certificate, CertificateType},
+                consensus_message::Block,
+            },
             solana_account::{AccountSharedData, state_traits::StateMut},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
@@ -3020,17 +3124,22 @@ mod tests {
         let genesis_config = create_genesis_config(1_000_000).0;
         let bank = Bank::new_for_tests(&genesis_config);
         let vote_account_pubkey = Pubkey::new_unique();
+        let identity = Pubkey::new_unique();
 
         assert!(!active_vote_account_exists_in_bank(
             &bank,
             &vote_account_pubkey
         ));
-        assert!(!active_vote_account_exists_in_bank_alpenglow(
+        assert!(!should_require_vote_history_file(
             &bank,
-            &vote_account_pubkey
+            &vote_account_pubkey,
+            &identity,
         ));
 
-        let mut vote_state = VoteStateV4::default();
+        let mut vote_state = VoteStateV4 {
+            node_pubkey: identity,
+            ..VoteStateV4::default()
+        };
         let mut vote_account =
             AccountSharedData::new(1, VoteStateV4::size_of(), &solana_vote_program::id());
         vote_account
@@ -3041,9 +3150,10 @@ mod tests {
             &bank,
             &vote_account_pubkey
         ));
-        assert!(!active_vote_account_exists_in_bank_alpenglow(
+        assert!(!should_require_vote_history_file(
             &bank,
-            &vote_account_pubkey
+            &vote_account_pubkey,
+            &identity,
         ));
 
         vote_state.votes.push_back(LandedVote {
@@ -3058,19 +3168,24 @@ mod tests {
             &bank,
             &vote_account_pubkey
         ));
-        assert!(!active_vote_account_exists_in_bank_alpenglow(
+        assert!(!should_require_vote_history_file(
             &bank,
-            &vote_account_pubkey
+            &vote_account_pubkey,
+            &identity,
         ));
 
         bank.set_alpenglow_genesis_certificate(&Certificate {
-            cert_type: CertificateType::Genesis(40, Hash::new_unique()),
+            cert_type: CertificateType::Genesis(Block {
+                slot: 40,
+                block_id: Hash::new_unique(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         });
-        assert!(!active_vote_account_exists_in_bank_alpenglow(
+        assert!(!should_require_vote_history_file(
             &bank,
-            &vote_account_pubkey
+            &vote_account_pubkey,
+            &identity,
         ));
 
         vote_state.votes.push_back(LandedVote {
@@ -3082,9 +3197,17 @@ mod tests {
             .set_state(&VoteStateVersions::new_v4(vote_state))
             .unwrap();
         bank.store_account(&vote_account_pubkey, &vote_account);
-        assert!(active_vote_account_exists_in_bank_alpenglow(
+        assert!(should_require_vote_history_file(
             &bank,
-            &vote_account_pubkey
+            &vote_account_pubkey,
+            &identity,
+        ));
+
+        // Use an unstaked identity
+        assert!(!should_require_vote_history_file(
+            &bank,
+            &vote_account_pubkey,
+            &Pubkey::new_unique(),
         ));
     }
 

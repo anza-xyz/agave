@@ -60,6 +60,7 @@ arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true }
@@ -139,6 +140,7 @@ solana-sha256-hasher = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-streamer = { workspace = true }

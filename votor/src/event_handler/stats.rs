@@ -1,6 +1,6 @@
 use {
     crate::{event::VotorEvent, voting_service::BLSOp},
-    agave_votor_messages::{consensus_message::ConsensusMessage, vote::VoteType},
+    agave_votor_messages::vote::VoteType,
     solana_clock::Slot,
     solana_metrics::datapoint_info,
     std::{
@@ -154,8 +154,8 @@ impl EventHandlerStats {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
                 entry.parent_ready = Some(Instant::now());
             }
-            VotorEvent::Finalized((slot, _), is_fast_finalization) => {
-                let entry = self.slot_tracking_map.entry(*slot).or_default();
+            VotorEvent::Finalized(block, is_fast_finalization) => {
+                let entry = self.slot_tracking_map.entry(block.slot).or_default();
                 if entry.finalized.is_none() {
                     entry.finalized = Some((Instant::now(), *is_fast_finalization));
                 } else if *is_fast_finalization {
@@ -185,11 +185,7 @@ impl EventHandlerStats {
     }
 
     pub fn incr_vote(&mut self, bls_op: &BLSOp) {
-        if let BLSOp::PushVote { message, .. } = bls_op {
-            let ConsensusMessage::Vote(vote) = **message else {
-                warn!("Unexpected BLS message type: {message:?}");
-                return;
-            };
+        if let BLSOp::PushVote { vote, .. } = bls_op {
             let vote_type = vote.vote.get_type();
             let entry = self.sent_votes.entry(vote_type).or_insert(0);
             *entry = entry.saturating_add(1);

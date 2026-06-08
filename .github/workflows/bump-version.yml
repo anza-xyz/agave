@@ -17,7 +17,7 @@ on:
 
 jobs:
   version-bump:
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code

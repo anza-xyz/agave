@@ -2,7 +2,10 @@
 
 use {
     crate::rpc_sender::*,
-    agave_votor_messages::certificate::{Certificate, CertificateType},
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        consensus_message::Block,
+    },
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     serde_json::{Number, Value, json},
@@ -176,7 +179,7 @@ impl RpcSender for MockSender {
             })?,
             "getAgGenesisCert" => {
                 let cert = Certificate {
-                    cert_type: CertificateType::Genesis(0, Hash::default()),
+                    cert_type: CertificateType::Genesis(Block { slot: 0, block_id: Hash::default() }),
                     signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                     bitmap: Vec::default(),
                 };

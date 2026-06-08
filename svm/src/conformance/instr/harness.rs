@@ -1,67 +1,39 @@
 //! Conformance harness.
 
 use {
-    super::context::{InstrContext, InstrEffects},
-    crate::message_processor::process_message,
+    super::{context::InstrContext, effects::InstrEffects},
+    crate::{
+        conformance::{
+            callback::DefaultCallback,
+            setup::{compile_transaction_context, program_runtime_environments, recent_blockhash},
+        },
+        message_processor::process_message,
+    },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
+        invoke_context::{EnvironmentConfig, InvokeContext},
+        loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::svm_message::SVMStaticMessage,
-    solana_syscalls::create_program_runtime_environment,
-    solana_transaction_context::transaction::TransactionContext,
     solana_transaction_error::TransactionError,
     std::rc::Rc,
 };
 #[cfg(feature = "conformance")]
 use {
-    super::programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-    agave_feature_set::FeatureSet,
-    agave_precompiles::{get_precompile, is_precompile},
+    crate::conformance::{
+        callback::ConformanceCallback,
+        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+        setup::sysvar_cache_from_accounts,
+    },
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
-    solana_account::ReadableAccount,
-    solana_precompile_error::PrecompileError,
     std::ffi::c_int,
 };
-
-/// Default callback. No precompile support.
-struct DefaultCallback;
-
-impl InvokeContextCallback for DefaultCallback {}
-
-/// Conformance callback. Full precompile support across all features.
-#[cfg(feature = "conformance")]
-struct ConformanceCallback;
-
-#[cfg(feature = "conformance")]
-impl InvokeContextCallback for ConformanceCallback {
-    fn is_precompile(&self, program_id: &Pubkey) -> bool {
-        is_precompile(program_id, |_| true)
-    }
-
-    fn process_precompile(
-        &self,
-        program_id: &Pubkey,
-        data: &[u8],
-        instruction_datas: Vec<&[u8]>,
-    ) -> Result<(), PrecompileError> {
-        if let Some(precompile) = get_precompile(program_id, |_| true) {
-            precompile.verify(data, &instruction_datas, &FeatureSet::all_enabled())
-        } else {
-            Err(PrecompileError::InvalidPublicKey)
-        }
-    }
-}
 
 /// Execute a single instruction against the Solana VM with the default
 /// (no-precompile) callback.
@@ -97,45 +69,27 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         .expect("program not loaded in cache")
         .account_owner();
 
-    let (sanitized_message, transaction_accounts) =
-        mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key);
-
-    let mut transaction_context = TransactionContext::new(
-        transaction_accounts,
+    let (sanitized_message, mut transaction_context) = compile_transaction_context(
+        &input.instruction,
+        &input.accounts,
+        program_id,
+        &loader_key,
+        &compute_budget,
         (*rent).clone(),
-        compute_budget.max_instruction_stack_depth,
-        compute_budget.max_instruction_trace_length,
-        sanitized_message.num_instructions(),
     );
 
-    let program_runtime_environment = create_program_runtime_environment(
-        &input.feature_set,
-        &compute_budget.to_budget(),
-        false, /* deployment */
-        false, /* debugging_features */
-    )
-    .unwrap();
+    let runtime_environments = program_runtime_environments(&input.feature_set, &compute_budget);
 
     let result = {
-        #[expect(deprecated)]
-        let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
-            .get_recent_blockhashes()
-            .ok()
-            .and_then(|x| (*x).last().cloned())
-            .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
-            .unwrap_or_default();
+        let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
 
-        let program_runtime_environments = ProgramRuntimeEnvironments::new(
-            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
-            program_runtime_environment,
-        );
         let environment_config = EnvironmentConfig::new(
             blockhash,
             blockhash_lamports_per_signature,
             false,
             callback,
             &feature_set,
-            &program_runtime_environments,
+            &runtime_environments,
             sysvar_cache,
         );
 
@@ -205,17 +159,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let instr_context = InstrContext::from(input);
 
     // When testing with protobuf, we fill the sysvar cache from input accounts.
-    let sysvar_cache = {
-        let mut cache = SysvarCache::default();
-        cache.fill_missing_entries(|pubkey, callbackback| {
-            if let Some(account) = instr_context.accounts.iter().find(|(key, _)| key == pubkey)
-                && account.1.lamports() > 0
-            {
-                callbackback(account.1.data());
-            }
-        });
-        cache
-    };
+    let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
 
     // When testing with protobuf, we fill the program cache from input accounts.
     let mut program_cache = {
@@ -223,18 +167,16 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         let feature_set = &instr_context.feature_set;
         let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
         let compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
-
-        let environment = create_program_runtime_environment(
-            feature_set,
-            &compute_budget.to_budget(),
-            false, /* deployment */
-            false, /* debugging_features */
-        )
-        .unwrap();
+        let environments = program_runtime_environments(feature_set, &compute_budget);
 
         let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(&mut cache, &environment, &instr_context.accounts, slot)
-            .unwrap();
+        fill_program_cache_from_accounts(
+            &mut cache,
+            environments.get_env_for_deployment(),
+            &instr_context.accounts,
+            slot,
+        )
+        .unwrap();
 
         cache
     };
@@ -281,11 +223,11 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::{
-            super::programs::{add_program_to_program_cache, new_program_cache_with_builtins},
-            *,
+        super::*,
+        crate::conformance::programs::{
+            add_program_to_program_cache, keyed_account_for_system_program,
+            new_program_cache_with_builtins,
         },
-        crate::conformance::programs::keyed_account_for_system_program,
         solana_account::Account,
         solana_instruction::Instruction,
         solana_rent::Rent,
@@ -296,7 +238,7 @@ mod tests {
     };
 
     const NOOP_ELF: &[u8] =
-        include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+        include_bytes!("../../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
 
     const FROM_BASE_LAMPORTS: u64 = 5_000;
     const TO_BASE_LAMPORTS: u64 = 1_000;

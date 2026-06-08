@@ -4,7 +4,7 @@ use {
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::ConsensusMessage,
+        consensus_message::SigVerifiedBatch,
         fraction::Fraction,
     },
     crossbeam_channel::Sender,
@@ -52,7 +52,7 @@ pub(super) fn verify_and_send_certificates(
     verified_certs_set: &mut HashSet<CertificateType>,
     certs: Vec<CertPayload>,
     root_bank: &Bank,
-    channel_to_pool: &Sender<Vec<ConsensusMessage>>,
+    channel_to_pool: &Sender<SigVerifiedBatch>,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
@@ -89,7 +89,7 @@ pub(super) fn verify_and_send_certificates(
 ///
 /// The valid certs are inserted into the [`verified_certs_set`].
 /// Invalid cert senders are banlisted.
-/// Returns a Vec of [`ConsensusMessage`] constructed from the valid certs.
+/// Returns a [`SigVerifiedBatch`] constructed from the valid certs.
 fn verify_certs(
     certs: Vec<CertPayload>,
     root_bank: &Bank,
@@ -97,7 +97,7 @@ fn verify_certs(
     stats: &mut SigVerifyCertStats,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
-) -> Vec<ConsensusMessage> {
+) -> SigVerifiedBatch {
     let verified = thread_pool.install(|| {
         certs
             .into_par_iter()
@@ -108,7 +108,7 @@ fn verify_certs(
             .collect::<Vec<_>>()
     });
 
-    verified
+    let certs = verified
         .into_iter()
         .filter_map(|(cert_payload, res)| match res {
             Ok(()) => {
@@ -116,7 +116,7 @@ fn verify_certs(
                 if !verified_certs_set.insert(cert.cert_type) {
                     stats.unnecessary_certs_verified += 1;
                 }
-                Some(ConsensusMessage::Certificate(cert))
+                Some(cert)
             }
             Err(e) => {
                 match &e {
@@ -148,7 +148,8 @@ fn verify_certs(
                 None
             }
         })
-        .collect()
+        .collect();
+    SigVerifiedBatch::Certificates(certs)
 }
 
 fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyError> {

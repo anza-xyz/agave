@@ -13,6 +13,7 @@ edition = { workspace = true }
 agave-unstable-api = []
 
 [dependencies]
+quinn = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true }

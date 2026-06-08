@@ -468,6 +468,10 @@ pub(crate) mod external {
                 root_bank,
                 working_bank,
             } = self.sharable_banks.load();
+            // Prefer the leader bank over the highest working fork when leader
+            let working_bank = active_leader_state(&self.shared_leader_state)
+                .and_then(|leader_state| leader_state.working_bank().cloned())
+                .unwrap_or(working_bank);
 
             if working_bank.slot() > message.max_working_slot {
                 return self.return_unprocessed_message(
@@ -1144,7 +1148,7 @@ pub(crate) mod external {
             mint_keypair: Keypair,
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
-            _bank_forks: Arc<RwLock<BankForks>>,
+            bank_forks: Arc<RwLock<BankForks>>,
             _replay_vote_receiver: ReplayVoteReceiver,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
@@ -1349,7 +1353,7 @@ pub(crate) mod external {
                 mint_keypair,
                 genesis_config,
                 bank,
-                _bank_forks: bank_forks,
+                bank_forks,
                 _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 allocator: client_session.allocators.pop().unwrap(),
@@ -1976,6 +1980,37 @@ pub(crate) mod external {
             );
             assert_eq!(response.responses.num_transaction_responses, 0);
             assert_eq!(response.responses.transaction_responses_offset, 0);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_check_prefers_active_leader_bank() {
+            let mut test_frame = setup_external_test_frame();
+            let batch = test_frame.allocate_batch(&[test_serialized_transaction(
+                test_frame.bank.confirmed_last_blockhash(),
+            )]);
+
+            // Insert a higher fork bank so the highest working bank exceeds
+            // `max_working_slot` while the active leader bank does not.
+            let higher_bank = Bank::new_from_parent(
+                test_frame.bank.clone(),
+                SlotLeader::new_unique(),
+                test_frame.bank.slot() + 1,
+            );
+            test_frame.bank_forks.write().unwrap().insert(higher_bank);
+            test_frame.set_active_bank();
+
+            test_frame.send_message(PackToWorkerMessage {
+                flags: pack_message_flags::CHECK | check_flags::STATUS_CHECKS,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.check_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
 
             test_frame.free_batch(batch);
         }
