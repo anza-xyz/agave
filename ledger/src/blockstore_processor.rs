@@ -2972,6 +2972,7 @@ pub mod tests {
             consensus_message::Block,
         },
         assert_matches::assert_matches,
+        crossbeam_channel::bounded,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
@@ -5216,7 +5217,7 @@ pub mod tests {
             })
             .collect();
         let entry = next_entry(&bank_1_blockhash, 1, vote_txs);
-        let (replay_vote_sender, replay_vote_receiver) = crossbeam_channel::unbounded();
+        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
         let _ = process_entries_for_tests(
             &BankWithScheduler::new_without_scheduler(bank1),
             vec![entry],
@@ -5589,8 +5590,7 @@ pub mod tests {
         bank.transfer(LAMPORTS_PER_SOL, &mint_keypair, &keypair2.pubkey())
             .unwrap();
 
-        let (transaction_status_sender, transaction_status_receiver) =
-            crossbeam_channel::unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let transaction_status_sender = TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,
@@ -5911,7 +5911,7 @@ pub mod tests {
             transaction_indexes: vec![],
         };
         let mut timing = ExecuteTimings::default();
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = bounded(1024);
 
         assert_eq!(bank.transaction_count(), 0);
         assert_eq!(bank.transaction_error_count(), 0);

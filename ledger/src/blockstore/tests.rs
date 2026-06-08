@@ -10,7 +10,6 @@ use {
     },
     agave_feature_set::discard_unexpected_data_complete_shreds,
     assert_matches::assert_matches,
-    crossbeam_channel::unbounded,
     rand::{rng, seq::SliceRandom},
     solana_account_decoder::parse_token::UiTokenAmount,
     solana_entry::entry::next_entry_mut,
@@ -5751,9 +5750,9 @@ fn test_get_slot_entries_dead_slot_race() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     {
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (slot_sender, slot_receiver) = unbounded();
-        let (shred_sender, shred_receiver) = unbounded::<Vec<Shred>>();
-        let (signal_sender, signal_receiver) = unbounded();
+        let (slot_sender, slot_receiver) = bounded(1024);
+        let (shred_sender, shred_receiver) = bounded::<Vec<Shred>>(1024);
+        let (signal_sender, signal_receiver) = bounded(1024);
 
         std::thread::scope(|scope| {
             scope.spawn(|| {
