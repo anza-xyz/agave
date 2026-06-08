@@ -33,9 +33,5 @@ impl SerializableAccountStorageEntry {
     }
 }
 
-pub(crate) trait SerializableStorage {}
-
-impl SerializableStorage for SerializableAccountStorageEntry {}
-
 #[cfg(feature = "frozen-abi")]
 impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountStorageEntry {}

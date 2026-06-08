@@ -55,7 +55,6 @@ use {
         thread,
         time::Instant,
     },
-    storage::SerializableStorage,
     types::{SerdeAccountsLtHash, UnusedRentCollector},
     wincode::{
         SchemaReadOwned, SchemaWrite,
@@ -781,10 +780,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Bank, ReconstructedBankInfo), Error>
-where
-    E: SerializableStorage + std::marker::Sync,
-{
+) -> Result<(Bank, ReconstructedBankInfo), Error> {
     let mut bank_fields = bank_fields.collapse_into();
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
     let deserializable_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
@@ -994,10 +990,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
-where
-    E: SerializableStorage + std::marker::Sync,
-{
+) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error> {
     let mut accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
         accounts_db_config,
