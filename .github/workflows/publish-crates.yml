@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  # Lets a maintainer re-run the publish against an existing tag (e.g. when a layer failed
-  # mid-run, or after configuring a missing crates.io trusted publisher). Select the tag
-  # when dispatching; the workflow uses `github.ref_name` for both triggers.
   workflow_dispatch:
 
 permissions: {}
@@ -26,9 +23,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # Fail fast if the tag doesn't match the workspace version; otherwise the publish
-      # would silently push whatever version is in Cargo.toml under the wrong tag name.
-      # Also rejects workflow_dispatch runs targeting a branch instead of a tag.
       - name: Verify tag matches workspace version
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -62,10 +56,7 @@ jobs:
           DOCKER_IMAGE: ${{ steps.docker.outputs.image }}
         run: docker pull "${DOCKER_IMAGE}"
 
-      # Compute publish layers from cargo xtask publish order. Output is an array of layers
-      # where each layer is a list of crates that can be published once the prior layer is
-      # done. We strip every field except `name`: the matrix only needs the crate name to
-      # drive `cargo publish -p`.
+      # Compute publish layers from cargo xtask publish order.
       - name: Compute publish layers
         id: layers
         env:
@@ -80,9 +71,6 @@ jobs:
           layers=$(jq -c 'map(map({name}))' <<<"${raw}")
           echo "layers=${layers}" >> "${GITHUB_OUTPUT}"
 
-      # `cargo package` verifies by default: it builds each crate in a clean temp dir,
-      # catching missing files or broken packaging before anything is uploaded. Requires
-      # the CI image for rocksdb's C deps.
       - name: Package crates
         env:
           DOCKER_IMAGE: ${{ steps.docker.outputs.image }}
@@ -145,8 +133,7 @@ jobs:
           DOCKER_IMAGE: ${{ needs.package.outputs.docker_image }}
         run: docker pull "${DOCKER_IMAGE}"
 
-      # Fresh crates.io token per layer job, revoked at job end via the action's `post`
-      # step. Each layer fits in well under the 30 minute token lifetime.
+      # Fresh crates.io token per layer job.
       - name: Mint crates.io token
         id: auth
         uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe  # v1.0.4

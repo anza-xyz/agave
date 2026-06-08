@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 #
 # Publishes a list of workspace crates to crates.io using a trusted-publisher OIDC token.
-# Reads crate names from stdin, one per line. Skips empty lines and already-published
-# versions, retries on rate limits.
+# Reads crate names from stdin, one per line.
 #
 # Required env vars:
 #   CARGO_REGISTRY_TOKEN  Short-lived crates.io token from rust-lang/crates-io-auth-action
 #   CRATE_VERSION         Version expected on crates.io (used for already-published check)
 #   DOCKER_IMAGE          CI Docker image (rust + C deps for rocksdb, etc.)
-#
-# Emits GitHub Actions workflow commands (::group::, ::error::) for log folding.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -21,7 +18,6 @@ cd "$(dirname "$0")/.."
 is_published() {
   local name=$1 version=$2
   # crates.io API docs require a user-agent header: https://crates.io/data-access#api
-  # A missing version 404s (curl -f fails); a present one returns a "version" object.
   curl -fsSL \
     --user-agent 'Anza (https://github.com/anza-xyz/agave)' \
     "https://crates.io/api/v1/crates/${name}/${version}" 2>/dev/null \
@@ -59,8 +55,8 @@ while IFS= read -r crate_name; do
       exit 1
     fi
 
-    # crates.io returns "Please try again after <RFC1123 timestamp>" on rate limit.
-    # Parse it; fall back to 60s, which matches the 1/min leaky-bucket refill rate.
+    # crates.io rate-limits with "Please try again after <RFC1123 timestamp>"; fall back
+    # to 60s, matching the 1/min leaky-bucket refill rate.
     retry_after=$(sed -n 's/.*Please try again after \(.*\) or email.*/\1/p' <<< "${output}")
     if [[ -n "${retry_after}" ]]; then
       backoff=$(( $(date -d "${retry_after}" +%s) - $(date +%s) ))
