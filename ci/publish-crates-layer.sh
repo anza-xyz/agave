@@ -66,6 +66,4 @@ while IFS= read -r crate_name; do
     fi
   done
   echo "::endgroup::"
-
-  sleep 5
 done
