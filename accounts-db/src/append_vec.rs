@@ -342,36 +342,11 @@ impl AppendVec {
     /// Creates a new AppendVec for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
-    /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
-    /// accounts verification to ensure it is valid.
-    pub fn new_for_startup(file_info: FileInfo, current_len: usize) -> Result<Self> {
-        let new = Self::new_from_file_info_unchecked(file_info, current_len)?;
-
-        // The current_len is allowed to be either exactly the same as file_size, or
-        // u64-aligned-equivalent to file_size.  This is because `flush` and `shink` compute the
-        // required file size with *aligned* stored size per account, including the very last
-        // account.  So the file size may have padding to the next u64-alignment.
-        // For our usage, this is still safe as these padding bytes could never be used for an
-        // account.  This renders the `get_` and `scan_` functions safe.
-        if (current_len as u64 == new.file_size)
-            || (u64_align!(current_len) as u64 == new.file_size)
-        {
-            Ok(new)
-        } else {
-            // However, if opening a minimized snapshot, the file sizes can be
-            // larger than current length [^1].  So when the `if` condition fails,
-            // fallback to the old/slow impl that does the full sanitization.
-            // [^1]: https://github.com/anza-xyz/agave/issues/6797
-            info!(
-                "Could not optimistically create new AppendVec, falling back to pessimistic impl: \
-                 file size ({}) and current length ({}) do not match for '{}'",
-                new.file_size,
-                current_len,
-                new.path.display(),
-            );
-            let _num_accounts = new.sanitize_layout_and_length()?;
-            Ok(new)
-        }
+    /// The storage length is taken to be the full file size; this is trusted and relies on later
+    /// index generation or accounts verification to ensure it is valid.
+    pub fn new_for_startup(file_info: FileInfo) -> Result<Self> {
+        let current_len = file_info.size as usize;
+        Self::new_from_file_info_unchecked(file_info, current_len)
     }
 
     /// Creates an appendvec in read-only mode from existing `FileInfo` and without full data checks
@@ -402,6 +377,7 @@ impl AppendVec {
     }
 
     /// Checks that all accounts layout is correct and returns the number of accounts.
+    #[cfg(feature = "dev-context-only-utils")]
     fn sanitize_layout_and_length(&self) -> Result<usize> {
         // This discards allocated accounts immediately after check at each loop iteration.
         //
