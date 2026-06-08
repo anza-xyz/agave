@@ -290,13 +290,14 @@ pub fn execute(
     let _ = config;
 
     #[cfg(target_os = "linux")]
-    let xdp_transmit_setup = {
+    let (xdp_transmit_setup, xdp_network_config_report) = {
         use {
             agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
+            solana_core::system_monitor_service::XdpNetworkConfigReport,
         };
 
         let super::Config { primordial_caps } = config;
@@ -372,33 +373,46 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let xdp_transmit_setup = xdp_transmit_config.clone().map(|xdp_config| {
-            use {
-                agave_xdp::{default_device_ipv4, interface_ipv4},
-                solana_core::validator::XdpTransmitSetup,
-            };
+        let (xdp_transmit_setup, report) = xdp_transmit_config
+            .clone()
+            .map(|mut xdp_config| {
+                use {
+                    agave_xdp::{device::NetworkDevice, interface_ipv4},
+                    solana_core::validator::XdpTransmitSetup,
+                };
 
-            let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
-                IpAddr::V4(_unspecified) => {
-                    if let Some(interface) = xdp_config.interface.as_ref() {
-                        interface_ipv4(interface).expect(
-                            "configured interface should exist and have an IPv4 address assigned",
-                        )
-                    } else {
-                        default_device_ipv4().expect(
-                            "default route device should exist and have an IPv4 address assigned",
-                        )
-                    }
-                }
-                _ => panic!("IPv6 not supported"),
-            };
-            XdpTransmitSetup {
-                transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
-                    .expect("failed to create xdp transmitter"),
-                src_ip,
-            }
-        });
+                let device = if let Some(interface) = xdp_config.interface.as_ref() {
+                    NetworkDevice::new(interface).expect("configured interface should exist")
+                } else {
+                    NetworkDevice::new_from_default_route()
+                        .expect("default route device should exist")
+                };
+
+                let xdp_interface = device.name().to_string();
+                // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
+                // uses the same interface name, with bond-master fallback.
+                xdp_config.interface = Some(xdp_interface.clone());
+                let zero_copy = xdp_config.zero_copy;
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                    IpAddr::V4(_unspecified) => interface_ipv4(&xdp_interface).expect(
+                        "selected interface should exist and have an IPv4 address assigned",
+                    ),
+                    _ => panic!("IPv6 not supported"),
+                };
+                (
+                    XdpTransmitSetup {
+                        transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
+                            .expect("failed to create xdp transmitter"),
+                        src_ip,
+                    },
+                    XdpNetworkConfigReport {
+                        zero_copy,
+                        interface: xdp_interface,
+                    },
+                )
+            })
+            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
 
         // we're done with caps needed to init xdp now. remove them from our process
         caps::set(None, CapSet::Effective, &retained_caps)
@@ -406,11 +420,11 @@ pub fn execute(
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        xdp_transmit_setup
+        (xdp_transmit_setup, report)
     };
 
     #[cfg(not(target_os = "linux"))]
-    let xdp_transmit_setup = None;
+    let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
 
     let reserved = xdp_transmit_config
         .map(|xdp| xdp.cpus.clone())
@@ -799,6 +813,7 @@ pub fn execute(
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
+        xdp_network_config_report,
         no_os_cpu_stats_reporting: matches.is_present("no_os_cpu_stats_reporting"),
         no_os_disk_stats_reporting: matches.is_present("no_os_disk_stats_reporting"),
         // The validator needs to open many files, check that the process has
