@@ -1,7 +1,7 @@
 use {
     async_trait::async_trait,
     bincode::serialize,
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     futures_util::StreamExt,
     log::*,
     reqwest::{self, header::CONTENT_TYPE},
@@ -223,7 +223,7 @@ fn test_rpc_slot_updates() {
         TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
 
     // Track when slot updates are ready
-    let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
+    let (update_sender, update_receiver) = bounded::<SlotUpdate>(1024);
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
@@ -328,10 +328,10 @@ fn test_rpc_subscriptions() {
         .collect();
 
     // Track account notifications are received
-    let (account_sender, account_receiver) = unbounded::<(Pubkey, RpcResponse<UiAccount>)>();
+    let (account_sender, account_receiver) = bounded::<(Pubkey, RpcResponse<UiAccount>)>(1024);
     // Track when status notifications are received
     let (status_sender, status_receiver) =
-        unbounded::<(Signature, RpcResponse<RpcSignatureResult>)>();
+        bounded::<(Signature, RpcResponse<RpcSignatureResult>)>(1024);
 
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
