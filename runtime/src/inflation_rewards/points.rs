@@ -507,7 +507,6 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
-        test_case::test_matrix,
     };
 
     impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {
@@ -531,8 +530,8 @@ mod tests {
         }
     }
 
-    #[test_matrix([true, false])]
-    fn test_stake_state_calculate_points_with_typical_values(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_stake_state_calculate_points_with_typical_values() {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
         // bootstrap means fully-vested stake at epoch 0 with
@@ -561,13 +560,13 @@ mod tests {
                 null_tracer(),
                 None,
                 &HashMap::new(),
-                use_fixed_point_stake_math,
+                true,
             )
         );
     }
 
-    #[test_matrix([true, false])]
-    fn test_tower_epoch_credits_iter(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_tower_epoch_credits_iter() {
         let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
         let credits = 1235;
 
@@ -586,7 +585,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
-            use_fixed_point_stake_math,
+            true,
         );
         assert_eq!(points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(new_credits, credits * 2);
@@ -605,7 +604,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
-            use_fixed_point_stake_math,
+            true,
         );
         assert_eq!(points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(new_credits, credits * 2);
@@ -625,7 +624,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
-            use_fixed_point_stake_math,
+            true,
         );
         assert_eq!(points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(new_credits, credits * 2);
@@ -636,8 +635,8 @@ mod tests {
         assert!(saw_marker);
     }
 
-    #[test_matrix([true, false])]
-    fn test_ag_epoch_credits_iter(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_ag_epoch_credits_iter() {
         let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
         let total_stake = stake_lamports * 2;
         let credits = 1235;
@@ -669,7 +668,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap();
             assert_eq!(points, 0);
@@ -687,7 +686,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap();
             if saw_marker {
@@ -719,7 +718,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
-            use_fixed_point_stake_math,
+            true,
         )
         .unwrap();
         assert_eq!(
@@ -739,7 +738,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap();
             assert_eq!(
@@ -750,8 +749,8 @@ mod tests {
         }
     }
 
-    #[test_matrix([true, false])]
-    fn test_migrating_epoch_credits_iter(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_migrating_epoch_credits_iter() {
         let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
         let total_stake = stake_lamports * 2;
         let credits = 1235;
@@ -781,7 +780,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
-            use_fixed_point_stake_math,
+            true,
         )
         .unwrap();
         assert_eq!(tower_points, credits as u128 * stake_lamports as u128 * 2);
@@ -801,7 +800,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
-            use_fixed_point_stake_math,
+            true,
         )
         .unwrap();
         assert_eq!(tower_points, credits as u128 * stake_lamports as u128);
@@ -820,7 +819,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
-            use_fixed_point_stake_math,
+            true,
         )
         .unwrap();
         assert_eq!(tower_points, 0);
@@ -831,8 +830,8 @@ mod tests {
         assert_eq!(new_credits, credits * 2);
     }
 
-    #[test_matrix([true, false])]
-    fn test_changing_total_stake(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_changing_total_stake() {
         let pubkey = Pubkey::new_unique();
         let vote_account = VoteAccount::new_random();
         let staker_delegation = LAMPORTS_PER_SOL;
@@ -890,7 +889,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
-            use_fixed_point_stake_math,
+            true,
         )
         .unwrap();
         assert_eq!(new_credits, credits * 4);
@@ -901,8 +900,8 @@ mod tests {
         assert_eq!(points, expected_points as u128);
     }
 
-    #[test_matrix([true, false])]
-    fn test_stake_activating_deactivating(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_stake_activating_deactivating() {
         let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
         let credits = 1235;
 
@@ -925,7 +924,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                use_fixed_point_stake_math,
+                true,
             );
             assert_eq!(points, credits as u128 * stake_lamports as u128);
             assert_eq!(new_credits, credits * 2);
@@ -971,7 +970,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap();
             assert_eq!(
@@ -1018,7 +1017,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap();
             if activation_epoch == 0 {

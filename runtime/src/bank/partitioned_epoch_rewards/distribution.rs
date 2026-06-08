@@ -390,7 +390,7 @@ mod tests {
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
         std::sync::Arc,
-        test_case::test_matrix,
+        test_case::test_case,
     };
 
     #[test]
@@ -674,11 +674,9 @@ mod tests {
         }
     }
 
-    #[test_matrix([true, false], [true, false])]
-    fn test_build_updated_stake_reward(
-        adjust_delegations_for_rent: bool,
-        use_fixed_point_stake_math: bool,
-    ) {
+    #[test_case(true; "adjust_delegations_for_rent")]
+    #[test_case(false; "no_adjust_delegations_for_rent")]
+    fn test_build_updated_stake_reward(adjust_delegations_for_rent: bool) {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
         // add an entry so we can get full deactivation one epoch later
@@ -732,7 +730,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap_err(),
             DistributionError::AccountNotFound
@@ -770,7 +768,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap_err(),
             DistributionError::ArithmeticOverflow
@@ -842,7 +840,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap(),
             expected_stake_reward
@@ -924,7 +922,7 @@ mod tests {
                 &partitioned_stake_reward,
                 &rent,
                 adjust_delegations_for_rent,
-                use_fixed_point_stake_math,
+                true,
             )
             .unwrap(),
             expected_stake_reward

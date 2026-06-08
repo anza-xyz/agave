@@ -203,7 +203,6 @@ mod tests {
         solana_stake_interface::state::Delegation,
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
-        test_case::test_matrix,
     };
 
     #[test]
@@ -250,8 +249,8 @@ mod tests {
         assert_eq!(expected_stake_stakes, stake_stakes);
     }
 
-    #[test_matrix([true, false])]
-    fn test_serde_stakes_to_delegation_format(use_fixed_point_stake_math: bool) {
+    #[test]
+    fn test_serde_stakes_to_delegation_format() {
         #[derive(Debug, Serialize)]
         struct SerializableDummy {
             head: String,
@@ -289,12 +288,7 @@ mod tests {
                 &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
-            stakes_cache.check_and_store(
-                &vote_pubkey,
-                &vote_account,
-                None,
-                use_fixed_point_stake_math,
-            );
+            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::free();
@@ -305,12 +299,7 @@ mod tests {
                     &rent,
                     rng.random_range(0..1_000_000), // lamports
                 );
-                stakes_cache.check_and_store(
-                    &stake_pubkey,
-                    &stake_account,
-                    None,
-                    use_fixed_point_stake_math,
-                );
+                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
             }
         }
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();
