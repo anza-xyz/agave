@@ -6,6 +6,7 @@ use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
     agave_votor_messages::consensus_message::ConsensusMessage,
+    crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
     solana_client::connection_cache::ConnectionCache,
@@ -445,7 +446,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     JoinHandle<()>,
     crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
 ) {
-    let (sender, receiver) = crossbeam_channel::unbounded();
+    let (sender, receiver) = bounded(1024);
     let cancel = CancellationToken::new();
     let stakes = validator_keys
         .iter()

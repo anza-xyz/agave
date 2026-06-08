@@ -7,7 +7,7 @@ use {
     agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     assert_matches::assert_matches,
-    crossbeam_channel::{Receiver, unbounded},
+    crossbeam_channel::{Receiver, bounded},
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
@@ -2539,8 +2539,8 @@ fn test_run_test_load_program_accounts_partition_root() {
         num_slots_per_validator,
     ]);
 
-    let (update_client_sender, update_client_receiver) = unbounded();
-    let (scan_client_sender, scan_client_receiver) = unbounded();
+    let (update_client_sender, update_client_receiver) = bounded(1024);
+    let (scan_client_sender, scan_client_receiver) = bounded(1024);
     let exit = Arc::new(AtomicBool::new(false));
 
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
@@ -2980,8 +2980,8 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
 
     let num_starting_accounts = 100;
     let exit = Arc::new(AtomicBool::new(false));
-    let (update_client_sender, update_client_receiver) = unbounded();
-    let (scan_client_sender, scan_client_receiver) = unbounded();
+    let (update_client_sender, update_client_receiver) = bounded(1024);
+    let (scan_client_sender, scan_client_receiver) = bounded(1024);
 
     // Setup the update/scan threads
     let (t_update, t_scan, starting_accounts) = setup_transfer_scan_threads(
@@ -3826,7 +3826,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     // for the partition.
     assert!(partition_node_stake < our_node_stake && partition_node_stake < good_node_stake);
 
-    let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+    let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
 
     // 1) Set up the cluster
     let (mut cluster, validator_keys) = test_faulty_node(
@@ -5371,7 +5371,7 @@ fn test_duplicate_shreds_switch_failure() {
     let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
 
     // 1) Set up the cluster
-    let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+    let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
     let validator_configs = validator_keypairs
         .into_iter()
         .map(|(validator_keys, in_genesis)| {
