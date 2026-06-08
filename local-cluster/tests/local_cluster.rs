@@ -15,6 +15,7 @@ use {
     serial_test::serial,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
+    solana_client::rpc_client::RpcClient,
     solana_client_traits::AsyncClient,
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
@@ -72,7 +73,6 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
-    solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         config::{
             RpcBlockSubscribeConfig, RpcBlockSubscribeFilter, RpcProgramAccountsConfig,
@@ -90,7 +90,10 @@ use {
         BroadcastStageType,
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
     },
-    solana_vote::{vote_parser, vote_transaction},
+    solana_vote::{
+        vote_parser::{self},
+        vote_transaction,
+    },
     solana_vote_interface::state::TowerSync,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
@@ -2585,6 +2588,7 @@ fn test_run_test_load_program_accounts_partition_root() {
         None,
         false,
         additional_accounts,
+        false,
     );
 }
 
@@ -3621,7 +3625,17 @@ fn test_fork_choice_refresh_old_votes() {
 /// locked-out survivors still converge on a rooted fork.
 #[test]
 #[serial]
-fn test_kill_heaviest_partition() {
+fn test_kill_heaviest_partition_tower() {
+    test_kill_heaviest_partition(false);
+}
+
+#[test]
+#[serial]
+fn test_kill_heaviest_partition_alpenglow() {
+    test_kill_heaviest_partition(true);
+}
+
+fn test_kill_heaviest_partition(is_alpenglow: bool) {
     // This test:
     // 1) Spins up four partitions, the heaviest being the first with more stake
     // 2) Schedules the other validators for sufficient slots in the schedule
@@ -3661,6 +3675,7 @@ fn test_kill_heaviest_partition() {
         None,
         true,
         vec![],
+        is_alpenglow,
     )
 }
 
@@ -4242,13 +4257,25 @@ fn find_latest_replayed_slot_from_ledger(
 /// Stricter fork-choice assertions are covered by separate partition tests.
 #[test]
 #[serial]
-fn test_cluster_partition() {
+fn test_cluster_partition_1_1_1() {
+    run_test_cluster_partition(3, false);
+}
+
+/// Partition/recovery test for Alpenglow
+#[test]
+#[serial]
+fn test_cluster_partition_1_1_1_alpenglow() {
+    run_test_cluster_partition(3, true);
+}
+
+fn run_test_cluster_partition(num_partitions: usize, is_alpenglow: bool) {
     let empty = |_: &mut LocalCluster, _: &mut ()| {};
     let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
         cluster.check_for_new_roots(16, "PARTITION_TEST", SocketAddrSpace::Unspecified);
     };
+    let partition_sizes = vec![1; num_partitions];
     run_cluster_partition(
-        &[1, 1, 1],
+        &partition_sizes,
         None,
         (),
         empty,
@@ -4257,6 +4284,7 @@ fn test_cluster_partition() {
         None,
         false,
         vec![],
+        is_alpenglow,
     )
 }
 
