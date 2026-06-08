@@ -430,8 +430,6 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    pipeline.add_step(default_trigger_secondary_step());
-
     Ok(pipeline)
 }
 
@@ -707,25 +705,6 @@ fn default_crate_publish_test_step() -> buildkite::Step {
         )])),
         timeout_in_minutes: Some(45),
         ..Default::default()
-    })
-}
-
-fn default_trigger_secondary_step() -> buildkite::Step {
-    buildkite::Step::Trigger(buildkite::TriggerStep {
-        name: String::from("Trigger Build on agave-secondary"),
-        trigger: String::from("agave-secondary"),
-        branches: vec![String::from("!pull/*")],
-        is_async: Some(true),
-        soft_fail: Some(true),
-        build: Some(buildkite::Build {
-            message: Some(String::from("${BUILDKITE_MESSAGE}")),
-            commit: Some(String::from("${BUILDKITE_COMMIT}")),
-            branch: Some(String::from("${BUILDKITE_BRANCH}")),
-            env: Some(HashMap::from([(
-                String::from("TRIGGERED_BUILDKITE_TAG"),
-                String::from("${BUILDKITE_TAG}"),
-            )])),
-        }),
     })
 }
 
