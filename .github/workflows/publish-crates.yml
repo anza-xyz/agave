@@ -77,12 +77,7 @@ jobs:
             -v "${PWD}:/solana" -w /solana \
             "${DOCKER_IMAGE}" \
             cargo xtask publish order --format json)
-          layers=$(python3 -c "
-          import json, sys
-          data = json.loads(sys.argv[1])
-          stripped = [[{'name': c['name']} for c in level] for level in data]
-          print(json.dumps(stripped))
-          " "${raw}")
+          layers=$(jq -c 'map(map({name}))' <<<"${raw}")
           echo "layers=${layers}" >> "${GITHUB_OUTPUT}"
 
       # `cargo package` verifies by default: it builds each crate in a clean temp dir,
@@ -166,8 +161,4 @@ jobs:
         run: |
           set -euo pipefail
           export CRATE_VERSION="${REF_NAME#v}"
-          python3 -c "
-          import json, os
-          for c in json.loads(os.environ['LAYER_CRATES']):
-              print(c['name'])
-          " | ci/publish-crates-layer.sh
+          jq -r '.[].name' <<<"${LAYER_CRATES}" | ci/publish-crates-layer.sh

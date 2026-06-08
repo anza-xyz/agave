@@ -21,17 +21,17 @@ cd "$(dirname "$0")/.."
 is_published() {
   local name=$1 version=$2
   # crates.io API docs require a user-agent header: https://crates.io/data-access#api
+  # A missing version 404s (curl -f fails); a present one returns a "version" object.
   curl -fsSL \
     --user-agent 'Anza (https://github.com/anza-xyz/agave)' \
     "https://crates.io/api/v1/crates/${name}/${version}" 2>/dev/null \
-    | python3 -c "import sys,json; print('version' in json.load(sys.stdin))" \
-    || echo "False"
+    | jq -e 'has("version")' >/dev/null 2>&1
 }
 
 while IFS= read -r crate_name; do
   [[ -z "${crate_name}" ]] && continue
 
-  if [[ "$(is_published "${crate_name}" "${CRATE_VERSION}")" == "True" ]]; then
+  if is_published "${crate_name}" "${CRATE_VERSION}"; then
     echo "${crate_name} ${CRATE_VERSION} already on crates.io, skipping"
     continue
   fi
