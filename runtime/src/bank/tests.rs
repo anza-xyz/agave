@@ -12378,7 +12378,7 @@ fn test_new_for_txn_tests_system_transfer() {
         ),
         (
             solana_sdk_ids::sysvar::slot_hashes::id(),
-            make_sysvar(bincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
+            make_sysvar(wincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
         ),
         (system_program::id(), {
             let mut acct = AccountSharedData::new(1, 14, &native_loader::id());
@@ -12551,7 +12551,7 @@ fn test_new_for_block_tests_with_vote_account() {
         ),
         (
             solana_sdk_ids::sysvar::slot_hashes::id(),
-            make_sysvar(bincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
+            make_sysvar(wincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
         ),
         (system_program::id(), {
             let mut acct = AccountSharedData::new(1, 14, &native_loader::id());

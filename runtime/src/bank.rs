@@ -2546,7 +2546,7 @@ impl Bank {
         self.update_sysvar_account(&sysvar::slot_hashes::id(), |account| {
             let mut slot_hashes = account
                 .as_ref()
-                .map(|account| from_account::<SlotHashes, _>(account).unwrap())
+                .map(|account| wincode::deserialize::<SlotHashes>(account.data()).unwrap())
                 .unwrap_or_default();
             slot_hashes.add(self.parent_slot, self.parent_hash);
             create_account(

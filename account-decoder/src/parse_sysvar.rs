@@ -56,16 +56,18 @@ pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, P
                 .ok()
                 .map(|rewards| SysvarAccountType::Rewards(rewards.into()))
         } else if pubkey == &sysvar::slot_hashes::id() {
-            deserialize::<SlotHashes>(data).ok().map(|slot_hashes| {
-                let slot_hashes = slot_hashes
-                    .iter()
-                    .map(|slot_hash| UiSlotHashEntry {
-                        slot: slot_hash.0,
-                        hash: slot_hash.1.to_string(),
-                    })
-                    .collect();
-                SysvarAccountType::SlotHashes(slot_hashes)
-            })
+            wincode::deserialize::<SlotHashes>(data)
+                .ok()
+                .map(|slot_hashes| {
+                    let slot_hashes = slot_hashes
+                        .iter()
+                        .map(|slot_hash| UiSlotHashEntry {
+                            slot: slot_hash.0,
+                            hash: slot_hash.1.to_string(),
+                        })
+                        .collect();
+                    SysvarAccountType::SlotHashes(slot_hashes)
+                })
         } else if pubkey == &sysvar::slot_history::id() {
             deserialize::<SlotHistory>(data).ok().map(|slot_history| {
                 SysvarAccountType::SlotHistory(UiSlotHistory {
