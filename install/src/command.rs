@@ -455,34 +455,23 @@ fn add_to_path(new_path: &str) -> bool {
 
 #[cfg(unix)]
 fn add_to_path(new_path: &str) -> bool {
-    let shell_export_string = format!("\nexport PATH=\"{new_path}:$PATH\"");
+    let home_dir = dirs_next::home_dir();
+    let shell = std::env::var("SHELL").ok();
+    let zdotdir = std::env::var("ZDOTDIR").ok().map(PathBuf::from);
+    let xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok().map(PathBuf::from);
+    let path_config = unix_shell_path_config(
+        new_path,
+        home_dir.as_deref(),
+        shell.as_deref(),
+        zdotdir.as_deref(),
+        xdg_config_home.as_deref(),
+    );
+    let shell_export_string = path_config.command;
     let mut modified_rcfiles = false;
 
-    // Look for sh, bash, and zsh rc files
-    let mut rcfiles = vec![dirs_next::home_dir().map(|p| p.join(".profile"))];
-    if let Ok(shell) = std::env::var("SHELL") {
-        if shell.contains("zsh") {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .ok()
-                .map(PathBuf::from)
-                .or_else(dirs_next::home_dir);
-            let zprofile = zdotdir.map(|p| p.join(".zprofile"));
-            rcfiles.push(zprofile);
-        }
-    }
-
-    if let Some(bash_profile) = dirs_next::home_dir().map(|p| p.join(".bash_profile")) {
-        // Only update .bash_profile if it exists because creating .bash_profile
-        // will cause .profile to not be read
-        if bash_profile.exists() {
-            rcfiles.push(Some(bash_profile));
-        }
-    }
-    let rcfiles = rcfiles.into_iter().filter_map(|f| f.filter(|f| f.exists()));
-
     // For each rc file, append a PATH entry if not already present
-    for rcfile in rcfiles {
-        if !rcfile.exists() {
+    for rcfile in path_config.rcfiles {
+        if !rcfile.create && !rcfile.path.exists() {
             continue;
         }
 
@@ -493,16 +482,21 @@ fn add_to_path(new_path: &str) -> bool {
             Ok(contents)
         }
 
-        match read_file(&rcfile) {
+        let contents = if rcfile.path.exists() {
+            read_file(&rcfile.path)
+        } else {
+            Ok(String::new())
+        };
+        match contents {
             Err(err) => {
-                println!("Unable to read {rcfile:?}: {err}");
+                println!("Unable to read {:?}: {err}", rcfile.path);
             }
             Ok(contents) => {
                 if !contents.contains(&shell_export_string) {
                     println!(
                         "Adding {} to {}",
                         style(&shell_export_string).italic(),
-                        style(rcfile.to_str().unwrap()).bold()
+                        style(rcfile.path.to_str().unwrap()).bold()
                     );
 
                     fn append_file(dest: &Path, line: &str) -> io::Result<()> {
@@ -518,10 +512,22 @@ fn add_to_path(new_path: &str) -> bool {
 
                         Ok(())
                     }
-                    append_file(&rcfile, &shell_export_string).unwrap_or_else(|err| {
-                        println!("Unable to append to {rcfile:?}: {err}");
-                    });
-                    modified_rcfiles = true;
+                    if rcfile.create {
+                        if let Some(parent) = rcfile.path.parent() {
+                            if let Err(err) = fs::create_dir_all(parent) {
+                                println!("Unable to create {parent:?}: {err}");
+                                continue;
+                            }
+                        }
+                    }
+                    match append_file(&rcfile.path, &shell_export_string) {
+                        Ok(()) => {
+                            modified_rcfiles = true;
+                        }
+                        Err(err) => {
+                            println!("Unable to append to {:?}: {err}", rcfile.path);
+                        }
+                    }
                 }
             }
         }
@@ -541,6 +547,186 @@ fn add_to_path(new_path: &str) -> bool {
     }
 
     modified_rcfiles
+}
+
+#[cfg(unix)]
+struct UnixShellPathConfig {
+    command: String,
+    rcfiles: Vec<UnixShellRcFile>,
+}
+
+#[cfg(unix)]
+struct UnixShellRcFile {
+    path: PathBuf,
+    create: bool,
+}
+
+#[cfg(unix)]
+fn unix_shell_name(shell: Option<&str>) -> Option<&str> {
+    shell.and_then(|shell| Path::new(shell).file_name()?.to_str())
+}
+
+#[cfg(unix)]
+fn unix_shell_path_config(
+    new_path: &str,
+    home_dir: Option<&Path>,
+    shell: Option<&str>,
+    zdotdir: Option<&Path>,
+    xdg_config_home: Option<&Path>,
+) -> UnixShellPathConfig {
+    let Some(home_dir) = home_dir else {
+        return UnixShellPathConfig {
+            command: format!("\nexport PATH=\"{new_path}:$PATH\""),
+            rcfiles: Vec::new(),
+        };
+    };
+
+    match unix_shell_name(shell) {
+        Some("fish") => {
+            let config_dir = xdg_config_home
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| home_dir.join(".config"));
+            UnixShellPathConfig {
+                command: format!(
+                    "\nif not contains \"{new_path}\" $PATH\n    set -gx PATH \"{new_path}\" \
+                     $PATH\nend"
+                ),
+                rcfiles: vec![UnixShellRcFile {
+                    path: config_dir.join("fish").join("config.fish"),
+                    create: true,
+                }],
+            }
+        }
+        shell_name => {
+            let mut rcfiles = vec![UnixShellRcFile {
+                path: home_dir.join(".profile"),
+                create: false,
+            }];
+            if shell_name == Some("zsh") {
+                rcfiles.push(UnixShellRcFile {
+                    path: zdotdir.unwrap_or(home_dir).join(".zprofile"),
+                    create: false,
+                });
+            }
+            if home_dir.join(".bash_profile").exists() {
+                // Only update .bash_profile if it exists because creating .bash_profile
+                // will cause .profile to not be read
+                rcfiles.push(UnixShellRcFile {
+                    path: home_dir.join(".bash_profile"),
+                    create: false,
+                });
+            }
+
+            UnixShellPathConfig {
+                command: format!("\nexport PATH=\"{new_path}:$PATH\""),
+                rcfiles,
+            }
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use {super::*, tempfile::TempDir};
+
+    #[test]
+    fn test_unix_shell_path_config_uses_profile_for_posix_shells() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = unix_shell_path_config(
+            "/opt/agave/bin",
+            Some(temp_dir.path()),
+            Some("/bin/sh"),
+            None,
+            None,
+        );
+
+        assert_eq!(config.command, "\nexport PATH=\"/opt/agave/bin:$PATH\"");
+        assert_eq!(config.rcfiles.len(), 1);
+        assert_eq!(config.rcfiles[0].path, temp_dir.path().join(".profile"));
+        assert!(!config.rcfiles[0].create);
+    }
+
+    #[test]
+    fn test_unix_shell_path_config_uses_existing_bash_profile() {
+        let temp_dir = TempDir::new().unwrap();
+        File::create(temp_dir.path().join(".bash_profile")).unwrap();
+
+        let config = unix_shell_path_config(
+            "/opt/agave/bin",
+            Some(temp_dir.path()),
+            Some("/bin/bash"),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            config
+                .rcfiles
+                .iter()
+                .map(|rcfile| rcfile.path.strip_prefix(temp_dir.path()).unwrap())
+                .collect::<Vec<_>>(),
+            [Path::new(".profile"), Path::new(".bash_profile")]
+        );
+        assert!(config.rcfiles.iter().all(|rcfile| !rcfile.create));
+    }
+
+    #[test]
+    fn test_unix_shell_path_config_uses_zdotdir_for_zsh() {
+        let temp_dir = TempDir::new().unwrap();
+        let zdotdir = temp_dir.path().join("zsh");
+
+        let config = unix_shell_path_config(
+            "/opt/agave/bin",
+            Some(temp_dir.path()),
+            Some("/usr/local/bin/zsh"),
+            Some(&zdotdir),
+            None,
+        );
+
+        assert_eq!(
+            config
+                .rcfiles
+                .iter()
+                .map(|rcfile| rcfile.path.clone())
+                .collect::<Vec<_>>(),
+            [temp_dir.path().join(".profile"), zdotdir.join(".zprofile")]
+        );
+        assert!(config.rcfiles.iter().all(|rcfile| !rcfile.create));
+    }
+
+    #[test]
+    fn test_unix_shell_path_config_uses_fish_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_config_home = temp_dir.path().join("xdg");
+
+        let config = unix_shell_path_config(
+            "/opt/agave/bin",
+            Some(temp_dir.path()),
+            Some("/usr/bin/fish"),
+            None,
+            Some(&xdg_config_home),
+        );
+
+        assert_eq!(
+            config.command,
+            "\nif not contains \"/opt/agave/bin\" $PATH\n    set -gx PATH \"/opt/agave/bin\" \
+             $PATH\nend"
+        );
+        assert_eq!(config.rcfiles.len(), 1);
+        assert_eq!(
+            config.rcfiles[0].path,
+            xdg_config_home.join("fish").join("config.fish")
+        );
+        assert!(config.rcfiles[0].create);
+    }
+
+    #[test]
+    fn test_unix_shell_path_config_has_no_rcfiles_without_home_dir() {
+        let config = unix_shell_path_config("/opt/agave/bin", None, Some("/bin/fish"), None, None);
+
+        assert_eq!(config.command, "\nexport PATH=\"/opt/agave/bin:$PATH\"");
+        assert!(config.rcfiles.is_empty());
+    }
 }
 
 pub fn init(
