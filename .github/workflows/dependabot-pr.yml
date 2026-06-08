@@ -9,7 +9,7 @@ jobs:
   dependabot:
     timeout-minutes: 10
     runs-on: ubuntu-24.04
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.actor == 'dependabot[bot]'
     steps:
       - name: Create github app token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
