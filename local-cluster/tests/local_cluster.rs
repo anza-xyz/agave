@@ -6383,9 +6383,8 @@ fn test_alpenglow_missed_migration_entirely() {
     {
         let blockstore = Blockstore::open(&exit_info.info.ledger_path).unwrap();
         let end_slot = blockstore.highest_slot().unwrap().unwrap();
-        blockstore.purge_from_next_slots(start_slot, end_slot);
         blockstore
-            .purge_slots(start_slot, end_slot, PurgeType::Exact)
+            .purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)
             .unwrap();
     }
 

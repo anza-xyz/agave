@@ -11,7 +11,6 @@ use {
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit, values_t_or_exit,
     },
-    itertools::Itertools,
     log::*,
     regex::Regex,
     serde_json::json,
@@ -22,7 +21,7 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{
-            Blockstore, BlockstoreError, PurgeType,
+            Blockstore, PurgeType,
             column::{Column, ColumnName},
         },
         blockstore_options::AccessType,
@@ -457,14 +456,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                  ledger]",
             ))
             .arg(
-                Arg::with_name("batch_size")
-                    .long("batch-size")
-                    .value_name("NUM")
-                    .takes_value(true)
-                    .default_value("1000")
-                    .help("Removes at most BATCH_SIZE slots while purging in loop"),
-            )
-            .arg(
                 Arg::with_name("dead_slots_only")
                     .long("dead-slots-only")
                     .required(false)
@@ -810,7 +801,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let start_slot = value_t_or_exit!(arg_matches, "start_slot", Slot);
             let end_slot = value_t!(arg_matches, "end_slot", Slot).ok();
             let dead_slots_only = arg_matches.is_present("dead_slots_only");
-            let batch_size = value_t_or_exit!(arg_matches, "batch_size", usize);
 
             let blockstore = crate::open_blockstore(
                 &ledger_path,
@@ -836,41 +826,23 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 )));
             }
 
-            info!(
-                "Purging data from slots {} to {} ({} slots) (dead slot only: {})",
-                start_slot,
-                end_slot,
-                end_slot - start_slot,
-                dead_slots_only,
-            );
-            let purge_from_blockstore =
-                |start_slot, end_slot| -> std::result::Result<(), BlockstoreError> {
-                    blockstore.purge_from_next_slots(start_slot, end_slot);
-                    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)
-                };
             if !dead_slots_only {
-                let slots_iter = &(start_slot..=end_slot).chunks(batch_size);
-                for slots in slots_iter {
-                    let slots = slots.collect::<Vec<_>>();
-                    assert!(!slots.is_empty());
-
-                    let start_slot = *slots.first().unwrap();
-                    let end_slot = *slots.last().unwrap();
-                    info!(
-                        "Purging chunked slots from {} to {} ({} slots)",
-                        start_slot,
-                        end_slot,
-                        end_slot - start_slot
-                    );
-                    purge_from_blockstore(start_slot, end_slot)?;
-                }
+                blockstore.purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)?;
             } else {
-                let dead_slots_iter = blockstore
+                let dead_slots: Vec<_> = blockstore
                     .dead_slots_iterator(start_slot)?
-                    .take_while(|s| *s <= end_slot);
-                for dead_slot in dead_slots_iter {
+                    .take_while(|s| *s <= end_slot)
+                    .collect();
+                // Iterate the slots in reverse order so that purging does not
+                // retain an empty `SlotMeta` for dead slots that are chained to
+                // each other
+                for dead_slot in dead_slots.into_iter().rev() {
                     info!("Purging dead slot {dead_slot}");
-                    purge_from_blockstore(dead_slot, dead_slot)?;
+                    blockstore.purge_slots_cleanup_chaining(
+                        dead_slot,
+                        dead_slot,
+                        PurgeType::Exact,
+                    )?;
                 }
             }
         }
