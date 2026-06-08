@@ -85,8 +85,9 @@ jobs:
           " "${raw}")
           echo "layers=${layers}" >> "${GITHUB_OUTPUT}"
 
-      # `--verify` builds each crate in a clean temp dir, catching missing files or broken
-      # packaging before anything is uploaded. Requires the CI image for rocksdb's C deps.
+      # `cargo package` verifies by default: it builds each crate in a clean temp dir,
+      # catching missing files or broken packaging before anything is uploaded. Requires
+      # the CI image for rocksdb's C deps.
       - name: Package crates
         env:
           DOCKER_IMAGE: ${{ steps.docker.outputs.image }}
@@ -97,7 +98,7 @@ jobs:
           docker run --rm \
             -v "${PWD}:/solana" -w /solana \
             "${DOCKER_IMAGE}" \
-            cargo package --workspace --verify
+            cargo package --workspace
           find target/package -maxdepth 1 -name '*.crate' -exec cp {} target/crate-staging/ \;
 
       - name: Upload crate artifacts
