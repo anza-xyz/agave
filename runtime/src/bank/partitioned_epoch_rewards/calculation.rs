@@ -320,7 +320,11 @@ impl Bank {
                 >= distributed_lamports
                     + distributed_to_incinerator_lamports
                     + burned_lamports
-                    + total_stake_rewards_lamports
+                    + total_stake_rewards_lamports,
+            "point_value={point_value:?}, distributed_lamports={distributed_lamports}, \
+             distributed_to_incinerator_lamports={distributed_to_incinerator_lamports} \
+             burned_lamports={burned_lamports}, \
+             total_stake_rewards_lamports={total_stake_rewards_lamports}"
         );
         info!(
             "distributed reward commissions: {} out of {}, remaining {}",
