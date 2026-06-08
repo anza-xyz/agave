@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use {
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         log::*,
         solana_connection_cache::{
             client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
@@ -91,7 +91,7 @@ mod tests {
             solana_quic_client::quic_client::QuicClientConnection,
         };
         agave_logger::setup();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
         let SpawnServerResult {
@@ -172,7 +172,7 @@ mod tests {
             solana_quic_client::nonblocking::quic_client::QuicClientConnection,
         };
         agave_logger::setup();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
         let SpawnNonBlockingServerResult {
@@ -231,7 +231,7 @@ mod tests {
         agave_logger::setup();
 
         // Request Receiver
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (request_recv_socket, request_recv_cancel, keypair) = server_args();
         let SpawnServerResult {
@@ -254,7 +254,7 @@ mod tests {
         drop(request_recv_endpoints);
         // Response Receiver:
         let (response_recv_socket, response_recv_cancel, keypair2) = server_args();
-        let (sender2, receiver2) = unbounded();
+        let (sender2, receiver2) = bounded(1024);
 
         let addr = response_recv_socket.local_addr().unwrap().ip();
         let port = response_recv_socket.local_addr().unwrap().port();
@@ -343,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn test_connection_close() {
         agave_logger::setup();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
         let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
