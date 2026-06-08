@@ -32,6 +32,7 @@ use {
         consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         generated_cert_types::GeneratedCertTypes,
+        quic_client::VotorQuicClient,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
@@ -185,7 +186,7 @@ pub struct AlpenglowInitializationState {
     pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
 
     // For BLS voting service
-    pub bls_connection_cache: Arc<ConnectionCache>,
+    pub votor_quic_client: VotorQuicClient,
     pub voting_service_test_override: Option<VotingServiceOverride>,
 }
 
@@ -267,7 +268,7 @@ impl Tvu {
             cancel,
             staked_nodes,
             key_notifiers,
-            bls_connection_cache,
+            votor_quic_client,
             voting_service_test_override,
             highest_finalized,
         } = votor_init;
@@ -595,7 +596,7 @@ impl Tvu {
             bls_receiver,
             cluster_info.clone(),
             vote_history_storage,
-            bls_connection_cache,
+            votor_quic_client,
             bank_forks.clone(),
             voting_service_test_override,
         );
@@ -725,12 +726,13 @@ pub mod tests {
             create_new_tmp_ledger,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
-        solana_net_utils::SocketAddrSpace,
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{bank::Bank, bank_forks_controller::BankForksControllerHandle},
         solana_signer::Signer,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+        solana_tpu_client_next::connection_workers_scheduler::{BindTarget, StakeIdentity},
         std::{
             sync::atomic::{AtomicU64, Ordering},
             time::Duration,
@@ -799,10 +801,16 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
-        let bls_connection_cache = ConnectionCache::new_quic_for_tests(
-            "connection_cache_bls_quic",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        );
+        let cancel = CancellationToken::new();
+        let runtime = VotorQuicClient::spawn_runtime().unwrap();
+        let votor_quic_sender = VotorQuicClient::new(
+            runtime.handle().clone(),
+            BindTarget::Socket(bind_to_localhost_unique().unwrap()),
+            StakeIdentity::new(&vote_keypair),
+            cancel,
+        )
+        .unwrap()
+        .0;
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
         let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
@@ -901,7 +909,7 @@ pub mod tests {
                 cancel,
                 staked_nodes,
                 key_notifiers,
-                bls_connection_cache: Arc::new(bls_connection_cache),
+                votor_quic_client: votor_quic_sender,
                 voting_service_test_override: None,
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,

@@ -39,6 +39,7 @@ lazy-lru = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 qualifier_attr = { workspace = true }
+quinn = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -46,7 +47,6 @@ solana-bloom = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -69,16 +69,24 @@ solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
+solana-tls-utils = { workspace = true }
+solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
 wincode = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+anyhow = { workspace = true }
+clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
+libc = { workspace = true }
 rand = { workspace = true }
+solana-connection-cache = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -86,7 +94,6 @@ solana-sdk-ids = { workspace = true }
 solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
-tokio-util = { workspace = true }
 
 [lints]
 workspace = true

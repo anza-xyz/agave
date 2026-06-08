@@ -322,7 +322,7 @@ pub fn setup_endpoint(
     Ok(endpoint)
 }
 
-fn build_client_config(
+pub fn build_client_config(
     stake_identity: Option<&StakeIdentity>,
     initial_congestion_window: Option<u64>,
 ) -> ClientConfig {
