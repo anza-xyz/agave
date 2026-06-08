@@ -2532,7 +2532,7 @@ impl Bank {
         self.update_sysvar_account(&sysvar::slot_history::id(), |account| {
             let mut slot_history = account
                 .as_ref()
-                .map(|account| from_account::<SlotHistory, _>(account).unwrap())
+                .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
                 .unwrap_or_default();
             slot_history.add(self.slot());
             create_account(
@@ -2557,7 +2557,8 @@ impl Bank {
     }
 
     pub fn get_slot_history(&self) -> Option<SlotHistory> {
-        from_account(&self.get_account(&sysvar::slot_history::id())?)
+        wincode::deserialize::<SlotHistory>(self.get_account(&sysvar::slot_history::id())?.data())
+            .ok()
     }
 
     fn update_epoch_stakes(
@@ -3875,7 +3876,7 @@ impl Bank {
             let current_account = self.get_account_with_fixed_root(&slot_history_id);
             let slot_history = current_account
                 .as_ref()
-                .map(|account| from_account::<SlotHistory, _>(account).unwrap())
+                .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
                 .unwrap_or_default();
             if slot_history.check(self.slot()) == Check::Found {
                 let ancestors = Ancestors::from(self.proper_ancestors().collect::<Vec<_>>());
