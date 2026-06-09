@@ -1019,13 +1019,14 @@ pub fn output_slot(
         }
     };
 
-    let entries: Vec<&EntrySummary> = components
+    let entries: Vec<EntrySummary> = components
         .iter()
         .filter_map(|component| match component {
             ConfirmedBlockComponent::EntryBatch(entries) => Some(entries),
             ConfirmedBlockComponent::BlockMarker(_) => None,
         })
         .flatten()
+        .copied()
         .collect();
 
     if verbose_level == 0 {
@@ -1074,6 +1075,17 @@ pub fn output_slot(
             println!("  Programs:");
             output_sorted_program_ids(program_ids);
         }
+    } else if verbose_level == 2 {
+        let encoded_block = EncodedConfirmedBlock::try_from(block_contents)?;
+        let cli_block = CliBlockWithEntries {
+            encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
+                encoded_block,
+                entries,
+            )?,
+            slot,
+        };
+
+        println!("{}", output_format.formatted_string(&cli_block));
     } else {
         let encoded_block = EncodedConfirmedBlock::try_from(block_contents)?;
         let cli_block = CliBlockWithComponents {
