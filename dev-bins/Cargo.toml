@@ -51,7 +51,7 @@ itertools = "0.14.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-log = "0.4.28"
+log = "0.4.31"
 num_cpus = "1.17.0"
 pretty-hex = "0.4.2"
 prost = "0.14.3"
