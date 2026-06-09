@@ -273,18 +273,9 @@ pub fn insert_vote_and_create_bls_message(
     // Update and save the vote history
     context.vote_history.add_vote(vote);
 
-    let vote_msg = match create_vote_message(vote, context) {
-        Ok(vote_msg) => vote_msg,
-        Err(e) => {
-            handle_skippable_vote_error(e, "generate vote and push to votes")?;
-            return Ok(None);
-        }
+    let Some(vote_msg) = create_and_send_own_vote_message(vote, context)? else {
+        return Ok(None);
     };
-
-    context
-        .own_vote_sender
-        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
-        .map_err(|_| SendError(()))?;
 
     let saved_vote_history =
         SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
@@ -294,6 +285,26 @@ pub fn insert_vote_and_create_bls_message(
         vote: Arc::new(vote_msg),
         saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
     }))
+}
+
+pub(crate) fn create_and_send_own_vote_message(
+    vote: Vote,
+    context: &mut VotingContext,
+) -> Result<Option<VoteMessage>, VoteError> {
+    let vote_msg = match create_vote_message(vote, context) {
+        Ok(vote_msg) => vote_msg,
+        Err(e) => {
+            handle_skippable_vote_error(e, "generate vote message")?;
+            return Ok(None);
+        }
+    };
+
+    context
+        .own_vote_sender
+        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
+        .map_err(|_| SendError(()))?;
+
+    Ok(Some(vote_msg))
 }
 
 pub fn generate_refresh_vote_message(
