@@ -51,11 +51,6 @@ jobs:
           source ci/docker/env.sh
           echo "image=${CI_DOCKER_IMAGE}" >> "${GITHUB_OUTPUT}"
 
-      - name: Pull Docker image
-        env:
-          DOCKER_IMAGE: ${{ steps.docker.outputs.image }}
-        run: docker pull "${DOCKER_IMAGE}"
-
       # Compute publish layers from cargo xtask publish order.
       - name: Compute publish layers
         id: layers
@@ -127,11 +122,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Pull Docker image
-        env:
-          DOCKER_IMAGE: ${{ needs.package.outputs.docker_image }}
-        run: docker pull "${DOCKER_IMAGE}"
 
       # Fresh crates.io token per layer job.
       - name: Mint crates.io token
