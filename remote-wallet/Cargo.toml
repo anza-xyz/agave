@@ -15,6 +15,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 default = ["linux-static-hidraw"]
 agave-unstable-api = []
+keystone = ["dep:hex", "dep:rusb", "dep:serde_json", "dep:ur-parse-lib", "dep:ur-registry"]
 linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
 linux-shared-libusb = ["hidapi/linux-shared-libusb"]
 linux-static-hidraw = ["hidapi/linux-static-hidraw"]
@@ -23,12 +24,15 @@ linux-static-libusb = ["hidapi/linux-static-libusb"]
 [dependencies]
 console = { workspace = true }
 dialoguer = { workspace = true }
+hex = { workspace = true, optional = true }
 hidapi = { workspace = true, optional = true }
 log = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 parking_lot = { workspace = true }
+rusb = { workspace = true, optional = true }
 semver = { workspace = true }
+serde_json = { workspace = true, optional = true }
 solana-derivation-path = { workspace = true }
 solana-offchain-message = { workspace = true }
 solana-pubkey = { workspace = true, features = ["std"] }
@@ -36,6 +40,8 @@ solana-signature = { workspace = true, features = ["std"] }
 solana-signer = { workspace = true }
 thiserror = { workspace = true }
 trezor-client = { workspace = true }
+ur-parse-lib = { workspace = true, optional = true }
+ur-registry = { workspace = true, optional = true }
 uriparse = { workspace = true }
 
 [dev-dependencies]

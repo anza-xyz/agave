@@ -71,7 +71,7 @@ solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-remote-wallet = { workspace = true }
+solana-remote-wallet = { workspace = true, features = ["keystone"] }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }

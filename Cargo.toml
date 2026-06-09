@@ -322,6 +322,7 @@ reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.5"
 rts-alloc = { version = "4.0.0" }
+rusb = "0.9"
 rustls = { version = "0.23.40", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.28"
@@ -561,6 +562,8 @@ trees = "0.4.2"
 trezor-client = { version = "0.1.5", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
 unwrap_none = "0.1.2"
+ur-parse-lib = { version = "1.0.3", default-features = false, features = ["std"] }
+ur-registry = { version = "1.0.3", default-features = false, features = ["std"] }
 uriparse = "0.6.4"
 url = "2.5.8"
 winapi = "0.3.8"
