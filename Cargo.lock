@@ -449,6 +449,7 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "serde_bytes",
+ "serde_json",
  "solana-accounts-db",
  "solana-bloom",
  "solana-bls-signatures",

@@ -42,6 +42,7 @@ qualifier_attr = { workspace = true }
 quinn = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
+serde_json = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
