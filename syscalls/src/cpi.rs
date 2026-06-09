@@ -4,7 +4,7 @@ use {
     solana_program_runtime::cpi::{
         SyscallInvokeSigned, TranslatedAccount, cpi_common, translate_accounts_c,
         translate_accounts_rust, translate_instruction_c, translate_instruction_rust,
-        translate_signers_rust,
+        translate_signers,
     },
 };
 
@@ -52,7 +52,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         signers_seeds_len: u64,
         invoke_context: &InvokeContext,
     ) -> Result<Vec<Pubkey>, Error> {
-        translate_signers_rust(
+        translate_signers(
             program_id,
             signers_seeds_addr,
             signers_seeds_len,
@@ -105,7 +105,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         signers_seeds_len: u64,
         invoke_context: &InvokeContext,
     ) -> Result<Vec<Pubkey>, Error> {
-        translate_signers_rust(
+        translate_signers(
             program_id,
             signers_seeds_addr,
             signers_seeds_len,

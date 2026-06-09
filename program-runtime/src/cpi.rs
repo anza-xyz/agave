@@ -634,7 +634,7 @@ pub fn translate_accounts_rust<'a>(
     )?
 }
 
-pub fn translate_signers_rust(
+pub fn translate_signers(
     program_id: &Pubkey,
     signers_seeds_addr: u64,
     signers_seeds_len: u64,
@@ -773,51 +773,6 @@ pub fn translate_accounts_c<'a>(
             )
         },
     )?
-}
-
-pub fn translate_signers_c(
-    program_id: &Pubkey,
-    signers_seeds_addr: u64,
-    signers_seeds_len: u64,
-    invoke_context: &InvokeContext,
-) -> Result<Vec<Pubkey>, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-    if signers_seeds_len > 0 {
-        let signers_seeds = translate_slice::<VmSlice<u8>>(
-            memory_mapping,
-            signers_seeds_addr,
-            signers_seeds_len,
-            check_aligned,
-        )?;
-        if signers_seeds.len() > MAX_SIGNERS {
-            return Err(Box::new(CpiError::TooManySigners));
-        }
-        Ok(signers_seeds
-            .iter()
-            .map(|signer_seeds| {
-                let seeds = translate_slice::<VmSlice<u8>>(
-                    memory_mapping,
-                    signer_seeds.ptr(),
-                    signer_seeds.len(),
-                    check_aligned,
-                )?;
-                if seeds.len() > MAX_SEEDS {
-                    return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
-                }
-                let seeds_bytes = seeds
-                    .iter()
-                    .map(|seed| {
-                        translate_slice::<u8>(memory_mapping, seed.ptr(), seed.len(), check_aligned)
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                Pubkey::create_program_address(&seeds_bytes, program_id)
-                    .map_err(|err| Box::new(CpiError::BadSeeds(err)) as Error)
-            })
-            .collect::<Result<Vec<_>, Error>>()?)
-    } else {
-        Ok(vec![])
-    }
 }
 
 /// Call process instruction, common to both Rust and C
@@ -1919,7 +1874,7 @@ mod tests {
             ))
             .unwrap();
 
-        let signers = translate_signers_rust(&program_id, vm_addr, 1, &invoke_context).unwrap();
+        let signers = translate_signers(&program_id, vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(signers[0], derived_key);
     }
 
