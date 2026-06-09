@@ -3725,7 +3725,10 @@ pub mod rpc_full {
                             tvu: contact_info
                                 .tvu(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu: None,
+                            tpu: contact_info
+                                .tpu(Protocol::UDP)
+                                // See `new_with_external_ip` in `node.rs` for the usage of 1 as a placeholder
+                                .filter(|addr| socket_addr_space.check(addr) && addr.port() != 1),
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
