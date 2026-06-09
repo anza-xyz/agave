@@ -5,7 +5,7 @@ sidebar_label: Runtime
 pagination_label: Validator Runtime
 ---
 
-The runtime is a concurrent transaction processor. Transactions specify their data dependencies upfront and dynamic memory allocation is explicit. By separating program code from the state it operates on, the runtime is able to choreograph concurrent access. Transactions accessing only read-only accounts are executed in parallel whereas transactions accessing writable accounts are serialized. The runtime interacts with the program through an entrypoint with a well-defined interface. The data stored in an account is an opaque type, an array of bytes. The program has full control over its contents.
+The runtime is a concurrent transaction processor. Transactions specify, upfront, the full set of accounts they will access and whether each account is read-only or writable, and dynamic memory allocation is explicit. By separating program code from the state it operates on, the runtime can lock accounts and use those locks to choreograph concurrent access. Transactions whose writable account sets do not overlap, and that share only read-only accounts, may be executed in parallel; transactions that would require conflicting locks are serialized. A configurable `transaction_account_lock_limit` bounds how many accounts a single transaction may lock, preventing oversized transactions from monopolizing runtime resources. The runtime interacts with the program through an entrypoint with a well-defined interface. The data stored in an account is an opaque type, an array of bytes. The program has full control over its contents.
 
 The transaction structure specifies a list of public keys and signatures for those keys and a sequential list of instructions that will operate over the states associated with the account keys. For the transaction to be committed all the instructions must execute successfully; if any abort the whole transaction fails to commit.
 
@@ -25,7 +25,7 @@ The TVU runtime ensures that PoH verification occurs before the runtime processe
 
 ![Runtime pipeline](/img/runtime.svg)
 
-At the _execute_ stage, the loaded accounts have no data dependencies, so all the programs can be executed in parallel.
+At the _execute_ stage, the runtime has identified a set of transactions whose account locks do not conflict, so the corresponding programs can be executed in parallel.
 
 The runtime enforces the following rules:
 
