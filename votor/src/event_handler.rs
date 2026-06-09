@@ -390,7 +390,6 @@ impl EventHandler {
             }
 
             // We have observed the safe to notar condition, and can send a notar fallback vote
-            // TODO: update cert pool to check parent block id for intra window slots
             VotorEvent::SafeToNotar(block) => {
                 info!("{my_pubkey}: SafeToNotar {block:?}");
                 Self::try_skip_window(my_pubkey, block.slot, vctx, &mut votes)?;
