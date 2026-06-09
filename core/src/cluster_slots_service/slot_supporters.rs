@@ -123,7 +123,7 @@ impl SlotSupporters {
         if !same_epoch {
             let old_len = self.supporting_stakes.len();
             let new_len = index_map.len();
-            if new_len < old_len * 2 {
+            if new_len * 2 < old_len {
                 // if new length is much less than allocation, reallocate
                 self.supporting_stakes = Vec::from_iter(repeat_atomic_u64(new_len));
             } else {
@@ -162,5 +162,50 @@ impl SlotSupporters {
                 None
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_pubkey::Pubkey,
+        std::{collections::HashMap, sync::Arc},
+    };
+
+    fn make_index_map(len: usize) -> Arc<IndexMap> {
+        let mut map: IndexMap = HashMap::default();
+        for i in 0..len {
+            map.insert(Pubkey::new_unique(), i);
+        }
+        Arc::new(map)
+    }
+
+    #[test]
+    fn test_recycle_reuses_allocation_when_new_len_not_much_smaller() {
+        let total_stake: Stake = 1;
+        let index_100 = make_index_map(100);
+        let supporters = SlotSupporters::new(total_stake, index_100);
+        let mem_before = supporters.memory_usage();
+
+        let index_60 = make_index_map(60);
+        let supporters = supporters.recycle(total_stake, &index_60);
+        let mem_after = supporters.memory_usage();
+
+        assert_eq!(mem_before, mem_after);
+    }
+
+    #[test]
+    fn test_recycle_reallocates_when_new_len_much_smaller() {
+        let total_stake: Stake = 1;
+        let index_100 = make_index_map(100);
+        let supporters = SlotSupporters::new(total_stake, index_100);
+        let mem_before = supporters.memory_usage();
+
+        let index_40 = make_index_map(40);
+        let supporters = supporters.recycle(total_stake, &index_40);
+        let mem_after = supporters.memory_usage();
+
+        assert!(mem_after < mem_before);
     }
 }
