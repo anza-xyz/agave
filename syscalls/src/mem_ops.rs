@@ -180,7 +180,7 @@ unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
             // SAFETY: Caller is required to guarantee both slices are at least n-long.
             // SAFETY: Pointer is guaranteed to be dereferenceable by virtue of being derived from
             // `s2` slice.
-            s2ptr.cast::<u128>().read_unaligned()
+            s2ptr.cast::<u128>().read_unaligned().to_le()
         };
         if s1mid_value != s2mid_value {
             // It would seem that we could work with u128s directly here and leave it to LLVM to
@@ -196,10 +196,7 @@ unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
                 let w2 = (s2mid_value >> 64) as u64;
                 (w1, w2)
             };
-            let shift = cfg_select! {
-                target_endian = "little" => (s1_word ^ s2_word).trailing_zeros() & !7,
-                target_endian = "big" => (63 - (s1_word ^ s2_word).leading_zeros()) & !7,
-            };
+            let shift = (s1_word ^ s2_word).trailing_zeros() & !7;
             let b1 = (s1_word >> shift) as u8;
             let b2 = (s2_word >> shift) as u8;
             return i32::from(b1).wrapping_sub(b2.into());
