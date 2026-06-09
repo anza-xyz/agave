@@ -248,20 +248,29 @@ impl VoteWorker {
                 continue;
             };
 
+            let (process_transactions_summary, process_packets_transactions_us) =
+                measure_us!(self.process_packets_transactions(
+                    bank,
+                    std::slice::from_ref(&sanitized_transaction),
+                    banking_stage_stats,
+                    slot_metrics_tracker,
+                ));
+            slot_metrics_tracker
+                .increment_process_packets_transactions_us(process_packets_transactions_us);
+
             let ProcessTransactionsSummary {
                 reached_max_poh_height,
                 retryable_transaction_indexes: retryable_vote_indices,
                 ..
-            } = self.do_process_packets(
-                bank,
-                std::slice::from_ref(&sanitized_transaction),
-                banking_stage_stats,
-                consumed_buffered_packets_count,
-                rebuffered_packet_count,
-                slot_metrics_tracker,
-            );
+            } = process_transactions_summary;
 
-            if !retryable_vote_indices.is_empty() {
+            let retryable_vote_count = retryable_vote_indices.len();
+            *consumed_buffered_packets_count += usize::from(retryable_vote_count == 0);
+            *rebuffered_packet_count += retryable_vote_count;
+
+            slot_metrics_tracker.increment_retryable_packets_count(retryable_vote_count as u64);
+
+            if retryable_vote_count != 0 {
                 // vote is processed one at a time, so the only valid retryable index is 0
                 assert_eq!(retryable_vote_indices.as_slice(), &[0]);
 
@@ -277,52 +286,6 @@ impl VoteWorker {
         }
 
         false
-    }
-
-    fn do_process_packets(
-        &self,
-        bank: &Bank,
-        sanitized_transactions: &[RuntimeTransactionView],
-        banking_stage_stats: &BankingStageStats,
-        consumed_buffered_packets_count: &mut usize,
-        rebuffered_packet_count: &mut usize,
-        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) -> ProcessTransactionsSummary {
-        let (process_transactions_summary, process_packets_transactions_us) =
-            measure_us!(self.process_packets_transactions(
-                bank,
-                sanitized_transactions,
-                banking_stage_stats,
-                slot_metrics_tracker,
-            ));
-
-        slot_metrics_tracker
-            .increment_process_packets_transactions_us(process_packets_transactions_us);
-
-        let ProcessTransactionsSummary {
-            ref retryable_transaction_indexes,
-            ..
-        } = process_transactions_summary;
-
-        // The difference between all transactions passed to execution and the ones that
-        // are retryable were the ones that were either:
-        // 1) Committed into the block
-        // 2) Dropped without being committed because they had some fatal error (too old,
-        // duplicate signature, etc.)
-        //
-        // Note: This assumes that every packet deserializes into one transaction!
-        *consumed_buffered_packets_count += sanitized_transactions
-            .len()
-            .saturating_sub(retryable_transaction_indexes.len());
-
-        // Out of the buffered packets just retried, collect any still unprocessed
-        // transactions in this batch
-        *rebuffered_packet_count += retryable_transaction_indexes.len();
-
-        slot_metrics_tracker
-            .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
-
-        process_transactions_summary
     }
 
     fn process_packets_transactions(
