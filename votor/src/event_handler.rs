@@ -620,12 +620,14 @@ impl EventHandler {
         my_pubkey: &Pubkey,
         vctx: &mut VotingContext,
     ) -> Result<(), VoteError> {
-        let votes = vctx
+        let root = vctx
             .vote_history
-            .votes_cast_since(vctx.vote_history.root().saturating_sub(1));
+            .root()
+            .max(vctx.sharable_banks.root().slot());
+        let votes = vctx.vote_history.votes_cast_since(root.saturating_sub(1));
         for vote in votes {
             info!("{my_pubkey}: Initializing consensus pool with restored vote {vote:?}");
-            create_and_send_own_vote_message(vote, vctx)?;
+            create_and_send_own_vote_message(vote, vctx, /* respect_wait_to_vote */ false)?;
         }
 
         Ok(())
@@ -1430,6 +1432,27 @@ mod tests {
             assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
         }
 
+        fn check_for_own_votes(&self, expected_votes: &[Vote]) {
+            let mut received_messages = Vec::with_capacity(expected_votes.len());
+            for _ in expected_votes {
+                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
+                else {
+                    panic!("expected own vote batch");
+                };
+                received_messages.extend(votes);
+            }
+
+            for expected_vote in expected_votes {
+                let expected_message = self.expected_vote_message(expected_vote);
+                let index = received_messages
+                    .iter()
+                    .position(|message| *message == expected_message)
+                    .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
+                received_messages.remove(index);
+            }
+            assert!(received_messages.is_empty());
+        }
+
         fn check_no_own_vote(&self) {
             assert_eq!(
                 self.own_vote_receiver.try_recv().err(),
@@ -2128,9 +2151,7 @@ mod tests {
         )
         .unwrap();
 
-        test_context.check_for_own_vote(&notarize_vote);
-        test_context.check_for_own_vote(&skip_vote);
-        test_context.check_for_own_vote(&fallback_vote);
+        test_context.check_for_own_votes(&[notarize_vote, skip_vote, fallback_vote]);
         test_context.check_no_own_vote();
         assert!(test_context.bls_ops.is_empty());
         assert_eq!(
