@@ -2986,7 +2986,8 @@ pub mod rpc_minimal {
                         schedule_by_identity.retain(|k, _| *k == identity);
                     }
                     schedule_by_identity
-                }))
+                })
+                .filter(|schedule_by_identity| !schedule_by_identity.is_empty()))
         }
     }
 }
@@ -5551,7 +5552,7 @@ pub mod tests {
         );
         let result: Option<RpcLeaderSchedule> =
             parse_success_result(rpc.handle_request_sync(request));
-        let expected = Some(HashMap::default());
+        let expected = None;
         assert_eq!(result, expected);
     }
 
