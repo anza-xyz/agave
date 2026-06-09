@@ -113,6 +113,8 @@ pub enum BlockstoreError {
         block_header_parent_slot: Slot,
         shred_parent_slot: Slot,
     },
+    #[error("Block in slot {0} was aborted as leader sent an empty entry batch")]
+    BlockAborted(Slot),
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 

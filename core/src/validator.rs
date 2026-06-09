@@ -144,7 +144,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, XdpSender as TurbineXdpSender, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
@@ -1560,7 +1560,7 @@ impl Validator {
                 let (transmitter, sender) = xdp_transmit_builder.build();
                 (
                     Some(transmitter),
-                    Some(XdpSender::new(sender.clone(), src_addr)),
+                    Some(TurbineXdpSender::new(sender.clone(), src_addr)),
                     Some((sender, *src_addr.ip())),
                 )
             } else {
@@ -3113,7 +3113,10 @@ mod tests {
     #[test]
     fn test_should_require_vote_history_file() {
         use {
-            agave_votor_messages::certificate::{Certificate, CertificateType},
+            agave_votor_messages::{
+                certificate::{Certificate, CertificateType},
+                consensus_message::Block,
+            },
             solana_account::{AccountSharedData, state_traits::StateMut},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
@@ -3172,7 +3175,10 @@ mod tests {
         ));
 
         bank.set_alpenglow_genesis_certificate(&Certificate {
-            cert_type: CertificateType::Genesis(40, Hash::new_unique()),
+            cert_type: CertificateType::Genesis(Block {
+                slot: 40,
+                block_id: Hash::new_unique(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         });

@@ -87,7 +87,10 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             parent_block_id: Hash::default(),
-            parent_for_double_merkle: (Slot::MAX, Hash::default()),
+            parent_for_double_merkle: Block {
+                slot: Slot::MAX,
+                block_id: Hash::default(),
+            },
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
             carryover_entry: None,
@@ -162,7 +165,10 @@ impl StandardBroadcastRun {
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
         self.parent_block_id = parent_block_id;
-        self.parent_for_double_merkle = (bank.parent_slot(), parent_block_id);
+        self.parent_for_double_merkle = Block {
+            slot: bank.parent_slot(),
+            block_id: parent_block_id,
+        };
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
         self.next_shred_index = 0u32;
@@ -279,10 +285,10 @@ impl StandardBroadcastRun {
             return;
         };
         let parent_for_double_merkle = match update_parent {
-            VersionedUpdateParent::V1(update_parent) => (
-                update_parent.new_parent_slot,
-                update_parent.new_parent_block_id,
-            ),
+            VersionedUpdateParent::V1(update_parent) => Block {
+                slot: update_parent.new_parent_slot,
+                block_id: update_parent.new_parent_block_id,
+            },
         };
         self.parent_for_double_merkle = parent_for_double_merkle;
     }
@@ -290,8 +296,8 @@ impl StandardBroadcastRun {
     /// Leaf that binds the current replay parent into the double-merkle block id.
     fn parent_info_leaf(&self, fec_set_count: u32) -> Hash {
         hashv(&[
-            &self.parent_for_double_merkle.0.to_le_bytes(),
-            self.parent_for_double_merkle.1.as_bytes(),
+            &self.parent_for_double_merkle.slot.to_le_bytes(),
+            self.parent_for_double_merkle.block_id.as_bytes(),
             &fec_set_count.to_le_bytes(),
         ])
     }
@@ -676,7 +682,12 @@ mod test {
             shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_runtime::bank::Bank,
+        solana_pubkey::Pubkey,
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            genesis_utils::{activate_feature, deactivate_features},
+            slot_params::{slot_time_feature_gates, slot_time_feature_ids},
+        },
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
         test_case::test_case,
@@ -738,6 +749,65 @@ mod test {
 
     fn test_leader_schedule_cache(bank: &Bank) -> Arc<LeaderScheduleCache> {
         Arc::new(LeaderScheduleCache::new_from_bank(bank))
+    }
+
+    fn broadcast_shred_limits_for_slot_time_features(
+        feature_ids: impl IntoIterator<Item = Pubkey>,
+    ) -> (u32, u32) {
+        let ledger_path = get_tmp_ledger_path!();
+        let blockstore = Arc::new(
+            Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger"),
+        );
+        let mut genesis_config = create_genesis_config(10_000).genesis_config;
+        let slot_time_features = slot_time_feature_ids().to_vec();
+        deactivate_features(&mut genesis_config, &slot_time_features);
+        for feature_id in feature_ids {
+            activate_feature(&mut genesis_config, feature_id);
+        }
+
+        let (parent_bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        parent_bank.set_tick_height(parent_bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&parent_bank);
+
+        let effective_slot = parent_bank.epoch_schedule().get_first_slot_in_epoch(1);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            parent_bank,
+            SlotLeader::default(),
+            effective_slot,
+        );
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks.clone()),
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + ticks.len() as u64,
+        };
+        let (socket_sender, _socket_receiver) = unbounded();
+        let (blockstore_sender, _blockstore_receiver) = unbounded();
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
+
+        standard_broadcast_run
+            .process_receive_results(
+                &Keypair::new(),
+                &blockstore,
+                &socket_sender,
+                &blockstore_sender,
+                receive_results,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap();
+
+        (
+            standard_broadcast_run.max_data_shreds_per_slot,
+            standard_broadcast_run.max_code_shreds_per_slot,
+        )
     }
 
     #[test]
@@ -1158,52 +1228,28 @@ mod test {
 
     #[test]
     fn test_update_shred_limits_from_bank() {
-        agave_logger::setup();
-        let num_shreds_per_slot = 2;
-        let (
-            blockstore,
-            genesis_config,
-            cluster_info,
-            parent_bank,
-            leader_keypair,
-            socket,
-            bank_forks,
-        ) = setup(num_shreds_per_slot);
-        let bank = new_child_bank(&parent_bank, 1);
-        let ticks = create_ticks(1, 0, genesis_config.hash());
-        let receive_results = ReceiveResults {
-            component: BlockComponent::EntryBatch(ticks),
-            bank: bank.clone(),
-            last_tick_height: bank.tick_height() + 1,
-        };
-
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
-        standard_broadcast_run.max_data_shreds_per_slot = 1;
-        standard_broadcast_run.max_code_shreds_per_slot = 1;
-        standard_broadcast_run
-            .test_process_receive_results(
-                &leader_keypair,
-                &cluster_info,
-                &socket,
-                &blockstore,
-                receive_results,
-                &bank_forks,
+        assert_eq!(
+            broadcast_shred_limits_for_slot_time_features(std::iter::empty()),
+            (
+                DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+                DEFAULT_MAX_CODE_SHREDS_PER_SLOT
             )
-            .unwrap();
-
-        assert_eq!(
-            standard_broadcast_run.max_data_shreds_per_slot,
-            bank.max_data_shreds_per_slot()
         );
+
+        for ((feature_id, _), expected_shreds_per_slot) in slot_time_feature_gates()
+            .into_iter()
+            .zip([28_672, 24_576, 20_480, 16_384])
+        {
+            assert_eq!(
+                broadcast_shred_limits_for_slot_time_features([feature_id]),
+                (expected_shreds_per_slot, expected_shreds_per_slot)
+            );
+        }
+
+        let [reduce_to_350ms, _, _, reduce_to_200ms] = slot_time_feature_ids();
         assert_eq!(
-            standard_broadcast_run.max_code_shreds_per_slot,
-            bank.max_code_shreds_per_slot()
+            broadcast_shred_limits_for_slot_time_features([reduce_to_350ms, reduce_to_200ms]),
+            (16_384, 16_384)
         );
     }
 
@@ -1260,7 +1306,10 @@ mod test {
         bs.parent = 10;
         let original_parent_block_id = Hash::new_unique();
         bs.parent_block_id = original_parent_block_id;
-        bs.parent_for_double_merkle = (bs.parent, bs.parent_block_id);
+        bs.parent_for_double_merkle = Block {
+            slot: bs.parent,
+            block_id: bs.parent_block_id,
+        };
 
         let new_parent_slot = 7;
         let new_parent_block_id = Hash::new_unique();
@@ -1286,7 +1335,10 @@ mod test {
         assert_eq!(bs.parent_block_id, original_parent_block_id);
         assert_eq!(
             bs.parent_for_double_merkle,
-            (new_parent_slot, new_parent_block_id)
+            Block {
+                slot: new_parent_slot,
+                block_id: new_parent_block_id
+            }
         );
         let fec_set_count = 3u32;
         assert_eq!(

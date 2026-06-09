@@ -29,6 +29,7 @@ extraPrimordialStakes="${20:=0}"
 tmpfsAccounts="${21:false}"
 disableQuic="${22}"
 enableUdp="${23}"
+alpenglow="${24:-false}"
 
 set +x
 
@@ -203,7 +204,15 @@ EOF
                                        "$(solana-keygen pubkey "config/validator-vote-$i.json")"
                                        "$(solana-keygen pubkey "config/validator-stake-$i.json")"
           )
+          args+=(--bootstrap-validator-bls-pubkey "$(solana-keygen bls_pubkey "config/validator-identity-$i.json")")
         done
+      fi
+
+      if $alpenglow; then
+        echo "Consensus method: Alpenglow"
+        args+=(--alpenglow)
+      else
+        echo "Consensus method: TowerBFT"
       fi
 
       multinode-demo/setup.sh "${args[@]}"

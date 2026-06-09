@@ -37,6 +37,7 @@ use {
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
+    agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -45,7 +46,6 @@ use {
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
         duplicate_shred_listener::DuplicateShredListener,
     },
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
@@ -77,7 +77,7 @@ use {
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
-    solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
+    solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
         net::UdpSocket,
@@ -143,7 +143,7 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
-    pub turbine_xdp_sender: Option<XdpSender>,
+    pub turbine_xdp_sender: Option<TurbineXdpSender>,
 }
 
 impl Default for TvuConfig {
@@ -170,7 +170,7 @@ pub struct AlpenglowInitializationState {
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     pub bank_forks_controller: Arc<dyn BankForksController>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
@@ -717,6 +717,7 @@ pub mod tests {
         },
         serial_test::serial,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
@@ -805,7 +806,13 @@ pub mod tests {
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
         let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
-        let highest_parent_ready = Arc::new(RwLock::new((0, (0, Hash::default()))));
+        let highest_parent_ready = Arc::new(RwLock::new((
+            0,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        )));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
             unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));

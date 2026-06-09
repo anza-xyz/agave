@@ -106,14 +106,20 @@ for file in "${files[@]}"; do
 
 or
 
-2. make a dummy publication.
+2. make a dummy publication to reserve the name (requires your own crates.io token).
 
-  example:
-  scripts/reserve-cratesio-package-name.sh \
-    --token <GRIMES_CRATESIO_TOKEN> \
-    lib solana-new-lib-crate
+  a) publish the placeholder crate:
 
-  see also: scripts/reserve-cratesio-package-name.sh --help
+       scripts/reserve-cratesio-package-name.sh \
+         --token <YOUR_CRATEIO_TOKEN> \
+         lib solana-new-lib-crate
+
+     see also: scripts/reserve-cratesio-package-name.sh --help
+
+  b) send a crate owner invitation to anza-team
+
+  c) once your PR is ready to merge, ping the devops team to accept the
+     invitation.
 "
     else
       ((error_count++))

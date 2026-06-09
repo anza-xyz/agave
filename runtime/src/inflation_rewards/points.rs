@@ -1,7 +1,10 @@
 //! Information about points calculation based on stake state.
 
 use {
-    crate::{alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes},
+    crate::{
+        alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes,
+        stake_delegation::delegation_effective_stake,
+    },
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     log::{error, trace},
     solana_clock::Epoch,
@@ -41,6 +44,7 @@ pub(crate) struct CalculationEnvironment<'a> {
     pub(crate) new_rate_activation_epoch: Option<Epoch>,
     pub(crate) commission_rate_in_basis_points: bool,
     pub(crate) adjust_delegations_for_rent: bool,
+    pub(crate) use_fixed_point_stake_math: bool,
 }
 
 #[derive(Debug)]
@@ -104,6 +108,7 @@ pub(crate) fn calculate_points_for_tower(
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    use_fixed_point_stake_math: bool,
 ) -> Result<u128, InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         Ok(calculate_stake_points_for_tower(
@@ -113,6 +118,7 @@ pub(crate) fn calculate_points_for_tower(
             null_tracer(),
             new_rate_activation_epoch,
             epoch_stakes,
+            use_fixed_point_stake_math,
         ))
     } else {
         Err(InstructionError::InvalidAccountData)
@@ -128,6 +134,7 @@ fn calculate_stake_points_for_tower(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    use_fixed_point_stake_math: bool,
 ) -> u128 {
     calculate_stake_points_and_credits(
         stake,
@@ -137,6 +144,7 @@ fn calculate_stake_points_for_tower(
         new_rate_activation_epoch,
         &AlpenglowEpochType::Tower,
         epoch_stakes,
+        use_fixed_point_stake_math,
     )
     .tower_points
 }
@@ -226,6 +234,7 @@ fn tower_epoch_credits_iter(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> (u128, u64, bool) {
     let mut points = 0;
     let credits_in_stake = stake.credits_observed;
@@ -244,11 +253,12 @@ fn tower_epoch_credits_iter(
             initial_epoch_credits,
             &mut new_credits_observed,
         );
-        #[allow(deprecated)]
-        let stake_amount = u128::from(stake.delegation.stake(
+        let stake_amount = u128::from(delegation_effective_stake(
+            &stake.delegation,
             epoch,
             stake_history,
             new_rate_activation_epoch,
+            use_fixed_point_stake_math,
         ));
 
         // finally calculate points for this epoch
@@ -276,6 +286,7 @@ fn ag_epoch_credits_iter(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    use_fixed_point_stake_math: bool,
 ) -> Result<(u128, u64), CalculatedStakePoints> {
     let mut points = 0;
     let credits_in_stake = stake.credits_observed;
@@ -301,11 +312,12 @@ fn ag_epoch_credits_iter(
             initial_epoch_credits,
             &mut new_credits_observed,
         );
-        #[allow(deprecated)]
-        let stake_amount = u128::from(stake.delegation.stake(
+        let stake_amount = u128::from(delegation_effective_stake(
+            &stake.delegation,
             epoch,
             stake_history,
             new_rate_activation_epoch,
+            use_fixed_point_stake_math,
         ));
 
         let earned_points = {
@@ -346,6 +358,7 @@ fn migrating_epoch_credits_iter(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    use_fixed_point_stake_math: bool,
 ) -> Result<(u128, u128, u64), CalculatedStakePoints> {
     let (tower_points, tower_new_credits_observed, saw_marker) = tower_epoch_credits_iter(
         stake,
@@ -353,6 +366,7 @@ fn migrating_epoch_credits_iter(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
+        use_fixed_point_stake_math,
     );
     let (ag_points, ag_new_credits_observed) = ag_epoch_credits_iter(
         migration_epoch,
@@ -363,6 +377,7 @@ fn migrating_epoch_credits_iter(
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
         epoch_stakes,
+        use_fixed_point_stake_math,
     )?;
 
     let new_credits_observed = tower_new_credits_observed.max(ag_new_credits_observed);
@@ -380,6 +395,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     new_rate_activation_epoch: Option<Epoch>,
     ag_epoch_type: &AlpenglowEpochType,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    use_fixed_point_stake_math: bool,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -437,6 +453,7 @@ pub(crate) fn calculate_stake_points_and_credits(
                 stake_history,
                 inflation_point_calc_tracer,
                 new_rate_activation_epoch,
+                use_fixed_point_stake_math,
             );
             (points, 0, credits)
         }
@@ -451,6 +468,7 @@ pub(crate) fn calculate_stake_points_and_credits(
                 inflation_point_calc_tracer,
                 new_rate_activation_epoch,
                 epoch_stakes,
+                use_fixed_point_stake_math,
             ) {
                 Ok(r) => r,
                 Err(e) => return e,
@@ -466,6 +484,7 @@ pub(crate) fn calculate_stake_points_and_credits(
                 inflation_point_calc_tracer,
                 new_rate_activation_epoch,
                 epoch_stakes,
+                use_fixed_point_stake_math,
             ) {
                 Ok(r) => r,
                 Err(e) => return e,
@@ -540,7 +559,8 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &HashMap::new()
+                &HashMap::new(),
+                true,
             )
         );
     }
@@ -565,6 +585,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
+            true,
         );
         assert_eq!(points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(new_credits, credits * 2);
@@ -583,6 +604,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
+            true,
         );
         assert_eq!(points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(new_credits, credits * 2);
@@ -602,6 +624,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
+            true,
         );
         assert_eq!(points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(new_credits, credits * 2);
@@ -645,6 +668,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
+                true,
             )
             .unwrap();
             assert_eq!(points, 0);
@@ -662,6 +686,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
+                true,
             )
             .unwrap();
             if saw_marker {
@@ -693,6 +718,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
+            true,
         )
         .unwrap();
         assert_eq!(
@@ -712,6 +738,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
+                true,
             )
             .unwrap();
             assert_eq!(
@@ -753,6 +780,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
+            true,
         )
         .unwrap();
         assert_eq!(tower_points, credits as u128 * stake_lamports as u128 * 2);
@@ -772,6 +800,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
+            true,
         )
         .unwrap();
         assert_eq!(tower_points, credits as u128 * stake_lamports as u128);
@@ -790,6 +819,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
+            true,
         )
         .unwrap();
         assert_eq!(tower_points, 0);
@@ -859,6 +889,7 @@ mod tests {
             null_tracer(),
             None,
             &epoch_stakes,
+            true,
         )
         .unwrap();
         assert_eq!(new_credits, credits * 4);
@@ -893,6 +924,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                true,
             );
             assert_eq!(points, credits as u128 * stake_lamports as u128);
             assert_eq!(new_credits, credits * 2);
@@ -938,6 +970,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
+                true,
             )
             .unwrap();
             assert_eq!(
@@ -984,6 +1017,7 @@ mod tests {
                 null_tracer(),
                 None,
                 &epoch_stakes,
+                true,
             )
             .unwrap();
             if activation_epoch == 0 {

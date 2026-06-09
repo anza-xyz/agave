@@ -11,11 +11,27 @@ jobs:
     runs-on: ubuntu-24.04
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
+      - name: Create github app token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - name: Set git config
+        run: |
+          git config --global user.email "49699333+dependabot[bot]@users.noreply.github.com"
+          git config --global user.name "dependabot[bot]"
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           ref: ${{ github.event.pull_request.head.ref }}
-          token: ${{ secrets.PAT }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
       - name: update code
         env:
@@ -45,8 +61,6 @@ jobs:
           if [ -z "$(git status --porcelain)" ]; then
             echo "✅ Nothing to update"
           else
-            git config user.email "49699333+dependabot[bot]@users.noreply.github.com"
-            git config user.name "dependabot[bot]"
             git add **/Cargo.toml
             git add **/Cargo.lock
             git commit -am "Update all workspaces"

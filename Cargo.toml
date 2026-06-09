@@ -305,7 +305,7 @@ proptest = "1.11"
 prost = "0.14.3"
 prost-types = "0.14.3"
 protobuf-src = "1.1.0"
-protosol = "=8.0.0"
+protosol = "=8.2.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.9"
 rand = "0.9.4"
@@ -329,7 +329,7 @@ serde_bytes = "0.11.19"
 serde_json = "1.0.150"
 serde_with = { version = "3.20.0", default-features = false }
 serde_yaml = "0.9.34"
-serial_test = "3.4.0"
+serial_test = "3.5.0"
 shaq = { version = "3.0.0" }
 shuttle = "0.7.1"
 signal-hook = "0.4.4"
@@ -344,7 +344,7 @@ solana-account-decoder = { path = "account-decoder", version = "=4.2.0-alpha.0",
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.1"
 solana-accounts-db = { path = "accounts-db", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-address = "2.6.0"
+solana-address = "2.6.1"
 solana-address-lookup-table-interface = "3.1.0"
 solana-banks-client = { path = "banks-client", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-banks-interface = { path = "banks-interface", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -390,7 +390,7 @@ solana-epoch-schedule = "3.1.0"
 solana-faucet = { path = "faucet", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
 solana-fee = { path = "fee", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-fee-calculator = "3.2.0"
+solana-fee-calculator = "3.2.1"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.4"
 solana-frozen-abi = "3.5.0"
@@ -401,7 +401,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=4.2.0-alpha.0", fea
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.1.0"
-solana-hash = "4.3.0"
+solana-hash = "4.4.0"
 solana-hash-512 = "1.1.0"
 solana-inflation = "3.1.0"
 solana-instruction = "3.4.0"
@@ -474,7 +474,7 @@ solana-sha256-hasher = "3.1.0"
 solana-sha512-hasher = "1.0.1"
 solana-short-vec = "3.2.1"
 solana-shred-version = "3.0.1"
-solana-signature = { version = "3.4.0", default-features = false }
+solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.0"
 solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.0.2"

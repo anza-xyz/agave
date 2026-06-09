@@ -1103,7 +1103,7 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor::event::VotorEventSender,
         assert_matches::assert_matches,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         serde_json::Value,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -1169,7 +1169,7 @@ mod tests {
                 },
             });
 
-            let (snapshot_request_sender, _) = unbounded();
+            let (snapshot_request_sender, _) = bounded(1024);
             let snapshot_controller = Arc::new(SnapshotController::new(
                 snapshot_request_sender.clone(),
                 SnapshotConfig::default(),
@@ -1183,7 +1183,7 @@ mod tests {
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::new()));
             let votor_event_sender = config.votor_event_sender.unwrap_or_else(|| {
-                let (votor_event_sender, _) = unbounded();
+                let (votor_event_sender, _) = bounded(1024);
                 votor_event_sender
             });
             let meta = AdminRpcRequestMetadata {
@@ -1243,7 +1243,7 @@ mod tests {
     // Bank but without validator.
     #[test]
     fn test_set_identity() {
-        let (votor_event_sender, votor_event_receiver) = unbounded();
+        let (votor_event_sender, votor_event_receiver) = bounded(1024);
         let rpc = RpcHandler::start_with_config(TestConfig {
             account_indexes: AccountSecondaryIndexes::default(),
             votor_event_sender: Some(votor_event_sender),

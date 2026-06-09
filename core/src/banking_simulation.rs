@@ -264,18 +264,16 @@ struct SimulatorLoopLogger {
 }
 
 impl SimulatorLoopLogger {
-    fn bank_costs(bank: &Bank) -> (u64, u64) {
-        bank.read_cost_tracker()
-            .map(|t| (t.block_cost(), t.vote_cost()))
-            .unwrap()
+    fn bank_cost(bank: &Bank) -> u64 {
+        bank.read_cost_tracker().map(|t| t.block_cost()).unwrap()
     }
 
     fn log_frozen_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {:?} txs: {} (frozen)",
+            "simulated bank slot+delta: {}+{}ms cost: {} fees: {:?} txs: {} (frozen)",
             bank.slot(),
             bank_elapsed.as_millis(),
-            Self::bank_costs(bank),
+            Self::bank_cost(bank),
             bank.get_collector_fee_details(),
             bank.executed_transaction_count(),
         );
@@ -283,10 +281,10 @@ impl SimulatorLoopLogger {
 
     fn log_ongoing_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {:?} txs: {} (ongoing)",
+            "simulated bank slot+delta: {}+{}ms cost: {} fees: {:?} txs: {} (ongoing)",
             bank.slot(),
             bank_elapsed.as_millis(),
-            Self::bank_costs(bank),
+            Self::bank_cost(bank),
             bank.get_collector_fee_details(),
             bank.executed_transaction_count(),
         );

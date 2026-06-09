@@ -194,11 +194,10 @@ async fn stake_rewards_from_warp() {
     let stake_history: StakeHistory = deserialize(&stake_history_account.data).unwrap();
     let clock: Clock = deserialize(&clock_account.data).unwrap();
     let stake = stake_state.stake().unwrap();
-    #[allow(deprecated)]
     let stake_activation_status =
         stake
             .delegation
-            .stake_activating_and_deactivating(clock.epoch, &stake_history, None);
+            .stake_activating_and_deactivating_v2(clock.epoch, &stake_history, None);
     assert_eq!(
         stake_activation_status,
         StakeActivationStatus::with_effective(stake.delegation.stake),

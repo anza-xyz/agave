@@ -10,7 +10,7 @@ use {
     agave_votor_messages::{
         self,
         certificate::{Certificate, CertificateType},
-        consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
     bincode::serialize,
@@ -328,7 +328,10 @@ pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
     // so we add a fake genesis certificate.
     let cert = Certificate {
-        cert_type: CertificateType::Genesis(0, Hash::default()),
+        cert_type: CertificateType::Genesis(Block {
+            slot: 0,
+            block_id: Hash::default(),
+        }),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: encode_base2(&BitVec::new()).unwrap(),
     };

@@ -70,7 +70,7 @@ impl Entry {
                 rank_map,
                 vote.rank,
                 &vote.signature,
-                notar.block_id,
+                notar.block.block_id,
                 self.max_validators,
             ),
             Vote::Skip(_) => self.skip.add_vote(rank_map, vote.rank, &vote.signature),
@@ -120,6 +120,7 @@ impl Entry {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::Block,
         solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -230,12 +231,18 @@ mod tests {
         let blockid1 = Hash::new_unique();
 
         for rank in 0..2 {
-            let notar = Vote::new_notarization_vote(slot, blockid0);
+            let notar = Vote::new_notarization_vote(Block {
+                slot,
+                block_id: blockid0,
+            });
             let vote = new_vote(notar, rank, &keypairs);
             entry.add_vote(&rank_map, &vote).unwrap();
         }
         for rank in 2..5 {
-            let notar = Vote::new_notarization_vote(slot, blockid1);
+            let notar = Vote::new_notarization_vote(Block {
+                slot,
+                block_id: blockid1,
+            });
             let vote = new_vote(notar, rank, &keypairs);
             entry.add_vote(&rank_map, &vote).unwrap();
         }

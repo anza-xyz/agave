@@ -94,6 +94,11 @@ const TPU_CHANNEL_SIZE: usize = 50_000;
 /// Chosen based on nominal voting load for a cluster with ~2000 validators + some margin.
 pub(crate) const TPU_VOTE_CHANNEL_SIZE: usize = 4_000;
 
+/// Size of the channel between the TPU forwards streamer and the fetch stage.
+/// Mirrors `TPU_CHANNEL_SIZE`; the streamer uses `try_send`, so an over-full
+/// channel drops packets (tracked via streamer metrics) rather than blocking.
+const TPU_FORWARD_CHANNEL_SIZE: usize = 50_000;
+
 pub struct Tpu {
     fetch_stage: FetchStage,
     cluster_info_vote_listener: ClusterInfoVoteListener,
@@ -173,7 +178,8 @@ impl Tpu {
         let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
         let evicting_vote_sender =
             EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
-        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
+        let (forwarded_packet_sender, forwarded_packet_receiver) =
+            bounded(TPU_FORWARD_CHANNEL_SIZE);
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),

@@ -275,7 +275,7 @@ impl Timers {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::unbounded,
+        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::bounded,
         solana_clock::DEFAULT_MS_PER_SLOT,
     };
 
@@ -331,7 +331,7 @@ mod tests {
     fn timers_progress() {
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let mut timers = Timers::new(one_micro, sender);
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
