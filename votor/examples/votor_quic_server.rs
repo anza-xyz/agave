@@ -153,37 +153,36 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     let _guard = runtime.enter();
 
-    info!("Spawning {num_peers} QUIC servers from {}...", cli.config.display());
+    info!(
+        "Spawning {num_peers} QUIC servers from {}...",
+        cli.config.display()
+    );
 
     let mut servers: Vec<ServerSlot> = Vec::with_capacity(num_peers);
     for (idx, (keypair, peer)) in keypairs.iter().zip(config.peers.iter()).enumerate() {
         let addr = SocketAddr::new(peer.ip, peer.base_port);
-        let sock = UdpSocket::bind(addr)
-            .map_err(|e| anyhow::anyhow!("peers[{idx}]: bind {addr}: {e}"))?;
+        let sock =
+            UdpSocket::bind(addr).map_err(|e| anyhow::anyhow!("peers[{idx}]: bind {addr}: {e}"))?;
         let (sender, receiver) = bounded(4096);
 
-        let (
-            SpawnNonBlockingServerResult {
-                thread: handle, ..
-            },
-            _banlist,
-        ) = spawn_simple_qos_server(
-            "votor_quic_server",
-            [QuicSocket::Kernel(sock)],
-            keypair,
-            sender,
-            staked_nodes.clone(),
-            QuicStreamerConfig {
-                max_connections_per_ipaddr_per_min: num_peers as u64 * 1000,
-                ..QuicStreamerConfig::default_for_tests()
-            },
-            SimpleQosConfig {
-                max_streams_per_second: cli.max_streams_per_second,
-                max_staked_connections: num_peers + 100,
-                max_connections_per_peer: 2,
-            },
-            cancel.clone(),
-        )?;
+        let (SpawnNonBlockingServerResult { thread: handle, .. }, _banlist) =
+            spawn_simple_qos_server(
+                "votor_quic_server",
+                [QuicSocket::Kernel(sock)],
+                keypair,
+                sender,
+                staked_nodes.clone(),
+                QuicStreamerConfig {
+                    max_connections_per_ipaddr_per_min: num_peers as u64 * 1000,
+                    ..QuicStreamerConfig::default_for_tests()
+                },
+                SimpleQosConfig {
+                    max_streams_per_second: cli.max_streams_per_second,
+                    max_staked_connections: num_peers + 100,
+                    max_connections_per_peer: 2,
+                },
+                cancel.clone(),
+            )?;
 
         servers.push(ServerSlot { handle, receiver });
 
@@ -228,8 +227,7 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 received_count.fetch_add(1, Ordering::Relaxed);
                                 if slot >= warmup_threshold {
-                                    let us =
-                                        recv_nanos.saturating_sub(send_nanos) as f64 / 1000.0;
+                                    let us = recv_nanos.saturating_sub(send_nanos) as f64 / 1000.0;
                                     local.push(us);
                                 }
                             }
