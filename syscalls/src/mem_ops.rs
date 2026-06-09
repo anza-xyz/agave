@@ -167,7 +167,7 @@ unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     for s1pre_byte in s1pre.iter().copied() {
         unsafe {
             // SAFETY: we are guaranteed to stay in bounds of a slice `s2` by virtue of both slices
-            // being no longer than `n`.
+            // containing at least `n` bytes (caller precondition.)
             let s2pre_byte = *s2ptr;
             if s1pre_byte != s2pre_byte {
                 return i32::from(s1pre_byte).wrapping_sub(s2pre_byte.into());
@@ -196,14 +196,17 @@ unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
                 let w2 = (s2mid_value >> 64) as u64;
                 (w1, w2)
             };
-            let shift = (s1_word ^ s2_word).trailing_zeros() & !7;
+            let shift = cfg_select! {
+                target_endian = "little" => (s1_word ^ s2_word).trailing_zeros() & !7,
+                target_endian = "big" => (63 - (s1_word ^ s2_word).leading_zeros()) & !7,
+            };
             let b1 = (s1_word >> shift) as u8;
             let b2 = (s2_word >> shift) as u8;
             return i32::from(b1).wrapping_sub(b2.into());
         }
         unsafe {
             // SAFETY: we are guaranteed to stay in bounds of a slice `s2` by virtue of both slices
-            // being no longer than `n`.
+            // containing at least `n` bytes (caller precondition.)
             s2ptr = s2ptr.add(std::mem::size_of::<u128>());
         }
     }
