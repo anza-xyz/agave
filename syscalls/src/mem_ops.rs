@@ -159,13 +159,62 @@ fn memmove(
 
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
-    for i in 0..n {
+    let (s1pre, s1mid, s1end) = unsafe {
+        // SAFETY: Caller is required to guarantee both slices are at least n-long.
+        s1.get_unchecked(..n).align_to::<u128>()
+    };
+    let mut s2ptr = s2.as_ptr();
+    for s1pre_byte in s1pre.iter().copied() {
         unsafe {
-            let a = *s1.get_unchecked(i);
-            let b = *s2.get_unchecked(i);
-            if a != b {
-                return (a as i32).saturating_sub(b as i32);
+            // SAFETY: we are guaranteed to stay in bounds of a slice `s2` by virtue of both slices
+            // being no longer than `n`.
+            let s2pre_byte = *s2ptr;
+            if s1pre_byte != s2pre_byte {
+                return i32::from(s1pre_byte).wrapping_sub(s2pre_byte.into());
+            }
+            s2ptr = s2ptr.add(1);
+        }
+    }
+    for s1mid_value in s1mid.iter().copied() {
+        let s2mid_value = unsafe {
+            // SAFETY: Caller is required to guarantee both slices are at least n-long.
+            // SAFETY: Pointer is guaranteed to be dereferenceable by virtue of being derived from
+            // `s2` slice.
+            s2ptr.cast::<u128>().read_unaligned()
+        };
+        if s1mid_value != s2mid_value {
+            // It would seem that we could work with u128s directly here and leave it to LLVM to
+            // figure out how to split up the operations to u64s, but it seems to produce notably
+            // worse code than splitting the u64s out manually (even _when_ these splits result in
+            // the values being re-read from "memory").
+            let (s1_word, s2_word) = if s1mid_value as u64 != s2mid_value as u64 {
+                let w1 = s1mid_value as u64;
+                let w2 = s2mid_value as u64;
+                (w1, w2)
+            } else {
+                let w1 = (s1mid_value >> 64) as u64;
+                let w2 = (s2mid_value >> 64) as u64;
+                (w1, w2)
             };
+            let shift = (s1_word ^ s2_word).trailing_zeros() & !7;
+            let b1 = (s1_word >> shift) as u8;
+            let b2 = (s2_word >> shift) as u8;
+            return i32::from(b1).wrapping_sub(b2.into());
+        }
+        unsafe {
+            // SAFETY: we are guaranteed to stay in bounds of a slice `s2` by virtue of both slices
+            // being no longer than `n`.
+            s2ptr = s2ptr.add(std::mem::size_of::<u128>());
+        }
+    }
+    for s1end_byte in s1end.iter().copied() {
+        unsafe {
+            // This is the same as the `pre` slice loop above.
+            let s2end_byte = *s2ptr;
+            if s1end_byte != s2end_byte {
+                return i32::from(s1end_byte).wrapping_sub(s2end_byte.into());
+            }
+            s2ptr = s2ptr.add(1);
         }
     }
     0
