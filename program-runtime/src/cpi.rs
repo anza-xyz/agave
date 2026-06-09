@@ -102,22 +102,6 @@ struct SolAccountInfo {
     pub executable: bool,
 }
 
-/// Rust representation of C's SolSignerSeed
-#[derive(Debug)]
-#[repr(C)]
-struct SolSignerSeedC {
-    pub addr: u64,
-    pub len: u64,
-}
-
-/// Rust representation of C's SolSignerSeeds
-#[derive(Debug)]
-#[repr(C)]
-struct SolSignerSeedsC {
-    pub addr: u64,
-    pub len: u64,
-}
-
 /// Maximum number of account info structs that can be used in a single CPI invocation
 const MAX_CPI_ACCOUNT_INFOS: usize = 255;
 
@@ -800,7 +784,7 @@ pub fn translate_signers_c(
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     if signers_seeds_len > 0 {
-        let signers_seeds = translate_slice::<SolSignerSeedsC>(
+        let signers_seeds = translate_slice::<VmSlice<u8>>(
             memory_mapping,
             signers_seeds_addr,
             signers_seeds_len,
@@ -812,10 +796,10 @@ pub fn translate_signers_c(
         Ok(signers_seeds
             .iter()
             .map(|signer_seeds| {
-                let seeds = translate_slice::<SolSignerSeedC>(
+                let seeds = translate_slice::<VmSlice<u8>>(
                     memory_mapping,
-                    signer_seeds.addr,
-                    signer_seeds.len,
+                    signer_seeds.ptr(),
+                    signer_seeds.len(),
                     check_aligned,
                 )?;
                 if seeds.len() > MAX_SEEDS {
@@ -824,7 +808,7 @@ pub fn translate_signers_c(
                 let seeds_bytes = seeds
                     .iter()
                     .map(|seed| {
-                        translate_slice::<u8>(memory_mapping, seed.addr, seed.len, check_aligned)
+                        translate_slice::<u8>(memory_mapping, seed.ptr(), seed.len(), check_aligned)
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Pubkey::create_program_address(&seeds_bytes, program_id)
