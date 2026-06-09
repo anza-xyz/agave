@@ -675,12 +675,12 @@ fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> CliPopulatedFooter
         bank_hash,
         block_producer_time_nanos,
         block_user_agent,
-        final_cert,
+        block_final_cert,
         skip_reward_cert,
         notar_reward_cert,
     } = footer;
 
-    let final_cert_log = match final_cert {
+    let final_cert_log = match block_final_cert {
         Some(cert) => {
             let slot = cert.slot;
             let block_id = cert.block_id.to_string();
