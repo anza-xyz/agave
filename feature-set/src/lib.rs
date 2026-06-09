@@ -1282,10 +1282,6 @@ pub mod relax_intrabatch_account_locks {
     solana_pubkey::declare_id!("4WeHX6QoXCCwqbSFgi6dxnB6QsPo6YApaNTH7P4MLQ99");
 }
 
-pub mod create_slashing_program {
-    solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
-}
-
 pub mod disable_partitioned_rent_collection {
     solana_pubkey::declare_id!("2B2SBNbUcr438LtGXNcJNBP2GBSxjx81F945SdSkUSfC");
 }
@@ -1304,10 +1300,6 @@ pub mod raise_block_limits_to_60m {
 
 pub mod mask_out_rent_epoch_in_vm_serialization {
     solana_pubkey::declare_id!("RENtePQcDLrAbxAsP3k8dwVcnNYQ466hi2uKvALjnXx");
-}
-
-pub mod enshrine_slashing_program {
-    solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
 }
 
 pub mod enable_extend_program_checked {
@@ -2406,10 +2398,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0083: Allow batched transactions to read/write and write/write the same accounts",
         ),
         (
-            create_slashing_program::id(),
-            "SIMD-0204: creates an enshrined slashing program",
-        ),
-        (
             disable_partitioned_rent_collection::id(),
             "SIMD-0175: Disable partitioned rent collection #4562",
         ),
@@ -2428,10 +2416,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             mask_out_rent_epoch_in_vm_serialization::id(),
             "SIMD-0267: Sets rent_epoch to a constant in the VM",
-        ),
-        (
-            enshrine_slashing_program::id(),
-            "SIMD-0204: Slashable event verification",
         ),
         (
             enable_extend_program_checked::id(),
