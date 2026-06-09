@@ -6337,6 +6337,7 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
         bank.partitioned_rewards_stake_account_stores_per_block,
         params.partitioned_epoch_rewards_stake_account_stores_per_block()
     );
+    assert_eq!(bank.vat_to_burn_per_epoch(), params.vat_to_burn_per_epoch());
     assert_eq!(
         bank.entry_bytes_budget().slot_limit(),
         params.max_entry_bytes_per_slot()
@@ -6390,6 +6391,63 @@ fn test_reduce_slot_time_features() {
         );
         assert!(bank.slot_time_reduction_active());
         assert_slot_time_bank_state(&bank, params);
+    }
+}
+
+#[test]
+fn test_vat_burn_slot_params() {
+    let voting_keypair = ValidatorVoteKeypairs::new_rand();
+    let validator_keypairs = [&voting_keypair];
+    let vote_pubkey = voting_keypair.vote_keypair.pubkey();
+
+    // Loop through slot reduction features one at a time.
+    for (slot_time_feature_id, params) in std::iter::once((None, LEGACY_SLOT_PARAMS))
+        .chain(slot_time_feature_gates().map(|(feature_id, params)| (Some(feature_id), params)))
+    {
+        // Genesis with slot reduction feature active (if applicable).
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = genesis_utils::create_genesis_config_with_vote_accounts_and_cluster_type(
+            1_000 * LAMPORTS_PER_SOL,
+            &validator_keypairs,
+            vec![minimum_vote_account_balance_for_vat(100)],
+            ClusterType::Development,
+            &FeatureSet::default(),
+            false,
+        );
+        activate_feature(&mut genesis_config, feature_set::alpenglow::id());
+        activate_feature(
+            &mut genesis_config,
+            feature_set::validator_admission_ticket::id(),
+        );
+        if let Some(feature_id) = slot_time_feature_id {
+            activate_feature(&mut genesis_config, feature_id);
+        }
+
+        // Advance forward such that feature goes effective.
+        let (parent_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank_slot = if slot_time_feature_id.is_some() {
+            parent_bank.epoch_schedule().get_first_slot_in_epoch(1)
+        } else {
+            parent_bank.slot().saturating_add(1)
+        };
+        let mut bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), bank_slot);
+        assert_eq!(bank.vat_to_burn_per_epoch(), params.vat_to_burn_per_epoch());
+
+        // Verify correct VAT amount is burned.
+        let vote_lamports_before = bank.get_balance(&vote_pubkey);
+        let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+        let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
+        let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch());
+        bank.maybe_burn_vat_from_staked_accounts(&epoch_stakes);
+        assert_eq!(
+            bank.get_balance(&vote_pubkey),
+            vote_lamports_before - params.vat_to_burn_per_epoch()
+        );
+        assert_eq!(
+            bank.get_balance(&incinerator::id()),
+            incinerator_lamports_before + params.vat_to_burn_per_epoch()
+        );
     }
 }
 
@@ -6955,6 +7013,10 @@ fn test_slot_params_use_genesis_baseline_without_features() {
     assert_eq!(
         baseline_params.partitioned_epoch_rewards_stake_account_stores_per_block(),
         stake_account_stores_per_block
+    );
+    assert_eq!(
+        baseline_params.vat_to_burn_per_epoch(),
+        DEFAULT_VAT_TO_BURN_PER_EPOCH
     );
     assert_eq!(
         bank.max_data_shreds_per_slot(),

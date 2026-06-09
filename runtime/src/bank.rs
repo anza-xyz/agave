@@ -251,9 +251,12 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 /// only the top 2000 validators by stake will be present in vote account structures.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
-/// The admission cost in lamports that is burned from the vote account of
-/// validators that are a part of the voting set
-pub const VAT_TO_BURN_PER_EPOCH: u64 = 1_600_000_000; // 1.6 SOL
+/// Default 400ms-slot Validator Admission Ticket burn amount.
+///
+/// Use this for conservative genesis/test funding defaults. Runtime VAT
+/// filtering and burns must use the bank's effective slot params instead.
+pub const DEFAULT_VAT_TO_BURN_PER_EPOCH: u64 =
+    crate::slot_params::LEGACY_SLOT_PARAMS.vat_to_burn_per_epoch();
 
 /// The off-curve account where we store the Alpenglow clock. The clock sysvar has seconds
 /// resolution while the Alpenglow clock has nanosecond resolution.
@@ -2532,7 +2535,7 @@ impl Bank {
         self.update_sysvar_account(&sysvar::slot_history::id(), |account| {
             let mut slot_history = account
                 .as_ref()
-                .map(|account| from_account::<SlotHistory, _>(account).unwrap())
+                .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
                 .unwrap_or_default();
             slot_history.add(self.slot());
             create_account(
@@ -2557,7 +2560,8 @@ impl Bank {
     }
 
     pub fn get_slot_history(&self) -> Option<SlotHistory> {
-        from_account(&self.get_account(&sysvar::slot_history::id())?)
+        wincode::deserialize::<SlotHistory>(self.get_account(&sysvar::slot_history::id())?.data())
+            .ok()
     }
 
     fn update_epoch_stakes(
@@ -2622,6 +2626,7 @@ impl Bank {
             return;
         }
 
+        let vat_to_burn_per_epoch = self.vat_to_burn_per_epoch();
         let vote_accounts = epoch_stakes.stakes().vote_accounts();
         debug_assert!(vote_accounts.len() <= 2000);
         // +1 for the incinerator account
@@ -2633,11 +2638,11 @@ impl Bank {
         // accounts with non-zero stake and sufficient balance.
         for (vote_pubkey, _stake) in vote_accounts.delegated_stakes() {
             let mut account = self.get_account(vote_pubkey).unwrap();
-            total_vat += VAT_TO_BURN_PER_EPOCH;
+            total_vat += vat_to_burn_per_epoch;
             account.set_lamports(
                 account
                     .lamports()
-                    .checked_sub(VAT_TO_BURN_PER_EPOCH)
+                    .checked_sub(vat_to_burn_per_epoch)
                     .expect(
                         "Vote accounts should have already been filtered to contain enough \
                          balance for the VAT",
@@ -2797,6 +2802,11 @@ impl Bank {
     /// Returns the slot params that should be effective for this bank's slot.
     fn current_slot_params(&self) -> SlotParams {
         self.slot_params_at_slot(self.slot)
+    }
+
+    /// Returns the Validator Admission Ticket burn for this bank's slot params.
+    pub(crate) fn vat_to_burn_per_epoch(&self) -> u64 {
+        self.current_slot_params().vat_to_burn_per_epoch()
     }
 
     /// Returns the effective slot duration for `slot`.
@@ -3880,7 +3890,7 @@ impl Bank {
             let current_account = self.get_account_with_fixed_root(&slot_history_id);
             let slot_history = current_account
                 .as_ref()
-                .map(|account| from_account::<SlotHistory, _>(account).unwrap())
+                .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
                 .unwrap_or_default();
             if slot_history.check(self.slot()) == Check::Found {
                 let ancestors = Ancestors::from(self.proper_ancestors().collect::<Vec<_>>());
@@ -5747,7 +5757,7 @@ impl Bank {
             .epoch_stakes_from_slot(slot)
             .ok_or(CertVerifyError::MissingRankMap)?;
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        let total_stake = epoch_stakes.total_stake();
+        let total_stake = key_to_rank_map.total_stake();
 
         let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
             key_to_rank_map
@@ -6532,7 +6542,7 @@ impl Bank {
             .rent
             .minimum_balance(VoteStateV4::size_of());
         if self.feature_set.snapshot().alpenglow {
-            vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+            vote_account_rent_exempt_minimum + self.vat_to_burn_per_epoch()
         } else {
             vote_account_rent_exempt_minimum
         }

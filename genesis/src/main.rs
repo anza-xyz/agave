@@ -42,7 +42,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
-        bank::VAT_TO_BURN_PER_EPOCH,
+        bank::DEFAULT_VAT_TO_BURN_PER_EPOCH,
         genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
@@ -66,7 +66,7 @@ use {
 
 /// In order to satisfy the VAT we need to fund all vote accounts
 /// This corresponds to 100 epochs worth of VAT
-const VAT_MINIMUM_LAMPORTS: u64 = VAT_TO_BURN_PER_EPOCH * 100;
+const DEFAULT_VAT_MINIMUM_LAMPORTS: u64 = DEFAULT_VAT_TO_BURN_PER_EPOCH * 100;
 
 pub enum AccountFileFormat {
     Pubkey,
@@ -279,7 +279,7 @@ fn add_validator_accounts(
             .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         // Vote account needs enough lamports for rent exemption plus VAT
         let vote_account_lamports =
-            rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
+            rent.minimum_balance(VoteStateV4::size_of()) + DEFAULT_VAT_MINIMUM_LAMPORTS;
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
