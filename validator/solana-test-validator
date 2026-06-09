@@ -2,4 +2,12 @@
 
 here="$(dirname "$0")"
 set -x
-exec cargo run --manifest-path="$here"/Cargo.toml --bin solana-test-validator -- "$@"
+
+export RUSTFLAGS="-C force-frame-pointers=yes -C target-cpu=native"
+export CFLAGS="-g -fno-omit-frame-pointer"
+export CXXFLAGS="-g -fno-omit-frame-pointer"
+
+exec cargo run --manifest-path="$here"/Cargo.toml \
+  --bin solana-test-validator \
+  --profile release-with-debug \
+  -- "$@"
