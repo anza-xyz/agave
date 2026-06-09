@@ -146,7 +146,6 @@ pub struct BufferedReader<'a, const N: usize> {
 }
 
 impl<'a, const N: usize> BufferedReader<'a, N> {
-    #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             file_offset_of_next_read: 0,

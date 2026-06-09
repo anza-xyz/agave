@@ -15,19 +15,22 @@ usage() {
   fi
   CLIENT_OPTIONS=$(cat << EOM
 -c clientType=numClients=extraArgs - Number of clientTypes to start.  This options can be specified
-                                     more than once.  Defaults to bench-tps for all clients if not
-                                     specified.
+                                     more than once.  Defaults to transaction-bench for all clients
+                                     if not specified.
                                      Valid client types are:
                                          idle
-                                         bench-tps
+                                         transaction-bench
+                                         bench-tps (deprecated)
                                      User can optionally provide extraArgs that are transparently
                                      supplied to the client program as command line parameters.
+                                     extraArgs use the argument names of the selected client program
+                                     (solana-transaction-bench or, for bench-tps, solana-bench-tps).
                                      For example,
-                                         -c bench-tps=2="--tx_count 25000"
-                                     This will start 2 bench-tps clients, and supply "--tx_count 25000"
-                                     to the bench-tps client.
+                                         -c transaction-bench=2="--target-tps 5000 ws-leader-tracker"
+                                     This will start 2 solana-transaction-bench clients, and supply
+                                     "--target-tps 5000 ws-leader-tracker" to each of them.
 --use-unstaked-connection          - Use unstaked connection. By default, staked connection with
-                                     bootstrap node credendials is used.
+                                     bootstrap node credentials is used.
 EOM
 )
   cat <<EOF
@@ -114,7 +117,8 @@ Operate a configured testnet
                                       - Enable UDP for tpu transactions
 
    --client-type
-                                      - Specify backend client type for bench-tps. Valid options are (rpc-client|tpu-client), tpu-client is default
+                                      - Specify backend client type for the deprecated bench-tps. Valid options are (rpc-client|tpu-client), tpu-client is default.
+                                        Ignored by solana-transaction-bench, which always sends over QUIC to the TPU.
 
  sanity/start-specific options:
    -F                   - Discard validator nodes that didn't bootup successfully
@@ -323,7 +327,7 @@ startBootstrapLeader() {
          \"$internalNodesStakeLamports\" \
          \"$internalNodesLamports\" \
          $nodeIndex \
-         ${#clientIpList[@]} \"$benchTpsExtraArgs\" \
+         $numBenchTpsClients \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
          \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$maybeWarpSlot\" \
@@ -398,7 +402,7 @@ startNode() {
          \"$internalNodesStakeLamports\" \
          \"$internalNodesLamports\" \
          $nodeIndex \
-         ${#clientIpList[@]} \"$benchTpsExtraArgs\" \
+         $numBenchTpsClients \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
          \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$maybeWarpSlot\" \
@@ -421,6 +425,12 @@ startClient() {
   declare clientToRun="$2"
   declare clientIndex="$3"
 
+  # Forward the extra args that belong to the selected client program.
+  declare clientExtraArgs=$benchTpsExtraArgs
+  if [[ $clientToRun = solana-transaction-bench ]]; then
+    clientExtraArgs=$transactionBenchExtraArgs
+  fi
+
   initLogDir
   declare logFile="$netLogDir/client-$clientToRun-$ipAddress.log"
 
@@ -431,7 +441,7 @@ startClient() {
     startCommon "$ipAddress"
     ssh "${sshOptions[@]}" -f "$ipAddress" \
       "./solana/net/remote/remote-client.sh $deployMethod $entrypointIp \
-      $clientToRun \"$RUST_LOG\" \"$benchTpsExtraArgs\" $clientIndex $clientType \
+      $clientToRun \"$RUST_LOG\" \"$clientExtraArgs\" $clientIndex $clientType \
       $maybeUseUnstakedConnection"
   ) >> "$logFile" 2>&1 || {
     cat "$logFile"
@@ -441,11 +451,15 @@ startClient() {
 }
 
 startClients() {
-  for ((i=0; i < "$numClients" && i < "$numClientsRequested"; i++)) do
-    if [[ $i -lt "$numBenchTpsClients" ]]; then
-      startClient "${clientIpList[$i]}" "solana-bench-tps" "$i"
+  benchTpsIndex=0
+  for ((i=0; i < numClients && i < numClientsRequested; i++)) do
+    if [[ $i -lt $numTransactionBenchClients ]]; then
+      startClient "${clientIpList[$i]}" "solana-transaction-bench" "$i"
+    elif [[ $i -lt $((numTransactionBenchClients + numBenchTpsClients)) ]]; then
+      startClient "${clientIpList[$i]}" "solana-bench-tps" "$benchTpsIndex"
+      ((benchTpsIndex++))
     else
-      startClient "${clientIpList[$i]}" "idle"
+      startClient "${clientIpList[$i]}" "idle" "$i"
     fi
   done
 }
@@ -511,6 +525,52 @@ getNodeType() {
   exit 1
 }
 
+# solana-transaction-bench lives in the external anza-xyz/tpu-tools repository
+# and is therefore not produced by the agave build. When transaction-bench
+# clients are requested, stage the binary into the deploy artifacts so it ships
+# to the nodes alongside the agave binaries (clients fetch ~/.cargo/bin/* from
+# the entrypoint).
+stageTransactionBenchBinary() {
+  [[ $numTransactionBenchClients -gt 0 ]] || return 0
+
+  declare destDir
+  case $deployMethod in
+  local) destDir="$SOLANA_ROOT"/farf/bin ;;
+  tar)   destDir="$SOLANA_ROOT"/solana-release/bin ;;
+  *)     return 0 ;;
+  esac
+  mkdir -p "$destDir"
+
+  if [[ -x "$destDir"/solana-transaction-bench ]]; then
+    echo "solana-transaction-bench already staged in $destDir"
+    return 0
+  fi
+
+  declare src="${SOLANA_TRANSACTION_BENCH:-}"
+  if [[ -z $src ]]; then
+    src="$(command -v solana-transaction-bench || true)"
+  fi
+  if [[ -n $src && -x $src ]]; then
+    echo "Staging solana-transaction-bench from $src"
+    cp -f "$src" "$destDir"/solana-transaction-bench
+    return 0
+  fi
+
+  echo "solana-transaction-bench not found locally, installing it from crates.io"
+  declare -a cargoArgs=(install --root "$SOLANA_ROOT"/farf --locked)
+  [[ -z ${SOLANA_TRANSACTION_BENCH_VERSION:-} ]] || cargoArgs+=(--version "$SOLANA_TRANSACTION_BENCH_VERSION")
+  cargoArgs+=(solana-transaction-bench)
+  if cargo "${cargoArgs[@]}"; then
+    if [[ $destDir != "$SOLANA_ROOT"/farf/bin ]]; then
+      cp -f "$SOLANA_ROOT"/farf/bin/solana-transaction-bench "$destDir"/solana-transaction-bench
+    fi
+  else
+    echo "Warning: failed to stage solana-transaction-bench."
+    echo "         Clients will try to install it themselves at start time."
+    echo "         Alternatively set SOLANA_TRANSACTION_BENCH to a prebuilt binary path before deploying."
+  fi
+}
+
 prepareDeploy() {
   case $deployMethod in
   tar)
@@ -546,6 +606,8 @@ prepareDeploy() {
     usage "Internal error: invalid deployMethod: $deployMethod"
     ;;
   esac
+
+  stageTransactionBenchBinary
 
   if [[ -n $deployIfNewer ]]; then
     if [[ $deployMethod != tar ]]; then
@@ -764,6 +826,8 @@ nodeAddress=
 numIdleClients=0
 numBenchTpsClients=0
 benchTpsExtraArgs=
+numTransactionBenchClients=0
+transactionBenchExtraArgs=
 failOnValidatorBootupFailure=true
 genesisOptions=
 numValidatorsRequested=
@@ -992,6 +1056,10 @@ while getopts "h?T:t:o:f:rc:Fn:i:d" opt "${shortArgs[@]}"; do
           numIdleClients=$numClients
           # $extraArgs ignored for 'idle'
         ;;
+        transaction-bench)
+          numTransactionBenchClients=$numClients
+          transactionBenchExtraArgs=$extraArgs
+        ;;
         bench-tps)
           numBenchTpsClients=$numClients
           benchTpsExtraArgs=$extraArgs
@@ -1028,9 +1096,10 @@ if [[ -n $numValidatorsRequested ]]; then
 fi
 
 numClients=${#clientIpList[@]}
-numClientsRequested=$((numBenchTpsClients + numIdleClients))
+numClientsRequested=$((numTransactionBenchClients + numBenchTpsClients + numIdleClients))
 if [[ "$numClientsRequested" -eq 0 ]]; then
-  numBenchTpsClients=$numClients
+  # Default to solana-transaction-bench on every available client node.
+  numTransactionBenchClients=$numClients
   numClientsRequested=$numClients
 else
   if [[ "$numClientsRequested" -gt "$numClients" ]]; then

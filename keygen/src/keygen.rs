@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
-    bip39::{Mnemonic, MnemonicType, Seed},
+    bip39::Mnemonic,
     clap::{
         Arg, ArgAction, ArgMatches, Command, builder::ValueParser, crate_description, crate_name,
         value_parser,
@@ -570,7 +570,6 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             }
 
             let word_count = try_get_word_count(matches)?.unwrap();
-            let mnemonic_type = MnemonicType::for_word_count(word_count)?;
             let language = try_get_language(matches)?.unwrap();
 
             let silent = matches.try_contains_id("silent")?;
@@ -580,14 +579,15 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 
             let derivation_path = acquire_derivation_path(matches)?;
 
-            let mnemonic = Mnemonic::new(mnemonic_type, language);
+            let mnemonic = Mnemonic::generate_in(language, word_count)
+                .map_err(|e| format!("Unable to generate mnemonic: {e}"))?;
             let (passphrase, passphrase_message) = acquire_passphrase_and_message(matches)
                 .map_err(|err| format!("Unable to acquire passphrase: {err}"))?;
 
-            let seed = Seed::new(&mnemonic, &passphrase);
+            let seed = mnemonic.to_seed(&passphrase);
             let keypair = match derivation_path {
-                Some(_) => keypair_from_seed_and_derivation_path(seed.as_bytes(), derivation_path),
-                None => keypair_from_seed(seed.as_bytes()),
+                Some(_) => keypair_from_seed_and_derivation_path(&seed, derivation_path),
+                None => keypair_from_seed(&seed),
             }?;
 
             if let Some(outfile) = outfile {
@@ -596,7 +596,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             }
 
             if !silent {
-                let phrase: &str = mnemonic.phrase();
+                let phrase = mnemonic.to_string();
                 let divider = String::from_utf8(vec![b'='; phrase.len()]).unwrap();
                 println!(
                     "{}\npubkey: {}\n{}\nSave this seed phrase{} to recover your new \
@@ -605,7 +605,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                     keypair.pubkey(),
                     &divider,
                     passphrase_message,
-                    phrase,
+                    &phrase,
                     &divider
                 );
             }
@@ -709,7 +709,6 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             let derivation_path = acquire_derivation_path(matches)?;
 
             let word_count = try_get_word_count(matches)?.unwrap();
-            let mnemonic_type = MnemonicType::for_word_count(word_count)?;
             let language = try_get_language(matches)?.unwrap();
 
             let (passphrase, passphrase_message) = if use_mnemonic {
@@ -777,17 +776,18 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 );
                             }
                             let (keypair, phrase) = if use_mnemonic {
-                                let mnemonic = Mnemonic::new(mnemonic_type, language);
-                                let seed = Seed::new(&mnemonic, &passphrase);
+                                let mnemonic = Mnemonic::generate_in(language, word_count)
+                                    .expect("CLI word count is always a valid BIP39 length");
+                                let seed = mnemonic.to_seed(&passphrase);
                                 let keypair = match derivation_path {
                                     Some(_) => keypair_from_seed_and_derivation_path(
-                                        seed.as_bytes(),
+                                        &seed,
                                         derivation_path.clone(),
                                     ),
-                                    None => keypair_from_seed(seed.as_bytes()),
+                                    None => keypair_from_seed(&seed),
                                 }
                                 .unwrap();
-                                (keypair, mnemonic.phrase().to_string())
+                                (keypair, mnemonic.to_string())
                             } else {
                                 (Keypair::new(), "".to_string())
                             };

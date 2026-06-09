@@ -40,6 +40,9 @@ pub enum BLSOp {
     PushCertificates {
         certificates: Vec<Arc<Certificate>>,
     },
+    RefreshVotes {
+        votes: Vec<Arc<VoteMessage>>,
+    },
 }
 
 fn send_message(
@@ -239,6 +242,20 @@ impl VotingService {
                     );
                 }
             }
+            BLSOp::RefreshVotes { votes } => {
+                for vote in votes {
+                    let slot = vote.vote.slot();
+                    let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
+                    Self::broadcast_consensus_message(
+                        slot,
+                        cluster_info,
+                        &msg,
+                        connection_cache,
+                        additional_listeners,
+                        staked_validators_cache,
+                    );
+                }
+            }
         }
     }
 
@@ -341,7 +358,7 @@ mod tests {
     }))]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
-            cert_type: CertificateType::Skip(5),
+                cert_type: CertificateType::Skip(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: Vec::new(),
         })],
@@ -349,6 +366,17 @@ mod tests {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
+    }))]
+    #[test_case(BLSOp::RefreshVotes {
+        votes: vec![Arc::new(VoteMessage {
+            vote: Vote::new_skip_vote(6),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            rank: 1,
+        })],
+    }, ConsensusMessage::Vote(VoteMessage {
+        vote: Vote::new_skip_vote(6),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        rank: 1,
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();

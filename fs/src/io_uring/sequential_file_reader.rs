@@ -48,7 +48,6 @@ pub struct SequentialFileReaderBuilder<'sp> {
 }
 
 impl<'sp> SequentialFileReaderBuilder<'sp> {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             read_capacity: DEFAULT_READ_SIZE,

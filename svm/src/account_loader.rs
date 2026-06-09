@@ -321,14 +321,6 @@ impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for Accoun
     }
 }
 
-// NOTE this is a required subtrait of TransactionProcessingCallback.
-// It may make sense to break out a second subtrait just for the above two functions,
-// but this would be a nontrivial breaking change and require careful consideration.
-impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallback
-    for AccountLoader<'_, CB>
-{
-}
-
 /// Set the rent epoch to u64::MAX if the account is rent exempt.
 ///
 /// TODO: This function is used to update the rent epoch of an account. Once we
@@ -689,7 +681,7 @@ mod tests {
         },
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+        solana_svm_callback::TransactionProcessingCallback,
         solana_system_transaction::transfer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{
@@ -729,8 +721,6 @@ mod tests {
             }
         }
     }
-
-    impl InvokeContextCallback for TestCallbacks {}
 
     impl TransactionProcessingCallback for TestCallbacks {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
