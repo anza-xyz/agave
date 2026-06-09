@@ -59,6 +59,11 @@ pub struct VoteWorker {
     consumer: Consumer,
 }
 
+struct ProcessPacketsOutput {
+    retryable_transaction_indexes: Vec<usize>,
+    reached_end_of_slot: bool,
+}
+
 impl VoteWorker {
     pub fn new(
         exit: Arc<AtomicBool>,
@@ -257,15 +262,18 @@ impl VoteWorker {
                 continue;
             };
 
-            let retryable_vote_indices = self.do_process_packets(
+            let ProcessPacketsOutput {
+                retryable_transaction_indexes: retryable_vote_indices,
+                reached_end_of_slot: reached_end_of_slot_after_batch,
+            } = self.do_process_packets(
                 bank,
-                &mut reached_end_of_slot,
                 std::slice::from_ref(&sanitized_transaction),
                 banking_stage_stats,
                 consumed_buffered_packets_count,
                 rebuffered_packet_count,
                 slot_metrics_tracker,
             );
+            reached_end_of_slot = reached_end_of_slot_after_batch;
 
             if !retryable_vote_indices.is_empty() {
                 // vote is processed one at a time, so the only valid retryable index is 0
@@ -283,14 +291,12 @@ impl VoteWorker {
     fn do_process_packets(
         &self,
         bank: &Bank,
-        reached_end_of_slot: &mut bool,
         sanitized_transactions: &[RuntimeTransactionView],
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) -> Vec<usize> {
-        debug_assert!(!*reached_end_of_slot);
+    ) -> ProcessPacketsOutput {
         let (process_transactions_summary, process_packets_transactions_us) =
             measure_us!(self.process_packets_transactions(
                 bank,
@@ -308,7 +314,7 @@ impl VoteWorker {
             ..
         } = process_transactions_summary;
 
-        *reached_end_of_slot = has_reached_end_of_slot(reached_max_poh_height, bank);
+        let reached_end_of_slot = has_reached_end_of_slot(reached_max_poh_height, bank);
 
         // The difference between all transactions passed to execution and the ones that
         // are retryable were the ones that were either:
@@ -328,7 +334,10 @@ impl VoteWorker {
         slot_metrics_tracker
             .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
 
-        retryable_transaction_indexes
+        ProcessPacketsOutput {
+            retryable_transaction_indexes,
+            reached_end_of_slot,
+        }
     }
 
     fn process_packets_transactions(
