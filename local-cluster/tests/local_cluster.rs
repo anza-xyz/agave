@@ -15,7 +15,6 @@ use {
     serial_test::serial,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
-    solana_client_traits::AsyncClient,
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -34,7 +33,9 @@ use {
     solana_entry::entry::create_ticks,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_genesis_utils::open_genesis_config,
-    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
+    solana_gossip::{
+        contact_info::Protocol, crds_data::MAX_VOTES, gossip_service::discover_validators,
+    },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::{Keypair, keypair_from_seed},
@@ -53,7 +54,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
-        cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient},
+        cluster::{Cluster, ClusterValidatorInfo},
         cluster_tests,
         integration_tests::{
             AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, RUST_LOG_FILTER, SnapshotValidatorConfig,
@@ -98,6 +99,7 @@ use {
         fs,
         io::Read,
         iter,
+        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
@@ -160,7 +162,7 @@ fn test_spend_and_verify_all_nodes() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -186,12 +188,11 @@ fn test_local_cluster_signature_subscribe() {
         .unwrap();
     let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
 
-    let tx_client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
 
-    let (blockhash, _) = tx_client
-        .rpc_client()
+    let (blockhash, _) = rpc_client
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
 
@@ -212,13 +213,32 @@ fn test_local_cluster_signature_subscribe() {
     )
     .unwrap();
 
-    LocalCluster::send_transaction_with_retries(
-        &tx_client,
-        &[&cluster.funding_keypair],
-        &mut transaction,
-        5,
-    )
-    .unwrap();
+    let tpu_sender = cluster_tests::TpuSender::new();
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("test_bad_handshake: get_slot_leader");
+    let tpu_addr = rpc_client
+        .get_cluster_nodes()
+        .expect("test_bad_handshake: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)
+        .or_else(|| {
+            cluster
+                .get_contact_info(cluster.entry_point_info.pubkey())
+                .unwrap()
+                .tpu(Protocol::QUIC)
+        })
+        .expect("test_bad_handshake: leader has no QUIC TPU address");
+    tpu_sender
+        .send_transaction_with_retries(
+            tpu_addr,
+            &rpc_client,
+            &[&cluster.funding_keypair],
+            &mut transaction,
+            5,
+        )
+        .unwrap();
 
     let mut got_received_notification = false;
     loop {
@@ -324,7 +344,7 @@ fn test_forwarding() {
     cluster_tests::send_many_transactions(
         validator_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         20,
     );
@@ -369,7 +389,7 @@ fn test_restart_node() {
     cluster_tests::send_many_transactions(
         &cluster.entry_point_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         1,
     );
@@ -401,8 +421,8 @@ fn test_mainnet_beta_cluster_type() {
     .unwrap();
     assert_eq!(cluster_nodes.len(), 1);
 
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
 
     // Programs that are available at epoch 0
@@ -419,8 +439,7 @@ fn test_mainnet_beta_cluster_type() {
         assert_matches!(
             (
                 program_id,
-                client
-                    .rpc_client()
+                rpc_client
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
                     .value
@@ -434,8 +453,7 @@ fn test_mainnet_beta_cluster_type() {
         assert_eq!(
             (
                 program_id,
-                client
-                    .rpc_client()
+                rpc_client
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
                     .value
@@ -976,9 +994,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let timer = Instant::now();
     loop {
         let validator_current_slot = cluster
-            .build_validator_tpu_quic_client(&validator_identity.pubkey())
+            .build_rpc_client(&validator_identity.pubkey())
             .unwrap()
-            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::finalized())
             .unwrap();
         trace!("validator current slot: {validator_current_slot}");
@@ -1278,7 +1295,7 @@ fn test_snapshot_restart_tower() {
         2,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -1366,19 +1383,14 @@ fn test_snapshots_blockstore_floor() {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
     let mut current_slot = 0;
 
     // Let this validator run a while with repair
     let target_slot = slot_floor + 40;
     while current_slot <= target_slot {
         trace!("current_slot: {current_slot}");
-        if let Ok(slot) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-        {
+        if let Ok(slot) = rpc_client.get_slot_with_commitment(CommitmentConfig::processed()) {
             current_slot = slot;
         } else {
             continue;
@@ -1429,6 +1441,7 @@ fn test_snapshots_restart_validity() {
     let num_runs = 3;
     let mut expected_balances = HashMap::new();
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let tpu_sender = cluster_tests::TpuSender::new();
     for i in 1..num_runs {
         info!("run {i}");
         // Push transactions to one of the nodes and confirm that transactions were
@@ -1437,7 +1450,7 @@ fn test_snapshots_restart_validity() {
         let new_balances = cluster_tests::send_many_transactions(
             &cluster.entry_point_info,
             &cluster.funding_keypair,
-            &cluster.connection_cache,
+            &tpu_sender,
             10,
             10,
         );
@@ -1477,7 +1490,7 @@ fn test_snapshots_restart_validity() {
             1,
             HashSet::new(),
             SocketAddrSpace::Unspecified,
-            &cluster.connection_cache,
+            &tpu_sender,
         );
     }
 }
@@ -1498,12 +1511,11 @@ fn test_no_voting() {
         ..ClusterConfig::default()
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
     loop {
-        let last_slot = client
-            .rpc_client()
+        let last_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::processed())
             .expect("Couldn't get slot");
         if last_slot > 4 * VOTE_THRESHOLD_DEPTH as u64 {
@@ -1562,16 +1574,13 @@ fn test_optimistic_confirmation_violation_detection() {
     // so that the vote on `S-1` is definitely in gossip and optimistic confirmation is
     // detected on slot `S-1` for sure, then stop the heavier of the two
     // validators
-    let client = cluster
-        .build_validator_tpu_quic_client(&node_to_restart)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&node_to_restart).unwrap();
     let start = Instant::now();
     let target_slot = 50;
     let max_wait_time_seconds = 100;
     let mut optimistically_confirmed_slot;
     loop {
-        optimistically_confirmed_slot = client
-            .rpc_client()
+        optimistically_confirmed_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::confirmed())
             .unwrap();
 
@@ -1589,7 +1598,7 @@ fn test_optimistic_confirmation_violation_detection() {
     }
 
     info!("exiting node");
-    drop(client);
+    drop(rpc_client);
     let mut exited_validator_info = cluster.exit_node(&node_to_restart);
     info!("exiting node success");
 
@@ -1695,16 +1704,13 @@ fn test_optimistic_confirmation_violation_detection() {
         );
 
         // Wait for a root descended from `new_fork_slot` to be set.
-        let client = cluster
-            .build_validator_tpu_quic_client(&node_to_restart)
-            .unwrap();
+        let rpc_client = cluster.build_rpc_client(&node_to_restart).unwrap();
 
         info!("looking for root > {optimistically_confirmed_slot} on new fork {new_fork_slot}");
         let start = Instant::now();
         loop {
-            info!("Client connecting to: {}", client.rpc_client().url());
-            let last_root = client
-                .rpc_client()
+            info!("Client connecting to: {}", rpc_client.url());
+            let last_root = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap();
 
@@ -1779,9 +1785,7 @@ fn test_validator_saves_tower() {
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     let ledger_path = cluster
         .validators
@@ -1795,10 +1799,7 @@ fn test_validator_saves_tower() {
 
     // Wait for some votes to be generated
     loop {
-        if let Ok(slot) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-        {
+        if let Ok(slot) = rpc_client.get_slot_with_commitment(CommitmentConfig::processed()) {
             trace!("current slot: {slot}");
             if slot > 2 {
                 break;
@@ -1816,16 +1817,11 @@ fn test_validator_saves_tower() {
 
     // Restart the validator and wait for a new root
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for the first new root
     let last_replayed_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}");
             if root > 0 {
                 break root;
@@ -1847,16 +1843,11 @@ fn test_validator_saves_tower() {
         .unwrap();
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}, last_replayed_root: {last_replayed_root}");
             if root > last_replayed_root {
                 break root;
@@ -1878,16 +1869,11 @@ fn test_validator_saves_tower() {
     validator_info.config.require_tower = false;
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for another new root
     let new_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}, last tower root: {tower3_root}");
             if root > tower3_root {
                 break root;
@@ -2552,14 +2538,30 @@ fn test_run_test_load_program_accounts_partition_root() {
     );
 
     let on_partition_start = |cluster: &mut LocalCluster, _: &mut ()| {
-        let update_client = cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        let rpc_client = cluster
+            .build_rpc_client(cluster.entry_point_info.pubkey())
             .unwrap();
-        update_client_sender.send(update_client).unwrap();
-        let scan_client = cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        let leader_pubkey = rpc_client
+            .get_slot_leader()
+            .expect("on_partition_start: get_slot_leader");
+        let tpu_addr = rpc_client
+            .get_cluster_nodes()
+            .expect("on_partition_start: get_cluster_nodes")
+            .into_iter()
+            .find(|n| n.pubkey == leader_pubkey.to_string())
+            .and_then(|n| n.tpu_quic)
+            .or_else(|| {
+                cluster
+                    .get_contact_info(cluster.entry_point_info.pubkey())
+                    .unwrap()
+                    .tpu(Protocol::QUIC)
+            })
+            .expect("on_partition_start: leader has no QUIC TPU address");
+        update_client_sender.send((rpc_client, tpu_addr)).unwrap();
+        let scan_rpc_client = cluster
+            .build_rpc_client(cluster.entry_point_info.pubkey())
             .unwrap();
-        scan_client_sender.send(scan_client).unwrap();
+        scan_client_sender.send(scan_rpc_client).unwrap();
     };
 
     let on_partition_before_resolved = |_: &mut LocalCluster, _: &mut ()| {};
@@ -2645,9 +2647,15 @@ fn test_oc_bad_signatures() {
     );
 
     // 3) Start up a spy to listen for and push votes to leader TPU
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
+    let tpu_addr = cluster
+        .get_contact_info(cluster.entry_point_info.pubkey())
+        .unwrap()
+        .tpu(Protocol::QUIC)
+        .expect("test_oc_bad_signatures: entry point has no QUIC TPU address");
+    let tpu_sender = cluster_tests::TpuSender::new();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2691,8 +2699,9 @@ fn test_oc_bad_signatures() {
 
                 // Send the bad vote and expect transaction error.
                 assert_matches!(
-                    LocalCluster::send_transaction_with_retries(
-                        &client,
+                    tpu_sender.send_transaction_with_retries(
+                        tpu_addr,
+                        &rpc_client,
                         &[&node_keypair, &bad_authorized_signer_keypair],
                         &mut vote_tx,
                         5,
@@ -2854,8 +2863,8 @@ fn setup_transfer_scan_threads(
     num_starting_accounts: usize,
     exit: Arc<AtomicBool>,
     scan_commitment: CommitmentConfig,
-    update_client_receiver: Receiver<QuicTpuClient>,
-    scan_client_receiver: Receiver<QuicTpuClient>,
+    update_client_receiver: Receiver<(Arc<RpcClient>, SocketAddr)>,
+    scan_client_receiver: Receiver<Arc<RpcClient>>,
 ) -> (
     JoinHandle<()>,
     JoinHandle<()>,
@@ -2887,38 +2896,45 @@ fn setup_transfer_scan_threads(
     let t_update = Builder::new()
         .name("update".to_string())
         .spawn(move || {
-            let client = update_client_receiver.recv().unwrap();
-            loop {
-                if exit_.load(Ordering::Relaxed) {
-                    return;
-                }
-                let (blockhash, _) = client
-                    .rpc_client()
-                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                    .unwrap();
-                for i in 0..starting_keypairs_.len() {
-                    let result = client.async_transfer(
-                        1,
-                        &starting_keypairs_[i],
-                        &target_keypairs_[i].pubkey(),
-                        blockhash,
-                    );
-                    if result.is_err() {
-                        debug!("Failed in transfer for starting keypair: {result:?}");
+            let (rpc_client, tpu_addr) = update_client_receiver.recv().unwrap();
+            let tpu_sender = cluster_tests::TpuSender::new();
+            let tpu_sender_inner = tpu_sender.clone();
+            tpu_sender.with_connection(tpu_addr, move |sender| {
+                loop {
+                    if exit_.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let (blockhash, _) = rpc_client
+                        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                        .unwrap();
+                    for i in 0..starting_keypairs_.len() {
+                        let tx = system_transaction::transfer(
+                            &starting_keypairs_[i],
+                            &target_keypairs_[i].pubkey(),
+                            1,
+                            blockhash,
+                        );
+                        tpu_sender_inner.try_send_wire_transaction(
+                            sender,
+                            wincode::serialize(&tx)
+                                .expect("setup_transfer_scan_threads: serialize"),
+                        );
+                    }
+                    for i in 0..starting_keypairs_.len() {
+                        let tx = system_transaction::transfer(
+                            &target_keypairs_[i],
+                            &starting_keypairs_[i].pubkey(),
+                            1,
+                            blockhash,
+                        );
+                        tpu_sender_inner.try_send_wire_transaction(
+                            sender,
+                            wincode::serialize(&tx)
+                                .expect("setup_transfer_scan_threads: serialize"),
+                        );
                     }
                 }
-                for i in 0..starting_keypairs_.len() {
-                    let result = client.async_transfer(
-                        1,
-                        &target_keypairs_[i],
-                        &starting_keypairs_[i].pubkey(),
-                        blockhash,
-                    );
-                    if result.is_err() {
-                        debug!("Failed in transfer for starting keypair: {result:?}");
-                    }
-                }
-            }
+            });
         })
         .unwrap();
 
@@ -2934,13 +2950,12 @@ fn setup_transfer_scan_threads(
     let t_scan = Builder::new()
         .name("scan".to_string())
         .spawn(move || {
-            let client = scan_client_receiver.recv().unwrap();
+            let rpc_client = scan_client_receiver.recv().unwrap();
             loop {
                 if exit.load(Ordering::Relaxed) {
                     return;
                 }
-                if let Some(total_scan_balance) = client
-                    .rpc_client()
+                if let Some(total_scan_balance) = rpc_client
                     .get_program_ui_accounts_with_config(
                         &system_program::id(),
                         scan_commitment_config.clone(),
@@ -3013,14 +3028,28 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
-    update_client_sender.send(client).unwrap();
-    let scan_client = cluster
-        .build_validator_tpu_quic_client(&other_validator_id)
-        .unwrap();
-    scan_client_sender.send(scan_client).unwrap();
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("run_test_load_program_accounts: get_slot_leader");
+    let tpu_addr = rpc_client
+        .get_cluster_nodes()
+        .expect("run_test_load_program_accounts: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)
+        .or_else(|| {
+            cluster
+                .get_contact_info(cluster.entry_point_info.pubkey())
+                .unwrap()
+                .tpu(Protocol::QUIC)
+        })
+        .expect("run_test_load_program_accounts: leader has no QUIC TPU address");
+    update_client_sender.send((rpc_client, tpu_addr)).unwrap();
+    let scan_rpc_client = cluster.build_rpc_client(&other_validator_id).unwrap();
+    scan_client_sender.send(scan_rpc_client).unwrap();
 
     // Wait for some roots to pass
     cluster.check_for_new_roots(
@@ -4306,7 +4335,7 @@ fn test_leader_failure_4() {
             .config
             .validator_exit,
         &local.funding_keypair,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
         num_nodes,
         config.ticks_per_slot * config.poh_config.target_tick_duration.as_millis() as u64,
         SocketAddrSpace::Unspecified,
@@ -5632,7 +5661,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -5666,7 +5695,7 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -5864,7 +5893,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 
     if num_offline_nodes > 0 {
@@ -5950,7 +5979,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::send_many_transactions(
         &cluster.entry_point_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         1,
     );

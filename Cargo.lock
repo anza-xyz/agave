@@ -8896,7 +8896,6 @@ dependencies = [
  "serial_test",
  "solana-account 4.3.0",
  "solana-accounts-db",
- "solana-client",
  "solana-client-traits",
  "solana-clock",
  "solana-cluster-type",
@@ -8923,7 +8922,6 @@ dependencies = [
  "solana-program-binaries",
  "solana-pubkey 4.2.0",
  "solana-pubsub-client",
- "solana-quic-client",
  "solana-rent",
  "solana-rpc-client",
  "solana-rpc-client-api",
@@ -8938,6 +8936,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-time-utils",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
  "solana-turbine",
@@ -8948,7 +8947,9 @@ dependencies = [
  "static_assertions",
  "strum",
  "tempfile",
+ "tokio",
  "tokio-util 0.7.18",
+ "wincode",
 ]
 
 [[package]]
