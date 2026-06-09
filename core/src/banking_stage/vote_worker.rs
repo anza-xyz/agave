@@ -59,11 +59,6 @@ pub struct VoteWorker {
     consumer: Consumer,
 }
 
-struct ProcessPacketsOutput {
-    retryable_transaction_indexes: Vec<usize>,
-    reached_end_of_slot: bool,
-}
-
 impl VoteWorker {
     pub fn new(
         exit: Arc<AtomicBool>,
@@ -242,29 +237,21 @@ impl VoteWorker {
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
-        let all_vote_packets = self.storage.drain_unprocessed(bank);
-
-        let mut reached_end_of_slot = false;
+        let mut all_vote_packets = self.storage.drain_unprocessed(bank).into_iter();
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
         // Process one vote at a time to avoid over-reserving block CUs during packing.
         // This also keeps each recorded vote batch small, which favors entry/FEC-set packing.
-        for packet in all_vote_packets {
-            // Short circuit if we've reached the end of slot.
-            if reached_end_of_slot {
-                self.storage.reinsert_packets(std::iter::once(packet));
-
-                continue;
-            }
-
+        while let Some(packet) = all_vote_packets.next() {
             let Some(sanitized_transaction) =
                 consume_scan_should_process_packet(bank, packet, &mut error_counters)
             else {
                 continue;
             };
 
-            let ProcessPacketsOutput {
+            let ProcessTransactionsSummary {
+                reached_max_poh_height,
                 retryable_transaction_indexes: retryable_vote_indices,
-                reached_end_of_slot: reached_end_of_slot_after_batch,
+                ..
             } = self.do_process_packets(
                 bank,
                 std::slice::from_ref(&sanitized_transaction),
@@ -273,7 +260,6 @@ impl VoteWorker {
                 rebuffered_packet_count,
                 slot_metrics_tracker,
             );
-            reached_end_of_slot = reached_end_of_slot_after_batch;
 
             if !retryable_vote_indices.is_empty() {
                 // vote is processed one at a time, so the only valid retryable index is 0
@@ -283,9 +269,14 @@ impl VoteWorker {
                     sanitized_transaction.into_inner_transaction().into_view(),
                 ));
             }
+
+            if has_reached_end_of_slot(reached_max_poh_height, bank) {
+                self.storage.reinsert_packets(all_vote_packets);
+                return true;
+            }
         }
 
-        reached_end_of_slot
+        false
     }
 
     fn do_process_packets(
@@ -296,7 +287,7 @@ impl VoteWorker {
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) -> ProcessPacketsOutput {
+    ) -> ProcessTransactionsSummary {
         let (process_transactions_summary, process_packets_transactions_us) =
             measure_us!(self.process_packets_transactions(
                 bank,
@@ -309,12 +300,9 @@ impl VoteWorker {
             .increment_process_packets_transactions_us(process_packets_transactions_us);
 
         let ProcessTransactionsSummary {
-            reached_max_poh_height,
-            retryable_transaction_indexes,
+            ref retryable_transaction_indexes,
             ..
         } = process_transactions_summary;
-
-        let reached_end_of_slot = has_reached_end_of_slot(reached_max_poh_height, bank);
 
         // The difference between all transactions passed to execution and the ones that
         // are retryable were the ones that were either:
@@ -334,10 +322,7 @@ impl VoteWorker {
         slot_metrics_tracker
             .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
 
-        ProcessPacketsOutput {
-            retryable_transaction_indexes,
-            reached_end_of_slot,
-        }
+        process_transactions_summary
     }
 
     fn process_packets_transactions(
