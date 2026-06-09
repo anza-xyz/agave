@@ -7,6 +7,10 @@ pub(super) enum SigVerifyError {
     SigverifyVotes(#[from] SigVerifyVoteError),
     #[error("verifying certs failed with {0}")]
     SigverifyCerts(#[from] SigVerifyCertError),
+    #[error("certificate worker disconnected")]
+    CertWorkerDisconnected,
+    #[error("certificate worker failed to reply")]
+    CertWorkerReplyDisconnected,
 }
 
 /// Different types of errors that sig verifying votes can fail with.
