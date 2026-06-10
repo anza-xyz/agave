@@ -549,11 +549,11 @@ mod test {
     use {
         super::*, crate::consensus_pool::tests::create_bank_forks,
         agave_votor_messages::vote::Vote, solana_runtime::genesis_utils::ValidatorVoteKeypairs,
+        test_case::test_matrix,
     };
 
-    #[test]
-    fn test_notar_failures() {
-        let slot = 1;
+    #[test_matrix([Vote::new_skip_vote(1), Vote::new_genesis_vote(Block{slot:1, block_id:Hash::new_unique()}), Vote::new_notarization_vote(Block{slot:1, block_id:Hash::new_unique()})])]
+    fn test_notar_failures(initial_vote: Vote) {
         let rank = 123;
         let max_validators = 2048;
         let num_validators = 10;
@@ -565,65 +565,58 @@ mod test {
         let total_stake = NonZero::new(1000).unwrap();
         let completed_certs = BTreeMap::new();
 
-        let mut votes = VotePool::new(slot, max_validators);
-        let skip =
-            SigVerifiedVoteBatch::new_for_test(Vote::new_skip_vote(slot), max_validators, rank);
-        votes
-            .add_vote(&root_bank, total_stake, &skip, &completed_certs)
+        let mut vote_pool = VotePool::new(1, max_validators);
+        let initial_vote = SigVerifiedVoteBatch::new_for_test(initial_vote, max_validators, rank);
+        vote_pool
+            .add_vote(&root_bank, total_stake, &initial_vote, &completed_certs)
             .unwrap();
         let notar = SigVerifiedVoteBatch::new_for_test(
             Vote::new_notarization_vote(Block {
-                slot,
+                slot: 1,
                 block_id: Hash::new_unique(),
             }),
             max_validators,
             rank,
         );
         assert_eq!(
-            votes
+            vote_pool
                 .add_vote(&root_bank, total_stake, &notar, &completed_certs)
                 .unwrap_err(),
             VotePoolAddVoteError::Invalid
         );
+    }
 
-        let mut votes = VotePool::new(slot, max_validators);
+    #[test]
+    fn test_duplicate_notar() {
+        let rank = 123;
+        let max_validators = 2048;
+        let num_validators = 10;
+        let validator_keypairs = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let bank_forks = create_bank_forks(&validator_keypairs);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let total_stake = NonZero::new(1000).unwrap();
+        let completed_certs = BTreeMap::new();
+
+        let mut vote_pool = VotePool::new(1, max_validators);
         let notar = SigVerifiedVoteBatch::new_for_test(
             Vote::new_notarization_vote(Block {
-                slot,
+                slot: 1,
                 block_id: Hash::new_unique(),
             }),
             max_validators,
             rank,
         );
-        votes
+        vote_pool
             .add_vote(&root_bank, total_stake, &notar, &completed_certs)
             .unwrap();
-        let notar = SigVerifiedVoteBatch::new_for_test(
-            Vote::new_notarization_vote(Block {
-                slot,
-                block_id: Hash::new_unique(),
-            }),
-            max_validators,
-            rank,
-        );
         assert_eq!(
-            votes
+            vote_pool
                 .add_vote(&root_bank, total_stake, &notar, &completed_certs)
                 .unwrap_err(),
             VotePoolAddVoteError::Invalid
         );
-
-        // let mut votes = VotePool::new(slot);
-        // let notar = VoteMessage {
-        //     vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-        //     signature,
-        //     rank,
-        // };
-        // votes.add_vote(voter, notar.clone()).unwrap();
-        // assert!(matches!(
-        //     votes.add_vote(voter, notar),
-        //     Err(VotePoolAddVoteError::Duplicate)
-        // ));
     }
 
     // #[test]
