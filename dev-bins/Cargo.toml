@@ -29,6 +29,8 @@ used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
+## Due to recent switch to Rust 2024, should be removed after repo auto-fix before release cut
+collapsible_if = "allow"
 
 [workspace.dependencies]
 agave-feature-set = { path = "../feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
