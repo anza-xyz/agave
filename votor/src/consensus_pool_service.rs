@@ -173,9 +173,8 @@ impl ConsensusPoolService {
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
         match &batch {
-            SigVerifiedBatch::Votes(_votes) => {
-                // TODO: need to figure out many votes to increment stats
-                unimplemented!();
+            SigVerifiedBatch::Votes(votes) => {
+                stats.received_votes += votes.len();
             }
             SigVerifiedBatch::Certificates(certs) => {
                 stats.received_certificates += certs.len();

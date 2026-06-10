@@ -1441,25 +1441,24 @@ mod tests {
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
-            unimplemented!()
-            // let mut received_messages = Vec::with_capacity(expected_votes.len());
-            // for _ in expected_votes {
-            //     let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
-            //     else {
-            //         panic!("expected own vote batch");
-            //     };
-            //     received_messages.extend(votes);
-            // }
+            let mut received_messages = Vec::with_capacity(expected_votes.len());
+            for _ in expected_votes {
+                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
+                else {
+                    panic!("expected own vote batch");
+                };
+                received_messages.push(votes);
+            }
 
-            // for expected_vote in expected_votes {
-            //     let expected_message = self.expected_vote_message(expected_vote);
-            //     let index = received_messages
-            //         .iter()
-            //         .position(|message| *message == expected_message)
-            //         .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
-            //     received_messages.remove(index);
-            // }
-            // assert!(received_messages.is_empty());
+            for expected_vote in expected_votes {
+                let expected_message = self.expected_vote_message(expected_vote);
+                let index = received_messages
+                    .iter()
+                    .position(|message| message.vote() == &expected_message.vote)
+                    .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
+                received_messages.remove(index);
+            }
+            assert!(received_messages.is_empty());
         }
 
         fn check_no_own_vote(&self) {

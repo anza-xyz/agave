@@ -157,6 +157,16 @@ impl SigVerifiedVoteBatch {
         self.stake
     }
 
+    /// Returns the length of the batch
+    pub fn len(&self) -> usize {
+        self.ranks.count_ones()
+    }
+
+    /// Returns true if the batch is empty
+    pub fn is_empty(&self) -> bool {
+        self.ranks.count_ones() == 0
+    }
+
     #[cfg(feature = "dev-context-only-utils")]
     /// Constructs a new vote batch for test purposes
     pub fn new_for_test(vote: Vote, max_validators: usize, rank: u16) -> Self {
@@ -198,18 +208,16 @@ pub enum SigVerifiedBatch {
 impl SigVerifiedBatch {
     /// Returns the length of the batch
     pub fn len(&self) -> usize {
-        // TODO: look up len from ranks
         match self {
-            Self::Votes(_votes) => unimplemented!(),
+            Self::Votes(votes) => votes.len(),
             Self::Certificates(certs) => certs.len(),
         }
     }
 
     /// Returns true if the batch is empty.
     pub fn is_empty(&self) -> bool {
-        // TODO: look up is empty rom ranks
         match self {
-            Self::Votes(_votes) => unimplemented!(),
+            Self::Votes(votes) => votes.is_empty(),
             Self::Certificates(certs) => certs.is_empty(),
         }
     }
