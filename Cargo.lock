@@ -9574,6 +9574,7 @@ name = "solana-quic-client"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "arc-swap",
  "async-lock",
  "async-trait",
  "crossbeam-channel",
