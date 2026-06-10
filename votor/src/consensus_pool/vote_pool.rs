@@ -3,7 +3,6 @@ use {
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, SigVerifiedVoteBatch},
         fraction::Fraction,
-        migration::GENESIS_VOTE_THRESHOLD,
         vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -12,7 +11,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_signer_store::{EncodeError, encode_base2, encode_base3},
+    solana_signer_store::{encode_base2, encode_base3},
     std::{
         collections::{BTreeMap, HashMap, HashSet, hash_map::Entry as HashMapEntry},
         num::NonZero,
@@ -22,12 +21,6 @@ use {
 };
 
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
-
-const SKIP_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
-const NOTAR_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
-const NOTAR_FALLBACK_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
-const FINALIZE_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
-const FAST_FINALIZE_CERT_THRESHOLD: Fraction = Fraction::from_percentage(80);
 
 // TODO: return an iterator maybe?
 fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> Vec<Pubkey> {
@@ -222,11 +215,14 @@ impl VoteEntry {
     fn try_build_cert(
         &self,
         cert_type: CertificateType,
-        threshold: Fraction,
         total_stake: NonZero<u64>,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Option<Certificate> {
+        if completed_certs.contains_key(&cert_type) {
+            return None;
+        }
         let observed_fraction = Fraction::new(self.stake, total_stake);
-        if observed_fraction < threshold {
+        if observed_fraction < cert_type.threshold() {
             return None;
         }
         let new_len = self.ranks.last_one().map_or(0, |i| i.saturating_add(1));
@@ -290,21 +286,15 @@ impl VotePool {
         ) {
             (None, None) => Ok(None),
             (Some(entry), None) | (None, Some(entry)) => {
-                if let Some(cert) =
-                    entry.try_build_cert(cert_type, NOTAR_FALLBACK_CERT_THRESHOLD, total_stake)
-                {
+                if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
                     return Ok(Some(cert));
                 }
                 Ok(None)
             }
             (Some(notar_entry), Some(nf_entry)) => {
-                if let Some(cert) = try_build_from_entries(
-                    cert_type,
-                    NOTAR_FALLBACK_CERT_THRESHOLD,
-                    total_stake,
-                    notar_entry,
-                    nf_entry,
-                ) {
+                if let Some(cert) =
+                    try_build_from_entries(cert_type, total_stake, notar_entry, nf_entry)
+                {
                     return Ok(Some(cert));
                 }
                 Ok(None)
@@ -319,22 +309,9 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Finalize(batch.vote().slot());
-        if completed_certs.contains_key(&cert_type) {
-            return Ok(None);
-        }
-        let observed_stake = self.finalize.stake;
-        let observed_fraction = Fraction::new(observed_stake, total_stake);
-        if observed_fraction < FINALIZE_CERT_THRESHOLD {
-            return Ok(None);
-        }
-        // TODO: can we avoid the clone?
-        let cert = build_cert_from_bitmap(
-            cert_type,
-            self.finalize.signature,
-            self.finalize.ranks.clone(),
-        )
-        .unwrap();
-        Ok(Some(cert))
+        Ok(self
+            .finalize
+            .try_build_cert(cert_type, total_stake, completed_certs))
     }
 
     fn try_produce_finalize_fast_cert(
@@ -343,19 +320,11 @@ impl VotePool {
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
-        let cert_type = CertificateType::FinalizeFast(block);
-        if completed_certs.contains_key(&cert_type) {
-            return Ok(None);
-        }
         let Some(entry) = self.notar.entries.get(&block.block_id) else {
             return Ok(None);
         };
-        if let Some(cert) =
-            entry.try_build_cert(cert_type, FAST_FINALIZE_CERT_THRESHOLD, total_stake)
-        {
-            return Ok(Some(cert));
-        }
-        Ok(None)
+        let cert_type = CertificateType::FinalizeFast(block);
+        Ok(entry.try_build_cert(cert_type, total_stake, completed_certs))
     }
 
     fn try_produce_notar_cert(
@@ -365,13 +334,10 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Notarize(block);
-        if completed_certs.contains_key(&cert_type) {
-            return Ok(None);
-        }
         let Some(entry) = self.notar.entries.get(&block.block_id) else {
             return Ok(None);
         };
-        if let Some(cert) = entry.try_build_cert(cert_type, NOTAR_CERT_THRESHOLD, total_stake) {
+        if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
             return Ok(Some(cert));
         }
         Ok(None)
@@ -389,23 +355,19 @@ impl VotePool {
         }
         if let Some(cert) = self
             .skip
-            .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
+            .try_build_cert(cert_type, total_stake, completed_certs)
         {
             return Ok(Some(cert));
         }
         if let Some(cert) =
             self.skip_fallback
-                .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
+                .try_build_cert(cert_type, total_stake, completed_certs)
         {
             return Ok(Some(cert));
         }
-        if let Some(cert) = try_build_from_entries(
-            cert_type,
-            SKIP_CERT_THRESHOLD,
-            total_stake,
-            &self.skip,
-            &self.skip_fallback,
-        ) {
+        if let Some(cert) =
+            try_build_from_entries(cert_type, total_stake, &self.skip, &self.skip_fallback)
+        {
             return Ok(Some(cert));
         }
         Ok(None)
@@ -418,13 +380,10 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Genesis(block);
-        if completed_certs.contains_key(&cert_type) {
-            return Ok(None);
-        }
         let Some(entry) = self.genesis.entries.get(&block.block_id) else {
             return Ok(None);
         };
-        if let Some(cert) = entry.try_build_cert(cert_type, GENESIS_VOTE_THRESHOLD, total_stake) {
+        if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
             return Ok(Some(cert));
         }
         Ok(None)
@@ -549,32 +508,15 @@ impl VotePool {
     }
 }
 
-/// Build a [`Certificate`] from a single bitmap.
-fn build_cert_from_bitmap(
-    cert_type: CertificateType,
-    signature: SignatureProjective,
-    mut bitmap: BitVec<u8>,
-) -> Result<Certificate, EncodeError> {
-    let new_len = bitmap.last_one().map_or(0, |i| i.saturating_add(1));
-    bitmap.resize(new_len, false);
-    let bitmap = encode_base2(&bitmap)?;
-    Ok(Certificate {
-        cert_type,
-        signature: signature.into(),
-        bitmap,
-    })
-}
-
 /// Build a [`Certificate`] from two bitmaps.
 fn try_build_from_entries(
     cert_type: CertificateType,
-    threshold: Fraction,
     total_stake: NonZero<u64>,
     entry0: &VoteEntry,
     entry1: &VoteEntry,
 ) -> Option<Certificate> {
     let observed_fraction = Fraction::new(entry0.stake.saturating_add(entry1.stake), total_stake);
-    if observed_fraction < threshold {
+    if observed_fraction < cert_type.threshold() {
         return None;
     }
     // TODO: can we avoid the clones somehow?
