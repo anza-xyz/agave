@@ -16,7 +16,6 @@ use {
         migration::MigrationStatus,
         vote::VoteType,
     },
-    certificate_builder::BuildError as CertificateBuildError,
     log::trace,
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -26,7 +25,6 @@ use {
     thiserror::Error,
 };
 
-pub mod certificate_builder;
 pub(crate) mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
@@ -41,8 +39,6 @@ pub(crate) enum AddVoteError {
     EpochStakesNotFound(Epoch),
     #[error("Unrooted slot")]
     UnrootedSlot,
-    #[error("Certificate error: {0}")]
-    Certificate(#[from] CertificateBuildError),
 }
 
 fn get_total_stake(root_bank: &Bank, slot: Slot) -> Result<NonZero<u64>, AddVoteError> {
