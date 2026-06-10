@@ -8946,7 +8946,9 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-transaction"
-version = "4.2.0-alpha.0"
+version = "4.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "736d2cec944c6f8f298a7bd8ada5eb318cca9ab859281b1300842fa0e9a25afa"
 dependencies = [
  "solana-hash 4.4.0",
  "solana-message",
@@ -9273,9 +9275,9 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction"
-version = "4.1.2"
+version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45eb9e481a70f582be316d0bf2f8f8704079664e636a4e5d0c0d077f1c9de8f3"
+checksum = "47d105ecce084206697230226c6b2230401c220feb4dc63e1274d58b38969292"
 dependencies = [
  "serde",
  "serde_derive",
