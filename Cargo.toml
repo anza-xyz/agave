@@ -479,7 +479,7 @@ solana-sha512-hasher = "1.0.1"
 solana-short-vec = "3.2.2"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
-solana-signer = "3.0.0"
+solana-signer = "3.0.1"
 solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.0.2"
 solana-slot-history = "3.0.1"
