@@ -1342,7 +1342,7 @@ mod tests {
         super::*,
         crate::banking_trace::BankingTracer,
         agave_banking_stage_ingress_types::BankingPacketReceiver,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
         solana_keypair::Keypair,
@@ -1536,7 +1536,7 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
-        let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
@@ -1579,8 +1579,8 @@ mod tests {
         let in_flight_commit = bank.freeze_lock();
         ctx.record_receiver.shutdown();
         for _ in ctx.record_receiver.drain_after_shutdown() {}
-        let (abort_started_sender, abort_started_receiver) = unbounded();
-        let (abort_done_sender, abort_done_receiver) = unbounded();
+        let (abort_started_sender, abort_started_receiver) = bounded(1024);
+        let (abort_done_sender, abort_done_receiver) = bounded(1024);
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 abort_started_sender.send(()).unwrap();
@@ -1652,7 +1652,7 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
-        let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let mut genesis_cert_block_marker = test_genesis_cert_block_marker();
         genesis_cert_block_marker.slot = parent_bank.slot();
@@ -1729,7 +1729,7 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (record_sender, record_receiver) = record_channels(false);
-        let (_leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _reward_request_receiver) = CertsRequestor::new();
@@ -1838,7 +1838,7 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (record_sender, record_receiver) = record_channels(false);
-        let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();

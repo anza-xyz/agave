@@ -163,7 +163,7 @@ fn test_spend_and_verify_all_nodes() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -327,7 +327,7 @@ fn test_forwarding() {
     cluster_tests::send_many_transactions(
         validator_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         20,
     );
@@ -372,7 +372,7 @@ fn test_restart_node() {
     cluster_tests::send_many_transactions(
         &cluster.entry_point_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         1,
     );
@@ -1281,7 +1281,7 @@ fn test_snapshot_restart_tower() {
         2,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -1432,6 +1432,7 @@ fn test_snapshots_restart_validity() {
     let num_runs = 3;
     let mut expected_balances = HashMap::new();
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let tpu_sender = cluster_tests::TpuSender::new();
     for i in 1..num_runs {
         info!("run {i}");
         // Push transactions to one of the nodes and confirm that transactions were
@@ -1440,7 +1441,7 @@ fn test_snapshots_restart_validity() {
         let new_balances = cluster_tests::send_many_transactions(
             &cluster.entry_point_info,
             &cluster.funding_keypair,
-            &cluster.connection_cache,
+            &tpu_sender,
             10,
             10,
         );
@@ -1480,7 +1481,7 @@ fn test_snapshots_restart_validity() {
             1,
             HashSet::new(),
             SocketAddrSpace::Unspecified,
-            &cluster.connection_cache,
+            &tpu_sender,
         );
     }
 }
@@ -4334,7 +4335,7 @@ fn test_leader_failure_4() {
             .config
             .validator_exit,
         &local.funding_keypair,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
         num_nodes,
         config.ticks_per_slot * config.poh_config.target_tick_duration.as_millis() as u64,
         SocketAddrSpace::Unspecified,
@@ -5660,7 +5661,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -5694,7 +5695,7 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -5892,7 +5893,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 
     if num_offline_nodes > 0 {
@@ -5978,7 +5979,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::send_many_transactions(
         &cluster.entry_point_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         1,
     );

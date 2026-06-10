@@ -223,15 +223,25 @@ pub fn generate_vote_tx(
     })
 }
 
-fn create_vote_message(vote: Vote, context: &mut VotingContext) -> Result<VoteMessage, VoteError> {
+/// Creates a vote message from `vote`, respecting `context.wait_to_vote_slot` only if `respect_wait_to_vote` is true
+fn create_vote_message(
+    vote: Vote,
+    context: &mut VotingContext,
+    respect_wait_to_vote: bool,
+) -> Result<VoteMessage, VoteError> {
     let bank = context.sharable_banks.root();
+    let wait_to_vote_slot = if respect_wait_to_vote {
+        context.wait_to_vote_slot
+    } else {
+        None
+    };
     match generate_vote_tx(
         vote,
         &bank,
         context.vote_account_pubkey,
         &context.identity_keypair,
         &context.authorized_voter_keypairs,
-        context.wait_to_vote_slot,
+        wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
         GenerateVoteTxResult::Vote(vote) => Ok(vote),
@@ -273,18 +283,11 @@ pub fn insert_vote_and_create_bls_message(
     // Update and save the vote history
     context.vote_history.add_vote(vote);
 
-    let vote_msg = match create_vote_message(vote, context) {
-        Ok(vote_msg) => vote_msg,
-        Err(e) => {
-            handle_skippable_vote_error(e, "generate vote and push to votes")?;
-            return Ok(None);
-        }
+    let Some(vote_msg) =
+        create_and_send_own_vote_message(vote, context, /* respect_wait_to_vote */ true)?
+    else {
+        return Ok(None);
     };
-
-    context
-        .own_vote_sender
-        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
-        .map_err(|_| SendError(()))?;
 
     let saved_vote_history =
         SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
@@ -296,11 +299,32 @@ pub fn insert_vote_and_create_bls_message(
     }))
 }
 
+pub(crate) fn create_and_send_own_vote_message(
+    vote: Vote,
+    context: &mut VotingContext,
+    respect_wait_to_vote: bool,
+) -> Result<Option<VoteMessage>, VoteError> {
+    let vote_msg = match create_vote_message(vote, context, respect_wait_to_vote) {
+        Ok(vote_msg) => vote_msg,
+        Err(e) => {
+            handle_skippable_vote_error(e, "generate vote message")?;
+            return Ok(None);
+        }
+    };
+
+    context
+        .own_vote_sender
+        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
+        .map_err(|_| SendError(()))?;
+
+    Ok(Some(vote_msg))
+}
+
 pub fn generate_refresh_vote_message(
     vote: Vote,
     vctx: &mut VotingContext,
 ) -> Result<Option<VoteMessage>, VoteError> {
-    match create_vote_message(vote, vctx) {
+    match create_vote_message(vote, vctx, /* respect_wait_to_vote */ true) {
         Ok(vote_msg) => Ok(Some(vote_msg)),
         Err(e) => {
             handle_skippable_vote_error(e, "generate refresh vote message")?;

@@ -6,7 +6,7 @@ use {
         SnapshotInterval, SnapshotKind, paths as snapshot_paths,
         snapshot_archive_info::FullSnapshotArchiveInfo, snapshot_config::SnapshotConfig,
     },
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     itertools::Itertools,
     log::{info, trace},
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -172,7 +172,7 @@ where
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-    let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+    let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
@@ -276,7 +276,7 @@ fn test_slots_to_snapshot() {
     let num_set_roots = status_cache_max_entries * 2;
 
     for add_root_interval in &[1, 3, 9] {
-        let (snapshot_sender, _snapshot_receiver) = unbounded();
+        let (snapshot_sender, _snapshot_receiver) = bounded(1024);
         // Make sure this test never clears bank.slots_since_snapshot
         let snapshot_test_config = SnapshotTestConfig::new(
             SnapshotInterval::Slots(
@@ -405,7 +405,7 @@ fn test_bank_forks_incremental_snapshot() {
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-    let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+    let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
@@ -594,8 +594,8 @@ fn test_snapshots_with_background_services() {
         SocketAddrSpace::Unspecified,
     ));
 
-    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
-    let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+    let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
+    let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
@@ -777,7 +777,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         SocketAddrSpace::Unspecified,
     ));
 
-    let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
+    let (snapshot_request_sender, _snapshot_request_receiver) = bounded(1024);
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
 
     let bank_forks = snapshot_test_config.bank_forks.clone();

@@ -18,7 +18,6 @@ use {
         rpc_sender::*,
     },
     agave_votor_messages::certificate::Certificate,
-    serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
     solana_account_decoder::UiAccount,
@@ -46,6 +45,7 @@ use {
     },
     solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration},
+    wincode::{SchemaWrite, config::DefaultConfig},
 };
 
 #[derive(Default)]
@@ -95,7 +95,7 @@ impl SerializableMessage for v0::Message {
 
 /// Trait used to add support for versioned transactions to RPC APIs while
 /// retaining backwards compatibility
-pub trait SerializableTransaction: Serialize {
+pub trait SerializableTransaction: SchemaWrite<DefaultConfig, Src = Self> {
     fn get_signature(&self) -> &Signature;
     fn get_recent_blockhash(&self) -> &Hash;
     fn uses_durable_nonce(&self) -> bool;
@@ -4372,9 +4372,12 @@ mod tests {
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
-        solana_message::{MessageHeader, compiled_instruction::CompiledInstruction},
+        solana_message::{
+            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1,
+        },
         solana_rpc_client_api::client_error::ErrorKind,
         solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
         std::{io, thread},
@@ -5181,5 +5184,35 @@ mod tests {
             .get_latest_blockhash_with_commitment(CommitmentConfig::default())
             .unwrap();
         assert_eq!(value, response.value);
+    }
+
+    #[test]
+    fn test_send_transaction_v1() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let key = Keypair::new();
+        let to = Pubkey::new_unique();
+        let blockhash = Hash::default();
+        let ix = system_instruction::transfer(&key.pubkey(), &to, 50);
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V1(
+                v1::Message::try_compile(&key.pubkey(), &[ix], blockhash).unwrap(),
+            ),
+            &[key],
+        )
+        .unwrap();
+
+        let signature = rpc_client.send_transaction(&tx);
+        assert_eq!(signature.unwrap(), tx.signatures[0]);
+
+        let rpc_client = RpcClient::new_mock("fails".to_string());
+
+        let signature = rpc_client.send_transaction(&tx);
+        assert!(signature.is_err());
+
+        // Test bad signature returned from rpc node
+        let rpc_client = RpcClient::new_mock("malicious".to_string());
+        let signature = rpc_client.send_transaction(&tx);
+        assert!(signature.is_err());
     }
 }

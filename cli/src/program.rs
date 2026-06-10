@@ -12,7 +12,7 @@ use {
         feature::{CliFeatureStatus, status_from_account},
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
-    bip39::{Language, Mnemonic, MnemonicType, Seed},
+    bip39::{Language, Mnemonic},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account::state_traits::StateMut,
@@ -3259,15 +3259,15 @@ async fn send_deploy_messages(
 fn create_ephemeral_keypair()
 -> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
     const WORDS: usize = 12;
-    let mnemonic = Mnemonic::new(MnemonicType::for_word_count(WORDS)?, Language::English);
-    let seed = Seed::new(&mnemonic, "");
-    let new_keypair = keypair_from_seed(seed.as_bytes())?;
+    let mnemonic = Mnemonic::generate_in(Language::English, WORDS)?;
+    let seed = mnemonic.to_seed("");
+    let new_keypair = keypair_from_seed(&seed)?;
 
     Ok((WORDS, mnemonic, new_keypair))
 }
 
 fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic, ephemeral_pubkey: &Pubkey) {
-    let phrase: &str = mnemonic.phrase();
+    let phrase = mnemonic.to_string();
     let divider = String::from_utf8(vec![b'='; phrase.len()]).unwrap();
     eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
     eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");

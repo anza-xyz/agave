@@ -915,7 +915,7 @@ mod test {
     #[test]
     pub fn test_ancestor_hashes_service_process_replay_updates() {
         let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         let ancestor_hashes_request_statuses = DashMap::new();
         let mut dead_slot_pool = HashSet::new();
         let mut repairable_dead_slot_pool = HashSet::new();
@@ -1056,7 +1056,7 @@ mod test {
     #[test]
     pub fn test_ancestor_hashes_service_process_pruned_replay_updates() {
         let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         let ancestor_hashes_request_statuses = DashMap::new();
         let mut dead_slot_pool = HashSet::new();
         let mut repairable_dead_slot_pool = HashSet::new();
@@ -1259,8 +1259,8 @@ mod test {
 
             // Set up thread to give us responses
             let exit = Arc::new(AtomicBool::new(false));
-            let (requests_sender, requests_receiver) = unbounded();
-            let (response_sender, response_receiver) = unbounded();
+            let (requests_sender, requests_receiver) = bounded(1024);
+            let (response_sender, response_receiver) = bounded(1024);
 
             // Create slots [slot - MAX_ANCESTOR_RESPONSES, slot) with 5 shreds apiece
             let (shreds, _) = make_many_slot_entries(
@@ -1354,7 +1354,8 @@ mod test {
                     bank_forks_r.migration_status(),
                 )
             };
-            let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = unbounded();
+            let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) =
+                bounded(1024);
             let repair_info = RepairInfo {
                 bank_forks,
                 cluster_info: requester_cluster_info,
@@ -1366,8 +1367,8 @@ mod test {
             };
 
             let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
-                unbounded();
-            let (retryable_slots_sender, retryable_slots_receiver) = unbounded();
+                bounded(1024);
+            let (retryable_slots_sender, retryable_slots_receiver) = bounded(1024);
             Self {
                 ancestor_hashes_request_statuses,
                 ancestor_hashes_request_socket,
@@ -1978,7 +1979,7 @@ mod test {
             ref cluster_slots,
             ..
         } = repair_info;
-        let (dumped_slots_sender, _dumped_slots_receiver) = unbounded();
+        let (dumped_slots_sender, _dumped_slots_receiver) = bounded(1024);
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
@@ -2204,7 +2205,7 @@ mod test {
 
     #[test]
     fn test_process_replay_updates_continue_after_skipped_update() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let ancestor_hashes_request_statuses = DashMap::new();
         let mut dead_slot_pool = HashSet::new();
         let mut repairable_dead_slot_pool = HashSet::new();
