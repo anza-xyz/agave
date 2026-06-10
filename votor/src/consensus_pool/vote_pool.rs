@@ -290,24 +290,34 @@ impl VotePool {
                 if completed_certs.contains_key(&cert_type) {
                     return Ok(vec![]);
                 }
-                let nf_stake = self
-                    .notar_fallback
-                    .entries
-                    .get(&nf.block.block_id)
-                    .map(|e| e.stake)
-                    .unwrap_or_default();
-                let notar_stake = self
-                    .notar
-                    .entries
-                    .get(&nf.block.block_id)
-                    .map(|e| e.stake)
-                    .unwrap_or_default();
-                let observed_stake = nf_stake.saturating_add(notar_stake);
-                let observed_fraction = Fraction::new(observed_stake, total_stake);
-                if observed_fraction < NOTAR_FALLBACK_CERT_THRESHOLD {
-                    return Ok(vec![]);
+                match (
+                    self.notar.entries.get(&nf.block.block_id),
+                    self.notar_fallback.entries.get(&nf.block.block_id),
+                ) {
+                    (None, None) => Ok(vec![]),
+                    (Some(entry), None) | (None, Some(entry)) => {
+                        if let Some(cert) = entry.try_build_cert(
+                            cert_type,
+                            NOTAR_FALLBACK_CERT_THRESHOLD,
+                            total_stake,
+                        ) {
+                            return Ok(vec![cert]);
+                        }
+                        Ok(vec![])
+                    }
+                    (Some(notar_entry), Some(nf_entry)) => {
+                        if let Some(cert) = try_build_from_entries(
+                            cert_type,
+                            NOTAR_FALLBACK_CERT_THRESHOLD,
+                            total_stake,
+                            notar_entry,
+                            nf_entry,
+                        ) {
+                            return Ok(vec![cert]);
+                        }
+                        Ok(vec![])
+                    }
                 }
-                unimplemented!();
             }
             Vote::Finalize(f) => {
                 let cert_type = CertificateType::Finalize(f.slot);
