@@ -7,7 +7,7 @@ use {
         vote::Vote,
     },
     bitvec::vec::BitVec,
-    solana_bls_signatures::SignatureProjective,
+    solana_bls_signatures::{Signature as BLSSignature, SignatureProjective},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -215,8 +215,31 @@ impl VoteEntry {
         self.signature
             .aggregate_with(std::iter::once(batch.signature()))
             .unwrap();
-        self.stake += batch.stake().get();
+        self.stake = self.stake.saturating_add(batch.stake().get());
         Ok(self.stake)
+    }
+
+    fn try_build_cert(
+        &self,
+        cert_type: CertificateType,
+        threshold: Fraction,
+        total_stake: NonZero<u64>,
+    ) -> Option<Certificate> {
+        let observed_fraction = Fraction::new(self.stake, total_stake);
+        if observed_fraction < threshold {
+            return None;
+        }
+        let new_len = self.ranks.last_one().map_or(0, |i| i.saturating_add(1));
+        // TODO: can we avoid the clone somehow?
+        let mut ranks = self.ranks.clone();
+        ranks.resize(new_len, false);
+        let bitmap = encode_base2(&ranks).unwrap();
+        let signature = BLSSignature::from(self.signature);
+        Some(Certificate {
+            cert_type,
+            signature,
+            bitmap,
+        })
     }
 }
 
@@ -279,7 +302,7 @@ impl VotePool {
                     .get(&nf.block.block_id)
                     .map(|e| e.stake)
                     .unwrap_or_default();
-                let observed_stake = nf_stake + notar_stake;
+                let observed_stake = nf_stake.saturating_add(notar_stake);
                 let observed_fraction = Fraction::new(observed_stake, total_stake);
                 if observed_fraction < NOTAR_FALLBACK_CERT_THRESHOLD {
                     return Ok(vec![]);
@@ -310,57 +333,28 @@ impl VotePool {
                 if completed_certs.contains_key(&cert_type) {
                     return Ok(vec![]);
                 }
-                match (self.skip.stake != 0, self.skip_fallback.stake != 0) {
-                    (true, true) => {
-                        let observed_fraction = Fraction::new(
-                            self.skip.stake.saturating_add(self.skip_fallback.stake),
-                            total_stake,
-                        );
-                        if observed_fraction < SKIP_CERT_THRESHOLD {
-                            return Ok(vec![]);
-                        }
-                        // TODO: can we avoid the clone?
-                        let cert = build_cert_from_bitmaps(
-                            cert_type,
-                            self.skip.signature,
-                            self.skip.ranks.clone(),
-                            self.skip_fallback.signature,
-                            self.skip_fallback.ranks.clone(),
-                        )
-                        .unwrap();
-                        Ok(vec![cert])
-                    }
-                    (true, false) => {
-                        let observed_fraction = Fraction::new(self.skip.stake, total_stake);
-                        if observed_fraction < SKIP_CERT_THRESHOLD {
-                            return Ok(vec![]);
-                        }
-                        // TODO: can we avoid the clone?
-                        let cert = build_cert_from_bitmap(
-                            cert_type,
-                            self.skip.signature,
-                            self.skip.ranks.clone(),
-                        )
-                        .unwrap();
-                        Ok(vec![cert])
-                    }
-                    (false, true) => {
-                        let observed_fraction =
-                            Fraction::new(self.skip_fallback.stake, total_stake);
-                        if observed_fraction < SKIP_CERT_THRESHOLD {
-                            return Ok(vec![]);
-                        }
-                        // TODO: can we avoid the clone?
-                        let cert = build_cert_from_bitmap(
-                            cert_type,
-                            self.skip_fallback.signature,
-                            self.skip_fallback.ranks.clone(),
-                        )
-                        .unwrap();
-                        Ok(vec![cert])
-                    }
-                    (false, false) => Ok(vec![]),
+                if let Some(cert) =
+                    self.skip
+                        .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
+                {
+                    return Ok(vec![cert]);
                 }
+                if let Some(cert) =
+                    self.skip_fallback
+                        .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
+                {
+                    return Ok(vec![cert]);
+                }
+                if let Some(cert) = try_build_from_entries(
+                    cert_type,
+                    SKIP_CERT_THRESHOLD,
+                    total_stake,
+                    &self.skip,
+                    &self.skip_fallback,
+                ) {
+                    return Ok(vec![cert]);
+                }
+                Ok(vec![])
             }
             Vote::Genesis(genesis) => {
                 let cert_type = CertificateType::Genesis(genesis.block);
@@ -484,25 +478,33 @@ fn build_cert_from_bitmap(
 }
 
 /// Build a [`Certificate`] from two bitmaps.
-fn build_cert_from_bitmaps(
+fn try_build_from_entries(
     cert_type: CertificateType,
-    mut signature0: SignatureProjective,
-    mut bitmap0: BitVec<u8>,
-    signature1: SignatureProjective,
-    mut bitmap1: BitVec<u8>,
-) -> Result<Certificate, EncodeError> {
+    threshold: Fraction,
+    total_stake: NonZero<u64>,
+    entry0: &VoteEntry,
+    entry1: &VoteEntry,
+) -> Option<Certificate> {
+    let observed_fraction = Fraction::new(entry0.stake.saturating_add(entry1.stake), total_stake);
+    if observed_fraction < threshold {
+        return None;
+    }
+    // TODO: can we avoid the clones somehow?
+    let mut bitmap0 = entry0.ranks.clone();
+    let mut bitmap1 = entry1.ranks.clone();
     let last_one_0 = bitmap0.last_one().map_or(0, |i| i.saturating_add(1));
     let last_one_1 = bitmap1.last_one().map_or(0, |i| i.saturating_add(1));
     let new_length = last_one_0.max(last_one_1);
     bitmap0.resize(new_length, false);
     bitmap1.resize(new_length, false);
-    let bitmap = encode_base3(&bitmap0, &bitmap1)?;
-    signature0
-        .aggregate_with(std::iter::once(&signature1))
+    let bitmap = encode_base3(&bitmap0, &bitmap1).unwrap();
+    let mut signature = entry0.signature;
+    signature
+        .aggregate_with(std::iter::once(&entry1.signature))
         .unwrap();
-    Ok(Certificate {
+    Some(Certificate {
         cert_type,
-        signature: signature0.into(),
+        signature: signature.into(),
         bitmap,
     })
 }
