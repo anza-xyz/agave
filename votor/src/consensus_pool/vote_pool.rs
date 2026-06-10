@@ -22,6 +22,10 @@ use {
 
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
 
+fn default_bitvec(max_validators: usize) -> BitVec<u8> {
+    BitVec::repeat(false, max_validators)
+}
+
 // TODO: return an iterator maybe?
 fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> Vec<Pubkey> {
     let epoch_stakes = root_bank
@@ -61,7 +65,7 @@ impl NotarVoteEntry {
             slot,
             max_validators,
             entries: HashMap::new(),
-            ranks: BitVec::with_capacity(max_validators),
+            ranks: default_bitvec(max_validators),
         }
     }
 
@@ -101,7 +105,7 @@ impl GenesisVoteEntry {
             slot,
             max_validators,
             entries: HashMap::new(),
-            ranks: BitVec::with_capacity(max_validators),
+            ranks: default_bitvec(max_validators),
         }
     }
 
@@ -143,7 +147,7 @@ impl NotarFallbackVoteEntry {
             max_validators,
             entries: HashMap::new(),
             validators: HashMap::with_capacity(max_validators),
-            ranks: BitVec::with_capacity(max_validators),
+            ranks: default_bitvec(max_validators),
         }
     }
 
@@ -193,7 +197,7 @@ struct VoteEntry {
 impl VoteEntry {
     fn new(max_validators: usize) -> Self {
         Self {
-            ranks: BitVec::with_capacity(max_validators),
+            ranks: default_bitvec(max_validators),
             signature: SignatureProjective::identity(),
             stake: 0,
         }
@@ -542,24 +546,15 @@ fn try_build_from_entries(
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        crate::consensus_pool::tests::create_bank_forks,
-        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_ledger::genesis_utils::create_genesis_config,
-        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
+        super::*, crate::consensus_pool::tests::create_bank_forks,
+        agave_votor_messages::vote::Vote, solana_runtime::genesis_utils::ValidatorVoteKeypairs,
     };
 
     #[test]
     fn test_notar_failures() {
-        let voter = Pubkey::new_unique();
-        let signature = BLSSignature {
-            0: [0; BLS_SIGNATURE_AFFINE_SIZE],
-        };
-        let rank = 1;
         let slot = 1;
+        let rank = 123;
         let max_validators = 2048;
-        let genesis_config = create_genesis_config(10000000);
         let num_validators = 10;
         let validator_keypairs = (0..num_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -569,27 +564,26 @@ mod test {
         let total_stake = NonZero::new(1000).unwrap();
         let completed_certs = BTreeMap::new();
 
-        let mut votes = VotePool::new(slot, 2048);
-        let skip = SigVerifiedVoteBatch::new(vec![VoteMessage {
-            vote: Vote::new_skip_vote(slot),
-            signature,
-            rank,
-        }]);
+        let mut votes = VotePool::new(slot, max_validators);
+        let skip =
+            SigVerifiedVoteBatch::new_for_test(Vote::new_skip_vote(slot), max_validators, rank);
         votes
             .add_vote(&root_bank, total_stake, &skip, &completed_certs)
             .unwrap();
-        let notar = SigVerifiedVoteBatch::new(vec![VoteMessage {
-            vote: Vote::new_notarization_vote(Block {
+        let notar = SigVerifiedVoteBatch::new_for_test(
+            Vote::new_notarization_vote(Block {
                 slot,
                 block_id: Hash::new_unique(),
             }),
-            signature,
+            max_validators,
             rank,
-        }]);
-        assert!(matches!(
-            votes.add_vote(&root_bank, total_stake, &notar, &completed_certs),
-            Err(VotePoolAddVoteError::Invalid)
-        ));
+        );
+        assert_eq!(
+            votes
+                .add_vote(&root_bank, total_stake, &notar, &completed_certs)
+                .unwrap_err(),
+            VotePoolAddVoteError::Invalid
+        );
 
         // let mut votes = VotePool::new(slot);
         // let notar = VoteMessage {

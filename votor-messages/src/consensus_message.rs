@@ -156,6 +156,20 @@ impl SigVerifiedVoteBatch {
     pub fn stake(&self) -> NonZero<u64> {
         self.stake
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Constructs a new vote batch for test purposes
+    pub fn new_for_test(vote: Vote, max_validators: usize, rank: u16) -> Self {
+        let mut ranks = BitVec::new();
+        ranks.resize(max_validators, false);
+        ranks.set(rank as usize, true);
+        Self {
+            vote,
+            stake: NonZero::new(123).unwrap(),
+            signature: SignatureProjective::identity(),
+            ranks,
+        }
+    }
 }
 
 impl From<VoteMessage> for SigVerifiedVoteBatch {
