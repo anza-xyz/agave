@@ -288,8 +288,18 @@ impl ConsensusPool {
             &mut self.pending_safe_to_notar,
             &mut self.stats,
         );
+        let new_certs = new_certs
+            .into_iter()
+            .map(|cert| {
+                let cert = Arc::new(cert);
+                self.insert_certificate(root_bank, cert.cert_type, cert.clone(), events);
+                self.generated_cert_types.insert_cert(cert.cert_type);
+                self.stats.incr_generated_cert(&cert.cert_type);
+                cert
+            })
+            .collect();
         self.stats.incr_ingested_vote_type(vote_type);
-        Ok(new_certs.into_iter().map(Arc::new).collect())
+        Ok(new_certs)
     }
 
     fn add_certificates(
