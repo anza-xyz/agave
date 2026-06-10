@@ -475,6 +475,225 @@ pub mod tests {
         test_case::test_case,
     };
 
+    fn all_columns_empty_or_greater_than_slot(blockstore: &Blockstore, min_slot: Slot) {
+        assert!(
+            blockstore
+                .data_shred_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .code_shred_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .meta_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .index_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .erasure_meta_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .merkle_root_meta_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .double_merkle_meta_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .orphans_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .duplicate_slots_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+
+        assert!(
+            blockstore
+                .alt_data_shred_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .alt_meta_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .alt_index_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .alt_merkle_root_meta_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|((slot, _, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+
+        assert!(
+            blockstore
+                .bank_hash_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .optimistic_slots_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .roots_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .dead_slots_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+
+        assert!(
+            blockstore
+                .block_height_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .blocktime_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        assert!(
+            blockstore
+                .rewards_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+        // The slot is not stored in the leading bytes for keys in the
+        // `TransactionStatus`, `TransactionMemos`, and `AddressSignatures`
+        // columns so the entire column must be checked
+        assert!(
+            blockstore
+                .transaction_status_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .all(|((_, slot), _)| slot >= min_slot)
+        );
+        assert!(
+            blockstore
+                .transaction_memos_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .all(|((_, slot), _)| slot >= min_slot)
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .all(|((_, slot, _, _), _)| slot >= min_slot)
+        );
+        assert!(
+            blockstore
+                .perf_samples_cf
+                .iter(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
+                .unwrap_or(true)
+        );
+    }
+
     #[test]
     fn test_purge_slots() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -484,14 +703,12 @@ pub mod tests {
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
         blockstore.purge_slots(0, 5, PurgeType::Exact).unwrap();
-
-        test_all_empty_or_min(&blockstore, 6);
+        all_columns_empty_or_greater_than_slot(&blockstore, 6);
 
         blockstore.purge_slots(0, 50, PurgeType::Exact).unwrap();
-
         // min slot shouldn't matter, blockstore should be empty
-        test_all_empty_or_min(&blockstore, 100);
-        test_all_empty_or_min(&blockstore, 0);
+        all_columns_empty_or_greater_than_slot(&blockstore, 100);
+        all_columns_empty_or_greater_than_slot(&blockstore, 0);
 
         assert_eq!(blockstore.slot_meta_iterator(0).unwrap().next(), None);
     }

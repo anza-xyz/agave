@@ -62,10 +62,10 @@ impl AccountsFile {
     /// Creates a new AccountsFile for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
-    /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
-    /// accounts verification to ensure it is valid.
-    pub fn new_for_startup(file_info: FileInfo, current_len: usize) -> Result<Self> {
-        let av = AppendVec::new_for_startup(file_info, current_len)?;
+    /// The storage length is taken to be the full file size; this is trusted and relies on later
+    /// index generation or accounts verification to ensure it is valid.
+    pub fn new_for_startup(file_info: FileInfo) -> Result<Self> {
+        let av = AppendVec::new_for_startup(file_info)?;
         Ok(Self::AppendVec(av))
     }
 

@@ -343,7 +343,7 @@ mod tests {
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},
-        crossbeam_channel::{Receiver, TryRecvError},
+        crossbeam_channel::{Receiver, TryRecvError, bounded},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
@@ -383,7 +383,7 @@ mod tests {
 
     impl TestContext {
         fn new() -> Self {
-            let (channel_to_pool, pool_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_pool, pool_receiver) = bounded(1024);
             Self::new_with_pool_channel(channel_to_pool, pool_receiver)
         }
 
@@ -417,10 +417,10 @@ mod tests {
             let leader_schedule =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-            let (channel_to_repair, repair_receiver) = crossbeam_channel::unbounded();
-            let (channel_to_reward, reward_receiver) = crossbeam_channel::unbounded();
-            let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
-            let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_repair, repair_receiver) = bounded(1024);
+            let (channel_to_reward, reward_receiver) = bounded(1024);
+            let (packet_sender, packet_receiver) = bounded(1024);
+            let (channel_to_metrics, metrics_receiver) = bounded(1024);
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let banlist = new_test_banlist();
@@ -1350,10 +1350,10 @@ mod tests {
 
     #[test]
     fn test_verify_old_vote_and_cert() {
-        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
-        let (votes_for_repair_sender, _) = crossbeam_channel::unbounded();
-        let (consensus_metrics_sender, _) = crossbeam_channel::unbounded();
-        let (reward_votes_sender, _reward_votes_receiver) = crossbeam_channel::unbounded();
+        let (message_sender, message_receiver) = bounded(1024);
+        let (votes_for_repair_sender, _) = bounded(1024);
+        let (consensus_metrics_sender, _) = bounded(1024);
+        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -1381,7 +1381,7 @@ mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let (_packet_sender, packet_receiver) = crossbeam_channel::unbounded();
+        let (_packet_sender, packet_receiver) = bounded(1024);
         let mut sig_verifier = SigVerifier::new(
             SigVerifierContext {
                 migration_status: Arc::new(MigrationStatus::default()),

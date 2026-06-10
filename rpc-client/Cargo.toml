@@ -54,6 +54,7 @@ solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-interface = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -66,6 +67,7 @@ solana-hash = { workspace = true, features = ["atomic"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

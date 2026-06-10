@@ -313,7 +313,7 @@ mod tests {
             consumer::RetryableIndex,
             transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
@@ -470,8 +470,8 @@ mod tests {
         add_transactions_to_container(&mut container, 3);
 
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
-            (0..NUM_WORKERS).map(|_| unbounded()).unzip();
-        let (_finished_work_sender, finished_work_receiver) = unbounded();
+            (0..NUM_WORKERS).map(|_| bounded(1024)).unzip();
+        let (_finished_work_sender, finished_work_receiver) = bounded(1024);
         let mut common = SchedulingCommon::new(work_senders, finished_work_receiver, 10);
         assert_eq!(
             common.batches.entry_bytes(),
@@ -524,8 +524,8 @@ mod tests {
         add_transactions_to_container(&mut container, 1);
 
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
-            (0..NUM_WORKERS).map(|_| unbounded()).unzip();
-        let (finished_work_sender, finished_work_receiver) = unbounded();
+            (0..NUM_WORKERS).map(|_| bounded(1024)).unzip();
+        let (finished_work_sender, finished_work_receiver) = bounded(1024);
         let mut common = SchedulingCommon::new(work_senders, finished_work_receiver, 10);
 
         // Send a batch. Return completed work.
@@ -579,8 +579,8 @@ mod tests {
         let mut container = TransactionStateContainer::with_capacity(1024);
 
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
-            (0..NUM_WORKERS).map(|_| unbounded()).unzip();
-        let (finished_work_sender, finished_work_receiver) = unbounded();
+            (0..NUM_WORKERS).map(|_| bounded(1024)).unzip();
+        let (finished_work_sender, finished_work_receiver) = bounded(1024);
         let mut common = SchedulingCommon::new(work_senders, finished_work_receiver, 10);
         // Retryable indexes out-of-order.
         add_transactions_to_container(&mut container, 2);

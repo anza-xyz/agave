@@ -20,6 +20,7 @@ agave-unstable-api = []
 elgamal = ["dep:solana-zk-sdk"]
 
 [dependencies]
+bip39 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 clap = { version = "3.2.23", default-features = false, features = ["cargo", "std", "suggestions"] }
 five8 = { workspace = true }
@@ -42,7 +43,6 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-zk-sdk = { workspace = true, optional = true }
 thiserror = { workspace = true }
-tiny-bip39 = { workspace = true }
 uriparse = { workspace = true }
 url = { workspace = true }
 

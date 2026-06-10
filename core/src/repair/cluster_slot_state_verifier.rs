@@ -954,7 +954,7 @@ mod test {
     use {
         super::*,
         crate::{consensus::progress_map::ProgressMap, replay_stage::tests::setup_forks_from_tree},
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_runtime::bank_forks::BankForks,
         std::{
             collections::{HashMap, HashSet},
@@ -1616,7 +1616,7 @@ mod test {
             .unwrap()
             .hash();
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         apply_state_changes(
             duplicate_slot,
             &mut heaviest_subtree_fork_choice,
@@ -1699,7 +1699,7 @@ mod test {
         // BankFrozen should mark it down in Blockstore.
         assert!(blockstore.get_bank_hash(duplicate_slot).is_none());
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         apply_state_changes(
             duplicate_slot,
             &mut heaviest_subtree_fork_choice,
@@ -1780,7 +1780,7 @@ mod test {
         )];
         modify_state_changes(our_duplicate_slot_hash, &mut state_changes);
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         apply_state_changes(
             duplicate_slot,
             &mut heaviest_subtree_fork_choice,
@@ -1864,7 +1864,7 @@ mod test {
             || initial_bank_hash,
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             duplicate_slot,
             root,
@@ -1976,7 +1976,7 @@ mod test {
             || Some(slot2_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             2,
             root,
@@ -2098,7 +2098,7 @@ mod test {
             || Some(slot2_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             2,
             root,
@@ -2222,7 +2222,7 @@ mod test {
             || Some(slot3_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,
@@ -2308,7 +2308,7 @@ mod test {
             false,
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,
@@ -2338,7 +2338,7 @@ mod test {
             || Some(slot3_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,
@@ -2402,7 +2402,7 @@ mod test {
             false,
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,

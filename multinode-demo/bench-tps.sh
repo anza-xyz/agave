@@ -5,19 +5,33 @@ here=$(dirname "$0")
 # shellcheck source=multinode-demo/common.sh
 source "$here"/common.sh
 
+deprecation_notice() {
+  echo "WARNING: bench-tps is deprecated and will be removed in a future release."
+  echo "Please use multinode-demo/txs-bench.sh / solana-transaction-bench instead."
+}
+
 usage() {
-  if [[ -n $1 ]]; then
-    echo "$*"
+  declare message=${1:-}
+  if [[ -n $message ]]; then
+    echo "$message"
     echo
   fi
   echo "usage: $0 [extra args]"
   echo
   echo " Run bench-tps "
   echo
+  deprecation_notice
+  echo
   echo "   extra args: additional arguments are passed along to solana-bench-tps"
   echo
   exit 1
 }
+
+if [[ ${1:-} = "-h" || ${1:-} = "--help" ]]; then
+  usage ""
+fi
+
+deprecation_notice >&2
 
 args=("$@")
 default_arg --url "http://127.0.0.1:8899"

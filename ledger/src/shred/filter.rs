@@ -443,8 +443,8 @@ fn max_shred_slot(root: Slot, slots_per_epoch: Slot) -> Slot {
     // while being small enough to keep the overhead small on deduper, blockstore,
     // etc.
     const MAX_SHRED_DISTANCE_MINIMUM: Slot = 500;
-    // Allow shreds up to 2 epochs into the future to support catching up to the tip of the cluster.
-    root.saturating_add(MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch))
+    // Allow shreds up to half an epoch into the future to support catching up to the tip of the cluster.
+    root.saturating_add(MAX_SHRED_DISTANCE_MINIMUM.max(slots_per_epoch / 2))
 }
 
 /// Returns true if `index` and `fec_set_index` are valid under the assumption that

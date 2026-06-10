@@ -165,26 +165,29 @@ pub fn execute(
         }
     }
 
-    let xdp_interface = matches
-        .value_of("xdp_interface")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-        || matches.is_present("experimental_retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches
+    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-        .map(|cpus| {
-            XdpConfig::new(
-                xdp_interface,
-                parse_cpu_ranges(cpus).unwrap(),
-                xdp_zero_copy,
-            )
-        });
-    if bind_addresses.len() > 1 && retransmit_xdp.is_some() {
-        Err(String::from(
-            "--xdp-cpu-cores cannot be used in a multihoming context",
-        ))?;
-    }
+    {
+        let xdp_interface = matches
+            .value_of("xdp_interface")
+            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+        let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+            || matches.is_present("experimental_retransmit_xdp_zero_copy");
+        let config = XdpConfig::new(
+            xdp_interface,
+            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
+            xdp_zero_copy,
+        );
+        if bind_addresses.len() > 1 {
+            Err(String::from(
+                "--xdp-cpu-cores cannot be used in a multihoming context",
+            ))?;
+        }
+        Some(config)
+    } else {
+        None
+    };
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -287,7 +290,7 @@ pub fn execute(
     let _ = config;
 
     #[cfg(target_os = "linux")]
-    let xdp_builder_with_src_addr = {
+    let xdp_transmit_setup = {
         use {
             agave_xdp::transmitter::TransmitterBuilder,
             caps::{
@@ -313,7 +316,7 @@ pub fn execute(
         required_caps.extend(primordial_caps.clone());
         retained_caps.extend(primordial_caps.clone());
 
-        if let Some(xdp_config) = retransmit_xdp.as_ref() {
+        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
             required_caps.insert(CAP_NET_RAW);
             if xdp_config.zero_copy {
@@ -369,16 +372,12 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let xdp_builder_with_src_addr = retransmit_xdp.clone().map(|xdp_config| {
+        let xdp_transmit_setup = xdp_transmit_config.clone().map(|xdp_config| {
             use {
                 agave_xdp::{default_device_ipv4, interface_ipv4},
-                std::net::SocketAddrV4,
+                solana_core::validator::XdpTransmitSetup,
             };
 
-            let src_port = node.sockets.retransmit_sockets[0]
-                .local_addr()
-                .expect("failed to get local address")
-                .port();
             let src_ip = match node.bind_ip_addrs.active() {
                 IpAddr::V4(ip) if !ip.is_unspecified() => ip,
                 IpAddr::V4(_unspecified) => {
@@ -394,11 +393,11 @@ pub fn execute(
                 }
                 _ => panic!("IPv6 not supported"),
             };
-            (
-                TransmitterBuilder::new(xdp_config, exit.clone())
+            XdpTransmitSetup {
+                transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                     .expect("failed to create xdp transmitter"),
-                SocketAddrV4::new(src_ip, src_port),
-            )
+                src_ip,
+            }
         });
 
         // we're done with caps needed to init xdp now. remove them from our process
@@ -407,13 +406,13 @@ pub fn execute(
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        xdp_builder_with_src_addr
+        xdp_transmit_setup
     };
 
     #[cfg(not(target_os = "linux"))]
-    let xdp_builder_with_src_addr = None;
+    let xdp_transmit_setup = None;
 
-    let reserved = retransmit_xdp
+    let reserved = xdp_transmit_config
         .map(|xdp| xdp.cpus.clone())
         .unwrap_or_default()
         .iter()
@@ -1117,7 +1116,7 @@ pub fn execute(
             sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,
-        xdp_builder_with_src_addr,
+        xdp_transmit_setup,
         exit,
     )
     .map_err(|err| format!("{err:?}"))?;

@@ -27,6 +27,7 @@ Release channels have their own copy of this changelog:
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
   backward compatibility, but account storages are always accessed via file I/O.
 #### Changes
+* Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 ### CLI
 #### Breaking
 #### Changes

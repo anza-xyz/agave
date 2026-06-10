@@ -1,7 +1,6 @@
 //! Defines ConsensusPool to store received and generated votes and certificates.
 use {
     crate::{
-        commitment::CommitmentError,
         common::{
             MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
             Stake, conflicting_types, vote_to_cert_types,
@@ -56,20 +55,8 @@ pub(crate) enum AddVoteError {
     #[error("Certificate error: {0}")]
     Certificate(#[from] CertificateBuildError),
 
-    #[error("{0} channel disconnected")]
-    ChannelDisconnected(String),
-
-    #[error("Voting Service queue full")]
-    VotingServiceQueueFull,
-
     #[error("Invalid rank: {0}")]
     InvalidRank(u16),
-}
-
-impl From<CommitmentError> for AddVoteError {
-    fn from(_: CommitmentError) -> Self {
-        AddVoteError::ChannelDisconnected("CommitmentSender".to_string())
-    }
 }
 
 fn get_key_and_stakes(
@@ -80,10 +67,8 @@ fn get_key_and_stakes(
     let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).ok_or_else(|| {
         AddVoteError::EpochStakesNotFound(root_bank.epoch_schedule().get_epoch(slot))
     })?;
-    let Some(entry) = epoch_stakes
-        .bls_pubkey_to_rank_map()
-        .get_pubkey_stake_entry(rank as usize)
-    else {
+    let rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+    let Some(entry) = rank_map.get_pubkey_stake_entry(rank as usize) else {
         return Err(AddVoteError::InvalidRank(rank));
     };
     Ok((
@@ -94,7 +79,7 @@ fn get_key_and_stakes(
                 entry.vote_account_pubkey,
             )
         }),
-        NonZero::new(epoch_stakes.total_stake()).expect("expect total stakes to not be 0"),
+        NonZero::new(rank_map.total_stake()).expect("expect rank-map total stake to not be 0"),
     ))
 }
 

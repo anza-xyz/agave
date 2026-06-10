@@ -24,6 +24,7 @@ use {
             SLOT_PARAMS_200MS, SLOT_PARAMS_250MS, SLOT_PARAMS_300MS, SLOT_PARAMS_350MS, SlotParams,
             slot_time_feature_gates, slot_time_feature_ids,
         },
+        stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
         stakes::{DeserializableStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes},
@@ -32,7 +33,7 @@ use {
     agave_reserved_account_keys::ReservedAccount,
     ahash::AHashMap,
     assert_matches::assert_matches,
-    crossbeam_channel::{bounded, unbounded},
+    crossbeam_channel::{TrySendError, bounded},
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
@@ -2932,8 +2933,13 @@ fn test_bank_epoch_vote_accounts() {
 
         // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
         //   in the prior epoch (0 in this case)
-        #[allow(deprecated)]
-        let expected_stake = leader_stake.stake(0, &StakeHistory::default(), None);
+        let expected_stake = effective_stake(
+            &leader_stake,
+            0,
+            &StakeHistory::default(),
+            None,
+            parent.use_fixed_point_stake_math(),
+        );
         assert_eq!(
             expected_stake,
             vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
@@ -2950,8 +2956,13 @@ fn test_bank_epoch_vote_accounts() {
     );
 
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    #[allow(deprecated)]
-    let expected_stake = leader_stake.stake(child.epoch(), &StakeHistory::default(), None);
+    let expected_stake = effective_stake(
+        &leader_stake,
+        child.epoch(),
+        &StakeHistory::default(),
+        None,
+        child.use_fixed_point_stake_math(),
+    );
     assert_eq!(
         expected_stake,
         child
@@ -2970,8 +2981,13 @@ fn test_bank_epoch_vote_accounts() {
         SLOTS_PER_EPOCH - (LEADER_SCHEDULE_SLOT_OFFSET % SLOTS_PER_EPOCH) + 1,
     );
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    #[allow(deprecated)]
-    let expected_stake = leader_stake.stake(child.epoch(), &StakeHistory::default(), None);
+    let expected_stake = effective_stake(
+        &leader_stake,
+        child.epoch(),
+        &StakeHistory::default(),
+        None,
+        child.use_fixed_point_stake_math(),
+    );
     assert_eq!(
         expected_stake,
         child
@@ -6321,6 +6337,7 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
         bank.partitioned_rewards_stake_account_stores_per_block,
         params.partitioned_epoch_rewards_stake_account_stores_per_block()
     );
+    assert_eq!(bank.vat_to_burn_per_epoch(), params.vat_to_burn_per_epoch());
     assert_eq!(
         bank.entry_bytes_budget().slot_limit(),
         params.max_entry_bytes_per_slot()
@@ -6374,6 +6391,63 @@ fn test_reduce_slot_time_features() {
         );
         assert!(bank.slot_time_reduction_active());
         assert_slot_time_bank_state(&bank, params);
+    }
+}
+
+#[test]
+fn test_vat_burn_slot_params() {
+    let voting_keypair = ValidatorVoteKeypairs::new_rand();
+    let validator_keypairs = [&voting_keypair];
+    let vote_pubkey = voting_keypair.vote_keypair.pubkey();
+
+    // Loop through slot reduction features one at a time.
+    for (slot_time_feature_id, params) in std::iter::once((None, LEGACY_SLOT_PARAMS))
+        .chain(slot_time_feature_gates().map(|(feature_id, params)| (Some(feature_id), params)))
+    {
+        // Genesis with slot reduction feature active (if applicable).
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = genesis_utils::create_genesis_config_with_vote_accounts_and_cluster_type(
+            1_000 * LAMPORTS_PER_SOL,
+            &validator_keypairs,
+            vec![minimum_vote_account_balance_for_vat(100)],
+            ClusterType::Development,
+            &FeatureSet::default(),
+            false,
+        );
+        activate_feature(&mut genesis_config, feature_set::alpenglow::id());
+        activate_feature(
+            &mut genesis_config,
+            feature_set::validator_admission_ticket::id(),
+        );
+        if let Some(feature_id) = slot_time_feature_id {
+            activate_feature(&mut genesis_config, feature_id);
+        }
+
+        // Advance forward such that feature goes effective.
+        let (parent_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank_slot = if slot_time_feature_id.is_some() {
+            parent_bank.epoch_schedule().get_first_slot_in_epoch(1)
+        } else {
+            parent_bank.slot().saturating_add(1)
+        };
+        let mut bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), bank_slot);
+        assert_eq!(bank.vat_to_burn_per_epoch(), params.vat_to_burn_per_epoch());
+
+        // Verify correct VAT amount is burned.
+        let vote_lamports_before = bank.get_balance(&vote_pubkey);
+        let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+        let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
+        let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch());
+        bank.maybe_burn_vat_from_staked_accounts(&epoch_stakes);
+        assert_eq!(
+            bank.get_balance(&vote_pubkey),
+            vote_lamports_before - params.vat_to_burn_per_epoch()
+        );
+        assert_eq!(
+            bank.get_balance(&incinerator::id()),
+            incinerator_lamports_before + params.vat_to_burn_per_epoch()
+        );
     }
 }
 
@@ -6941,6 +7015,10 @@ fn test_slot_params_use_genesis_baseline_without_features() {
         stake_account_stores_per_block
     );
     assert_eq!(
+        baseline_params.vat_to_burn_per_epoch(),
+        DEFAULT_VAT_TO_BURN_PER_EPOCH
+    );
+    assert_eq!(
         bank.max_data_shreds_per_slot(),
         DEFAULT_MAX_DATA_SHREDS_PER_SLOT
     );
@@ -7178,7 +7256,7 @@ fn test_store_scan_consistency<F>(
     let (scan_finished_sender, scan_finished_receiver): (
         crossbeam_channel::Sender<BankId>,
         crossbeam_channel::Receiver<BankId>,
-    ) = unbounded();
+    ) = bounded(1024);
     let num_banks_scanned = Arc::new(AtomicU64::new(0));
     let scan_thread = {
         let exit = exit.clone();
@@ -7197,7 +7275,15 @@ fn test_store_scan_consistency<F>(
                     {
                         info!("scanning program accounts for slot {}", bank_to_scan.slot());
                         let accounts_result = bank_to_scan.get_program_accounts(&program_id);
-                        let _ = scan_finished_sender.send(bank_to_scan.bank_id());
+                        match scan_finished_sender.try_send(bank_to_scan.bank_id()) {
+                            // The receiver may have hung up during shutdown; that's fine.
+                            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+                            // A full channel means a caller isn't draining it, which would
+                            // block this scan thread. Fail loudly instead of deadlocking.
+                            Err(TrySendError::Full(_)) => {
+                                panic!("scan_finished channel is full; caller must drain it")
+                            }
+                        }
                         num_banks_scanned.fetch_add(1, Relaxed);
                         match (&acceptable_scan_results, accounts_result.is_err()) {
                             (AcceptableScanResults::DroppedSlotError, _)
@@ -7287,14 +7373,14 @@ fn test_store_scan_consistency<F>(
 
 #[test]
 fn test_store_scan_consistency_unrooted() {
-    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+    let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
     let pruned_banks_request_handler = PrunedBanksRequestHandler {
         pruned_banks_receiver,
     };
     test_store_scan_consistency(
         move |bank0,
               bank_to_scan_sender,
-              _scan_finished_receiver,
+              scan_finished_receiver,
               pubkeys_to_modify,
               program_id,
               starting_lamports| {
@@ -7373,6 +7459,11 @@ fn test_store_scan_consistency_unrooted() {
                 // Move purge here so that Bank::drop()->purge_slots() doesn't race
                 // with clean. Simulates the call from AccountsBackgroundService
                 pruned_banks_request_handler.handle_request(&current_major_fork_bank);
+
+                // Drain finished-scan notifications so the bounded channel can't fill
+                // up and block the scan thread. Non-blocking, to preserve the
+                // intentional overlap of clean/squash with the in-flight scan.
+                while scan_finished_receiver.try_recv().is_ok() {}
             }
         },
         Some(Box::new(SendDroppedBankCallback::new(pruned_banks_sender))),
@@ -7382,14 +7473,14 @@ fn test_store_scan_consistency_unrooted() {
 
 #[test]
 fn test_store_scan_consistency_root() {
-    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+    let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
     let pruned_banks_request_handler = PrunedBanksRequestHandler {
         pruned_banks_receiver,
     };
     test_store_scan_consistency(
         move |bank0,
               bank_to_scan_sender,
-              _scan_finished_receiver,
+              scan_finished_receiver,
               pubkeys_to_modify,
               program_id,
               starting_lamports| {
@@ -7429,6 +7520,11 @@ fn test_store_scan_consistency_root() {
                 // Move purge here so that Bank::drop()->purge_slots() doesn't race
                 // with clean. Simulates the call from AccountsBackgroundService
                 pruned_banks_request_handler.handle_request(&current_bank);
+
+                // Drain finished-scan notifications so the bounded channel can't fill
+                // up and block the scan thread. Non-blocking, to preserve the
+                // intentional overlap of clean/squash with the in-flight scan.
+                while scan_finished_receiver.try_recv().is_ok() {}
             }
         },
         Some(Box::new(SendDroppedBankCallback::new(pruned_banks_sender))),
@@ -12362,7 +12458,7 @@ fn test_new_for_txn_tests_system_transfer() {
         ),
         (
             solana_sdk_ids::sysvar::slot_hashes::id(),
-            make_sysvar(bincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
+            make_sysvar(wincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
         ),
         (system_program::id(), {
             let mut acct = AccountSharedData::new(1, 14, &native_loader::id());
@@ -12535,7 +12631,7 @@ fn test_new_for_block_tests_with_vote_account() {
         ),
         (
             solana_sdk_ids::sysvar::slot_hashes::id(),
-            make_sysvar(bincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
+            make_sysvar(wincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
         ),
         (system_program::id(), {
             let mut acct = AccountSharedData::new(1, 14, &native_loader::id());

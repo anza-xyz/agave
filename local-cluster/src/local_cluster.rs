@@ -7,6 +7,7 @@ use {
     },
     agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
+    agave_votor::vote_history_storage::FileVoteHistoryStorage,
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -189,6 +190,8 @@ impl LocalCluster {
         ];
         config.tower_storage = Arc::new(FileTowerStorage::new(ledger_path.to_path_buf()));
         config.accounts_db_config.bank_hash_details_dir = ledger_path.to_path_buf();
+        config.vote_history_storage =
+            Arc::new(FileVoteHistoryStorage::new(ledger_path.to_path_buf()));
 
         let snapshot_config = &mut config.snapshot_config;
         let dummy: PathBuf = DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into();
@@ -960,14 +963,14 @@ impl LocalCluster {
     /// Ok(Some(())) if the transaction was processed successfully. Return
     /// Ok(None) if the transaction was not processed.
     pub fn poll_for_successfully_processed_transaction(
-        client: &QuicTpuClient,
+        rpc_client: &RpcClient,
         transaction: &Transaction,
     ) -> std::result::Result<Option<()>, TransportError> {
         loop {
             // Some local cluster tests create conditions where confirmation
             // is unable to be reached. So rather than checking for confirmation,
             // check for the transaction being processed.
-            let status = client.rpc_client().get_signature_status_with_commitment(
+            let status = rpc_client.get_signature_status_with_commitment(
                 &transaction.signatures[0],
                 CommitmentConfig::processed(),
             )?;
@@ -981,7 +984,7 @@ impl LocalCluster {
                 }
             }
 
-            if !client.rpc_client().is_blockhash_valid(
+            if !rpc_client.is_blockhash_valid(
                 &transaction.message.recent_blockhash,
                 CommitmentConfig::processed(),
             )? {
@@ -1009,7 +1012,9 @@ impl LocalCluster {
         // in LocalCluster integration tests
         for attempt in 1..=attempts {
             client.send_transaction_to_upcoming_leaders(transaction)?;
-            if Self::poll_for_successfully_processed_transaction(client, transaction)?.is_some() {
+            if Self::poll_for_successfully_processed_transaction(client.rpc_client(), transaction)?
+                .is_some()
+            {
                 return Ok(());
             }
 
