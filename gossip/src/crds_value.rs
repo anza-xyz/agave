@@ -4,6 +4,7 @@ use {
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
+        verified_crds_cache,
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -53,12 +54,26 @@ impl Signable for CrdsValue {
     }
 
     fn set_signature(&mut self, signature: Signature) {
-        self.signature = signature
+        self.signature = signature;
+        // Keep self.hash consistent with the new signature: callers (CRDS
+        // shards, pull filters, the verified-CRDS cache) treat hash as the
+        // value's identity.
+        let serialized_data = wincode::serialize(&self.data).expect("failed to serialize CrdsData");
+        self.hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &serialized_data]);
     }
 
     fn verify(&self) -> bool {
-        self.get_signature()
+        if verified_crds_cache::contains(&self.hash) {
+            return true;
+        }
+        if !self
+            .get_signature()
             .verify(self.pubkey().as_ref(), self.signable_data().borrow())
+        {
+            return false;
+        }
+        verified_crds_cache::insert(self.hash);
+        true
     }
 }
 
