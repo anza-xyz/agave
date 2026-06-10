@@ -1,4 +1,3 @@
-use agave_votor_messages::consensus_message::SigVerifiedVoteBatch;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -15,7 +14,7 @@ use {
     },
     agave_votor::consensus_metrics::ConsensusMetricsEvent,
     agave_votor_messages::{
-        consensus_message::{SigVerifiedBatch, VoteMessage},
+        consensus_message::{SigVerifiedBatch, SigVerifiedVoteBatch, VoteMessage},
         vote::Vote,
     },
     rayon::{
