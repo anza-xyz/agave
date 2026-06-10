@@ -72,10 +72,7 @@ impl NotarVoteEntry {
         }
     }
 
-    fn add_vote(
-        &mut self,
-        batch: &SigVerifiedVoteBatch,
-    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+    fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
         if has_common_bits(&self.ranks, batch.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
@@ -115,10 +112,7 @@ impl GenesisVoteEntry {
         }
     }
 
-    fn add_vote(
-        &mut self,
-        batch: &SigVerifiedVoteBatch,
-    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+    fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
         if has_common_bits(&self.ranks, batch.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
@@ -164,7 +158,7 @@ impl NotarFallbackVoteEntry {
         &mut self,
         root_bank: &Bank,
         batch: &SigVerifiedVoteBatch,
-    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+    ) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
         for validator in get_validators(root_bank, batch) {
             if let Some(set) = self.validators.get(&validator)
@@ -200,7 +194,7 @@ impl NotarFallbackVoteEntry {
 struct VoteEntry {
     ranks: BitVec<u8>,
     signature: SignatureProjective,
-    stake: Option<NonZero<u64>>,
+    stake: u64,
 }
 
 impl VoteEntry {
@@ -208,14 +202,11 @@ impl VoteEntry {
         Self {
             ranks: BitVec::with_capacity(max_validators),
             signature: SignatureProjective::identity(),
-            stake: None,
+            stake: 0,
         }
     }
 
-    fn add_vote(
-        &mut self,
-        batch: &SigVerifiedVoteBatch,
-    ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
+    fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
         if has_common_bits(&self.ranks, batch.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
         }
@@ -224,16 +215,8 @@ impl VoteEntry {
         self.signature
             .aggregate_with(std::iter::once(batch.signature()))
             .unwrap();
-        match &mut self.stake {
-            None => {
-                self.stake = Some(batch.stake());
-                Ok(batch.stake())
-            }
-            Some(s) => {
-                *s = s.checked_add(batch.stake().get()).unwrap();
-                Ok(*s)
-            }
-        }
+        self.stake += batch.stake().get();
+        Ok(self.stake)
     }
 }
 
@@ -270,7 +253,6 @@ impl VotePool {
 
     pub(super) fn produce_certs(
         &mut self,
-        root_bank: &Bank,
         total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
@@ -289,13 +271,13 @@ impl VotePool {
                     .notar_fallback
                     .entries
                     .get(&nf.block.block_id)
-                    .map(|e| e.stake.unwrap().get())
+                    .map(|e| e.stake)
                     .unwrap_or_default();
                 let notar_stake = self
                     .notar
                     .entries
                     .get(&nf.block.block_id)
-                    .map(|e| e.stake.unwrap().get())
+                    .map(|e| e.stake)
                     .unwrap_or_default();
                 let observed_stake = nf_stake + notar_stake;
                 let observed_fraction = Fraction::new(observed_stake, total_stake);
@@ -309,7 +291,7 @@ impl VotePool {
                 if completed_certs.contains_key(&cert_type) {
                     return Ok(vec![]);
                 }
-                let observed_stake = self.finalize.stake.unwrap().get();
+                let observed_stake = self.finalize.stake;
                 let observed_fraction = Fraction::new(observed_stake, total_stake);
                 if observed_fraction < FINALIZE_CERT_THRESHOLD {
                     return Ok(vec![]);
@@ -328,8 +310,7 @@ impl VotePool {
                 if completed_certs.contains_key(&cert_type) {
                     return Ok(vec![]);
                 }
-                let observed_stake =
-                    self.skip.stake.unwrap().get() + self.skip_fallback.stake.unwrap().get();
+                let observed_stake = self.skip.stake + self.skip_fallback.stake;
                 let observed_fraction = Fraction::new(observed_stake, total_stake);
                 if observed_fraction < SKIP_CERT_THRESHOLD {
                     return Ok(vec![]);
@@ -344,7 +325,7 @@ impl VotePool {
                 let Some(entry) = self.genesis.entries.get(&genesis.block.block_id) else {
                     return Ok(vec![]);
                 };
-                let observed_fraction = Fraction::new(entry.stake.unwrap().get(), total_stake);
+                let observed_fraction = Fraction::new(entry.stake, total_stake);
                 if observed_fraction < GENESIS_VOTE_THRESHOLD {
                     return Ok(vec![]);
                 }
@@ -360,11 +341,12 @@ impl VotePool {
     pub(super) fn add_vote(
         &mut self,
         root_bank: &Bank,
+        total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
+    ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
-        let _stake = match batch.vote() {
+        let stake = match batch.vote() {
             Vote::Notarize(_) => {
                 if has_common_bits(&self.skip.ranks, batch.ranks())
                     || has_common_bits(&self.genesis.ranks, batch.ranks())
@@ -435,7 +417,8 @@ impl VotePool {
                 self.genesis.add_vote(batch)
             }
         }?;
-        self.produce_certs(root_bank, batch, completed_certs)
+        let certs = self.produce_certs(total_stake, batch, completed_certs)?;
+        Ok((stake, certs))
     }
 }
 
