@@ -33,7 +33,7 @@ use {
     agave_reserved_account_keys::ReservedAccount,
     ahash::AHashMap,
     assert_matches::assert_matches,
-    crossbeam_channel::{bounded, unbounded},
+    crossbeam_channel::{TrySendError, bounded},
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
@@ -7256,7 +7256,7 @@ fn test_store_scan_consistency<F>(
     let (scan_finished_sender, scan_finished_receiver): (
         crossbeam_channel::Sender<BankId>,
         crossbeam_channel::Receiver<BankId>,
-    ) = unbounded();
+    ) = bounded(1024);
     let num_banks_scanned = Arc::new(AtomicU64::new(0));
     let scan_thread = {
         let exit = exit.clone();
@@ -7275,7 +7275,15 @@ fn test_store_scan_consistency<F>(
                     {
                         info!("scanning program accounts for slot {}", bank_to_scan.slot());
                         let accounts_result = bank_to_scan.get_program_accounts(&program_id);
-                        let _ = scan_finished_sender.send(bank_to_scan.bank_id());
+                        match scan_finished_sender.try_send(bank_to_scan.bank_id()) {
+                            // The receiver may have hung up during shutdown; that's fine.
+                            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+                            // A full channel means a caller isn't draining it, which would
+                            // block this scan thread. Fail loudly instead of deadlocking.
+                            Err(TrySendError::Full(_)) => {
+                                panic!("scan_finished channel is full; caller must drain it")
+                            }
+                        }
                         num_banks_scanned.fetch_add(1, Relaxed);
                         match (&acceptable_scan_results, accounts_result.is_err()) {
                             (AcceptableScanResults::DroppedSlotError, _)
@@ -7365,14 +7373,14 @@ fn test_store_scan_consistency<F>(
 
 #[test]
 fn test_store_scan_consistency_unrooted() {
-    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+    let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
     let pruned_banks_request_handler = PrunedBanksRequestHandler {
         pruned_banks_receiver,
     };
     test_store_scan_consistency(
         move |bank0,
               bank_to_scan_sender,
-              _scan_finished_receiver,
+              scan_finished_receiver,
               pubkeys_to_modify,
               program_id,
               starting_lamports| {
@@ -7451,6 +7459,11 @@ fn test_store_scan_consistency_unrooted() {
                 // Move purge here so that Bank::drop()->purge_slots() doesn't race
                 // with clean. Simulates the call from AccountsBackgroundService
                 pruned_banks_request_handler.handle_request(&current_major_fork_bank);
+
+                // Drain finished-scan notifications so the bounded channel can't fill
+                // up and block the scan thread. Non-blocking, to preserve the
+                // intentional overlap of clean/squash with the in-flight scan.
+                while scan_finished_receiver.try_recv().is_ok() {}
             }
         },
         Some(Box::new(SendDroppedBankCallback::new(pruned_banks_sender))),
@@ -7460,14 +7473,14 @@ fn test_store_scan_consistency_unrooted() {
 
 #[test]
 fn test_store_scan_consistency_root() {
-    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+    let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
     let pruned_banks_request_handler = PrunedBanksRequestHandler {
         pruned_banks_receiver,
     };
     test_store_scan_consistency(
         move |bank0,
               bank_to_scan_sender,
-              _scan_finished_receiver,
+              scan_finished_receiver,
               pubkeys_to_modify,
               program_id,
               starting_lamports| {
@@ -7507,6 +7520,11 @@ fn test_store_scan_consistency_root() {
                 // Move purge here so that Bank::drop()->purge_slots() doesn't race
                 // with clean. Simulates the call from AccountsBackgroundService
                 pruned_banks_request_handler.handle_request(&current_bank);
+
+                // Drain finished-scan notifications so the bounded channel can't fill
+                // up and block the scan thread. Non-blocking, to preserve the
+                // intentional overlap of clean/squash with the in-flight scan.
+                while scan_finished_receiver.try_recv().is_ok() {}
             }
         },
         Some(Box::new(SendDroppedBankCallback::new(pruned_banks_sender))),

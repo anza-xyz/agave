@@ -29,6 +29,7 @@ solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 
 [dev-dependencies]
+solana-pubkey = { workspace = true, features = ["std"] }
 static_assertions = { workspace = true }
 
 [lints]
