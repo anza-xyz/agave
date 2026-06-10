@@ -130,8 +130,9 @@ impl ConsensusPool {
     fn update_vote_pool(
         &mut self,
         root_bank: &Bank,
+        total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
-    ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
+    ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
         // TODO: look up max validators from epoch stakes
         let max_validators = 2048;
         let slot = batch.vote().slot();
@@ -139,7 +140,7 @@ impl ConsensusPool {
             .vote_pools
             .entry(slot)
             .or_insert_with(|| VotePool::new(slot, max_validators));
-        pool.add_vote(root_bank, batch, &self.completed_certificates)
+        pool.add_vote(root_bank, total_stake, batch, &self.completed_certificates)
     }
 
     fn insert_certificate(
@@ -271,7 +272,9 @@ impl ConsensusPool {
         }
         let vote_type = vote.get_type();
         // TODO: handle unwrap
-        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, &batch).unwrap();
+        let (entry_stake, new_certs) = self
+            .update_vote_pool(root_bank, total_stake, &batch)
+            .unwrap();
         let fallback_vote_counters = self
             .slot_stake_counters_map
             .entry(vote_slot)
@@ -279,7 +282,7 @@ impl ConsensusPool {
 
         fallback_vote_counters.add_vote(
             vote,
-            entry_stake.get(),
+            entry_stake,
             is_pubkey_present(root_bank, &batch, my_vote_pubkey),
             events,
             &mut self.pending_safe_to_notar,
