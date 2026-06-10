@@ -2334,16 +2334,15 @@ impl Bank {
             let status_cache = self.status_cache.read().unwrap();
             let roots = status_cache.roots();
             let mut ancestors = Vec::with_capacity(roots.len() + self.ancestors.len());
-            ancestors.extend(roots.iter().copied());
-            (roots.iter().min().copied().unwrap_or(0), ancestors)
+            let mut min = Slot::MAX;
+            for root in roots {
+                ancestors.push(*root);
+                min = min.min(*root);
+            }
+            (if roots.is_empty() { 0 } else { min }, ancestors)
         };
 
-        ancestors.extend(
-            self.ancestors
-                .keys()
-                .into_iter()
-                .filter(|ancestor| *ancestor >= min),
-        );
+        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
         ancestors.sort_unstable();
         ancestors.dedup();
         ancestors
