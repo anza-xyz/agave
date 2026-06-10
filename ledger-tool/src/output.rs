@@ -153,9 +153,33 @@ fn writeln_block_marker(
                  {}, block_user_agent: {}",
                 footer.bank_hash, footer.block_producer_time_nanos, footer.block_user_agent,
             )?;
-            writeln!(f, "{prefix}  {}", footer.final_cert_log)?;
-            writeln!(f, "{prefix}  {}", footer.skip_rewards_log)?;
-            writeln!(f, "{prefix}  {}", footer.notar_rewards_log)
+
+            let final_cert_log = match &footer.final_cert {
+                Some(cert) => format!(
+                    "FinalCertificate: slot: {}, block_id: {}, final_aggregate validators: {}, \
+                     notar_aggregate validators: {}",
+                    cert.slot, cert.block_id, cert.final_validators, cert.notar_validators,
+                ),
+                None => "No finalization certificate".to_string(),
+            };
+            let skip_reward_log = match &footer.skip_reward {
+                Some(cert) => format!(
+                    "SkipRewardCertificate: slot: {}, validators: {}",
+                    cert.slot, cert.validators,
+                ),
+                None => "SkipRewardCertificate: None".to_string(),
+            };
+            let notar_reward_log = match &footer.notar_reward {
+                Some(cert) => format!(
+                    "NotarRewardCertificate: slot: {}, validators: {}, block_id: {}",
+                    cert.slot, cert.validators, cert.block_id,
+                ),
+                None => "NotarRewardCertificate: None".to_string(),
+            };
+
+            writeln!(f, "{prefix}  {}", final_cert_log)?;
+            writeln!(f, "{prefix}  {}", skip_reward_log)?;
+            writeln!(f, "{prefix}  {}", notar_reward_log)
         }
         CliPopulatedBlockMarker::BlockHeader(header) => writeln!(
             f,
@@ -255,13 +279,37 @@ pub struct CliPopulatedEntry {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CliFinalCert {
+    slot: Slot,
+    final_validators: usize,
+    notar_validators: usize,
+    block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliSkipRewards {
+    slot: Slot,
+    validators: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliNotarRewards {
+    slot: Slot,
+    validators: usize,
+    block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliPopulatedFooter {
     bank_hash: String,
     block_producer_time_nanos: u64,
     block_user_agent: String,
-    final_cert_log: String,
-    skip_rewards_log: String,
-    notar_rewards_log: String,
+    final_cert: Option<CliFinalCert>,
+    skip_reward: Option<CliSkipRewards>,
+    notar_reward: Option<CliNotarRewards>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -640,38 +688,46 @@ pub struct EncodedConfirmedBlockWithComponents {
     pub block_height: Option<u64>,
 }
 
-fn cli_populated_block_marker_from(marker: VersionedBlockMarker) -> CliPopulatedBlockMarker {
+fn cli_populated_block_marker_from(
+    marker: VersionedBlockMarker,
+) -> Result<CliPopulatedBlockMarker> {
     let VersionedBlockMarker::V1(block_marker) = marker;
     match block_marker {
         BlockMarkerV1::BlockFooter(footer) => {
             let VersionedBlockFooter::V1(footer) = footer.into_inner();
-            CliPopulatedBlockMarker::BlockFooter(cli_populated_footer_from_marker(footer))
+            Ok(CliPopulatedBlockMarker::BlockFooter(
+                cli_populated_footer_from_marker(footer)?,
+            ))
         }
         BlockMarkerV1::BlockHeader(header) => {
             let VersionedBlockHeader::V1(header) = header.into_inner();
-            CliPopulatedBlockMarker::BlockHeader(CliPopulatedHeader {
+            Ok(CliPopulatedBlockMarker::BlockHeader(CliPopulatedHeader {
                 parent_slot: header.parent_slot,
                 parent_block_id: header.parent_block_id.to_string(),
-            })
+            }))
         }
         BlockMarkerV1::UpdateParent(update_parent) => {
             let VersionedUpdateParent::V1(update_parent) = update_parent.into_inner();
-            CliPopulatedBlockMarker::UpdateParent(CliPopulatedUpdateParent {
-                new_parent_slot: update_parent.new_parent_slot,
-                new_parent_block_id: update_parent.new_parent_block_id.to_string(),
-            })
+            Ok(CliPopulatedBlockMarker::UpdateParent(
+                CliPopulatedUpdateParent {
+                    new_parent_slot: update_parent.new_parent_slot,
+                    new_parent_block_id: update_parent.new_parent_block_id.to_string(),
+                },
+            ))
         }
         BlockMarkerV1::GenesisCertificate(certificate) => {
             let certificate = certificate.into_inner();
-            CliPopulatedBlockMarker::GenesisCertificate(CliPopulatedGenesisCertificate {
-                slot: certificate.slot,
-                block_id: certificate.block_id.to_string(),
-            })
+            Ok(CliPopulatedBlockMarker::GenesisCertificate(
+                CliPopulatedGenesisCertificate {
+                    slot: certificate.slot,
+                    block_id: certificate.block_id.to_string(),
+                },
+            ))
         }
     }
 }
 
-fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> CliPopulatedFooter {
+fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> Result<CliPopulatedFooter> {
     let BlockFooterV1 {
         bank_hash,
         block_producer_time_nanos,
@@ -681,66 +737,55 @@ fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> CliPopulatedFooter
         notar_reward_cert,
     } = footer;
 
-    let final_cert_log = match block_final_cert {
-        Some(cert) => {
-            let slot = cert.slot;
-            let block_id = cert.block_id.to_string();
-            let final_validators = validator_count_log(&cert.final_aggregate.into_bitmap());
-            match cert.notar_aggregate {
-                Some(notar_aggregate) => {
-                    let notar_validators = validator_count_log(&notar_aggregate.into_bitmap());
-                    format!(
-                        "FinalCertificate: slot: {slot}, block_id: {block_id}, final_aggregate \
-                         validators: {final_validators}, notar_aggregate validators: \
-                         {notar_validators}",
-                    )
-                }
-                None => format!(
-                    "FinalCertificate: slot: {slot}, block_id: {block_id}, final_aggregate \
-                     validators: {final_validators}, notar_aggregate: None",
-                ),
-            }
-        }
-        None => "No finalization certificate".to_string(),
+    let final_cert = if let Some(cert) = block_final_cert {
+        Some(CliFinalCert {
+            slot: cert.slot,
+            block_id: cert.block_id.to_string(),
+            final_validators: validator_count_log(&cert.final_aggregate.into_bitmap())?,
+            notar_validators: match cert.notar_aggregate {
+                Some(notar_aggregate) => validator_count_log(&notar_aggregate.into_bitmap())?,
+                None => 0,
+            },
+        })
+    } else {
+        None
     };
 
-    let skip_rewards_log = match skip_reward_cert {
-        Some(cert) => format!(
-            "SkipRewardCertificate: slot: {}, validators: {}",
-            cert.slot,
-            validator_count_log(cert.to_bitmap()),
-        ),
-        None => "SkipRewardCertificate: None".to_string(),
+    let skip_reward = if let Some(cert) = skip_reward_cert {
+        Some(CliSkipRewards {
+            slot: cert.slot,
+            validators: validator_count_log(cert.to_bitmap())?,
+        })
+    } else {
+        None
     };
 
-    let notar_rewards_log = match notar_reward_cert {
-        Some(cert) => format!(
-            "NotarRewardCertificate: slot: {}, validators: {}, block_id: {}",
-            cert.slot,
-            validator_count_log(cert.bitmap()),
-            cert.block_id,
-        ),
-        None => "NotarRewardCertificate: None".to_string(),
+    let notar_reward = if let Some(cert) = notar_reward_cert {
+        Some(CliNotarRewards {
+            slot: cert.slot,
+            validators: validator_count_log(cert.bitmap())?,
+            block_id: cert.block_id.to_string(),
+        })
+    } else {
+        None
     };
 
-    CliPopulatedFooter {
+    Ok(CliPopulatedFooter {
         bank_hash: bank_hash.to_string(),
         block_producer_time_nanos,
         block_user_agent: String::from_utf8_lossy(&block_user_agent).into_owned(),
-        final_cert_log,
-        skip_rewards_log,
-        notar_rewards_log,
-    }
+        final_cert,
+        skip_reward,
+        notar_reward,
+    })
 }
 
-fn validator_count_log(bitmap: &[u8]) -> String {
-    match decode(bitmap, MAXIMUM_VALIDATORS) {
-        Ok(Decoded::Base2(validators)) => validators.count_ones().to_string(),
-        Ok(Decoded::Base3(first, second)) => first
-            .count_ones()
-            .saturating_add(second.count_ones())
-            .to_string(),
-        Err(err) => format!("unable to decode ({err:?})"),
+fn validator_count_log(bitmap: &[u8]) -> Result<usize> {
+    match decode(bitmap, MAXIMUM_VALIDATORS)
+        .map_err(|err| LedgerToolError::BitmapDecode(format!("unable to decode ({err:?})")))?
+    {
+        Decoded::Base2(validators) => Ok(validators.count_ones()),
+        Decoded::Base3(first, second) => Ok(first.count_ones().saturating_add(second.count_ones())),
     }
 }
 
@@ -777,7 +822,7 @@ impl EncodedConfirmedBlockWithComponents {
                 }
                 ConfirmedBlockComponent::BlockMarker(marker) => {
                     components.push(CliPopulatedComponent::BlockMarker(
-                        cli_populated_block_marker_from(marker),
+                        cli_populated_block_marker_from(marker)?,
                     ));
                 }
             }
