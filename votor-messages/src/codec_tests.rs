@@ -215,7 +215,7 @@ fn single_byte_mutation_is_safe_and_stable() {
                 let mut corrupted = bytes.clone();
                 corrupted[index] = corrupted[index].wrapping_add(delta);
                 if accepted_and_stable(&corrupted) {
-                    accepted += 1;
+                    accepted = accepted.saturating_add(1);
                 }
             }
         }
