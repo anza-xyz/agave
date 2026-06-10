@@ -543,31 +543,51 @@ fn try_build_from_entries(
 mod test {
     use {
         super::*,
+        crate::consensus_pool::tests::create_bank_forks,
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
-        solana_bls_signatures::Signature as BLSSignature,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        solana_ledger::genesis_utils::create_genesis_config,
+        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
     };
 
     #[test]
     fn test_notar_failures() {
         let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
+        let signature = BLSSignature {
+            0: [0; BLS_SIGNATURE_AFFINE_SIZE],
+        };
         let rank = 1;
         let slot = 1;
+        let max_validators = 2048;
+        let genesis_config = create_genesis_config(10000000);
+        let num_validators = 10;
+        let validator_keypairs = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let bank_forks = create_bank_forks(&validator_keypairs);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let total_stake = NonZero::new(1000).unwrap();
+        let completed_certs = BTreeMap::new();
 
-        let mut votes = VotePool::new(slot);
-        let skip = VoteMessage {
+        let mut votes = VotePool::new(slot, 2048);
+        let skip = SigVerifiedVoteBatch::new(vec![VoteMessage {
             vote: Vote::new_skip_vote(slot),
             signature,
             rank,
-        };
-        votes.add_vote(voter, skip).unwrap();
-        let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+        }]);
+        votes
+            .add_vote(&root_bank, total_stake, &skip, &completed_certs)
+            .unwrap();
+        let notar = SigVerifiedVoteBatch::new(vec![VoteMessage {
+            vote: Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::new_unique(),
+            }),
             signature,
             rank,
-        };
+        }]);
         assert!(matches!(
-            votes.add_vote(voter, notar),
+            votes.add_vote(&root_bank, total_stake, &notar, &completed_certs),
             Err(VotePoolAddVoteError::Invalid)
         ));
 

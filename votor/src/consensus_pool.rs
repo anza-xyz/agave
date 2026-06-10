@@ -650,11 +650,13 @@ mod tests {
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
 
-    fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
+    pub(crate) fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
         Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
     }
 
-    fn create_bank_forks(validator_keypairs: &[ValidatorVoteKeypairs]) -> Arc<RwLock<BankForks>> {
+    pub(crate) fn create_bank_forks(
+        validator_keypairs: &[ValidatorVoteKeypairs],
+    ) -> Arc<RwLock<BankForks>> {
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
             validator_keypairs,
