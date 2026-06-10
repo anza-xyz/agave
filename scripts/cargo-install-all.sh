@@ -33,6 +33,7 @@ usage: $0 [+<cargo version>] [options] <install directory>
   +<cargo version>      Build using <cargo version> instead of the version defined in rust-toolchain.toml.
 
   Options:
+    --dcou-check                Only check that dcou feature activation is correct and exit (no build).
     --debug                     Build with debug profile instead of release profile.
     --release-with-debug        Build with release-with-debug profile instead of release profile.
     --release-with-lto          Build with release-with-lto profile instead of release profile.
@@ -58,6 +59,7 @@ buildProfileArg='--profile release'
 buildProfile='release'
 
 # Build selection
+dcouCheckOnly=
 noBuildDCOUBins=
 noBuildDeprecatedBins=
 noBuildDevBins=
@@ -68,7 +70,10 @@ noSPLToken=
 
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
-    if [[ $1 = --debug ]]; then
+    if [[ $1 = --dcou-check ]]; then
+      dcouCheckOnly=true
+      shift
+    elif [[ $1 = --debug ]]; then
       buildProfileArg=      # the default cargo profile is 'debug'
       buildProfile='debug'
       shift
@@ -124,15 +129,17 @@ while [[ -n $1 ]]; do
   fi
 done
 
-if [[ -z "$installDir" ]]; then
-  usage "Install directory not specified"
-  exit 1
+
+if [[ -n "$installDir" ]]; then
+  installDir="$(mkdir -p "$installDir"; cd "$installDir"; pwd)"
+  mkdir -p "$installDir/bin/deps"
+
+  echo "Install location: $installDir ($buildProfile)"
+else
+  if [[ -z "$dcouCheckOnly" ]]; then
+    usage "Install directory not specified"
+  fi
 fi
-
-installDir="$(mkdir -p "$installDir"; cd "$installDir"; pwd)"
-mkdir -p "$installDir/bin/deps"
-
-echo "Install location: $installDir ($buildProfile)"
 
 cd "$(dirname "$0")"/..
 
@@ -204,6 +211,21 @@ check_dcou() {
      exit 1
   fi
 
+  # Likewise, make sure the dev tools really do activate dcou. Done before
+  # building so that `--dcou-check` can verify both expectations up front.
+  if [[ ${#dcouBinArgs[@]} -gt 0 ]]; then
+    if ! check_dcou --manifest-path "dev-bins/Cargo.toml" "${dcouBinArgs[@]}"; then
+       echo 'dcou feature activation is incorrectly remain to be deactivated!'
+       exit 1
+    fi
+  fi
+
+  # Stop here if we only want to check the dcou feature activation.
+  if [[ -n "$dcouCheckOnly" ]]; then
+    echo 'dcou feature activation check passed.'
+    exit 0
+  fi
+
   # Build our production binaries without dcou.
   if [[ ${#binArgs[@]} -gt 0 ]]; then
     cargo_build "${binArgs[@]}" --workspace
@@ -211,10 +233,6 @@ check_dcou() {
 
   # Finally, build the remaining dev tools with dcou.
   if [[ ${#dcouBinArgs[@]} -gt 0 ]]; then
-    if ! check_dcou --manifest-path "dev-bins/Cargo.toml" "${dcouBinArgs[@]}"; then
-       echo 'dcou feature activation is incorrectly remain to be deactivated!'
-       exit 1
-    fi
     cargo_build --manifest-path "dev-bins/Cargo.toml" "${dcouBinArgs[@]}"
   fi
 
@@ -227,6 +245,11 @@ check_dcou() {
     "$cargo" $maybeRustVersion install --locked spl-token-cli --root "$installDir" $maybeSplTokenCliVersionArg
   fi
 )
+
+# The subshell above exits early in dcou-check mode; stop here before installing.
+if [[ -n "$dcouCheckOnly" ]]; then
+  exit 0
+fi
 
 for bin in "${BINS[@]}"; do
   cp -fv "target/$buildProfile/$bin" "$installDir"/bin
