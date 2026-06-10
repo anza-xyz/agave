@@ -2,6 +2,8 @@ use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::SigVerifiedVoteBatch,
+        fraction::Fraction,
+        migration::GENESIS_VOTE_THRESHOLD,
         vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -10,6 +12,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_signer_store::{EncodeError, encode_base2, encode_base3},
     std::{
         collections::{BTreeMap, HashMap, HashSet, hash_map::Entry as HashMapEntry},
         num::NonZero,
@@ -19,6 +22,12 @@ use {
 };
 
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
+
+const SKIP_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+const NOTAR_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+const NOTAR_FALLBACK_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+const FINALIZE_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+const FAST_FINALIZE_CERT_THRESHOLD: Fraction = Fraction::from_percentage(80);
 
 // TODO: return an iterator maybe?
 fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> Vec<Pubkey> {
@@ -237,7 +246,6 @@ fn has_common_bits(a: &BitVec<u8>, b: &BitVec<u8>) -> bool {
 }
 
 pub(super) struct VotePool {
-    max_validators: usize,
     slot: Slot,
     skip: VoteEntry,
     skip_fallback: VoteEntry,
@@ -250,7 +258,6 @@ pub(super) struct VotePool {
 impl VotePool {
     pub(super) fn new(slot: Slot, max_validators: usize) -> Self {
         Self {
-            max_validators,
             slot,
             skip: VoteEntry::new(max_validators),
             skip_fallback: VoteEntry::new(max_validators),
@@ -261,12 +268,100 @@ impl VotePool {
         }
     }
 
+    pub(super) fn produce_certs(
+        &mut self,
+        root_bank: &Bank,
+        total_stake: NonZero<u64>,
+        batch: &SigVerifiedVoteBatch,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
+        match batch.vote() {
+            Vote::Notarize(_) => {
+                // notar; nf; ff;
+                unimplemented!();
+            }
+            Vote::NotarizeFallback(nf) => {
+                let cert_type = CertificateType::NotarizeFallback(nf.block);
+                if completed_certs.contains_key(&cert_type) {
+                    return Ok(vec![]);
+                }
+                let nf_stake = self
+                    .notar_fallback
+                    .entries
+                    .get(&nf.block.block_id)
+                    .map(|e| e.stake.unwrap().get())
+                    .unwrap_or_default();
+                let notar_stake = self
+                    .notar
+                    .entries
+                    .get(&nf.block.block_id)
+                    .map(|e| e.stake.unwrap().get())
+                    .unwrap_or_default();
+                let observed_stake = nf_stake + notar_stake;
+                let observed_fraction = Fraction::new(observed_stake, total_stake);
+                if observed_fraction < NOTAR_FALLBACK_CERT_THRESHOLD {
+                    return Ok(vec![]);
+                }
+                unimplemented!();
+            }
+            Vote::Finalize(f) => {
+                let cert_type = CertificateType::Finalize(f.slot);
+                if completed_certs.contains_key(&cert_type) {
+                    return Ok(vec![]);
+                }
+                let observed_stake = self.finalize.stake.unwrap().get();
+                let observed_fraction = Fraction::new(observed_stake, total_stake);
+                if observed_fraction < FINALIZE_CERT_THRESHOLD {
+                    return Ok(vec![]);
+                }
+                // TODO: can we avoid the clone?
+                let cert = build_cert_from_bitmap(
+                    cert_type,
+                    self.finalize.signature,
+                    self.finalize.ranks.clone(),
+                )
+                .unwrap();
+                Ok(vec![cert])
+            }
+            Vote::Skip(_) | Vote::SkipFallback(_) => {
+                let cert_type = CertificateType::Skip(batch.vote().slot());
+                if completed_certs.contains_key(&cert_type) {
+                    return Ok(vec![]);
+                }
+                let observed_stake =
+                    self.skip.stake.unwrap().get() + self.skip_fallback.stake.unwrap().get();
+                let observed_fraction = Fraction::new(observed_stake, total_stake);
+                if observed_fraction < SKIP_CERT_THRESHOLD {
+                    return Ok(vec![]);
+                }
+                unimplemented!();
+            }
+            Vote::Genesis(genesis) => {
+                let cert_type = CertificateType::Genesis(genesis.block);
+                if completed_certs.contains_key(&cert_type) {
+                    return Ok(vec![]);
+                }
+                let Some(entry) = self.genesis.entries.get(&genesis.block.block_id) else {
+                    return Ok(vec![]);
+                };
+                let observed_fraction = Fraction::new(entry.stake.unwrap().get(), total_stake);
+                if observed_fraction < GENESIS_VOTE_THRESHOLD {
+                    return Ok(vec![]);
+                }
+                // TODO: can we avoid the clone?
+                let cert = build_cert_from_bitmap(cert_type, entry.signature, entry.ranks.clone())
+                    .unwrap();
+                Ok(vec![cert])
+            }
+        }
+    }
+
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
     pub(super) fn add_vote(
         &mut self,
         root_bank: &Bank,
         batch: &SigVerifiedVoteBatch,
-        _completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
         let _stake = match batch.vote() {
@@ -340,8 +435,44 @@ impl VotePool {
                 self.genesis.add_vote(batch)
             }
         }?;
-        unimplemented!()
+        self.produce_certs(root_bank, batch, completed_certs)
     }
+}
+
+/// Build a [`Certificate`] from a single bitmap.
+fn build_cert_from_bitmap(
+    cert_type: CertificateType,
+    signature: SignatureProjective,
+    mut bitmap: BitVec<u8>,
+) -> Result<Certificate, EncodeError> {
+    let new_len = bitmap.last_one().map_or(0, |i| i.saturating_add(1));
+    bitmap.resize(new_len, false);
+    let bitmap = encode_base2(&bitmap)?;
+    Ok(Certificate {
+        cert_type,
+        signature: signature.into(),
+        bitmap,
+    })
+}
+
+/// Build a [`Certificate`] from two bitmaps.
+fn build_cert_from_bitmaps(
+    cert_type: CertificateType,
+    signature: SignatureProjective,
+    mut bitmap0: BitVec<u8>,
+    mut bitmap1: BitVec<u8>,
+) -> Result<Certificate, EncodeError> {
+    let last_one_0 = bitmap0.last_one().map_or(0, |i| i.saturating_add(1));
+    let last_one_1 = bitmap1.last_one().map_or(0, |i| i.saturating_add(1));
+    let new_length = last_one_0.max(last_one_1);
+    bitmap0.resize(new_length, false);
+    bitmap1.resize(new_length, false);
+    let bitmap = encode_base3(&bitmap0, &bitmap1)?;
+    Ok(Certificate {
+        cert_type,
+        signature: signature.into(),
+        bitmap,
+    })
 }
 
 #[cfg(test)]
