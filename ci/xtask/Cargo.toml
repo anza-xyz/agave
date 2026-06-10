@@ -20,17 +20,27 @@ integration-tests = []
 
 [dependencies]
 anyhow = "1.0.102"
+ar = "0.9.0"
+cargo_metadata = "0.23.1"
 clap = { version = "4.6.1", features = ["derive"] }
 env_logger = "0.11.10"
+flate2 = "1.1.5"
 futures-util = "0.3.31"
+libc = "0.2.185"
 log = "0.4.28"
 octocrab = { version = "0.51.0", features = ["stream"] }
 regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_yaml = "0.9.34"
+shlex = "1.3.0"
+tar = "0.4.44"
+tempfile = "3.27.0"
 tokio = { version = "1.52.3", features = ["full"] }
+walkdir = "2.5.0"
 xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "a9b0cf5facf85eb11458bbefc651132722c18dae" }
+xz2 = "0.1.7"
+zstd = "0.13.3"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
