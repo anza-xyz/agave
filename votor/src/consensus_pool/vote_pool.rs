@@ -337,6 +337,46 @@ impl VotePool {
         Ok(Some(cert))
     }
 
+    fn try_produce_finalize_fast_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::FinalizeFast(block);
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        let Some(entry) = self.notar.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        if let Some(cert) =
+            entry.try_build_cert(cert_type, FAST_FINALIZE_CERT_THRESHOLD, total_stake)
+        {
+            return Ok(Some(cert));
+        }
+        Ok(None)
+    }
+
+    fn try_produce_notar_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Notarize(block);
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        let Some(entry) = self.notar.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        if let Some(cert) = entry.try_build_cert(cert_type, NOTAR_CERT_THRESHOLD, total_stake) {
+            return Ok(Some(cert));
+        }
+        Ok(None)
+    }
+
     fn try_produce_skip_cert(
         &mut self,
         total_stake: NonZero<u64>,
@@ -397,10 +437,14 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
         match batch.vote() {
-            Vote::Notarize(_) => {
-                // notar; nf; ff;
-                unimplemented!();
-            }
+            Vote::Notarize(notar) => Ok([
+                self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_notar_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_finalize_fast_cert(total_stake, notar.block, completed_certs)?,
+            ]
+            .into_iter()
+            .flatten()
+            .collect()),
             Vote::NotarizeFallback(nf) => Ok(self
                 .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)?
                 .into_iter()
