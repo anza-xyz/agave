@@ -45,13 +45,13 @@ impl NotarVoteEntry {
         &mut self,
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote.slot());
+        debug_assert_eq!(self.slot, batch.vote().slot());
         for entry in self.entries.values() {
-            if has_common_bits(&batch.ranks, &entry.ranks) {
+            if has_common_bits(batch.ranks(), &entry.ranks) {
                 return Err(VotePoolAddVoteError::Duplicate);
             }
         }
-        let stake = match self.entries.entry(*batch.vote.block_id().unwrap()) {
+        let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let vote_pool_entry = e.get_mut();
                 vote_pool_entry.add_vote(batch)?
@@ -64,7 +64,7 @@ impl NotarVoteEntry {
                 stake
             }
         };
-        self.ranks |= &batch.ranks;
+        self.ranks |= batch.ranks();
         Ok(stake)
     }
 }
@@ -88,13 +88,13 @@ impl GenesisVoteEntry {
         &mut self,
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote.slot());
+        debug_assert_eq!(self.slot, batch.vote().slot());
         for entry in self.entries.values() {
-            if has_common_bits(&batch.ranks, &entry.ranks) {
+            if has_common_bits(batch.ranks(), &entry.ranks) {
                 return Err(VotePoolAddVoteError::Duplicate);
             }
         }
-        let stake = match self.entries.entry(*batch.vote.block_id().unwrap()) {
+        let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let vote_pool_entry = e.get_mut();
                 vote_pool_entry.add_vote(batch)?
@@ -175,21 +175,21 @@ impl VoteEntry {
         &mut self,
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
-        if has_common_bits(&self.ranks, &batch.ranks) {
+        if has_common_bits(&self.ranks, batch.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
         }
-        self.ranks |= &batch.ranks;
+        self.ranks |= batch.ranks();
         // TODO: handle signature error
         self.signature
-            .aggregate_with(std::iter::once(&batch.signature))
+            .aggregate_with(std::iter::once(batch.signature()))
             .unwrap();
         match &mut self.stake {
             None => {
-                self.stake = Some(batch.stake);
-                Ok(batch.stake)
+                self.stake = Some(batch.stake());
+                Ok(batch.stake())
             }
             Some(s) => {
-                *s = s.checked_add(batch.stake.get()).unwrap();
+                *s = s.checked_add(batch.stake().get()).unwrap();
                 Ok(*s)
             }
         }
@@ -235,32 +235,32 @@ impl VotePool {
         batch: &SigVerifiedVoteBatch,
         _completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote.slot());
-        let _stake = match batch.vote {
+        debug_assert_eq!(self.slot, batch.vote().slot());
+        let _stake = match batch.vote() {
             Vote::Notarize(_) => {
-                if has_common_bits(&batch.ranks, &self.skip.ranks) {
+                if has_common_bits(batch.ranks(), &self.skip.ranks) {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.notar.add_vote(batch)
             }
             Vote::Skip(_) => {
-                if has_common_bits(&self.notar.ranks, &batch.ranks)
-                    || has_common_bits(&self.finalize.ranks, &batch.ranks)
+                if has_common_bits(&self.notar.ranks, batch.ranks())
+                    || has_common_bits(&self.finalize.ranks, batch.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.skip.add_vote(batch)
             }
             Vote::SkipFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, &batch.ranks) {
+                if has_common_bits(&self.finalize.ranks, batch.ranks()) {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.skip_fallback.add_vote(batch)
             }
             Vote::Finalize(_) => {
-                if has_common_bits(&self.skip.ranks, &batch.ranks)
-                    || has_common_bits(&self.skip_fallback.ranks, &batch.ranks)
-                    || has_common_bits(&self.notar_fallback.ranks, &batch.ranks)
+                if has_common_bits(&self.skip.ranks, batch.ranks())
+                    || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
+                    || has_common_bits(&self.notar_fallback.ranks, batch.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
@@ -268,7 +268,7 @@ impl VotePool {
             }
             Vote::Genesis(_) => self.genesis.add_vote(batch),
             Vote::NotarizeFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, &batch.ranks) {
+                if has_common_bits(&self.finalize.ranks, batch.ranks()) {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.notar_fallback.add_vote(batch)

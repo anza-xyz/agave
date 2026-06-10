@@ -115,16 +115,41 @@ impl From<Certificate> for ConsensusMessage {
 }
 
 /// A batch of identical votes that have been sigverified
+///
+/// NOTE: the fields are intentially not exposed publicly to force users to use constructors
+/// thereby ensuring that the fields are set properly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SigVerifiedVoteBatch {
     /// The type of vote in the batch.
-    pub vote: Vote,
+    vote: Vote,
     /// The aggregate signature of the votes in the batch.
-    pub signature: SignatureProjective,
+    signature: SignatureProjective,
     /// The total stake in the batch.
-    pub stake: NonZero<u64>,
+    stake: NonZero<u64>,
     /// Ranks of the various validators whose votes are in the batch.
-    pub ranks: BitVec<u8>,
+    ranks: BitVec<u8>,
+}
+
+impl SigVerifiedVoteBatch {
+    /// Returns the ranks of the validators whose votes are in the batch.
+    pub fn ranks(&self) -> &BitVec<u8> {
+        &self.ranks
+    }
+
+    /// Returns the type of vote in this batch.
+    pub fn vote(&self) -> &Vote {
+        &self.vote
+    }
+
+    /// Returns the aggregate signature of the votes in the batch.
+    pub fn signature(&self) -> &SignatureProjective {
+        &self.signature
+    }
+
+    /// Returns the total stake in the batch.
+    pub fn stake(&self) -> NonZero<u64> {
+        self.stake
+    }
 }
 
 impl From<VoteMessage> for SigVerifiedVoteBatch {

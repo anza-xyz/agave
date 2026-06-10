@@ -69,8 +69,8 @@ fn get_rank(root_bank: &Bank, slot: Slot, pubkey: &Pubkey) -> u16 {
 }
 
 fn is_pubkey_present(root_bank: &Bank, batch: &SigVerifiedVoteBatch, pubkey: &Pubkey) -> bool {
-    let rank = get_rank(root_bank, batch.vote.slot(), pubkey);
-    *batch.ranks.get(rank as usize).unwrap()
+    let rank = get_rank(root_bank, batch.vote().slot(), pubkey);
+    *batch.ranks().get(rank as usize).unwrap()
 }
 
 /// Container to store received votes and certificates.
@@ -139,7 +139,7 @@ impl ConsensusPool {
     ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
         // TODO: look up max validators from epoch stakes
         let max_validators = 2048;
-        let slot = batch.vote.slot();
+        let slot = batch.vote().slot();
         let pool = self
             .vote_pools
             .entry(slot)
@@ -265,7 +265,7 @@ impl ConsensusPool {
         batch: SigVerifiedVoteBatch,
         events: &mut Vec<VotorEvent>,
     ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
-        let vote = batch.vote;
+        let vote = batch.vote();
         let vote_slot = vote.slot();
         let total_stake = get_total_stake(root_bank, vote_slot)?;
 
