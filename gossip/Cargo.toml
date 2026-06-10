@@ -39,6 +39,7 @@ arc-swap = { workspace = true }
 assert_matches = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 crossbeam-channel = { workspace = true }
+ed25519-dalek = { version = "2.1" }
 flate2 = { workspace = true }
 indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
