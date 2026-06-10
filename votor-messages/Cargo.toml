@@ -45,6 +45,7 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-votor-messages = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

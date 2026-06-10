@@ -490,6 +490,7 @@ dependencies = [
  "agave-feature-set",
  "agave-votor-messages",
  "log",
+ "proptest",
  "serde",
  "solana-address 2.6.1",
  "solana-bls-signatures",
