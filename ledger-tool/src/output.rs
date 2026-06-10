@@ -177,9 +177,9 @@ fn writeln_block_marker(
                 None => "NotarRewardCertificate: None".to_string(),
             };
 
-            writeln!(f, "{prefix}  {}", final_cert_log)?;
-            writeln!(f, "{prefix}  {}", skip_reward_log)?;
-            writeln!(f, "{prefix}  {}", notar_reward_log)
+            writeln!(f, "{prefix}  {final_cert_log}")?;
+            writeln!(f, "{prefix}  {skip_reward_log}")?;
+            writeln!(f, "{prefix}  {notar_reward_log}")
         }
         CliPopulatedBlockMarker::BlockHeader(header) => writeln!(
             f,
