@@ -165,14 +165,43 @@ impl ConsensusPoolService {
     }
 
     fn process_batch(
-        _ctx: &mut ConsensusPoolContext,
-        _batch: SigVerifiedBatch,
-        _consensus_pool: &mut ConsensusPool,
-        _events: &mut Vec<VotorEvent>,
-        _standstill_timer: &mut Instant,
-        _stats: &mut ConsensusPoolServiceStats,
+        ctx: &mut ConsensusPoolContext,
+        batch: SigVerifiedBatch,
+        consensus_pool: &mut ConsensusPool,
+        events: &mut Vec<VotorEvent>,
+        standstill_timer: &mut Instant,
+        stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
-        unimplemented!();
+        match &batch {
+            SigVerifiedBatch::Votes(_votes) => {
+                // TODO: need to figure out many votes to increment stats
+                unimplemented!();
+            }
+            SigVerifiedBatch::Certificates(certs) => {
+                stats.received_certificates += certs.len();
+            }
+        }
+
+        let (new_finalized_slot, new_certificates_to_send) =
+            match Self::add_message(ctx, consensus_pool, events, batch, stats) {
+                Ok(res) => res,
+                Err(err) => {
+                    stats.add_message_failed += 1;
+                    trace!(
+                        "{}, consensus_pool.add_message() failed with {err}",
+                        ctx.cluster_info.id()
+                    );
+                    return Ok(());
+                }
+            };
+        Self::maybe_update_root_and_send_new_certificates(
+            ctx,
+            consensus_pool,
+            new_finalized_slot,
+            new_certificates_to_send,
+            standstill_timer,
+            stats,
+        )
     }
 
     fn handle_channel_disconnected(ctx: &mut ConsensusPoolContext, channel_name: &str) {
@@ -365,20 +394,22 @@ impl ConsensusPoolService {
     ///
     /// If a new finalization slot was recognized, returns the slot
     fn add_message(
-        root_bank: &Bank,
-        my_pubkey: &Pubkey,
-        my_vote_pubkey: &Pubkey,
-        batch: SigVerifiedBatch,
+        ctx: &ConsensusPoolContext,
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
+        batch: SigVerifiedBatch,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
+        let root_bank = ctx.sharable_banks.root();
         let (new_finalized_slot, new_certificates_to_send) =
-            consensus_pool.add_message(root_bank, my_vote_pubkey, batch, votor_events)?;
+            consensus_pool.add_message(&root_bank, &ctx.my_vote_pubkey, batch, votor_events)?;
         let Some(new_finalized_slot) = new_finalized_slot else {
             return Ok((None, new_certificates_to_send));
         };
-        trace!("{my_pubkey}: new finalization certificate for {new_finalized_slot}");
+        trace!(
+            "{}: new finalization certificate for {new_finalized_slot}",
+            ctx.cluster_info.id()
+        );
         // RPC-facing finalized commitment is updated after votor selects a root.
         stats.standstill = false;
         Ok((Some(new_finalized_slot), new_certificates_to_send))
