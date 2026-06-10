@@ -82,4 +82,6 @@ EOF
   fi
 )
 
+./scripts/cargo-install-all.sh --dcou-check
+
 echo --- ok

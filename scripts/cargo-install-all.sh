@@ -136,7 +136,9 @@ if [[ -n "$installDir" ]]; then
 
   echo "Install location: $installDir ($buildProfile)"
 else
-  if [[ -z "$dcouCheckOnly" ]]; then
+  if [[ -n "$dcouCheckOnly" ]]; then
+    echo "(dcou check mode: ignore installDir validation)"
+  else
     usage "Install directory not specified"
   fi
 fi
