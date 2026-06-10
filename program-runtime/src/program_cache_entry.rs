@@ -262,18 +262,6 @@ impl ProgramCacheEntry {
             }
         }
 
-        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-        {
-            let jit_compile_time = solana_svm_measure::measure::Measure::start("jit_compile_time");
-            executable.jit_compile()?;
-            let jit_compile_time = jit_compile_time.end_as_us();
-            entry_stats.jit_compiled(jit_compile_time);
-            #[cfg(feature = "metrics")]
-            {
-                metrics.jit_compile_us = jit_compile_time;
-            }
-        }
-
         Ok(Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
@@ -389,6 +377,35 @@ impl ProgramCacheEntry {
 
     pub fn account_owner(&self) -> Pubkey {
         self.account_owner.into()
+    }
+
+    /// JIT compile a program entry if possible.
+    ///
+    /// Returns the number of microseconds it took for the compilation.
+    #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+    pub fn try_compile_loaded(&self) -> u64 {
+        use solana_svm_measure::measure::Measure;
+        let executable = match &self.program {
+            ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Closed
+            | ProgramCacheEntryType::DelayVisibility
+            | ProgramCacheEntryType::Unloaded(_)
+            | ProgramCacheEntryType::Builtin(_) => return 0,
+            ProgramCacheEntryType::Loaded(executable) => executable,
+        };
+        if executable.get_compiled_program().is_some() {
+            return 0;
+        }
+        let jit_compile_time = Measure::start("jit_compile_time");
+        if let Err(e) = executable.jit_compile() {
+            log::warn!("compiling failed even though program is valid: {e:?}");
+        }
+        jit_compile_time.end_as_us()
+    }
+
+    #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
+    pub fn try_compile_loaded(&self) -> u64 {
+        0
     }
 }
 

@@ -31,6 +31,7 @@ svm-internal = ["dep:qualifier_attr"]
 base64 = { workspace = true }
 bincode = { workspace = true }
 cfg-if = { workspace = true }
+crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }

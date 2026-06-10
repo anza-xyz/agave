@@ -18,6 +18,7 @@ pub mod program_metrics;
 pub mod serialization;
 pub mod stable_log;
 pub mod sysvar_cache;
+pub mod threaded_compilation;
 pub mod vm;
 
 // re-exports for macros
