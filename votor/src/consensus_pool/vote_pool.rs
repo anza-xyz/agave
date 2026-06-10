@@ -310,12 +310,57 @@ impl VotePool {
                 if completed_certs.contains_key(&cert_type) {
                     return Ok(vec![]);
                 }
-                let observed_stake = self.skip.stake + self.skip_fallback.stake;
-                let observed_fraction = Fraction::new(observed_stake, total_stake);
-                if observed_fraction < SKIP_CERT_THRESHOLD {
-                    return Ok(vec![]);
+                match (self.skip.stake != 0, self.skip_fallback.stake != 0) {
+                    (true, true) => {
+                        let observed_fraction = Fraction::new(
+                            self.skip.stake.saturating_add(self.skip_fallback.stake),
+                            total_stake,
+                        );
+                        if observed_fraction < SKIP_CERT_THRESHOLD {
+                            return Ok(vec![]);
+                        }
+                        // TODO: can we avoid the clone?
+                        let cert = build_cert_from_bitmaps(
+                            cert_type,
+                            self.skip.signature,
+                            self.skip.ranks.clone(),
+                            self.skip_fallback.signature,
+                            self.skip_fallback.ranks.clone(),
+                        )
+                        .unwrap();
+                        Ok(vec![cert])
+                    }
+                    (true, false) => {
+                        let observed_fraction = Fraction::new(self.skip.stake, total_stake);
+                        if observed_fraction < SKIP_CERT_THRESHOLD {
+                            return Ok(vec![]);
+                        }
+                        // TODO: can we avoid the clone?
+                        let cert = build_cert_from_bitmap(
+                            cert_type,
+                            self.skip.signature,
+                            self.skip.ranks.clone(),
+                        )
+                        .unwrap();
+                        Ok(vec![cert])
+                    }
+                    (false, true) => {
+                        let observed_fraction =
+                            Fraction::new(self.skip_fallback.stake, total_stake);
+                        if observed_fraction < SKIP_CERT_THRESHOLD {
+                            return Ok(vec![]);
+                        }
+                        // TODO: can we avoid the clone?
+                        let cert = build_cert_from_bitmap(
+                            cert_type,
+                            self.skip_fallback.signature,
+                            self.skip_fallback.ranks.clone(),
+                        )
+                        .unwrap();
+                        Ok(vec![cert])
+                    }
+                    (false, false) => Ok(vec![]),
                 }
-                unimplemented!();
             }
             Vote::Genesis(genesis) => {
                 let cert_type = CertificateType::Genesis(genesis.block);
@@ -441,8 +486,9 @@ fn build_cert_from_bitmap(
 /// Build a [`Certificate`] from two bitmaps.
 fn build_cert_from_bitmaps(
     cert_type: CertificateType,
-    signature: SignatureProjective,
+    mut signature0: SignatureProjective,
     mut bitmap0: BitVec<u8>,
+    signature1: SignatureProjective,
     mut bitmap1: BitVec<u8>,
 ) -> Result<Certificate, EncodeError> {
     let last_one_0 = bitmap0.last_one().map_or(0, |i| i.saturating_add(1));
@@ -451,9 +497,12 @@ fn build_cert_from_bitmaps(
     bitmap0.resize(new_length, false);
     bitmap1.resize(new_length, false);
     let bitmap = encode_base3(&bitmap0, &bitmap1)?;
+    signature0
+        .aggregate_with(std::iter::once(&signature1))
+        .unwrap();
     Ok(Certificate {
         cert_type,
-        signature: signature.into(),
+        signature: signature0.into(),
         bitmap,
     })
 }
