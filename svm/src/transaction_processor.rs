@@ -52,7 +52,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::LogCollector,
     solana_svm_measure::{measure::Measure, measure_us},
@@ -391,7 +391,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     /// Main entrypoint to the SVM.
-    pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
+    pub fn load_and_execute_sanitized_transactions<
+        CB: TransactionProcessingCallback + InvokeContextCallback,
+    >(
         &self,
         callbacks: &CB,
         sanitized_txs: &[impl SVMTransaction],
@@ -895,7 +897,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
-    fn execute_loaded_transaction<CB: TransactionProcessingCallback>(
+    fn execute_loaded_transaction<CB: InvokeContextCallback>(
         &self,
         callback: &CB,
         tx: &impl SVMTransaction,

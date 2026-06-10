@@ -6,7 +6,10 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::{alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes},
+    crate::{
+        alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes,
+        stake_delegation::effective_stake,
+    },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
@@ -48,11 +51,16 @@ pub(crate) fn redeem_rewards<'a>(
             stake_history,
             new_rate_activation_epoch,
             commission_rate_in_basis_points,
+            use_fixed_point_stake_math,
             ..
         } = calculation_environment;
-        #[allow(deprecated)]
-        let effective_stake_at_rewarded_epoch =
-            stake.stake(rewarded_epoch, stake_history, new_rate_activation_epoch);
+        let effective_stake_at_rewarded_epoch = effective_stake(
+            &stake,
+            rewarded_epoch,
+            stake_history,
+            new_rate_activation_epoch,
+            use_fixed_point_stake_math,
+        );
         inflation_point_calc_tracer(
             &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(
                 effective_stake_at_rewarded_epoch,
@@ -209,6 +217,7 @@ fn calculate_stake_rewards<'a>(
         new_rate_activation_epoch,
         point_value,
         rewarded_epoch,
+        use_fixed_point_stake_math,
         ..
     } = calculation_environment;
 
@@ -226,6 +235,7 @@ fn calculate_stake_rewards<'a>(
         new_rate_activation_epoch,
         ag_epoch_type,
         epoch_stakes,
+        use_fixed_point_stake_math,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -508,6 +518,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -537,6 +548,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -600,6 +612,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -631,6 +644,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -660,6 +674,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -692,6 +707,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -722,6 +738,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -754,6 +771,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -780,6 +798,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -803,6 +822,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -833,6 +853,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -863,6 +884,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -885,6 +907,7 @@ mod tests {
                 None,
                 &ag_epoch_type,
                 &epoch_stakes,
+                true,
             )
         );
 
@@ -907,6 +930,7 @@ mod tests {
                 None,
                 &ag_epoch_type,
                 &epoch_stakes,
+                true,
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -926,6 +950,7 @@ mod tests {
                 None,
                 &ag_epoch_type,
                 &epoch_stakes,
+                true,
             )
         );
 
@@ -953,6 +978,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -984,6 +1010,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
@@ -1023,6 +1050,7 @@ mod tests {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math: true,
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
@@ -1283,6 +1311,7 @@ mod tests {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math: true,
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
@@ -1331,6 +1360,7 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
+                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_stake_state,

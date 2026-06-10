@@ -780,11 +780,11 @@ pub mod tests {
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
-        let (retransmit_slots_sender, _retransmit_slots_receiver) = unbounded();
-        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let (_, gossip_confirmed_slots_receiver) = unbounded();
+        let (retransmit_slots_sender, _retransmit_slots_receiver) = bounded(1024);
+        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let (_, gossip_confirmed_slots_receiver) = bounded(1024);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
@@ -804,8 +804,8 @@ pub mod tests {
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         );
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
-        let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
-        let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
+        let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
+        let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
         let highest_parent_ready = Arc::new(RwLock::new((
             0,
             Block {
@@ -814,7 +814,7 @@ pub mod tests {
             },
         )));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
-            unbounded();
+            bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
         let cancel = CancellationToken::new();
@@ -832,7 +832,7 @@ pub mod tests {
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
-        let (reward_votes_sender, _reward_votes_receiver) = unbounded();
+        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),

@@ -81,7 +81,7 @@ use {
         slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank::{Bank, NewBankOptions, bank_hash_details},
+        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
         block_component_processor::BlockComponentProcessorError,
@@ -109,6 +109,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    thiserror::Error,
 };
 
 mod dead_slots;
@@ -137,6 +138,18 @@ const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
 
 // Give at least 4 leaders the chance to pack our vote
 const REFRESH_VOTE_BLOCKHEIGHT: usize = 16;
+
+const VAT_STATUS_CHECK_INTERVAL_SECS: u64 = 30;
+
+#[derive(Error, Debug)]
+enum VATHealthError {
+    #[error("vote account not found")]
+    VoteAccountNotFound,
+    #[error("missing BLS pubkey")]
+    NoBLSPubkey,
+    #[error("insufficient lamports in vote account: {0} < {1}")]
+    InsufficientFundsInVoteAccount(u64, u64),
+}
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum HeaviestForkFailures {
@@ -856,6 +869,7 @@ impl ReplayStage {
                 last_print_time: Instant::now(),
             };
             let mut last_genesis_vote_refresh_time = Instant::now();
+            let mut last_vat_status_check = Instant::now();
             let mut tbft_structs = TowerBFTStructures {
                 heaviest_subtree_fork_choice,
                 duplicate_slots_tracker,
@@ -1006,6 +1020,14 @@ impl ReplayStage {
                 );
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 replay_active_banks_time.stop();
+
+                // VAT health check
+                Self::maybe_report_vat_health(
+                    &mut last_vat_status_check,
+                    &authorized_voter_keypairs,
+                    &bank_forks,
+                    &vote_account,
+                );
 
                 // Check if we've completed the migration conditions
                 if migration_status.is_ready_to_enable() {
@@ -3124,6 +3146,73 @@ impl ReplayStage {
             voting_sender,
             wait_to_vote_slot,
         );
+    }
+
+    fn maybe_report_vat_health(
+        last_vat_status_check: &mut Instant,
+        authorized_voter_keypairs: &Arc<RwLock<Vec<Arc<Keypair>>>>,
+        bank_forks: &Arc<RwLock<BankForks>>,
+        vote_account: &Pubkey,
+    ) {
+        if last_vat_status_check.elapsed().as_secs() < VAT_STATUS_CHECK_INTERVAL_SECS {
+            return;
+        }
+        *last_vat_status_check = Instant::now();
+
+        let bank = bank_forks.read().unwrap().root_bank();
+        if !bank.feature_set.snapshot().validator_admission_ticket {
+            return;
+        }
+
+        let is_voting_validator = !authorized_voter_keypairs.read().unwrap().is_empty();
+        if !is_voting_validator {
+            return;
+        }
+
+        let epoch = bank.epoch();
+        if let Err(vat_failure_reason) = Self::check_vat_health(&bank, vote_account) {
+            warn!(
+                "VAT Health Check: Currently you will fail the VAT check at the start of epoch {} \
+                 meaning that you will be unable to vote or produce blocks in epoch {}. Reason: {}",
+                epoch.saturating_add(1),
+                epoch.saturating_add(2),
+                vat_failure_reason,
+            );
+        } else {
+            info!(
+                "VAT Health Check: Passing local VAT checks. Assuming you are in the top {} of \
+                 stake, you will be included in voting and block building in epoch {}",
+                MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                epoch.saturating_add(2),
+            );
+        }
+    }
+
+    fn check_vat_health(bank: &Bank, vote_account_pubkey: &Pubkey) -> Result<(), VATHealthError> {
+        let vote_accounts = bank.vote_accounts();
+
+        let Some((_, vote_account)) = vote_accounts.get(vote_account_pubkey) else {
+            return Err(VATHealthError::VoteAccountNotFound);
+        };
+
+        if vote_account
+            .vote_state_view()
+            .bls_pubkey_compressed()
+            .is_none()
+        {
+            return Err(VATHealthError::NoBLSPubkey);
+        }
+
+        let my_balance = vote_account.lamports();
+        let minimum_vote_account_balance_for_vat = bank.minimum_vote_account_balance_for_vat();
+        if vote_account.lamports() < minimum_vote_account_balance_for_vat {
+            return Err(VATHealthError::InsufficientFundsInVoteAccount(
+                my_balance,
+                minimum_vote_account_balance_for_vat,
+            ));
+        }
+
+        Ok(())
     }
 
     fn generate_vote_tx(

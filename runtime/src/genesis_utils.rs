@@ -2,7 +2,7 @@
 use solana_stake_interface::config::Config as StakeConfig;
 use {
     crate::{
-        bank::VAT_TO_BURN_PER_EPOCH,
+        bank::DEFAULT_VAT_TO_BURN_PER_EPOCH,
         block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
         stake_utils,
     },
@@ -50,10 +50,11 @@ use {
 // Default amount received by the validator
 const VALIDATOR_LAMPORTS: u64 = 890_880;
 
-// Minimum vote account balance required for VAT (SIMD-0357).
-// Vote accounts need this minimum to pass VAT filtering.
+// Default minimum vote account balance used by tests/genesis helpers. This is
+// conservative once shorter slot-time regimes lower the live bank VAT burn.
 pub fn minimum_vote_account_balance_for_vat(num_epochs: Epoch) -> u64 {
-    VAT_TO_BURN_PER_EPOCH * num_epochs + Rent::default().minimum_balance(VoteStateV4::size_of())
+    DEFAULT_VAT_TO_BURN_PER_EPOCH * num_epochs
+        + Rent::default().minimum_balance(VoteStateV4::size_of())
 }
 
 // Minimum stake lamports required for a valid stake account with non-zero stake.
@@ -449,7 +450,9 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
     // Ensure minimum lamports for VAT filtering, but only when stake > 0.
-    // VAT requires: non-zero stake, BLS pubkey, and lamports >= VAT_TO_BURN_PER_EPOCH + rent_exempt_minimum.
+    // VAT requires non-zero stake, a BLS pubkey, and lamports >= the bank's
+    // current VAT burn plus rent-exempt minimum. This helper funds with the
+    // conservative default burn amount.
     let (vote_account_lamports, stake_lamports) = if validator_stake_lamports > 0 {
         (
             validator_stake_lamports.max(minimum_vote_account_balance_for_vat(100)),

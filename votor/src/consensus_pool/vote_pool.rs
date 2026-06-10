@@ -2,7 +2,7 @@ use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::SigVerifiedVoteBatch,
-        vote::{Vote, VoteType},
+        vote::Vote,
     },
     bitvec::vec::BitVec,
     solana_bls_signatures::SignatureProjective,

@@ -536,7 +536,7 @@ mod tests {
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
-        crossbeam_channel::{Receiver, Sender, unbounded},
+        crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
@@ -556,7 +556,7 @@ mod tests {
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
-        (0..num).map(|_| unbounded()).unzip()
+        (0..num).map(|_| bounded(1024)).unzip()
     }
 
     // Helper struct to create tests that hold channels, files, etc.
@@ -603,12 +603,12 @@ mod tests {
 
         let decision_maker = DecisionMaker::new(shared_leader_state.clone());
 
-        let (banking_packet_sender, banking_packet_receiver) = unbounded();
+        let (banking_packet_sender, banking_packet_receiver) = bounded(1024);
         let receive_and_buffer =
             create_receive_and_buffer(banking_packet_receiver, bank_forks.clone());
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
-        let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
+        let (finished_consume_work_sender, finished_consume_work_receiver) = bounded(1024);
 
         let test_frame = TestFrame {
             bank,

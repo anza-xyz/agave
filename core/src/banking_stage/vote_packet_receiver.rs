@@ -280,7 +280,7 @@ mod tests {
             leader_slot_metrics::LeaderSlotMetricsTracker,
             vote_storage::{VoteStorage, tests::packet_from_slots},
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_perf::packet::PacketBatch,
         solana_runtime::{
             bank::Bank,
@@ -294,7 +294,7 @@ mod tests {
         filter_keys: Arc<HashSet<Pubkey>>,
     ) -> VoteStorage {
         let vote_packet = packet_from_slots(vec![(1, 1)], keypairs, None);
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         sender
             .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
             .unwrap();

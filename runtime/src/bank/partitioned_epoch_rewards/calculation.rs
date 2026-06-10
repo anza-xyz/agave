@@ -320,7 +320,11 @@ impl Bank {
                 >= distributed_lamports
                     + distributed_to_incinerator_lamports
                     + burned_lamports
-                    + total_stake_rewards_lamports
+                    + total_stake_rewards_lamports,
+            "point_value={point_value:?}, distributed_lamports={distributed_lamports}, \
+             distributed_to_incinerator_lamports={distributed_to_incinerator_lamports} \
+             burned_lamports={burned_lamports}, \
+             total_stake_rewards_lamports={total_stake_rewards_lamports}"
         );
         info!(
             "distributed reward commissions: {} out of {}, remaining {}",
@@ -523,6 +527,7 @@ impl Bank {
         adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
+        use_fixed_point_stake_math: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -627,6 +632,7 @@ impl Bank {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
+                use_fixed_point_stake_math,
             },
             reward_calc_tracer,
             ag_epoch_type,
@@ -685,6 +691,7 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
+        let use_fixed_point_stake_math = feature_snapshot.upgrade_bpf_stake_program_to_v5_1;
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
         // Name intentionally doesn't match -- "adjust delegations for rent" is
@@ -723,6 +730,7 @@ impl Bank {
                         adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
+                        use_fixed_point_stake_math,
                     );
 
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
@@ -826,6 +834,7 @@ impl Bank {
             }
         }
 
+        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -846,6 +855,7 @@ impl Bank {
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                         &self.epoch_stakes,
+                        use_fixed_point_stake_math,
                     )
                     .unwrap_or(0)
                 })
@@ -3014,7 +3024,7 @@ mod tests {
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let pubkey = solana_pubkey::new_rand();
 
-        let pre_burn_balance = 10 * crate::bank::VAT_TO_BURN_PER_EPOCH;
+        let pre_burn_balance = 10 * crate::bank::DEFAULT_VAT_TO_BURN_PER_EPOCH;
         let commission_lamports = 12_345;
 
         // Commission is planned against the pre-burn account state.
@@ -3034,7 +3044,7 @@ mod tests {
 
         // Simulate the VAT burn that would run in `update_epoch_stakes`
         // between reward calculation and distribution.
-        let post_burn_balance = pre_burn_balance - crate::bank::VAT_TO_BURN_PER_EPOCH;
+        let post_burn_balance = pre_burn_balance - crate::bank::DEFAULT_VAT_TO_BURN_PER_EPOCH;
         let mut burned_account = commission_account.clone();
         burned_account.set_lamports(post_burn_balance);
         bank.store_account_and_update_capitalization(&pubkey, &burned_account);
