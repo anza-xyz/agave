@@ -72,7 +72,8 @@ impl NotarVoteEntry {
     fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
         if has_common_bits(&self.ranks, batch.ranks()) {
-            return Err(VotePoolAddVoteError::Duplicate);
+            // TODO: is it important to figure out if this is invalid or duplicate vote?
+            return Err(VotePoolAddVoteError::Invalid);
         }
         let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
@@ -585,22 +586,32 @@ mod test {
             VotePoolAddVoteError::Invalid
         );
 
-        // let mut votes = VotePool::new(slot);
-        // let notar = VoteMessage {
-        //     vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-        //     signature,
-        //     rank,
-        // };
-        // votes.add_vote(voter, notar).unwrap();
-        // let notar = VoteMessage {
-        //     vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-        //     signature,
-        //     rank,
-        // };
-        // assert!(matches!(
-        //     votes.add_vote(voter, notar),
-        //     Err(VotePoolAddVoteError::Invalid)
-        // ));
+        let mut votes = VotePool::new(slot, max_validators);
+        let notar = SigVerifiedVoteBatch::new_for_test(
+            Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::new_unique(),
+            }),
+            max_validators,
+            rank,
+        );
+        votes
+            .add_vote(&root_bank, total_stake, &notar, &completed_certs)
+            .unwrap();
+        let notar = SigVerifiedVoteBatch::new_for_test(
+            Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::new_unique(),
+            }),
+            max_validators,
+            rank,
+        );
+        assert_eq!(
+            votes
+                .add_vote(&root_bank, total_stake, &notar, &completed_certs)
+                .unwrap_err(),
+            VotePoolAddVoteError::Invalid
+        );
 
         // let mut votes = VotePool::new(slot);
         // let notar = VoteMessage {
