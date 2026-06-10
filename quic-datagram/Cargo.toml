@@ -1,0 +1,47 @@
+[package]
+name = "solana-quic-datagram"
+description = "QUIC datagram endpoint with staked-only allowlist for Solana consensus traffic"
+documentation = "https://docs.rs/solana-quic-datagram"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+
+[features]
+# Exposes allowlist::AllowAll and other test-only helpers. Production binaries
+# must NOT enable this feature.
+dev-context-only-utils = []
+agave-unstable-api = []
+
+[dependencies]
+arc-swap = { workspace = true }
+arrayvec = { workspace = true }
+bytes = { workspace = true }
+crossbeam-channel = { workspace = true }
+futures = { workspace = true }
+lazy-lru = { workspace = true }
+log = { workspace = true }
+quinn = { workspace = true }
+quinn-proto = { workspace = true }
+rustls = { workspace = true }
+solana-keypair = { workspace = true }
+solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+[dev-dependencies]
+solana-keypair = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-quic-datagram = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true
