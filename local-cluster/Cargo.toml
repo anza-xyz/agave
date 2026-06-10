@@ -14,14 +14,18 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = [
+    "solana-core/dev-context-only-utils",
+    "agave-votor-messages/dev-context-only-utils",
+    "solana-tpu-client-next/dev-context-only-utils",
+]
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
-agave-votor-messages = { workspace = true, features = ["dev-context-only-utils"] }
+agave-votor-messages = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -34,7 +38,7 @@ solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
+solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-feature-gate-interface = { workspace = true }
@@ -68,7 +72,7 @@ solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
-solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
+solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-turbine = { workspace = true }
