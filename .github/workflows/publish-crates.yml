@@ -1,9 +1,9 @@
 name: Publish Crates
 
 on:
-  push:
-    tags:
-      - "v*"
+  # Invoked from release.yml
+  workflow_call:
+
   workflow_dispatch:
 
 permissions: {}
