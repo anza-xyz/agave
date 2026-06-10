@@ -4,6 +4,7 @@ use {
     crate::{
         nonblocking::{
             quic::spawn_server,
+            simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
@@ -63,6 +64,33 @@ where
         swqos,
         cancel,
     )
+}
+
+/// Spawn a SimpleQos streamer instance in the current tokio runtime.
+pub fn spawn_simple_qos_server(
+    name: &'static str,
+    sockets: impl IntoIterator<Item = QuicSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SimpleQosConfig,
+    cancel: CancellationToken,
+) -> Result<(SpawnNonBlockingServerResult, Arc<SimpleQosBanlist>), QuicServerError> {
+    let stats = Arc::<StreamerStats>::default();
+    let simple_qos = SimpleQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
+    let banlist = simple_qos.banlist.clone();
+    let result = spawn_server(
+        name,
+        stats,
+        sockets,
+        keypair,
+        packet_sender,
+        quic_server_params,
+        simple_qos,
+        cancel,
+    )?;
+    Ok((result, banlist))
 }
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {

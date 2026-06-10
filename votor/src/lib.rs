@@ -12,6 +12,7 @@ mod consensus_pool_service;
 pub mod event;
 mod event_handler;
 pub mod generated_cert_types;
+pub mod quic_client;
 pub mod root_utils;
 mod staked_validators_cache;
 mod timer_manager;

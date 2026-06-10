@@ -297,7 +297,7 @@ impl WorkersCache {
 
     /// Flushes the cache and asynchronously shuts down all workers. This method
     /// doesn't wait for the completion of all the shutdown tasks.
-    pub(crate) fn flush(&mut self) {
+    pub fn flush(&mut self) {
         while let Some((peer, current_worker)) = self.workers.pop_lru() {
             shutdown_worker(ShutdownWorker {
                 leader: peer,
