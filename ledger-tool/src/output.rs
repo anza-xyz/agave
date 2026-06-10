@@ -235,6 +235,7 @@ pub enum CliPopulatedComponent {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum CliPopulatedBlockMarker {
     BlockFooter(CliPopulatedFooter),
     BlockHeader(CliPopulatedHeader),
