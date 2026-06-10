@@ -1,7 +1,7 @@
 use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::SigVerifiedVoteBatch,
+        consensus_message::{Block, SigVerifiedVoteBatch},
         fraction::Fraction,
         migration::GENESIS_VOTE_THRESHOLD,
         vote::Vote,
@@ -274,7 +274,123 @@ impl VotePool {
         }
     }
 
-    pub(super) fn produce_certs(
+    fn try_produce_notar_fallback_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::NotarizeFallback(block);
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        match (
+            self.notar.entries.get(&block.block_id),
+            self.notar_fallback.entries.get(&block.block_id),
+        ) {
+            (None, None) => Ok(None),
+            (Some(entry), None) | (None, Some(entry)) => {
+                if let Some(cert) =
+                    entry.try_build_cert(cert_type, NOTAR_FALLBACK_CERT_THRESHOLD, total_stake)
+                {
+                    return Ok(Some(cert));
+                }
+                Ok(None)
+            }
+            (Some(notar_entry), Some(nf_entry)) => {
+                if let Some(cert) = try_build_from_entries(
+                    cert_type,
+                    NOTAR_FALLBACK_CERT_THRESHOLD,
+                    total_stake,
+                    notar_entry,
+                    nf_entry,
+                ) {
+                    return Ok(Some(cert));
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    fn try_produce_finalize_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        batch: &SigVerifiedVoteBatch,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Finalize(batch.vote().slot());
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        let observed_stake = self.finalize.stake;
+        let observed_fraction = Fraction::new(observed_stake, total_stake);
+        if observed_fraction < FINALIZE_CERT_THRESHOLD {
+            return Ok(None);
+        }
+        // TODO: can we avoid the clone?
+        let cert = build_cert_from_bitmap(
+            cert_type,
+            self.finalize.signature,
+            self.finalize.ranks.clone(),
+        )
+        .unwrap();
+        Ok(Some(cert))
+    }
+
+    fn try_produce_skip_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        batch: &SigVerifiedVoteBatch,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Skip(batch.vote().slot());
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        if let Some(cert) = self
+            .skip
+            .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
+        {
+            return Ok(Some(cert));
+        }
+        if let Some(cert) =
+            self.skip_fallback
+                .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
+        {
+            return Ok(Some(cert));
+        }
+        if let Some(cert) = try_build_from_entries(
+            cert_type,
+            SKIP_CERT_THRESHOLD,
+            total_stake,
+            &self.skip,
+            &self.skip_fallback,
+        ) {
+            return Ok(Some(cert));
+        }
+        Ok(None)
+    }
+
+    fn try_produce_genesis_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Genesis(block);
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        let Some(entry) = self.genesis.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        if let Some(cert) = entry.try_build_cert(cert_type, GENESIS_VOTE_THRESHOLD, total_stake) {
+            return Ok(Some(cert));
+        }
+        Ok(None)
+    }
+
+    fn try_produce_certs(
         &mut self,
         total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
@@ -285,104 +401,22 @@ impl VotePool {
                 // notar; nf; ff;
                 unimplemented!();
             }
-            Vote::NotarizeFallback(nf) => {
-                let cert_type = CertificateType::NotarizeFallback(nf.block);
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(vec![]);
-                }
-                match (
-                    self.notar.entries.get(&nf.block.block_id),
-                    self.notar_fallback.entries.get(&nf.block.block_id),
-                ) {
-                    (None, None) => Ok(vec![]),
-                    (Some(entry), None) | (None, Some(entry)) => {
-                        if let Some(cert) = entry.try_build_cert(
-                            cert_type,
-                            NOTAR_FALLBACK_CERT_THRESHOLD,
-                            total_stake,
-                        ) {
-                            return Ok(vec![cert]);
-                        }
-                        Ok(vec![])
-                    }
-                    (Some(notar_entry), Some(nf_entry)) => {
-                        if let Some(cert) = try_build_from_entries(
-                            cert_type,
-                            NOTAR_FALLBACK_CERT_THRESHOLD,
-                            total_stake,
-                            notar_entry,
-                            nf_entry,
-                        ) {
-                            return Ok(vec![cert]);
-                        }
-                        Ok(vec![])
-                    }
-                }
-            }
-            Vote::Finalize(f) => {
-                let cert_type = CertificateType::Finalize(f.slot);
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(vec![]);
-                }
-                let observed_stake = self.finalize.stake;
-                let observed_fraction = Fraction::new(observed_stake, total_stake);
-                if observed_fraction < FINALIZE_CERT_THRESHOLD {
-                    return Ok(vec![]);
-                }
-                // TODO: can we avoid the clone?
-                let cert = build_cert_from_bitmap(
-                    cert_type,
-                    self.finalize.signature,
-                    self.finalize.ranks.clone(),
-                )
-                .unwrap();
-                Ok(vec![cert])
-            }
-            Vote::Skip(_) | Vote::SkipFallback(_) => {
-                let cert_type = CertificateType::Skip(batch.vote().slot());
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(vec![]);
-                }
-                if let Some(cert) =
-                    self.skip
-                        .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
-                {
-                    return Ok(vec![cert]);
-                }
-                if let Some(cert) =
-                    self.skip_fallback
-                        .try_build_cert(cert_type, SKIP_CERT_THRESHOLD, total_stake)
-                {
-                    return Ok(vec![cert]);
-                }
-                if let Some(cert) = try_build_from_entries(
-                    cert_type,
-                    SKIP_CERT_THRESHOLD,
-                    total_stake,
-                    &self.skip,
-                    &self.skip_fallback,
-                ) {
-                    return Ok(vec![cert]);
-                }
-                Ok(vec![])
-            }
-            Vote::Genesis(genesis) => {
-                let cert_type = CertificateType::Genesis(genesis.block);
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(vec![]);
-                }
-                let Some(entry) = self.genesis.entries.get(&genesis.block.block_id) else {
-                    return Ok(vec![]);
-                };
-                let observed_fraction = Fraction::new(entry.stake, total_stake);
-                if observed_fraction < GENESIS_VOTE_THRESHOLD {
-                    return Ok(vec![]);
-                }
-                // TODO: can we avoid the clone?
-                let cert = build_cert_from_bitmap(cert_type, entry.signature, entry.ranks.clone())
-                    .unwrap();
-                Ok(vec![cert])
-            }
+            Vote::NotarizeFallback(nf) => Ok(self
+                .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)?
+                .into_iter()
+                .collect()),
+            Vote::Finalize(_) => Ok(self
+                .try_produce_finalize_cert(total_stake, batch, completed_certs)?
+                .into_iter()
+                .collect()),
+            Vote::Skip(_) | Vote::SkipFallback(_) => Ok(self
+                .try_produce_skip_cert(total_stake, batch, completed_certs)?
+                .into_iter()
+                .collect()),
+            Vote::Genesis(genesis) => Ok(self
+                .try_produce_genesis_cert(total_stake, genesis.block, completed_certs)?
+                .into_iter()
+                .collect()),
         }
     }
 
@@ -466,7 +500,7 @@ impl VotePool {
                 self.genesis.add_vote(batch)
             }
         }?;
-        let certs = self.produce_certs(total_stake, batch, completed_certs)?;
+        let certs = self.try_produce_certs(total_stake, batch, completed_certs)?;
         Ok((stake, certs))
     }
 }
