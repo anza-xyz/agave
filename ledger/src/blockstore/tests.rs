@@ -48,7 +48,7 @@ pub(crate) fn make_slot_entries_with_transactions(num_entries: u64) -> Vec<Entry
             vec![CompiledInstruction::new(1, &(), vec![0])],
         );
         entries.push(next_entry_mut(&mut Hash::default(), 0, vec![transaction]));
-        let mut tick = create_ticks(1, 0, hash(&bincode::serialize(&x).unwrap()));
+        let mut tick = create_ticks(1, 0, hash(&wincode::serialize(&x).unwrap()));
         entries.append(&mut tick);
     }
     entries
@@ -4002,7 +4002,7 @@ fn test_get_confirmed_signatures_for_address2() {
                 vec![CompiledInstruction::new(1, &(), vec![0])],
             );
             entries.push(next_entry_mut(&mut Hash::default(), 0, vec![transaction]));
-            let mut tick = create_ticks(1, 0, hash(&bincode::serialize(address).unwrap()));
+            let mut tick = create_ticks(1, 0, hash(&wincode::serialize(address).unwrap()));
             entries.append(&mut tick);
         }
         entries
@@ -5314,7 +5314,7 @@ fn test_rewards_protobuf_backward_compatibility() {
 
     let deprecated_rewards: StoredExtendedRewards = protobuf_rewards.clone().into();
     for slot in 0..2 {
-        let data = bincode::serialize(&deprecated_rewards).unwrap();
+        let data = wincode::serialize(&deprecated_rewards).unwrap();
         blockstore.rewards_cf.put_bytes(slot, &data).unwrap();
     }
     for slot in 2..4 {
@@ -5395,7 +5395,7 @@ fn test_transaction_status_protobuf_backward_compatibility() {
     let protobuf_status: generated::TransactionStatusMeta = status.into();
 
     for slot in 0..2 {
-        let data = bincode::serialize(&deprecated_status).unwrap();
+        let data = wincode::serialize(&deprecated_status).unwrap();
         blockstore
             .transaction_status_cf
             .put_bytes((Signature::default(), slot), &data)

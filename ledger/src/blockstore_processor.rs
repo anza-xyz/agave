@@ -4229,7 +4229,7 @@ pub mod tests {
         );
 
         let tx = Transaction::new_signed_with_payer(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 mock_program_id,
                 &10,
                 Vec::new(),
@@ -4273,7 +4273,7 @@ pub mod tests {
             );
 
             let tx = Transaction::new_signed_with_payer(
-                &[Instruction::new_with_bincode(
+                &[Instruction::new_with_wincode(
                     mock_program_id,
                     &(err as u8),
                     Vec::new(),
@@ -4745,7 +4745,7 @@ pub mod tests {
         // Make sure fees-only transactions still update the signature cache
         let missing_program_id = Pubkey::new_unique();
         let tx = Transaction::new_signed_with_payer(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 missing_program_id,
                 &10,
                 Vec::new(),
