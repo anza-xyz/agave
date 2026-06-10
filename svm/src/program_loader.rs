@@ -322,7 +322,6 @@ mod tests {
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
-        solana_svm_callback::InvokeContextCallback,
         solana_svm_type_overrides::sync::atomic::AtomicU64,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{
@@ -346,8 +345,6 @@ mod tests {
     pub(crate) struct MockBankCallback {
         pub(crate) account_shared_data: RefCell<HashMap<Pubkey, (AccountSharedData, Slot)>>,
     }
-
-    impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {

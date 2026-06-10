@@ -223,28 +223,9 @@ pub fn generate_vote_tx(
     })
 }
 
-/// Send an alpenglow vote as a BLSMessage
-/// `bank` will be used for:
-/// - startup verification
-/// - vote account checks
-/// - authorized voter checks
-///
-/// We also update the vote history and send the vote to
-/// the certificate pool thread for ingestion.
-///
-/// Returns false if we are currently a non-voting node
-fn insert_vote_and_create_bls_message(
-    vote: Vote,
-    is_refresh: bool,
-    context: &mut VotingContext,
-) -> Result<BLSOp, VoteError> {
-    // Update and save the vote history
-    if !is_refresh {
-        context.vote_history.add_vote(vote);
-    }
-
+fn create_vote_message(vote: Vote, context: &mut VotingContext) -> Result<VoteMessage, VoteError> {
     let bank = context.sharable_banks.root();
-    let vote_msg = match generate_vote_tx(
+    match generate_vote_tx(
         vote,
         &bank,
         context.vote_account_pubkey,
@@ -253,52 +234,79 @@ fn insert_vote_and_create_bls_message(
         context.wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
-        GenerateVoteTxResult::Vote(vote) => vote,
+        GenerateVoteTxResult::Vote(vote) => Ok(vote),
         e => {
             if e.is_transient_error() {
-                return Err(VoteError::TransientError(Box::new(e)));
+                Err(VoteError::TransientError(Box::new(e)))
             } else {
-                return Err(VoteError::InvalidConfig(Box::new(e)));
+                Err(VoteError::InvalidConfig(Box::new(e)))
             }
         }
+    }
+}
+
+fn handle_skippable_vote_error(err: VoteError, action: &str) -> Result<(), VoteError> {
+    match err {
+        VoteError::InvalidConfig(e) => {
+            warn!("Failed to {action}: {e:?}");
+            // These are not fatal errors, just skip the vote for now. But they are
+            // misconfigurations that should be warned about.
+            Ok(())
+        }
+        VoteError::TransientError(e) => {
+            info!("Failed to {action}: {e:?}");
+            // These are transient errors, just skip the vote for now.
+            Ok(())
+        }
+        e => Err(e),
+    }
+}
+
+/// Build a normal push-vote BLS op.
+///
+/// This updates vote history, sends the vote to the certificate pool thread for ingestion, and
+/// saves vote history for persistence.
+pub fn insert_vote_and_create_bls_message(
+    vote: Vote,
+    context: &mut VotingContext,
+) -> Result<Option<BLSOp>, VoteError> {
+    // Update and save the vote history
+    context.vote_history.add_vote(vote);
+
+    let vote_msg = match create_vote_message(vote, context) {
+        Ok(vote_msg) => vote_msg,
+        Err(e) => {
+            handle_skippable_vote_error(e, "generate vote and push to votes")?;
+            return Ok(None);
+        }
     };
+
     context
         .own_vote_sender
         .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
         .map_err(|_| SendError(()))?;
 
-    // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
     let saved_vote_history =
         SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
 
     // Return vote for sending
-    Ok(BLSOp::PushVote {
+    Ok(Some(BLSOp::PushVote {
         vote: Arc::new(vote_msg),
         saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
-    })
+    }))
 }
 
-pub fn generate_vote_message(
+pub fn generate_refresh_vote_message(
     vote: Vote,
-    is_refresh: bool,
     vctx: &mut VotingContext,
-) -> Result<Option<BLSOp>, VoteError> {
-    let bls_op = match insert_vote_and_create_bls_message(vote, is_refresh, vctx) {
-        Ok(bls_op) => bls_op,
-        Err(VoteError::InvalidConfig(e)) => {
-            warn!("Failed to generate vote and push to votes: {e:?}");
-            // These are not fatal errors, just skip the vote for now. But they are misconfigurations
-            // that should be warned about.
-            return Ok(None);
+) -> Result<Option<VoteMessage>, VoteError> {
+    match create_vote_message(vote, vctx) {
+        Ok(vote_msg) => Ok(Some(vote_msg)),
+        Err(e) => {
+            handle_skippable_vote_error(e, "generate refresh vote message")?;
+            Ok(None)
         }
-        Err(VoteError::TransientError(e)) => {
-            info!("Failed to generate vote and push to votes: {e:?}");
-            // These are transient errors, just skip the vote for now.
-            return Ok(None);
-        }
-        Err(e) => return Err(e),
-    };
-    Ok(Some(bls_op))
+    }
 }
 
 #[cfg(test)]
@@ -403,7 +411,7 @@ mod tests {
             slot: vote_slot,
             block_id,
         });
-        let result = generate_vote_message(vote, false, &mut voting_context)
+        let result = insert_vote_and_create_bls_message(vote, &mut voting_context)
             .ok()
             .unwrap()
             .unwrap();
@@ -433,8 +441,20 @@ mod tests {
         let received_message = own_vote_receiver.recv().unwrap();
         assert_eq!(
             received_message,
-            SigVerifiedBatch::Votes(vec![expected_message])
+            SigVerifiedBatch::Votes(vec![expected_message.clone()])
         );
+
+        let refresh_vote = Vote::new_notarization_vote(Block {
+            slot: vote_slot,
+            block_id,
+        });
+        let refresh_result = generate_refresh_vote_message(refresh_vote, &mut voting_context)
+            .ok()
+            .unwrap()
+            .unwrap();
+        assert_eq!(refresh_result.vote.slot(), vote_slot);
+        assert_eq!(refresh_result, expected_message);
+        assert!(own_vote_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -452,7 +472,7 @@ mod tests {
         voting_context.wait_to_vote_slot = Some(4);
         let vote = Vote::new_finalization_vote(2);
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_none()
         );
@@ -460,7 +480,7 @@ mod tests {
         // If we have reached wait_to_vote_slot, we should be able to vote
         voting_context.wait_to_vote_slot = Some(1);
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -498,7 +518,7 @@ mod tests {
             validator_keypairs[my_index].vote_keypair.insecure_clone(),
         )]));
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -553,7 +573,7 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         assert!(
-            generate_vote_message(vote, true, &mut voting_context)
+            generate_refresh_vote_message(vote, &mut voting_context)
                 .unwrap()
                 .is_none()
         );
@@ -561,7 +581,7 @@ mod tests {
         // Recover correct value to vote again
         voting_context.vote_account_pubkey = validator_keypairs[my_index].vote_keypair.pubkey();
         assert!(
-            generate_vote_message(vote, true, &mut voting_context)
+            generate_refresh_vote_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -585,7 +605,7 @@ mod tests {
             slot: 1_000_000_000,
             block_id: Hash::new_unique(),
         });
-        let _ = generate_vote_message(vote, false, &mut voting_context);
+        let _ = insert_vote_and_create_bls_message(vote, &mut voting_context);
     }
 
     #[test]
@@ -644,7 +664,7 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -660,7 +680,7 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_none()
         );

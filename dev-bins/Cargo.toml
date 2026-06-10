@@ -21,10 +21,14 @@ check-cfg = [
 
 # Clippy lint configuration that can not be applied in clippy.toml
 [workspace.lints.clippy]
+# Denied lints
 arithmetic_side_effects = "deny"
 default_trait_access = "deny"
 manual_let_else = "deny"
 used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"
 
 [workspace.dependencies]
 agave-feature-set = { path = "../feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

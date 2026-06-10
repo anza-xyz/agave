@@ -67,10 +67,8 @@ fn get_key_and_stakes(
     let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).ok_or_else(|| {
         AddVoteError::EpochStakesNotFound(root_bank.epoch_schedule().get_epoch(slot))
     })?;
-    let Some(entry) = epoch_stakes
-        .bls_pubkey_to_rank_map()
-        .get_pubkey_stake_entry(rank as usize)
-    else {
+    let rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+    let Some(entry) = rank_map.get_pubkey_stake_entry(rank as usize) else {
         return Err(AddVoteError::InvalidRank(rank));
     };
     Ok((
@@ -81,7 +79,7 @@ fn get_key_and_stakes(
                 entry.vote_account_pubkey,
             )
         }),
-        NonZero::new(epoch_stakes.total_stake()).expect("expect total stakes to not be 0"),
+        NonZero::new(rank_map.total_stake()).expect("expect rank-map total stake to not be 0"),
     ))
 }
 

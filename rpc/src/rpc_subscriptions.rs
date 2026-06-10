@@ -318,9 +318,6 @@ impl RpcNotifier {
         // just as the notifier generates a notification for it.
         let _ = self.sender.send(notification);
 
-        inc_new_counter_info!("rpc-pubsub-messages", 1);
-        inc_new_counter_info!("rpc-pubsub-bytes", buf_arc.len());
-
         self.recent_items.lock().unwrap().push(buf_arc);
     }
 }
@@ -483,6 +480,11 @@ fn initial_last_notified_slot(
 #[derive(Default)]
 struct PubsubNotificationStats {
     since: Option<Instant>,
+    notify_slot_count: u64,
+    notify_slot_update_count: u64,
+    notify_vote_count: u64,
+    notify_root_count: u64,
+    notify_signature_count: u64,
     notification_entry_processing_count: u64,
     notification_entry_processing_time_us: u64,
 }
@@ -496,6 +498,15 @@ impl PubsubNotificationStats {
         }
         datapoint_info!(
             "pubsub_notification_entries",
+            ("notify_slot_count", self.notify_slot_count, i64),
+            (
+                "notify_slot_update_count",
+                self.notify_slot_update_count,
+                i64
+            ),
+            ("notify_vote_count", self.notify_vote_count, i64),
+            ("notify_root_count", self.notify_root_count, i64),
+            ("notify_signature_count", self.notify_signature_count, i64),
             (
                 "notification_entry_processing_count",
                 self.notification_entry_processing_count,
@@ -777,7 +788,7 @@ impl RpcSubscriptions {
                                 .get(&SubscriptionParams::Slot)
                             {
                                 debug!("slot notify: {slot_info:?}");
-                                inc_new_counter_info!("rpc-subscription-notify-slot", 1);
+                                stats.notify_slot_count += 1;
                                 notifier.notify(slot_info, sub, false);
                             }
                         }
@@ -786,7 +797,8 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::SlotsUpdates)
                             {
-                                inc_new_counter_info!("rpc-subscription-notify-slots-updates", 1);
+                                debug!("slot update notify: {slot_update:?}");
+                                stats.notify_slot_update_count += 1;
                                 notifier.notify(slot_update, sub, false);
                             }
                         }
@@ -806,7 +818,7 @@ impl RpcSubscriptions {
                                     signature: signature.to_string(),
                                 };
                                 debug!("vote notify: {vote_info:?}");
-                                inc_new_counter_info!("rpc-subscription-notify-vote", 1);
+                                stats.notify_vote_count += 1;
                                 notifier.notify(&rpc_vote, sub, false);
                             }
                         }
@@ -816,7 +828,7 @@ impl RpcSubscriptions {
                                 .get(&SubscriptionParams::Root)
                             {
                                 debug!("root notify: {root:?}");
-                                inc_new_counter_info!("rpc-subscription-notify-root", 1);
+                                stats.notify_root_count += 1;
                                 notifier.notify(root, sub, false);
                             }
                         }
@@ -857,6 +869,7 @@ impl RpcSubscriptions {
                                             subscription.params()
                                         {
                                             if params.enable_received_notification {
+                                                stats.notify_signature_count += 1;
                                                 notifier.notify(
                                                     RpcResponse::from(RpcNotificationResponse {
                                                         context: RpcNotificationContext { slot },

@@ -4604,7 +4604,7 @@ mod tests {
         let src_hashes = src_hashes;
 
         let mut src_hashes_buf = vec![0; SlotHashes::size_of()];
-        bincode::serialize_into(&mut src_hashes_buf, &src_hashes).unwrap();
+        wincode::serialize_into(&mut src_hashes_buf, &src_hashes).unwrap();
 
         let transaction_accounts = vec![(
             sysvar::slot_hashes::id(),
@@ -4643,7 +4643,7 @@ mod tests {
             );
             assert_eq!(result.unwrap(), 0);
 
-            let hashes_from_buf = bincode::deserialize::<SlotHashes>(&got_hashes_buf).unwrap();
+            let hashes_from_buf = wincode::deserialize::<SlotHashes>(&got_hashes_buf).unwrap();
             assert_eq!(hashes_from_buf, src_hashes);
         }
     }
