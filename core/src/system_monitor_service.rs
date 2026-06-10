@@ -572,7 +572,7 @@ enum InterestingLimit {
 }
 
 #[cfg(target_os = "linux")]
-const INTERESTING_LIMITS: &[(&str, InterestingLimit)] = &[
+const INTERESTING_LIMITS: &[(&str, InterestingLimit); 5] = &[
     ("net.core.rmem_max", InterestingLimit::Recommend(134217728)),
     ("net.core.wmem_max", InterestingLimit::Recommend(134217728)),
     ("vm.max_map_count", InterestingLimit::Recommend(1000000)),
@@ -594,7 +594,7 @@ impl SystemMonitorService {
     }
 
     #[cfg(target_os = "linux")]
-    fn linux_get_current_network_limits() -> Vec<(&'static str, &'static InterestingLimit, i64)> {
+    fn linux_get_current_network_limits() -> [(&'static str, &'static InterestingLimit, i64); 5] {
         use sysctl::Sysctl;
 
         fn sysctl_read(name: &str) -> Result<String, sysctl::SysctlError> {
@@ -606,49 +606,64 @@ impl SystemMonitorService {
         fn normalize_err<E: std::fmt::Display>(key: &str, error: E) -> String {
             format!("Failed to query value for {key}: {error}")
         }
-        INTERESTING_LIMITS
-            .iter()
-            .map(|(key, interesting_limit)| {
-                let current_value = sysctl_read(key)
-                    .map_err(|e| normalize_err(key, e))
-                    .and_then(|val| val.parse::<i64>().map_err(|e| normalize_err(key, e)))
-                    .unwrap_or_else(|e| {
-                        error!("{e}");
-                        -1
-                    });
-                (*key, interesting_limit, current_value)
-            })
-            .collect::<Vec<_>>()
+
+        fn build_tuple(
+            (key, limit): &'static (&str, InterestingLimit),
+        ) -> (&'static str, &'static InterestingLimit, i64) {
+            let current_value = sysctl_read(key)
+                .map_err(|e| normalize_err(key, e))
+                .and_then(|val| val.parse::<i64>().map_err(|e| normalize_err(key, e)))
+                .unwrap_or_else(|e| {
+                    error!("{e}");
+                    -1
+                });
+            (key, limit, current_value)
+        }
+
+        [
+            build_tuple(&INTERESTING_LIMITS[0]),
+            build_tuple(&INTERESTING_LIMITS[1]),
+            build_tuple(&INTERESTING_LIMITS[2]),
+            build_tuple(&INTERESTING_LIMITS[3]),
+            build_tuple(&INTERESTING_LIMITS[4]),
+        ]
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn linux_report_network_limits(
-        current_limits: &[(&'static str, &'static InterestingLimit, i64)],
+        current_limits: [(&'static str, &'static InterestingLimit, i64); 5],
     ) -> bool {
-        current_limits
-            .iter()
-            .all(|(key, interesting_limit, current_value)| {
-                datapoint_warn!("os-config", (key, *current_value, i64));
-                match interesting_limit {
-                    InterestingLimit::Recommend(recommended_value)
-                        if current_value < recommended_value =>
-                    {
-                        warn!(
-                            "  {key}: recommended={recommended_value}, current={current_value} \
-                             too small"
-                        );
-                        false
-                    }
-                    InterestingLimit::Recommend(recommended_value) => {
-                        info!("  {key}: recommended={recommended_value} current={current_value}");
-                        true
-                    }
-                    InterestingLimit::QueryOnly => {
-                        info!("  {key}: report-only --  current={current_value}");
-                        true
-                    }
+        datapoint_info!(
+            "os-config",
+            ("platform", platform_id(), String),
+            (current_limits[0].0, current_limits[0].2, i64),
+            (current_limits[1].0, current_limits[1].2, i64),
+            (current_limits[2].0, current_limits[2].2, i64),
+            (current_limits[3].0, current_limits[3].2, i64),
+            (current_limits[4].0, current_limits[4].2, i64)
+        );
+
+        current_limits.iter().all(
+            |(key, interesting_limit, current_value)| match interesting_limit {
+                InterestingLimit::Recommend(recommended_value)
+                    if current_value < recommended_value =>
+                {
+                    warn!(
+                        "  {key}: recommended={recommended_value}, current={current_value} too \
+                         small"
+                    );
+                    false
                 }
-            })
+                InterestingLimit::Recommend(recommended_value) => {
+                    info!("  {key}: recommended={recommended_value} current={current_value}");
+                    true
+                }
+                InterestingLimit::QueryOnly => {
+                    info!("  {key}: report-only --  current={current_value}");
+                    true
+                }
+            },
+        )
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -659,9 +674,8 @@ impl SystemMonitorService {
 
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
-        datapoint_info!("os-config", ("platform", platform_id(), String));
         let current_limits = Self::linux_get_current_network_limits();
-        Self::linux_report_network_limits(&current_limits)
+        Self::linux_report_network_limits(current_limits)
     }
 
     #[cfg(target_os = "linux")]
