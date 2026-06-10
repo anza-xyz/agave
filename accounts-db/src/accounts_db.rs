@@ -1621,7 +1621,6 @@ impl AccountsDb {
             "if snapshots are disabled, then zero_lamport_accounts_to_purge_later should always \
              be empty"
         );
-<<<<<<< HEAD
         if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
             self.zero_lamport_accounts_to_purge_after_full_snapshot
                 .retain(|(slot, pubkey)| {
@@ -1632,28 +1631,9 @@ impl AccountsDb {
                     }
                     !is_candidate_for_clean
                 });
-=======
-
-        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
-        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and
-        // search for newly shrinkable storages.
-        if self
-            .latest_full_snapshot_slot_advanced_since_clean
-            .swap(false, Ordering::Acquire)
-        {
-            if let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot() {
-                self.zero_lamport_accounts_to_purge_after_full_snapshot
-                    .retain(|(slot, pubkey)| {
-                        let is_candidate_for_clean =
-                            max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
-                        if is_candidate_for_clean {
-                            insert_candidate(*pubkey, true);
-                        }
-                        !is_candidate_for_clean
-                    });
-
-                let last_swept_full_snapshot_slot =
-                    self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
+            let last_swept_full_snapshot_slot =
+                self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
+            if last_swept_full_snapshot_slot != latest_full_snapshot_slot {
                 let (added_to_shrink_count, sweep_us) =
                     measure_us!(self.check_shrink_eligibility_after_snapshot(
                         last_swept_full_snapshot_slot,
@@ -1663,7 +1643,6 @@ impl AccountsDb {
                     added_to_shrink_count;
                 timings.zero_lamport_sweep_us += sweep_us;
             }
->>>>>>> 4c6264ead (Create a set of slots with zero lamport accounts to shrink after full snapshot (#12665))
         }
 
         (candidates, min_dirty_slot)
@@ -1688,11 +1667,11 @@ impl AccountsDb {
         // iteration, never concurrently with clean_accounts.
         let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
         for slot in start..=latest_full_snapshot_slot {
-            if let Some(store) = self.storage.get_slot_storage_entry(slot)
-                && self.is_shrinking_productive(&store)
-                && self.is_candidate_for_shrink(&store)
-            {
-                if shrink_candidates.insert(slot) {
+            if let Some(store) = self.storage.get_slot_storage_entry(slot) {
+                if self.is_shrinking_productive(&store)
+                    && self.is_candidate_for_shrink(&store)
+                    && shrink_candidates.insert(slot)
+                {
                     added_to_shrink_count += 1;
                 }
             }
