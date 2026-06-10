@@ -17,7 +17,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
-    std::{collections::HashSet, num::NonZeroU64},
+    std::{collections::HashSet, num::NonZero},
     thiserror::Error,
 };
 
@@ -162,17 +162,16 @@ fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyErr
         });
     }
     let (aggregate_stake, total_stake) = root_bank.verify_certificate(cert)?;
-    debug_assert!(aggregate_stake <= total_stake);
+    debug_assert!(aggregate_stake <= total_stake.get());
     verify_stake(cert, aggregate_stake, total_stake)
 }
 
 fn verify_stake(
     cert: &Certificate,
     aggregate_stake: u64,
-    total_stake: u64,
+    total_stake: NonZero<u64>,
 ) -> Result<(), CertVerifyError> {
     let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
-    let total_stake = NonZeroU64::new(total_stake).expect("Total stake cannot be zero");
     let cert_fraction = Fraction::new(aggregate_stake, total_stake);
     if cert_fraction >= required_fraction {
         Ok(())

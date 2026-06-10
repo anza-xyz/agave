@@ -17,7 +17,7 @@ use {
     solana_entry::block_component::{BlockFinalizationCert, VotesAggregate},
     solana_pubkey::Pubkey,
     solana_signer_store::{DecodeError, Decoded, decode},
-    std::{collections::HashSet, num::NonZeroU64},
+    std::{collections::HashSet, num::NonZero},
     thiserror::Error,
 };
 
@@ -125,10 +125,8 @@ impl ValidatedBlockFinalizationCert {
             let (notarize_stake, total_stake) = Self::verify_certificate(bank, &notarize_cert)?;
             let (finalize_stake, _) = Self::verify_certificate(bank, &finalize_cert)?;
 
-            let notarize_percent =
-                Fraction::new(notarize_stake, NonZeroU64::new(total_stake).unwrap());
-            let finalize_percent =
-                Fraction::new(finalize_stake, NonZeroU64::new(total_stake).unwrap());
+            let notarize_percent = Fraction::new(notarize_stake, total_stake);
+            let finalize_percent = Fraction::new(finalize_stake, total_stake);
             let notarize_threshold = notarize_cert.cert_type.limits_and_vote_types().0;
             let finalize_threshold = finalize_cert.cert_type.limits_and_vote_types().0;
 
@@ -186,8 +184,7 @@ impl ValidatedBlockFinalizationCert {
             let (finalize_stake, total_stake) =
                 Self::verify_certificate(bank, &fast_finalize_cert)?;
 
-            let finalize_percent =
-                Fraction::new(finalize_stake, NonZeroU64::new(total_stake).unwrap());
+            let finalize_percent = Fraction::new(finalize_stake, total_stake);
             let finalize_threshold = fast_finalize_cert.cert_type.limits_and_vote_types().0;
 
             if finalize_percent < finalize_threshold {
@@ -362,7 +359,7 @@ impl ValidatedBlockFinalizationCert {
     fn verify_certificate(
         bank: &Bank,
         cert: &Certificate,
-    ) -> Result<(u64, u64), BlockFinalizationCertError> {
+    ) -> Result<(u64, NonZero<u64>), BlockFinalizationCertError> {
         bank.verify_certificate(cert)
             .map_err(|_| BlockFinalizationCertError::SignatureVerificationFailed(cert.cert_type))
     }

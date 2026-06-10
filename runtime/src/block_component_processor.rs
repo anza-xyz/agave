@@ -25,7 +25,7 @@ use {
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::{collections::HashSet, num::NonZeroU64, sync::Arc},
+    std::{collections::HashSet, sync::Arc},
     thiserror::Error,
 };
 
@@ -296,7 +296,7 @@ impl BlockComponentProcessor {
             BlockComponentProcessorError::GenesisCertificateFailedVerification
         })?;
 
-        let genesis_percent = Fraction::new(genesis_stake, NonZeroU64::new(total_stake).unwrap());
+        let genesis_percent = Fraction::new(genesis_stake, total_stake);
         if genesis_percent < GENESIS_VOTE_THRESHOLD {
             warn!(
                 "Received a genesis certificate for slot {cert_slot} in bank slot {} with \
