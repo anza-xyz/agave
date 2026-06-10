@@ -2765,8 +2765,21 @@ pub fn check_chained_block_id(
     }
 }
 
+fn mark_dead_if_primary_access(blockstore: &Blockstore, slot: Slot) {
+    if blockstore.is_primary_access() {
+        blockstore
+            .set_dead_slot(slot)
+            .expect("Failed to mark slot as dead in blockstore");
+    } else {
+        info!("Failed slot {slot} won't be marked dead due to being read-only blockstore access");
+    }
+}
+
 // Processes and replays the contents of a single slot, returns Error
-// if failed to play the slot
+// if failed to play the slot.
+//
+// For use during startup replay, enforces any pre and post replay checks
+// that occur in ReplayStage.
 #[allow(clippy::too_many_arguments)]
 pub fn process_single_slot(
     blockstore: &Blockstore,
@@ -2789,16 +2802,7 @@ pub fn process_single_slot(
         }
         ChainedBlockIdCheck::Mismatch => {
             // Mismatch, mark dead
-            if blockstore.is_primary_access() {
-                blockstore
-                    .set_dead_slot(slot)
-                    .expect("Failed to mark slot as dead in blockstore");
-            } else {
-                info!(
-                    "Failed slot {slot} won't be marked dead due to being read-only blockstore \
-                     access"
-                );
-            }
+            mark_dead_if_primary_access(blockstore, slot);
             return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
                 slot,
                 bank.parent_slot(),
@@ -2822,15 +2826,7 @@ pub fn process_single_slot(
     )
     .map_err(|err| {
         warn!("slot {slot} failed to verify: {err}");
-        if blockstore.is_primary_access() {
-            blockstore
-                .set_dead_slot(slot)
-                .expect("Failed to mark slot as dead in blockstore");
-        } else {
-            info!(
-                "Failed slot {slot} won't be marked dead due to being read-only blockstore access"
-            );
-        }
+        mark_dead_if_primary_access(blockstore, slot);
         err
     })?;
 
@@ -2839,7 +2835,20 @@ pub fn process_single_slot(
         .expect("Blockstore operations must succeed")
         .expect("Full block must have block id");
     bank.set_block_id(Some(block_id));
-    bank.freeze(); // all banks handled by this routine are created from complete slots
+    let verify_result = bank.freeze_and_verify_bank_hash(); // all banks handled by this routine are created from complete slots
+
+    if let Err((expected_hash, computed_hash)) = verify_result {
+        warn!(
+            "slot {slot} failed to freeze, bank hash mismatch expected {expected_hash} computed \
+             {computed_hash}"
+        );
+        mark_dead_if_primary_access(blockstore, slot);
+        return Err(BlockstoreProcessorError::BankHashMismatch(
+            slot,
+            expected_hash,
+            computed_hash,
+        ));
+    }
 
     if let Some(slot_callback) = &opts.slot_callback {
         slot_callback(bank);
