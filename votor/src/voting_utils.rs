@@ -465,7 +465,7 @@ mod tests {
         let received_message = own_vote_receiver.recv().unwrap();
         assert_eq!(
             received_message,
-            SigVerifiedBatch::Votes(expected_message.into())
+            SigVerifiedBatch::Votes(expected_message.clone().into())
         );
 
         let refresh_vote = Vote::new_notarization_vote(Block {

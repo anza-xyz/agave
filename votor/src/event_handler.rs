@@ -960,7 +960,9 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+            consensus_message::{
+                BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, SigVerifiedVoteBatch, VoteMessage,
+            },
             vote::Vote,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
@@ -1423,34 +1425,41 @@ mod tests {
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(
+                own_vote,
+                SigVerifiedBatch::Votes(SigVerifiedVoteBatch::new(vec![expected_message]))
+            );
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(
+                own_vote,
+                SigVerifiedBatch::Votes(SigVerifiedVoteBatch::new(vec![expected_message]))
+            );
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
-            let mut received_messages = Vec::with_capacity(expected_votes.len());
-            for _ in expected_votes {
-                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
-                else {
-                    panic!("expected own vote batch");
-                };
-                received_messages.extend(votes);
-            }
+            unimplemented!()
+            // let mut received_messages = Vec::with_capacity(expected_votes.len());
+            // for _ in expected_votes {
+            //     let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
+            //     else {
+            //         panic!("expected own vote batch");
+            //     };
+            //     received_messages.extend(votes);
+            // }
 
-            for expected_vote in expected_votes {
-                let expected_message = self.expected_vote_message(expected_vote);
-                let index = received_messages
-                    .iter()
-                    .position(|message| *message == expected_message)
-                    .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
-                received_messages.remove(index);
-            }
-            assert!(received_messages.is_empty());
+            // for expected_vote in expected_votes {
+            //     let expected_message = self.expected_vote_message(expected_vote);
+            //     let index = received_messages
+            //         .iter()
+            //         .position(|message| *message == expected_message)
+            //         .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
+            //     received_messages.remove(index);
+            // }
+            // assert!(received_messages.is_empty());
         }
 
         fn check_no_own_vote(&self) {
