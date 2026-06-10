@@ -6118,9 +6118,16 @@ pub mod tests {
         });
         let header_component = BlockComponent::new_block_marker(header);
 
+        let block_producer_time_nanos = u64::try_from(
+            genesis_config
+                .creation_time
+                .saturating_mul(1_000_000_000)
+                .saturating_add(1),
+        )
+        .unwrap();
         let footer = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
-            block_producer_time_nanos: 1_000_000_000,
+            block_producer_time_nanos,
             block_user_agent: b"test".to_vec(),
             block_final_cert: None,
             skip_reward_cert: None,
