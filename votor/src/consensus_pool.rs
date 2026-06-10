@@ -37,20 +37,12 @@ pub type PoolId = (Slot, VoteType);
 /// Different failure cases from calling `add_vote()`.
 #[derive(Debug, Error, PartialEq)]
 pub(crate) enum AddVoteError {
-    #[error("Conflicting vote type: {0:?} vs existing {1:?} for slot: {2} pubkey: {3}")]
-    ConflictingVoteType(VoteType, VoteType, Slot, Pubkey),
-
     #[error("Epoch stakes missing for epoch: {0}")]
     EpochStakesNotFound(Epoch),
-
     #[error("Unrooted slot")]
     UnrootedSlot,
-
     #[error("Certificate error: {0}")]
     Certificate(#[from] CertificateBuildError),
-
-    #[error("Invalid rank: {0}")]
-    InvalidRank(u16),
 }
 
 fn get_total_stake(root_bank: &Bank, slot: Slot) -> Result<NonZero<u64>, AddVoteError> {
@@ -61,6 +53,7 @@ fn get_total_stake(root_bank: &Bank, slot: Slot) -> Result<NonZero<u64>, AddVote
 }
 
 fn get_rank(root_bank: &Bank, slot: Slot, pubkey: &Pubkey) -> u16 {
+    // TODO: handle unwraps
     let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).unwrap();
     let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
     *bls_pubkey_to_rank_map
@@ -70,6 +63,7 @@ fn get_rank(root_bank: &Bank, slot: Slot, pubkey: &Pubkey) -> u16 {
 
 fn is_pubkey_present(root_bank: &Bank, batch: &SigVerifiedVoteBatch, pubkey: &Pubkey) -> bool {
     let rank = get_rank(root_bank, batch.vote().slot(), pubkey);
+    // TODO: figure out if unwrap is safe or not and handle it.
     *batch.ranks().get(rank as usize).unwrap()
 }
 
@@ -135,6 +129,7 @@ impl ConsensusPool {
 
     fn update_vote_pool(
         &mut self,
+        root_bank: &Bank,
         batch: &SigVerifiedVoteBatch,
     ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
         // TODO: look up max validators from epoch stakes
@@ -144,7 +139,7 @@ impl ConsensusPool {
             .vote_pools
             .entry(slot)
             .or_insert_with(|| VotePool::new(slot, max_validators));
-        pool.add_vote(batch, &self.completed_certificates)
+        pool.add_vote(root_bank, batch, &self.completed_certificates)
     }
 
     fn insert_certificate(
@@ -276,14 +271,14 @@ impl ConsensusPool {
         }
         let vote_type = vote.get_type();
         // TODO: handle unwrap
-        let (entry_stake, new_certs) = self.update_vote_pool(&batch).unwrap();
+        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, &batch).unwrap();
         let fallback_vote_counters = self
             .slot_stake_counters_map
             .entry(vote_slot)
             .or_insert_with(|| SlotStakeCounters::new(total_stake));
 
         fallback_vote_counters.add_vote(
-            &vote,
+            vote,
             entry_stake.get(),
             is_pubkey_present(root_bank, &batch, my_vote_pubkey),
             events,

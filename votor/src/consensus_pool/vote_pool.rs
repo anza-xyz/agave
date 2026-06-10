@@ -8,13 +8,35 @@ use {
     solana_bls_signatures::SignatureProjective,
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
     std::{
-        collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry},
+        collections::{BTreeMap, HashMap, HashSet, hash_map::Entry as HashMapEntry},
         num::NonZero,
         sync::Arc,
     },
     thiserror::Error,
 };
+
+const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
+
+// TODO: return an iterator maybe?
+fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> Vec<Pubkey> {
+    let epoch_stakes = root_bank
+        .epoch_stakes_from_slot(batch.vote().slot())
+        .unwrap();
+    let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+    batch
+        .ranks()
+        .iter_ones()
+        .map(|ind| {
+            bls_pubkey_to_rank_map
+                .get_pubkey_stake_entry(ind)
+                .unwrap()
+                .vote_account_pubkey
+        })
+        .collect()
+}
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum VotePoolAddVoteError {
@@ -46,21 +68,12 @@ impl NotarVoteEntry {
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
-        // Ensures that none of the validators voted notar before.
-        for (block_id, entry) in &self.entries {
-            if has_common_bits(batch.ranks(), &entry.ranks) {
-                if block_id == batch.vote().block_id().unwrap() {
-                    return Err(VotePoolAddVoteError::Duplicate);
-                } else {
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-            }
+        if has_common_bits(&self.ranks, batch.ranks()) {
+            return Err(VotePoolAddVoteError::Duplicate);
         }
         let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                // Checked above that there is no overlap.
-                debug_assert!(!has_common_bits(batch.ranks(), &entry.ranks));
                 entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
@@ -98,22 +111,12 @@ impl GenesisVoteEntry {
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
-        // Ensures that none of the validators voted notar before.
-        for (block_id, entry) in &self.entries {
-            if has_common_bits(batch.ranks(), &entry.ranks) {
-                if block_id == batch.vote().block_id().unwrap() {
-                    return Err(VotePoolAddVoteError::Duplicate);
-                } else {
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-            }
+        if has_common_bits(&self.ranks, batch.ranks()) {
+            return Err(VotePoolAddVoteError::Duplicate);
         }
-
         let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                // Checked above that there is no overlap.
-                debug_assert!(!has_common_bits(batch.ranks(), &entry.ranks));
                 entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
@@ -133,6 +136,7 @@ struct NotarFallbackVoteEntry {
     slot: Slot,
     max_validators: usize,
     entries: HashMap<Hash, VoteEntry>,
+    validators: HashMap<Pubkey, HashSet<Hash>>,
     ranks: BitVec<u8>,
 }
 
@@ -142,35 +146,45 @@ impl NotarFallbackVoteEntry {
             slot,
             max_validators,
             entries: HashMap::new(),
+            validators: HashMap::with_capacity(max_validators),
             ranks: BitVec::with_capacity(max_validators),
         }
     }
 
     fn add_vote(
         &mut self,
-        _batch: &SigVerifiedVoteBatch,
+        root_bank: &Bank,
+        batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
-        unimplemented!()
-        // debug_assert_eq!(self.slot, batch.vote.slot());
-        // for entry in self.entries.values() {
-        //     if has_common_bits(&batch.ranks, &entry.ranks) {
-        //         return Err(VotePoolAddVoteError::Duplicate);
-        //     }
-        // }
-        // match self.entries.entry(*batch.vote.block_id().unwrap()) {
-        //     HashMapEntry::Occupied(mut e) => {
-        //         let vote_pool_entry = e.get_mut();
-        //         vote_pool_entry.add_vote(&batch)?;
-        //     }
-        //     HashMapEntry::Vacant(e) => {
-        //         // TODO: initial VoteEntry so that we do not have to modify it.
-        //         let mut entry = VoteEntry::new(self.max_validators);
-        //         entry.add_vote(&batch)?;
-        //         e.insert(entry);
-        //     }
-        // }
-        // self.ranks |= batch.ranks;
-        // Ok(())
+        debug_assert_eq!(self.slot, batch.vote().slot());
+        for validator in get_validators(root_bank, batch) {
+            if let Some(set) = self.validators.get(&validator)
+                && set.len() >= MAX_NOTAR_FALLBACK_PER_VALIDATOR
+            {
+                return Err(VotePoolAddVoteError::Invalid);
+            }
+        }
+        let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
+            HashMapEntry::Occupied(mut e) => {
+                let entry = e.get_mut();
+                entry.add_vote(batch)?
+            }
+            HashMapEntry::Vacant(e) => {
+                // TODO: initial VoteEntry so that we do not have to modify it.
+                let mut entry = VoteEntry::new(self.max_validators);
+                let stake = entry.add_vote(batch)?;
+                e.insert(entry);
+                stake
+            }
+        };
+        for validator in get_validators(root_bank, batch) {
+            self.validators
+                .entry(validator)
+                .or_default()
+                .insert(*batch.vote().block_id().unwrap());
+        }
+        self.ranks |= batch.ranks();
+        Ok(stake)
     }
 }
 
@@ -250,6 +264,7 @@ impl VotePool {
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
     pub(super) fn add_vote(
         &mut self,
+        root_bank: &Bank,
         batch: &SigVerifiedVoteBatch,
         _completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(NonZero<u64>, Vec<Certificate>), VotePoolAddVoteError> {
@@ -282,7 +297,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.notar_fallback.add_vote(batch)
+                self.notar_fallback.add_vote(root_bank, batch)
             }
             Vote::Skip(_) => {
                 if has_common_bits(&self.notar.ranks, batch.ranks())
