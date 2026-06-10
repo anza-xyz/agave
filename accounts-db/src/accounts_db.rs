@@ -1034,7 +1034,7 @@ enum PubkeysToFlush {
     All,
     /// Flush only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
     /// purging the rest from the index and reclaiming older versions.
-    Only(HashSet<Pubkey>),
+    Only(HashSet<Pubkey, PubkeyHasherBuilder>),
 }
 
 impl AccountsDb {
@@ -4713,7 +4713,7 @@ impl AccountsDb {
 
     /// Flush all rooted slots up to `requested_flush_root`.
     ///
-    /// When `clean` is true, only the newest version of each account across the
+    /// When `should_clean` is true, only the newest version of each account across the
     /// flushed roots (at or below `max_clean_root`) is written to storage; older
     /// versions are purged from the index instead. When false, every account in
     /// every flushed root is written.
@@ -4721,7 +4721,7 @@ impl AccountsDb {
         &self,
         requested_flush_root: Option<Slot>,
         max_clean_root: Option<Slot>,
-        clean: bool,
+        should_clean: bool,
     ) -> (usize, usize, FlushStats) {
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
         let flushed_roots: BTreeSet<Slot> =
@@ -4731,7 +4731,7 @@ impl AccountsDb {
 
         // For each root being flushed, which of its cached accounts to write to storage.
         let (pubkeys_to_flush, select_pubkeys_us) =
-            measure_us!(self.select_pubkeys_to_flush(&flushed_roots, max_clean_root, clean));
+            measure_us!(self.select_pubkeys_to_flush(&flushed_roots, max_clean_root, should_clean));
 
         // Iterate from highest to lowest so that we don't need to flush earlier
         // outdated updates in earlier roots
@@ -4762,13 +4762,14 @@ impl AccountsDb {
         &self,
         flushed_roots: &BTreeSet<Slot>,
         max_clean_root: Option<Slot>,
-        clean: bool,
-    ) -> HashMap<Slot, PubkeysToFlush> {
-        let mut pubkeys_to_flush = HashMap::with_capacity(flushed_roots.len());
+        should_clean: bool,
+    ) -> IntMap<Slot, PubkeysToFlush> {
+        let mut pubkeys_to_flush =
+            IntMap::with_capacity_and_hasher(flushed_roots.len(), BuildNoHashHasher::default());
 
         // Presize the dedup set from the newest root (flushed first), doubled to leave room
         // for unique accounts contributed by older roots.
-        let dedup_capacity = if clean {
+        let dedup_capacity = if should_clean {
             flushed_roots
                 .last()
                 .and_then(|&root| self.accounts_cache.slot_cache(root))
@@ -4776,16 +4777,17 @@ impl AccountsDb {
         } else {
             0
         };
-        let mut written_accounts = HashSet::with_capacity(dedup_capacity);
+        let mut written_accounts =
+            HashSet::with_capacity_and_hasher(dedup_capacity, PubkeyHasherBuilder::default());
 
         // Iterate from newest root to oldest root being flushed in this batch
         for &root in flushed_roots.iter().rev() {
             let cleaned =
-                clean && max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
+                should_clean && max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
             let to_flush = if !cleaned {
                 PubkeysToFlush::All
             } else {
-                let mut flush_keys = HashSet::new();
+                let mut flush_keys = HashSet::default();
                 if let Some(slot_cache) = self.accounts_cache.slot_cache(root) {
                     for entry in slot_cache.iter() {
                         let pubkey = *entry.key();

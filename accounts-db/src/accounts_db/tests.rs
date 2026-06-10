@@ -3345,8 +3345,8 @@ fn test_select_pubkeys_to_flush() {
         db.accounts_cache.store(slot, &shared, account.clone());
     }
 
-    let shared_only = PubkeysToFlush::Only(HashSet::from([shared]));
-    let deduped = PubkeysToFlush::Only(HashSet::new());
+    let shared_only = PubkeysToFlush::Only([shared].into_iter().collect());
+    let deduped = PubkeysToFlush::Only(HashSet::default());
 
     // All roots cleaned: `shared` is written only at its newest root (15), deduped from 5 and 10.
     let plans = db.select_pubkeys_to_flush(&roots, Some(15), true);
