@@ -46,15 +46,22 @@ impl NotarVoteEntry {
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
-        for entry in self.entries.values() {
+        // Ensures that none of the validators voted notar before.
+        for (block_id, entry) in &self.entries {
             if has_common_bits(batch.ranks(), &entry.ranks) {
-                return Err(VotePoolAddVoteError::Duplicate);
+                if block_id == batch.vote().block_id().unwrap() {
+                    return Err(VotePoolAddVoteError::Duplicate);
+                } else {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
             }
         }
         let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
-                let vote_pool_entry = e.get_mut();
-                vote_pool_entry.add_vote(batch)?
+                let entry = e.get_mut();
+                // Checked above that there is no overlap.
+                debug_assert!(!has_common_bits(batch.ranks(), &entry.ranks));
+                entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
                 // TODO: initial VoteEntry so that we do not have to modify it.
@@ -73,6 +80,7 @@ struct GenesisVoteEntry {
     slot: Slot,
     max_validators: usize,
     entries: HashMap<Hash, VoteEntry>,
+    ranks: BitVec<u8>,
 }
 
 impl GenesisVoteEntry {
@@ -81,6 +89,7 @@ impl GenesisVoteEntry {
             slot,
             max_validators,
             entries: HashMap::new(),
+            ranks: BitVec::with_capacity(max_validators),
         }
     }
 
@@ -89,15 +98,23 @@ impl GenesisVoteEntry {
         batch: &SigVerifiedVoteBatch,
     ) -> Result<NonZero<u64>, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
-        for entry in self.entries.values() {
+        // Ensures that none of the validators voted notar before.
+        for (block_id, entry) in &self.entries {
             if has_common_bits(batch.ranks(), &entry.ranks) {
-                return Err(VotePoolAddVoteError::Duplicate);
+                if block_id == batch.vote().block_id().unwrap() {
+                    return Err(VotePoolAddVoteError::Duplicate);
+                } else {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
             }
         }
+
         let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
-                let vote_pool_entry = e.get_mut();
-                vote_pool_entry.add_vote(batch)?
+                let entry = e.get_mut();
+                // Checked above that there is no overlap.
+                debug_assert!(!has_common_bits(batch.ranks(), &entry.ranks));
+                entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
                 // TODO: initial VoteEntry so that we do not have to modify it.
@@ -107,6 +124,7 @@ impl GenesisVoteEntry {
                 stake
             }
         };
+        self.ranks |= batch.ranks();
         Ok(stake)
     }
 }
@@ -238,21 +256,49 @@ impl VotePool {
         debug_assert_eq!(self.slot, batch.vote().slot());
         let _stake = match batch.vote() {
             Vote::Notarize(_) => {
-                if has_common_bits(batch.ranks(), &self.skip.ranks) {
+                if has_common_bits(&self.skip.ranks, batch.ranks())
+                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                if let Some(entry) = self
+                    .notar_fallback
+                    .entries
+                    .get(batch.vote().block_id().unwrap())
+                    && has_common_bits(&entry.ranks, batch.ranks())
+                {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.notar.add_vote(batch)
             }
+            Vote::NotarizeFallback(_) => {
+                if has_common_bits(&self.finalize.ranks, batch.ranks())
+                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                if let Some(entry) = self.notar.entries.get(batch.vote().block_id().unwrap())
+                    && has_common_bits(&entry.ranks, batch.ranks())
+                {
+                    return Err(VotePoolAddVoteError::Invalid);
+                }
+                self.notar_fallback.add_vote(batch)
+            }
             Vote::Skip(_) => {
                 if has_common_bits(&self.notar.ranks, batch.ranks())
                     || has_common_bits(&self.finalize.ranks, batch.ranks())
+                    || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
+                    || has_common_bits(&self.genesis.ranks, batch.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.skip.add_vote(batch)
             }
             Vote::SkipFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, batch.ranks()) {
+                if has_common_bits(&self.finalize.ranks, batch.ranks())
+                    || has_common_bits(&self.skip.ranks, batch.ranks())
+                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.skip_fallback.add_vote(batch)
@@ -261,17 +307,22 @@ impl VotePool {
                 if has_common_bits(&self.skip.ranks, batch.ranks())
                     || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
                     || has_common_bits(&self.notar_fallback.ranks, batch.ranks())
+                    || has_common_bits(&self.genesis.ranks, batch.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 self.finalize.add_vote(batch)
             }
-            Vote::Genesis(_) => self.genesis.add_vote(batch),
-            Vote::NotarizeFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, batch.ranks()) {
+            Vote::Genesis(_) => {
+                if has_common_bits(&self.skip.ranks, batch.ranks())
+                    || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
+                    || has_common_bits(&self.notar_fallback.ranks, batch.ranks())
+                    || has_common_bits(&self.notar.ranks, batch.ranks())
+                    || has_common_bits(&self.finalize.ranks, batch.ranks())
+                {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.notar_fallback.add_vote(batch)
+                self.genesis.add_vote(batch)
             }
         }?;
         unimplemented!()
