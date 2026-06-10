@@ -97,7 +97,7 @@ cd net/
 # Configure the metrics database and validate credentials using environment variable `SOLANA_METRICS_CONFIG` (skip this if you are not using metrics)
 ./init-metrics.sh -c testnet-dev-${USER} ${USER}
 
-# Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node
+# Deploy the network from the local workspace and start processes on all nodes including transaction-bench on the client node
 RUST_LOG=info ./net.sh start
 
 # Show a help to ssh into any testnet node to access logs/etc
@@ -125,7 +125,7 @@ RUST_LOG=info ./net.sh start
   * `./init-metrics.sh -c testnet-dev-${user} ${user}` to create a new metrics database from scratch
   * Manually set `SOLANA_METRICS_CONFIG` in `./net/config/config` (which is exactly what `init-metrics.sh` does for you)
   * `./init-metrics.sh -e` to load metrics config from `SOLANA_METRICS_CONFIG` into the testnet config file or
-* `./net.sh` controls the payload on the testnet nodes, i.e. bootstrapping, the validators and bench-tps. In principle, you can run everything by hand, but `./net.sh` makes it easier.
+* `./net.sh` controls the payload on the testnet nodes, i.e. bootstrapping, the validators and transaction-bench clients. In principle, you can run everything by hand, but `./net.sh` makes it easier.
   * `./net.sh start` to actually run the test network.
     * This will actually upload your current sources to the bootstrap host, build them there and upload the result to all the nodes
     * The script will take 5-10 of minutes to run, in the end it should print something like
@@ -135,8 +135,8 @@ RUST_LOG=info ./net.sh start
      ```
     * You can also make sure it logs successful test transfers:
     ```✅ 1 lamport(s) transferred: seq=0   time= 402ms signature=33uJtPJM6ekBGrWCgWHKw1TTQJVrLxYMe3sp2PUmSRVb21LyXn3nDbQmzsgQyihE7VP2zD2iR66Du8aDUnSSd6pb```
-  * `./net.sh start  bench-tps=2="--tx_count 2500"` will start 2 clients with bench-tps workload sending 2500 transactions per batch.
-    * --tx_count argument is passed to the bench-tps program, see its manual for more options
+  * `./net.sh start -c transaction-bench=2="--target-tps 5000 ws-leader-tracker"` will start 2 clients with transaction-bench workloads targeting 5000 TPS.
+    * Arguments are passed to `solana-transaction-bench`; see its manual for more options.
   * `./net.sh sanity`  to test the deployment, it is also run by start command
   * `./net.sh stop`  to stop the validators and client. This does not kill the machines, so you can study the logs etc.
   * `./net.sh start --nobuild` will skip the source compilation, you will generally want that if you are only changing configuration files rather than code, or just want to re-run the last test.
@@ -174,7 +174,7 @@ You will want to have a script like this pretty much immediately to avoid making
 # Patch metrics config from env into config file
 ./init-metrics.sh -e
 # Enable metrics and start the network (this will also build software)
-RUST_LOG=info ./net.sh start  -c bench-tps=2="--tx_count 25000"
+RUST_LOG=info ./net.sh start -c transaction-bench=2="--target-tps 5000 ws-leader-tracker"
 ```
 
 ### Inscrutable "nothing works everything times out state"

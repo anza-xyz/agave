@@ -99,7 +99,6 @@ for PROJECT_NAME in "${PROJECT_NAMES[@]}"; do
       { "source": "/wallet-guide/hardware-wallet", "destination": "/cli/wallets/hardware-wallet" },
       { "source": "/wallet-guide/hardware-wallet/ledger", "destination": "/cli/wallets/hardware-wallet/ledger" },
       { "source": "/cluster/overview", "destination": "/clusters" },
-      { "source": "/cluster/bench-tps", "destination": "/clusters/benchmark" },
       { "source": "/cluster/performance-metrics", "destination": "/clusters/metrics" },
       { "source": "/running-validator", "destination": "/operations" },
       { "source": "/validator/get-started/setup-a-validator", "destination": "/operations/setup-a-validator" },

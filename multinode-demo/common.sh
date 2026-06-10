@@ -36,7 +36,7 @@ else
     declare program="$1"
     declare crate="$program"
     declare manifest_path
-    if [[ $program == "bench-tps" || $program == "ledger-tool" ]]; then
+    if [[ $program == "ledger-tool" ]]; then
       manifest_path="--manifest-path $here/dev-bins/Cargo.toml"
     fi
     if [[ -z $program ]]; then
@@ -65,7 +65,6 @@ else
   }
 fi
 
-solana_bench_tps=$(solana_program bench-tps)
 solana_transaction_bench=${SOLANA_TRANSACTION_BENCH:-solana-transaction-bench}
 solana_faucet=$(solana_program faucet)
 agave_validator=$(solana_program validator)
