@@ -1610,12 +1610,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bytesize"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c58ec36aac5066d5ca17df51b3e70279f5670a72102f5752cb7e7c856adfc70"
-
-[[package]]
 name = "bzip2"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7575,7 +7569,6 @@ dependencies = [
  "solana-test-validator",
  "solana-transaction-status",
  "solana-version",
- "systemstat",
  "tokio",
  "tungstenite",
 ]
@@ -11951,20 +11944,6 @@ dependencies = [
  "libc",
  "thiserror 2.0.18",
  "walkdir",
-]
-
-[[package]]
-name = "systemstat"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e89b75de097d0c52a1dc2114e19439d55f0e2e42d32168c6df44f139dfb66f"
-dependencies = [
- "bytesize",
- "lazy_static",
- "libc",
- "nom",
- "time",
- "winapi",
 ]
 
 [[package]]
