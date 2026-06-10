@@ -10,9 +10,10 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            SocketConfiguration as SocketConfig, bind_gossip_port_in_range,
+            SocketConfiguration as SocketConfig, bind_gossip_port_in_range_with_config,
             bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            get_max_recv_buffer_size, get_max_send_buffer_size, localhost_port_range_for_tests,
+            multi_bind_in_range_with_config,
         },
     },
     solana_pubkey::Pubkey,
@@ -63,22 +64,64 @@ impl Node {
     /// (handshakes, ACKs, connection management). For UDP, "read/write" only
     /// describes buffer tuning: Agave does not send from primarily_read_udp
     /// sockets nor receive on primarily_write_udp sockets. Setting the unused
-    /// side to 0 avoids increasing it; Linux still enforces a minimum.
+    /// side to 1 avoids increasing it; Linux still enforces a minimum. Note
+    /// unlike Linux, MacOS and FreeBSD will not accept a buffer size of zero.
     ///
     /// NOTE: In Linux, the minimum send buffer size (SO_SNDBUF) is 2048 bytes
     /// and the minimum receive buffer size (SO_RCVBUF) is 256 bytes
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html
     fn create_socket_configs() -> SocketConfigs {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "macos"
+        )) {
             const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+            let recv_buffer_size = get_max_recv_buffer_size()
+                .map_err(|err| {
+                    error!(
+                        "Maximum socket receive buffer size could not be determined: {}",
+                        err
+                    )
+                })
+                .ok();
+            let send_buffer_size = get_max_send_buffer_size()
+                .map_err(|err| {
+                    error!(
+                        "Maximum socket send buffer size could not be determined: {}",
+                        err
+                    )
+                })
+                .ok();
+            if let Some(sz) = recv_buffer_size {
+                info!("Maximum socket receive buffer size is {}", sz)
+            }
+            if let Some(sz) = send_buffer_size {
+                info!("Maximum socket send buffer size is {}", sz)
+            }
+            let maybe_set_recv_buffer_size = move |c: SocketConfig| {
+                let Some(sz) = recv_buffer_size else { return c };
+                c.recv_buffer_size(sz)
+            };
+            let maybe_set_send_buffer_size = move |c: SocketConfig| {
+                let Some(sz) = send_buffer_size else { return c };
+                c.send_buffer_size(sz)
+            };
+            let maybe_set_recv_and_send_buffer_sizes = move |c| {
+                let c = maybe_set_recv_buffer_size(c);
+                let c = maybe_set_send_buffer_size(c);
+                c
+            };
             SocketConfigs {
-                read_write: SocketConfig::default(),
-                primarily_read_quic: SocketConfig::default()
+                read_write: maybe_set_recv_and_send_buffer_sizes(SocketConfig::default()),
+                primarily_read_quic: maybe_set_recv_buffer_size(SocketConfig::default())
                     .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_write_quic: SocketConfig::default()
+                primarily_write_quic: maybe_set_send_buffer_size(SocketConfig::default())
                     .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_read_udp: SocketConfig::default().send_buffer_size(0),
-                primarily_write_udp: SocketConfig::default().recv_buffer_size(0),
+                primarily_read_udp: maybe_set_recv_buffer_size(SocketConfig::default())
+                    .send_buffer_size(1),
+                primarily_write_udp: maybe_set_send_buffer_size(SocketConfig::default())
+                    .recv_buffer_size(1),
             }
         } else {
             SocketConfigs::default()
@@ -136,16 +179,21 @@ impl Node {
         let mut gossip_sockets = Vec::with_capacity(bind_ip_addrs.len());
         let mut gossip_ports = Vec::with_capacity(bind_ip_addrs.len());
         let mut ip_echo_sockets = Vec::with_capacity(bind_ip_addrs.len());
+
+        let socket_configs = Self::create_socket_configs();
+
         for ip in bind_ip_addrs.iter() {
             let gossip_addr = SocketAddr::new(*ip, gossip_port);
-            let (port, (gossip, ip_echo)) =
-                bind_gossip_port_in_range(&gossip_addr, port_range, *ip);
+            let (port, (gossip, ip_echo)) = bind_gossip_port_in_range_with_config(
+                &gossip_addr,
+                port_range,
+                *ip,
+                socket_configs.read_write,
+            );
             gossip_sockets.push(gossip);
             gossip_ports.push(port);
             ip_echo_sockets.push(ip_echo);
         }
-
-        let socket_configs = Self::create_socket_configs();
 
         let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -251,7 +299,7 @@ impl Node {
         let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
-            socket_configs.primarily_write_udp,
+            socket_configs.primarily_write_udp.set_non_blocking(true),
             num_tvu_retransmit_sockets.get(),
         )
         .expect("tvu retransmit multi_bind");

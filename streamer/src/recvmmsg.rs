@@ -1,11 +1,11 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
 pub use solana_perf::packet::PACKETS_PER_BATCH;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use {
     crate::msghdr::create_msghdr,
     itertools::izip,
-    libc::{AF_INET, AF_INET6, MSG_WAITFORONE, iovec, mmsghdr, sockaddr_storage, socklen_t},
+    libc::{AF_INET, AF_INET6, iovec, mmsghdr, sockaddr_storage, socklen_t},
     std::{
         mem::{self, MaybeUninit},
         net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -17,7 +17,7 @@ use {
     std::{cmp, io, net::UdpSocket},
 };
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let mut i = 0;
@@ -44,7 +44,7 @@ pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num
     Ok(i)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr> {
     use libc::{sa_family_t, sockaddr_in, sockaddr_in6};
     const SOCKADDR_IN_SIZE: usize = std::mem::size_of::<sockaddr_in>();
@@ -90,7 +90,7 @@ this function
  You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
  prior to calling this function if you require this to actually time out after 1 second.
 */
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     // Should never hit this, but bail if the caller didn't provide any Packets
     // to receive into
@@ -129,14 +129,21 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         tv_sec: 1,
         tv_nsec: 0,
     };
-    // TODO: remove .try_into().unwrap() once rust libc fixes recvmmsg types for musl
-    #[allow(clippy::useless_conversion)]
     let nrecv = unsafe {
+        #[cfg(target_os = "linux")]
+        let count = count as u32;
+
+        #[cfg(not(target_env = "musl"))]
+        use libc::MSG_WAITFORONE;
+
+        #[cfg(target_env = "musl")]
+        const MSG_WAITFORONE: u32 = libc::MSG_WAITFORONE as u32;
+
         libc::recvmmsg(
             sock_fd,
             hdrs[0].assume_init_mut(),
-            count as u32,
-            MSG_WAITFORONE.try_into().unwrap(),
+            count,
+            MSG_WAITFORONE,
             &mut ts,
         )
     };

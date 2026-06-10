@@ -1,6 +1,6 @@
 //! The `sendmmsg` module provides sendmmsg() API implementation
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use {
     crate::msghdr::create_msghdr,
     itertools::izip,
@@ -35,7 +35,7 @@ impl From<SendPktsError> for TransportError {
 }
 
 // The type and lifetime constraints are overspecified to match 'linux' code.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn batch_send<'a, S, T: 'a + ?Sized>(
     sock: &UdpSocket,
     packets: impl IntoIterator<Item = (&'a T, S), IntoIter: ExactSizeIterator>,
@@ -62,7 +62,7 @@ where
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
@@ -124,7 +124,7 @@ fn mmsghdr_for_packet(
     });
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPktsError> {
     let sock_fd = sock.as_raw_fd();
     let mut total_sent = 0;
@@ -132,10 +132,52 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
 
     let mut pkts = &mut *hdrs;
     while !pkts.is_empty() {
-        let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts.len() as u32, 0) } {
+        let pkts_len = pkts.len();
+
+        #[cfg(target_os = "linux")]
+        let pkts_len = pkts_len as u32;
+
+        let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts_len, 0) } {
             -1 => {
+                let errno = io::Error::last_os_error();
+                if let Some(errno) = errno.raw_os_error() {
+                    // Handle transient sending errors due to busy
+                    // hardware by blocking in poll() and retrying
+                    if errno == libc::ENOBUFS || errno == libc::EAGAIN {
+                        let mut pfd = [libc::pollfd {
+                            fd: sock_fd,
+                            events: libc::POLLOUT,
+                            revents: 0,
+                        }];
+                        debug!(
+                            "sendmmsg({},{}): errno {}; waiting for socket to become writable",
+                            sock_fd, pkts_len, errno,
+                        );
+                        let rc = unsafe {
+                            libc::poll(pfd.as_mut_ptr(), pfd.len() as libc::nfds_t, 1000)
+                        };
+                        if rc > 0 {
+                            info!(
+                                "sendmmsg({},{}): poll elapsed; socket now writable",
+                                sock_fd, pkts_len
+                            );
+                            continue;
+                        } else if rc < 0 {
+                            let errno = io::Error::last_os_error();
+                            warn!(
+                                "sendmmsg({},{}): poll errno {}: {}",
+                                sock_fd,
+                                pkts_len,
+                                errno.raw_os_error().unwrap_or_default(),
+                                errno
+                            );
+                        } else {
+                            warn!("sendmsg({},{}): poll timed out", sock_fd, pkts_len);
+                        }
+                    }
+                }
                 if erropt.is_none() {
-                    erropt = Some(io::Error::last_os_error());
+                    erropt = Some(errno)
                 }
                 // skip over the failing packet
                 1_usize
@@ -157,10 +199,13 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
     }
 }
 
+#[cfg(target_os = "freebsd")]
+const MAX_IOV: usize = libc::IOV_MAX as usize;
+
 #[cfg(target_os = "linux")]
 const MAX_IOV: usize = libc::UIO_MAXIOV as usize;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn batch_send_max_iov<'a, S, T: 'a + ?Sized>(
     sock: &UdpSocket,
     packets: impl IntoIterator<Item = (&'a T, S), IntoIter: ExactSizeIterator>,
@@ -204,7 +249,7 @@ where
 
 // Need &'a to ensure that raw packet pointers obtained in mmsghdr_for_packet
 // stay valid.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn batch_send<'a, S, T: 'a + ?Sized>(
     sock: &UdpSocket,
     packets: impl IntoIterator<Item = (&'a T, S), IntoIter: ExactSizeIterator>,
