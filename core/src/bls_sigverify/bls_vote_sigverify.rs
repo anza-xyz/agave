@@ -1,3 +1,4 @@
+use agave_votor_messages::consensus_message::SigVerifiedVoteBatch;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -164,7 +165,7 @@ fn process_verified_votes(
             (pubkey, slots)
         })
         .collect();
-    let votes_for_pool = SigVerifiedBatch::Votes(votes_for_pool);
+    let votes_for_pool = SigVerifiedBatch::Votes(SigVerifiedVoteBatch::new(votes_for_pool));
     (
         votes_for_pool,
         msgs_for_repair,

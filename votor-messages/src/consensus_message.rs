@@ -131,6 +131,12 @@ pub struct SigVerifiedVoteBatch {
 }
 
 impl SigVerifiedVoteBatch {
+    /// Constructs a sig verified vote batch from a list of votes
+    // TODO: should this constructor only be available to bls sigverifier?
+    pub fn new(_votes: Vec<VoteMessage>) -> Self {
+        unimplemented!()
+    }
+
     /// Returns the ranks of the validators whose votes are in the batch.
     pub fn ranks(&self) -> &BitVec<u8> {
         &self.ranks
