@@ -106,12 +106,7 @@ impl StakedValidatorsCache {
 
         let mut nodes: Vec<_> = epoch_staked_nodes
             .iter()
-            .filter(|(pubkey, stake)| {
-                let positive_stake = **stake > 0;
-                let not_self = pubkey != &&cluster_info.id();
-
-                positive_stake && (self.include_self || not_self)
-            })
+            .filter(|(pubkey, _stake)| self.include_self || pubkey != &&cluster_info.id())
             .filter_map(|(pubkey, stake)| {
                 cluster_info.lookup_contact_info(pubkey, |node| {
                     node.alpenglow().map(|alpenglow_socket| Node {
