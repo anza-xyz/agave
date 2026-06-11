@@ -905,19 +905,21 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
-        let mut found_msg = false;
-        match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                for vote in votes {
-                    if vote.vote == vote2 && vote.rank == invalid_rank {
-                        found_msg = true;
-                        break;
-                    }
-                }
-            }
-            rest => panic!("unexpected type: {rest:?}"),
-        }
-        assert!(!found_msg);
+        unimplemented!();
+
+        // let mut found_msg = false;
+        // match &batches[0] {
+        //     SigVerifiedBatch::Votes(votes) => {
+        //         for vote in votes {
+        //             if vote.vote == vote2 && vote.rank == invalid_rank {
+        //                 found_msg = true;
+        //                 break;
+        //             }
+        //         }
+        //     }
+        //     rest => panic!("unexpected type: {rest:?}"),
+        // }
+        // assert!(!found_msg);
     }
 
     #[test]
@@ -968,20 +970,22 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
-        // Ensure the message with the invalid rank is not in the sent messages.
-        let mut found_msg = false;
-        match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                for vote in votes {
-                    if vote.rank == invalid_rank {
-                        found_msg = true;
-                        break;
-                    }
-                }
-            }
-            rest => panic!("unexpected type: {rest:?}"),
-        }
-        assert!(!found_msg);
+        unimplemented!();
+
+        // // Ensure the message with the invalid rank is not in the sent messages.
+        // let mut found_msg = false;
+        // match &batches[0] {
+        //     SigVerifiedBatch::Votes(votes) => {
+        //         for vote in votes {
+        //             if vote.rank == invalid_rank {
+        //                 found_msg = true;
+        //                 break;
+        //             }
+        //         }
+        //     }
+        //     rest => panic!("unexpected type: {rest:?}"),
+        // }
+        // assert!(!found_msg);
     }
 
     #[test]

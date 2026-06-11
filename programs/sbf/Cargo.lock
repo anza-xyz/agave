@@ -381,6 +381,7 @@ name = "agave-votor-messages"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "bitvec",
  "log",
  "serde",
  "solana-address 2.6.1",
