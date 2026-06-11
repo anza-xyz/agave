@@ -3,7 +3,10 @@ use {
     crate::{
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, ConsensusMessage, VoteMessage},
-        vote::Vote,
+        vote::{
+            FinalizationVote, GenesisVote, NotarizationFallbackVote, NotarizationVote,
+            SkipFallbackVote, SkipVote, Vote,
+        },
     },
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
@@ -15,42 +18,6 @@ use {
 // is released in solana-sdk.
 pod_wrapper! {
     unsafe struct PodBLSSignature(BLSSignature);
-}
-
-/// Wire format of a notar vote.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireNotarVote {
-    block: Block,
-}
-
-/// Wire format of a notar fallback vote.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireNotarFallbackVote {
-    block: Block,
-}
-
-/// Wire format of a finalize vote.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireFinalizeVote {
-    slot: Slot,
-}
-
-/// Wire format of a skip vote.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireSkipVote {
-    slot: Slot,
-}
-
-/// Wire format of a skip fallback vote.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireSkipFallbackVote {
-    slot: Slot,
-}
-
-/// Wire format of a genesis vote.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireGenesisVote {
-    block: Block,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
@@ -71,7 +38,7 @@ impl From<VoteMessage> for VoteSignature {
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireNotarVoteMessage {
-    vote: WireNotarVote,
+    vote: NotarizationVote,
     signature: VoteSignature,
 }
 
@@ -88,7 +55,7 @@ impl From<WireNotarVoteMessage> for VoteMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireNotarFallbackVoteMessage {
-    vote: WireNotarFallbackVote,
+    vote: NotarizationFallbackVote,
     signature: VoteSignature,
 }
 
@@ -105,7 +72,7 @@ impl From<WireNotarFallbackVoteMessage> for VoteMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireGenesisVoteMessage {
-    vote: WireGenesisVote,
+    vote: GenesisVote,
     signature: VoteSignature,
 }
 
@@ -122,7 +89,7 @@ impl From<WireGenesisVoteMessage> for VoteMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireFinalizeVoteMessage {
-    vote: WireFinalizeVote,
+    vote: FinalizationVote,
     signature: VoteSignature,
 }
 
@@ -139,7 +106,7 @@ impl From<WireFinalizeVoteMessage> for VoteMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireSkipVoteMessage {
-    vote: WireSkipVote,
+    vote: SkipVote,
     signature: VoteSignature,
 }
 
@@ -156,7 +123,7 @@ impl From<WireSkipVoteMessage> for VoteMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireSkipFallbackVoteMessage {
-    vote: WireSkipFallbackVote,
+    vote: SkipFallbackVote,
     signature: VoteSignature,
 }
 
@@ -435,31 +402,31 @@ impl From<VoteMessage> for WireConsensusMessageKind {
     fn from(msg: VoteMessage) -> Self {
         match msg.vote {
             Vote::Notarize(v) => WireConsensusMessageKind::NotarVote(WireNotarVoteMessage {
-                vote: WireNotarVote { block: v.block },
+                vote: NotarizationVote { block: v.block },
                 signature: msg.into(),
             }),
             Vote::NotarizeFallback(v) => {
                 WireConsensusMessageKind::NotarFallbackVote(WireNotarFallbackVoteMessage {
-                    vote: WireNotarFallbackVote { block: v.block },
+                    vote: NotarizationFallbackVote { block: v.block },
                     signature: msg.into(),
                 })
             }
             Vote::Finalize(v) => WireConsensusMessageKind::FinalizeVote(WireFinalizeVoteMessage {
-                vote: WireFinalizeVote { slot: v.slot },
+                vote: FinalizationVote { slot: v.slot },
                 signature: msg.into(),
             }),
             Vote::Skip(v) => WireConsensusMessageKind::SkipVote(WireSkipVoteMessage {
-                vote: WireSkipVote { slot: v.slot },
+                vote: SkipVote { slot: v.slot },
                 signature: msg.into(),
             }),
             Vote::SkipFallback(v) => {
                 WireConsensusMessageKind::SkipFallbackVote(WireSkipFallbackVoteMessage {
-                    vote: WireSkipFallbackVote { slot: v.slot },
+                    vote: SkipFallbackVote { slot: v.slot },
                     signature: msg.into(),
                 })
             }
             Vote::Genesis(v) => WireConsensusMessageKind::GenesisVote(WireGenesisVoteMessage {
-                vote: WireGenesisVote { block: v.block },
+                vote: GenesisVote { block: v.block },
                 signature: msg.into(),
             }),
         }

@@ -242,8 +242,7 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            let msg = msg.into();
-            match msg {
+            match ConsensusMessage::from(msg) {
                 ConsensusMessage::Vote(vote) => {
                     if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
                         votes.push(VotePayload {
