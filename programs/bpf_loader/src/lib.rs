@@ -231,6 +231,14 @@ fn process_loader_upgradeable_instruction(
             // Verify Buffer account
 
             let buffer = instruction_context.try_borrow_instruction_account(3)?;
+            if !buffer.is_writable() {
+                ic_logger_msg!(log_collector, "Buffer account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
+            if buffer.get_owner() != program_id {
+                ic_logger_msg!(log_collector, "Buffer account not owned by loader");
+                return Err(InstructionError::IncorrectProgramId);
+            }
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
                 if authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
@@ -396,6 +404,14 @@ fn process_loader_upgradeable_instruction(
             // Verify Buffer account
 
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
+            if !buffer.is_writable() {
+                ic_logger_msg!(log_collector, "Buffer account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
+            if buffer.get_owner() != program_id {
+                ic_logger_msg!(log_collector, "Buffer account not owned by loader");
+                return Err(InstructionError::IncorrectProgramId);
+            }
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
                 if authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
@@ -2082,11 +2098,6 @@ mod tests {
         );
 
         // Case: Buffer account not writable
-        //
-        // The program actually does not deliberately check to make sure the
-        // buffer is writable. However, no matter what the buffer account's
-        // balance is, when the program calls `set_lamports` on a readonly
-        // account, it triggers `ReadonlyLamportChange`.
         for buffer_balance in [0, 1_000_000, 15 * 1_000_000_000] {
             let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
                 &buffer_address,
@@ -2104,7 +2115,7 @@ mod tests {
             process_instruction(
                 transaction_accounts,
                 instruction_accounts,
-                Err(InstructionError::ReadonlyLamportChange),
+                Err(InstructionError::InvalidArgument),
             );
         }
 
@@ -2113,10 +2124,6 @@ mod tests {
         // In `Upgrade`, the buffer's lamports are used to fund the additional
         // programdata rent directly, with the rest spilled to the spill
         // account. Then, the buffer's data is set to `size_of_buffer(0)`.
-        //
-        // The program actually does not deliberately check the buffer's owner.
-        // When the program goes to debit the buffer, if it's not owned by the
-        // Loader V3 program, it fails with `ExternalAccountLamportSpend`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -2141,16 +2148,13 @@ mod tests {
         process_instruction(
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountLamportSpend),
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Buffer account not owned by loader: shrink scenario
         //
         // Same as the above case, but give the buffer a lamports balance of
         // `0`, rendering its balance "unchanged" by the spill operation.
-        //
-        // We should fall through to `set_data_length(size_of_buffer(0))`,
-        // which triggers `ExternalAccountDataModified`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -2167,7 +2171,7 @@ mod tests {
         process_instruction(
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountDataModified),
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Buffer account not owned by loader: no-op scenario
@@ -2175,13 +2179,6 @@ mod tests {
         // Same as the above case, but also truncate the buffer's data to
         // `size_of_buffer(0)` - just the buffer metadata, no ELF - rendering
         // the closing resize "unchanged" as well.
-        //
-        // This doesn't slip through for two reasons:
-        // * An empty buffer trips the "Buffer account too small" check, which
-        //   throws `InvalidAccountData` long before any mutation is attempted.
-        // * Let `set_lamports`, `set_data_length` evaluates ownership
-        //   unconditionally, so even a call to `set_data_length` with the same
-        //   length as input would still throw.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -2199,7 +2196,7 @@ mod tests {
         process_instruction(
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::InvalidAccountData),
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Buffer account too big
@@ -2736,11 +2733,6 @@ mod tests {
         );
 
         // Case: Buffer account not writable
-        //
-        // The program actually does not deliberately check to make sure the
-        // buffer is writable. However, no matter what the buffer account's
-        // balance is, when the program calls `set_lamports` on a readonly
-        // account, it triggers `ReadonlyLamportChange`.
         for buffer_balance in [0, 1_000_000, 15 * 1_000_000_000] {
             let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
                 &payer_address,
@@ -2759,7 +2751,7 @@ mod tests {
                 elf.len(),
                 transaction_accounts,
                 instruction_accounts,
-                Err(InstructionError::ReadonlyLamportChange),
+                Err(InstructionError::InvalidArgument),
             );
         }
 
@@ -2768,10 +2760,6 @@ mod tests {
         // In `DeployWithMaxDataLen`, the buffer's lamports are drained to the
         // payer before the payer is debited for the programdata's rent. Then,
         // the buffer's data is set to `size_of_buffer(0)`.
-        //
-        // The program actually does not deliberately check the buffer's owner.
-        // When the program goes to debit the buffer, if it's not owned by the
-        // Loader V3 program, it fails with `ExternalAccountLamportSpend`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2793,16 +2781,13 @@ mod tests {
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountLamportSpend),
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Buffer account not owned by loader: shrink scenario
         //
         // Same as the above case, but give the buffer a lamports balance of
         // `0`, rendering its balance "unchanged" by the drain operation.
-        //
-        // We should fall through to `set_data_length(size_of_buffer(0))`,
-        // which triggers `ExternalAccountDataModified`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2820,7 +2805,7 @@ mod tests {
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountDataModified),
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Buffer account not owned by loader: no-op scenario
@@ -2828,13 +2813,6 @@ mod tests {
         // Same as the above case, but also truncate the buffer's data to
         // `size_of_buffer(0)` - just the buffer metadata, no ELF - rendering
         // the closing resize "unchanged" as well.
-        //
-        // This doesn't slip through for two reasons:
-        // * An empty buffer trips the "Buffer account too small" check, which
-        //   throws `InvalidAccountData` long before any mutation is attempted.
-        // * Let `set_lamports`, `set_data_length` evaluates ownership
-        //   unconditionally, so even a call to `set_data_length` with the same
-        //   length as input would still throw.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2853,7 +2831,7 @@ mod tests {
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::InvalidAccountData),
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Max data length too small for Buffer data
