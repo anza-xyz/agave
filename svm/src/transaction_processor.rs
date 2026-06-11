@@ -1041,13 +1041,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts_resize_delta,
         } = execution_record;
 
-        // We now own the flags and no longer need interior mutability, so
-        // reinterpret them as a plain `Box<[bool]>`, reusing the allocation.
-        // SAFETY: `Cell<bool>` is `repr(transparent)` over `bool`, so
-        // `[Cell<bool>]` and `[bool]` have identical layout, and every flag holds
-        // a valid `bool`.
-        let mut touched_flags: Box<[bool]> =
-            unsafe { Box::from_raw(Box::into_raw(touched_flags) as *mut [bool]) };
+        // We now own the flags and no longer need interior mutability, so unwrap
+        // the per-element `Cell`s into a plain `Box<[bool]>`. `Vec::from` reuses
+        // the box's allocation, and the mapped collect reuses that same buffer in
+        // place (`Cell<bool>` and `bool` have identical layout), so no
+        // reallocation occurs.
+        let mut touched_flags: Box<[bool]> = Vec::from(touched_flags)
+            .into_iter()
+            .map(|flag| flag.into_inner())
+            .collect();
 
         // changed_account_count reflects the accounts the VM actually modified,
         // counted before the fee payer is force-marked below.
