@@ -11,7 +11,7 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             outstanding_requests::OutstandingRequests,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairInfo, RepairStats},
+            repair_service::{OutstandingShredRepairs, RepairInfo, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
@@ -1338,9 +1338,6 @@ impl ServeRepair {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
-
-        // ping timeout should be greater than the repair request iteration delay
-        assert!(REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.start > REPAIR_MS as u64);
 
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
