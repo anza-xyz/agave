@@ -1,3 +1,5 @@
+use agave_votor::common::get_stake;
+use agave_votor_messages::consensus_message::SigVerifiedBatch;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -14,7 +16,7 @@ use {
     },
     agave_votor::consensus_metrics::ConsensusMetricsEvent,
     agave_votor_messages::{
-        consensus_message::{SigVerifiedBatch, SigVerifiedVoteBatch, VoteMessage},
+        consensus_message::{SigVerifiedVoteBatch, VoteMessage},
         vote::Vote,
     },
     rayon::{
@@ -92,7 +94,13 @@ pub(super) fn verify_and_send_votes(
     let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
         process_verified_votes(verified_votes, root_bank, cluster_info, leader_schedule);
 
-    send_votes_to_pool(votes_for_pool, &channels.channel_to_pool, &mut stats)?;
+    for batch in votes_for_pool {
+        send_votes_to_pool(
+            SigVerifiedBatch::Votes(batch),
+            &channels.channel_to_pool,
+            &mut stats,
+        )?;
+    }
     send_votes_to_repair(msgs_for_repair, &channels.channel_to_repair, &mut stats)?;
     send_votes_to_rewards(msg_for_reward, &channels.channel_to_reward, &mut stats)?;
     send_votes_to_metrics(msg_for_metrics, &channels.channel_to_metrics, &mut stats)?;
@@ -129,7 +137,7 @@ fn process_verified_votes(
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
 ) -> (
-    SigVerifiedBatch,
+    Vec<SigVerifiedVoteBatch>,
     HashMap<Pubkey, Vec<Slot>>,
     AddVoteMessage,
     Vec<ConsensusMetricsEvent>,
@@ -164,7 +172,13 @@ fn process_verified_votes(
             (pubkey, slots)
         })
         .collect();
-    let votes_for_pool = SigVerifiedBatch::Votes(SigVerifiedVoteBatch::new(votes_for_pool));
+    let votes_for_pool = votes_for_pool
+        .into_iter()
+        .map(|vote| {
+            let stake = get_stake(root_bank, vote.vote.slot(), vote.rank).unwrap();
+            SigVerifiedVoteBatch::new(vote, stake)
+        })
+        .collect();
     (
         votes_for_pool,
         msgs_for_repair,

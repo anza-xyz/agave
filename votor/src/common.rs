@@ -4,7 +4,9 @@ use {
         fraction::Fraction,
         vote::{Vote, VoteType},
     },
-    std::time::Duration,
+    solana_clock::Slot,
+    solana_runtime::bank::Bank,
+    std::{num::NonZero, time::Duration},
 };
 
 // Core consensus types and constants
@@ -83,3 +85,10 @@ pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_add(DELTA_BLOCK_PROPAGA
 
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
+
+pub fn get_stake(root_bank: &Bank, slot: Slot, rank: u16) -> Result<NonZero<Stake>, String> {
+    let epoch_stakes = root_bank.epoch_stakes_from_slot(slot).unwrap();
+    let rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+    let entry = rank_map.get_pubkey_stake_entry(rank as usize).unwrap();
+    Ok(NonZero::new(entry.stake).unwrap())
+}

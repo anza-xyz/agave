@@ -132,9 +132,19 @@ pub struct SigVerifiedVoteBatch {
 
 impl SigVerifiedVoteBatch {
     /// Constructs a sig verified vote batch from a list of votes
-    // TODO: should this constructor only be available to bls sigverifier?
-    pub fn new(_votes: Vec<VoteMessage>) -> Self {
-        unimplemented!()
+    // TODO: should this constructor only be avilable to bls sigverifier?
+    pub fn new(msg: VoteMessage, stake: NonZero<u64>) -> Self {
+        // TODO: handle unwrap; lookup max_validators; and look up stake
+        let max_validators = 2048;
+        let mut ranks = BitVec::new();
+        ranks.resize(max_validators, false);
+        ranks.set(msg.rank as usize, true);
+        Self {
+            vote: msg.vote,
+            signature: msg.signature.try_as_projective().unwrap(),
+            stake,
+            ranks,
+        }
     }
 
     /// Returns the ranks of the validators whose votes are in the batch.
@@ -178,18 +188,6 @@ impl SigVerifiedVoteBatch {
             stake: NonZero::new(123).unwrap(),
             signature: SignatureProjective::identity(),
             ranks,
-        }
-    }
-}
-
-impl From<VoteMessage> for SigVerifiedVoteBatch {
-    fn from(msg: VoteMessage) -> Self {
-        // TODO: handle unwrap; fix ranks; and look up stake
-        Self {
-            vote: msg.vote,
-            signature: msg.signature.try_as_projective().unwrap(),
-            stake: NonZero::new(10).unwrap(),
-            ranks: BitVec::new(),
         }
     }
 }

@@ -1,13 +1,16 @@
 use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
+        common::get_stake,
         consensus_metrics::ConsensusMetricsEventSender,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+        consensus_message::{
+            BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, SigVerifiedVoteBatch, VoteMessage,
+        },
         vote::Vote,
     },
     crossbeam_channel::{SendError, Sender},
@@ -312,9 +315,13 @@ pub(crate) fn create_and_send_own_vote_message(
         }
     };
 
+    let root_bank = context.sharable_banks.root();
+    let stake = get_stake(&root_bank, vote.slot(), vote_msg.rank).unwrap();
+    let vote_batch = SigVerifiedVoteBatch::new(vote_msg.clone(), stake);
+
     context
         .own_vote_sender
-        .send(SigVerifiedBatch::Votes(vote_msg.clone().into()))
+        .send(SigVerifiedBatch::Votes(vote_batch))
         .map_err(|_| SendError(()))?;
 
     Ok(Some(vote_msg))
@@ -414,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_generate_own_vote_message() {
-        let (own_vote_sender, own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -461,24 +468,26 @@ mod tests {
             panic!("Expected BLSOp::VotePush, got {result:?}");
         }
 
-        // Check that own vote sender receives the vote
-        let received_message = own_vote_receiver.recv().unwrap();
-        assert_eq!(
-            received_message,
-            SigVerifiedBatch::Votes(expected_message.clone().into())
-        );
+        unimplemented!()
 
-        let refresh_vote = Vote::new_notarization_vote(Block {
-            slot: vote_slot,
-            block_id,
-        });
-        let refresh_result = generate_refresh_vote_message(refresh_vote, &mut voting_context)
-            .ok()
-            .unwrap()
-            .unwrap();
-        assert_eq!(refresh_result.vote.slot(), vote_slot);
-        assert_eq!(refresh_result, expected_message);
-        assert!(own_vote_receiver.try_recv().is_err());
+        // Check that own vote sender receives the vote
+        // let received_message = own_vote_receiver.recv().unwrap();
+        // assert_eq!(
+        //     received_message,
+        //     SigVerifiedBatch::Votes(expected_message.clone().into())
+        // );
+
+        // let refresh_vote = Vote::new_notarization_vote(Block {
+        //     slot: vote_slot,
+        //     block_id,
+        // });
+        // let refresh_result = generate_refresh_vote_message(refresh_vote, &mut voting_context)
+        //     .ok()
+        //     .unwrap()
+        //     .unwrap();
+        // assert_eq!(refresh_result.vote.slot(), vote_slot);
+        // assert_eq!(refresh_result, expected_message);
+        // assert!(own_vote_receiver.try_recv().is_err());
     }
 
     #[test]

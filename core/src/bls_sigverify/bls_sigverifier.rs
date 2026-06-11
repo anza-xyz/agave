@@ -339,7 +339,7 @@ mod tests {
         },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
-            consensus_message::{Block, ConsensusMessage, SigVerifiedVoteBatch, VoteMessage},
+            consensus_message::{Block, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},
@@ -685,19 +685,20 @@ mod tests {
             )))
             .unwrap();
 
-        let (m1_recv, m2_recv) = drain.join().expect("drain joined");
+        let (_m1_recv, _m2_recv) = drain.join().expect("drain joined");
+        unimplemented!()
         // Both messages were eventually delivered (no silent drop).
-        assert_eq!(
-            m1_recv,
-            SigVerifiedBatch::Votes(SigVerifiedVoteBatch::from(msg1))
-        );
-        assert_eq!(
-            m2_recv,
-            SigVerifiedBatch::Votes(SigVerifiedVoteBatch::from(msg2))
-        );
-        // pool_sent counts every message that made it onto the channel,
-        // whether via try_send or the blocking fallback.
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 2);
+        // assert_eq!(
+        //     m1_recv,
+        //     SigVerifiedBatch::Votes(SigVerifiedVoteBatch::from(msg1))
+        // );
+        // assert_eq!(
+        //     m2_recv,
+        //     SigVerifiedBatch::Votes(SigVerifiedVoteBatch::from(msg2))
+        // );
+        // // pool_sent counts every message that made it onto the channel,
+        // // whether via try_send or the blocking fallback.
+        // assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 2);
     }
 
     #[test]
