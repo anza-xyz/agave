@@ -82,6 +82,6 @@ EOF
   fi
 )
 
-./scripts/cargo-install-all.sh --dcou-check
+./scripts/cargo-install-all.sh --dcou-check-only
 
 echo --- ok
