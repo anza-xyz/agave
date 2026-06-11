@@ -25,6 +25,8 @@ use {
     thiserror::Error,
 };
 
+pub mod certificate_builder;
+
 pub(crate) mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
@@ -357,6 +359,7 @@ impl ConsensusPool {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn highest_notarized_slot(&self) -> Slot {
         // Return the max of CertificateType::Notarize and CertificateType::NotarizeFallback
         self.completed_certificates
@@ -371,6 +374,7 @@ impl ConsensusPool {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn highest_skip_slot(&self) -> Slot {
         self.completed_certificates
             .keys()
@@ -385,6 +389,7 @@ impl ConsensusPool {
 
     /// Checks if any block in the `slot` is finalized
     #[cfg(test)]
+    #[allow(dead_code)]
     fn is_finalized(&self, slot: Slot) -> bool {
         self.completed_certificates
             .keys()
@@ -398,6 +403,7 @@ impl ConsensusPool {
     /// Checks if the any block in slot `slot` has received a `NotarizeFallback` certificate, if so return
     /// the size of the certificate
     #[cfg(test)]
+    #[allow(dead_code)]
     fn slot_has_notarized_fallback(&self, slot: Slot) -> bool {
         self.completed_certificates.iter().any(
             |(cert_type, _)| matches!(cert_type, CertificateType::NotarizeFallback(block) if block.slot == slot),
@@ -406,6 +412,7 @@ impl ConsensusPool {
 
     /// Checks if `slot` has a `Skip` certificate
     #[cfg(test)]
+    #[allow(dead_code)]
     fn skip_certified(&self, slot: Slot) -> bool {
         self.completed_certificates
             .contains_key(&CertificateType::Skip(slot))
@@ -430,6 +437,7 @@ impl ConsensusPool {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn make_start_leader_decision(
         &self,
         my_leader_slot: Slot,
@@ -539,33 +547,25 @@ impl ConsensusPool {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::tests::get_cluster_info,
-        agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
-        bitvec::vec::BitVec,
-        solana_bls_signatures::{Signature as BLSSignature, keypair::Keypair as BLSKeypair},
-        solana_clock::Slot,
-        solana_keypair::Keypair,
         solana_runtime::{
-            bank::{Bank, NewBankOptions, SlotLeader},
+            bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
-        solana_signer_store::encode_base2,
         std::sync::{Arc, RwLock},
     };
 
-    fn dummy_bitmap() -> Vec<u8> {
-        let mut bitvec = BitVec::repeat(false, 1);
-        bitvec.set(0, true);
-        encode_base2(&bitvec).unwrap()
-    }
+    // fn dummy_bitmap() -> Vec<u8> {
+    //     let mut bitvec = BitVec::repeat(false, 1);
+    //     bitvec.set(0, true);
+    //     encode_base2(&bitvec).unwrap()
+    // }
 
-    pub(crate) fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
-        Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
-    }
+    // pub(crate) fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
+    //     Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
+    // }
 
     pub(crate) fn create_bank_forks(
         validator_keypairs: &[ValidatorVoteKeypairs],
