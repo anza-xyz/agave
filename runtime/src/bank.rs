@@ -3779,7 +3779,6 @@ impl Bank {
                 account_overrides: Some(&account_overrides),
                 check_program_deployment_slot: self.check_program_deployment_slot,
                 log_messages_bytes_limit: None,
-                limit_to_load_programs: true,
                 recording_config: ExecutionRecordingConfig {
                     enable_cpi_recording,
                     enable_log_recording: true,
@@ -4517,7 +4516,6 @@ impl Bank {
                 account_overrides: None,
                 check_program_deployment_slot: self.check_program_deployment_slot,
                 log_messages_bytes_limit,
-                limit_to_load_programs: false,
                 recording_config,
                 drop_on_failure: false,
                 all_or_nothing: false,
