@@ -29,9 +29,7 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{
-        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
-    },
+    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
@@ -89,6 +87,60 @@ use {
 pub enum Operation {
     Initialize,
     Run,
+}
+
+fn parse_xdp_transmit_config(
+    matches: &ArgMatches,
+    bind_addresses: &BindIpAddrs,
+) -> Result<Option<XdpConfig>, String> {
+    if matches.is_present("disable_xdp") {
+        return Ok(None);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = bind_addresses;
+        let xdp_config_requested = matches.value_of("xdp_cpu_cores").is_some()
+            || matches
+                .value_of("experimental_retransmit_xdp_cpu_cores")
+                .is_some()
+            || matches.value_of("xdp_interface").is_some()
+            || matches
+                .value_of("experimental_retransmit_xdp_interface")
+                .is_some()
+            || matches.is_present("disable_xdp_zero_copy")
+            || matches.is_present("xdp_zero_copy")
+            || matches.is_present("experimental_retransmit_xdp_zero_copy");
+        if xdp_config_requested {
+            return Err(String::from("XDP is only supported on Linux"));
+        }
+        Ok(None)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if bind_addresses.len() > 1 {
+            return Err(String::from(
+                "XDP cannot be used in a multihoming context. Use --disable-xdp to disable XDP",
+            ));
+        }
+
+        let xdp_interface = matches
+            .value_of("xdp_interface")
+            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+        let xdp_cpus = matches
+            .value_of("xdp_cpu_cores")
+            .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
+            .map(|cpu_ranges| {
+                solana_clap_utils::input_parsers::parse_cpu_ranges(cpu_ranges)
+                    .map_err(|err| err.to_string())
+            })
+            .transpose()?
+            .unwrap_or_else(|| vec![crate::commands::run::args::DEFAULT_XDP_CPU_CORE]);
+        let xdp_zero_copy = !matches.is_present("disable_xdp_zero_copy");
+
+        Ok(Some(XdpConfig::new(xdp_interface, xdp_cpus, xdp_zero_copy)))
+    }
 }
 
 pub fn execute(
@@ -165,29 +217,7 @@ pub fn execute(
         }
     }
 
-    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-    {
-        let xdp_interface = matches
-            .value_of("xdp_interface")
-            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-        let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-            || matches.is_present("experimental_retransmit_xdp_zero_copy");
-        let config = XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
-            xdp_zero_copy,
-        );
-        if bind_addresses.len() > 1 {
-            Err(String::from(
-                "--xdp-cpu-cores cannot be used in a multihoming context",
-            ))?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let xdp_transmit_config = parse_xdp_transmit_config(matches, &bind_addresses)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -1373,4 +1403,92 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use {
+        super::*,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    fn xdp_config_for_args(
+        args: &[&str],
+        bind_addresses: &BindIpAddrs,
+    ) -> Result<Option<XdpConfig>, String> {
+        let default_args = cli::DefaultArgs::default();
+        let matches =
+            cli::app("test", &default_args).get_matches_from([&["agave-validator"], args].concat());
+        parse_xdp_transmit_config(&matches, bind_addresses)
+    }
+
+    #[test]
+    fn default_xdp_config_uses_zero_copy_and_default_cpu() {
+        let bind_addresses = BindIpAddrs::default();
+        let config = xdp_config_for_args(&[], &bind_addresses).unwrap().unwrap();
+
+        assert_eq!(config.interface, None);
+        assert_eq!(
+            config.cpus,
+            vec![crate::commands::run::args::DEFAULT_XDP_CPU_CORE]
+        );
+        assert!(config.zero_copy);
+    }
+
+    #[test]
+    fn disable_xdp_returns_no_config() {
+        let bind_addresses = BindIpAddrs::default();
+        assert!(xdp_config_for_args(&["--disable-xdp"], &bind_addresses)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn xdp_cpu_interface_and_zero_copy_are_configurable() {
+        let bind_addresses = BindIpAddrs::default();
+        let config = xdp_config_for_args(
+            &[
+                "--xdp-interface",
+                "eth0",
+                "--xdp-cpu-cores",
+                "2-3",
+                "--disable-xdp-zero-copy",
+            ],
+            &bind_addresses,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(config.interface.as_deref(), Some("eth0"));
+        assert_eq!(config.cpus, vec![2, 3]);
+        assert!(!config.zero_copy);
+    }
+
+    #[test]
+    fn xdp_requires_opt_out_in_multihoming_context() {
+        let bind_addresses = BindIpAddrs::new(vec![
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+        ])
+        .unwrap();
+
+        let err = xdp_config_for_args(&[], &bind_addresses).unwrap_err();
+        assert!(err.contains("--disable-xdp"));
+        assert!(xdp_config_for_args(&["--disable-xdp"], &bind_addresses)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn disable_xdp_conflicts_with_xdp_overrides() {
+        let default_args = cli::DefaultArgs::default();
+        let matches = cli::app("test", &default_args).get_matches_from_safe(vec![
+            "agave-validator",
+            "--disable-xdp",
+            "--xdp-cpu-cores",
+            "2",
+        ]);
+
+        assert!(matches.is_err());
+    }
 }

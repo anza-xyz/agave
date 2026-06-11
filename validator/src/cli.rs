@@ -164,13 +164,12 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("experimental-retransmit-xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
+            .conflicts_with("disable_xdp")
             .conflicts_with("xdp_cpu_cores")
             .validator(|value| {
                 validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
             })
-            .help(
-                "Enable XDP retransmit on the specified CPU cores. Use --xdp-cpu-cores instead",
-            ),
+            .help("Use the specified CPU cores for XDP. Use --xdp-cpu-cores instead"),
         replaced_by: "xdp-cpu-cores",
     );
     add_arg!(
@@ -179,9 +178,9 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("experimental-retransmit-xdp-interface")
             .takes_value(true)
             .value_name("INTERFACE")
+            .conflicts_with("disable_xdp")
             .conflicts_with("xdp_interface")
-            .requires("experimental_retransmit_xdp_cpu_cores")
-            .help("Network interface to use for XDP retransmit. Use --xdp-interface instead"),
+            .help("Network interface to use for XDP. Use --xdp-interface instead"),
         replaced_by: "xdp-interface",
     );
     add_arg!(
@@ -189,10 +188,11 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         Arg::with_name("experimental_retransmit_xdp_zero_copy")
             .long("experimental-retransmit-xdp-zero-copy")
             .takes_value(false)
+            .conflicts_with("disable_xdp")
+            .conflicts_with("disable_xdp_zero_copy")
             .conflicts_with("xdp_zero_copy")
-            .requires("experimental_retransmit_xdp_cpu_cores")
-            .help("Enable XDP zero copy. Use --xdp-zero-copy instead"),
-        replaced_by: "xdp-zero-copy",
+            .help("No-op; XDP zero copy is enabled by default"),
+        usage_warning: "XDP zero copy is enabled by default. Use --disable-xdp-zero-copy to disable it.",
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -202,6 +202,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(is_parsable::<usize>)
             .help("Controls the TPU connection pool size per remote address"),
          usage_warning:"This parameter is misleading, avoid setting it",
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("xdp_zero_copy")
+            .long("xdp-zero-copy")
+            .takes_value(false)
+            .conflicts_with("disable_xdp")
+            .conflicts_with("disable_xdp_zero_copy")
+            .help("No-op; XDP zero copy is enabled by default"),
+        usage_warning: "XDP zero copy is enabled by default. Use --disable-xdp-zero-copy to disable it.",
     );
     res
 }

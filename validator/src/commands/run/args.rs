@@ -35,6 +35,7 @@ use {
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
+pub const DEFAULT_XDP_CPU_CORE: usize = 1;
 
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
@@ -1218,11 +1219,33 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
+        Arg::with_name("disable_xdp")
+            .long("disable-xdp")
+            .takes_value(false)
+            .conflicts_with("experimental_retransmit_xdp_cpu_cores")
+            .conflicts_with("experimental_retransmit_xdp_interface")
+            .conflicts_with("experimental_retransmit_xdp_zero_copy")
+            .conflicts_with("xdp_cpu_cores")
+            .conflicts_with("xdp_interface")
+            .conflicts_with("xdp_zero_copy")
+            .conflicts_with("disable_xdp_zero_copy")
+            .help("Disable XDP transmit, which is enabled by default"),
+    )
+    .arg(
+        Arg::with_name("disable_xdp_zero_copy")
+            .long("disable-xdp-zero-copy")
+            .takes_value(false)
+            .conflicts_with("experimental_retransmit_xdp_zero_copy")
+            .conflicts_with("xdp_zero_copy")
+            .conflicts_with("disable_xdp")
+            .help("Disable XDP zero copy while leaving XDP transmit enabled"),
+    )
+    .arg(
         Arg::with_name("xdp_interface")
             .long("xdp-interface")
             .takes_value(true)
             .value_name("INTERFACE")
-            .requires("xdp_cpu_cores")
+            .conflicts_with("disable_xdp")
             .help("Network interface to use for XDP"),
     )
     .arg(
@@ -1230,15 +1253,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
+            .conflicts_with("disable_xdp")
             .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
-            .help("Use the specified CPU cores for XDP"),
-    )
-    .arg(
-        Arg::with_name("xdp_zero_copy")
-            .long("xdp-zero-copy")
-            .takes_value(false)
-            .requires("xdp_cpu_cores")
-            .help("Enable XDP zero copy. Requires hardware support"),
+            .help("Use the specified CPU cores for XDP. Defaults to CPU core 1"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
