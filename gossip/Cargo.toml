@@ -42,6 +42,7 @@ agave-random = { workspace = true }
 arc-swap = { workspace = true }
 assert_matches = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 ed25519-dalek = { workspace = true }
 flate2 = { workspace = true }

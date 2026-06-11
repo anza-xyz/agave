@@ -38,6 +38,7 @@ rand = { workspace = true }
 rustls = { workspace = true }
 smallvec = { workspace = true }
 solana-keypair = { workspace = true }
+solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-packet = { workspace = true }
