@@ -844,7 +844,7 @@ pub mod tests {
                 retransmit: target1.sockets.retransmit_sockets,
                 fetch: target1.sockets.tvu,
                 ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
-                alpenglow: target1.sockets.alpenglow,
+                alpenglow: Some(target1.sockets.alpenglow),
                 block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,

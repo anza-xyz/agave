@@ -1586,11 +1586,11 @@ impl Validator {
                 (None, None, None)
             };
 
-        // disable all2all tests if not allowed for a given cluster type
+        // disable Alpenglow votor networking if not allowed for cluster type
         let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
             || genesis_config.cluster_type == ClusterType::Development
         {
-            node.sockets.alpenglow
+            Some(node.sockets.alpenglow)
         } else {
             None
         };
