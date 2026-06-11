@@ -3,7 +3,10 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
+    agave_votor_messages::{
+        certificate::Certificate,
+        consensus_message::{ConsensusMessage, VoteMessage},
+    },
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -31,19 +34,21 @@ const STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET: usize = 3;
 #[derive(Debug)]
 pub enum BLSOp {
     PushVote {
-        message: Arc<ConsensusMessage>,
-        slot: Slot,
+        vote: Arc<VoteMessage>,
         saved_vote_history: SavedVoteHistoryVersions,
     },
-    PushCertificate {
-        certificate: Arc<Certificate>,
+    PushCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
+    RefreshVotes {
+        votes: Vec<Arc<VoteMessage>>,
     },
 }
 
 fn send_message(
     buf: Vec<u8>,
     socket: &SocketAddr,
-    connection_cache: &Arc<ConnectionCache>,
+    connection_cache: &ConnectionCache,
 ) -> Result<(), TransportError> {
     let client = connection_cache.get_connection(socket);
 
@@ -149,7 +154,7 @@ impl VotingService {
                         &cluster_info,
                         vote_history_storage.as_ref(),
                         bls_op,
-                        connection_cache.clone(),
+                        &connection_cache,
                         &additional_listeners,
                         &mut staked_validators_cache,
                     );
@@ -164,7 +169,7 @@ impl VotingService {
         slot: Slot,
         cluster_info: &ClusterInfo,
         message: &ConsensusMessage,
-        connection_cache: Arc<ConnectionCache>,
+        connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
@@ -186,7 +191,7 @@ impl VotingService {
         // will cause a packet spike and overwhelm the network. If we later find out that this is
         // not an issue, we can optimize this by using multi_targret_send or similar methods.
         for socket in sockets {
-            if let Err(e) = send_message(buf.clone(), socket, &connection_cache) {
+            if let Err(e) = send_message(buf.clone(), socket, connection_cache) {
                 warn!("Failed to send alpenglow message to {socket}: {e:?}");
             }
         }
@@ -196,14 +201,13 @@ impl VotingService {
         cluster_info: &ClusterInfo,
         vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
-        connection_cache: Arc<ConnectionCache>,
+        connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
         match bls_op {
             BLSOp::PushVote {
-                message,
-                slot,
+                vote,
                 saved_vote_history,
             } => {
                 let mut measure = Measure::start("alpenglow vote history save");
@@ -213,27 +217,44 @@ impl VotingService {
                 }
                 measure.stop();
                 trace!("{measure}");
-
+                let slot = vote.vote.slot();
+                let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
                 Self::broadcast_consensus_message(
                     slot,
                     cluster_info,
-                    &message,
+                    &msg,
                     connection_cache,
                     additional_listeners,
                     staked_validators_cache,
                 );
             }
-            BLSOp::PushCertificate { certificate } => {
-                let vote_slot = certificate.cert_type.slot();
-                let message = ConsensusMessage::Certificate((*certificate).clone());
-                Self::broadcast_consensus_message(
-                    vote_slot,
-                    cluster_info,
-                    &message,
-                    connection_cache,
-                    additional_listeners,
-                    staked_validators_cache,
-                );
+            BLSOp::PushCertificates { certificates } => {
+                for certificate in certificates {
+                    let slot = certificate.cert_type.slot();
+                    let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
+                    Self::broadcast_consensus_message(
+                        slot,
+                        cluster_info,
+                        &message,
+                        connection_cache,
+                        additional_listeners,
+                        staked_validators_cache,
+                    );
+                }
+            }
+            BLSOp::RefreshVotes { votes } => {
+                for vote in votes {
+                    let slot = vote.vote.slot();
+                    let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
+                    Self::broadcast_consensus_message(
+                        slot,
+                        cluster_info,
+                        &msg,
+                        connection_cache,
+                        additional_listeners,
+                        staked_validators_cache,
+                    );
+                }
             }
         }
     }
@@ -251,9 +272,11 @@ mod tests {
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+            certificate::{Certificate, CertificateType},
+            consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
         },
+        crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
@@ -322,32 +345,42 @@ mod tests {
     }
 
     #[test_case(BLSOp::PushVote {
-        message: Arc::new(ConsensusMessage::Vote(VoteMessage {
+        vote: Arc::new(VoteMessage {
             vote: Vote::new_skip_vote(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
-        })),
-        slot: 5,
+        }),
         saved_vote_history: SavedVoteHistoryVersions::Current(SavedVoteHistory::default()),
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
     }))]
-    #[test_case(BLSOp::PushCertificate {
-        certificate: Arc::new(Certificate {
-            cert_type: CertificateType::Skip(5),
+    #[test_case(BLSOp::PushCertificates {
+        certificates: vec![Arc::new(Certificate {
+                cert_type: CertificateType::Skip(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: Vec::new(),
-        }),
+        })],
     }, ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
     }))]
+    #[test_case(BLSOp::RefreshVotes {
+        votes: vec![Arc::new(VoteMessage {
+            vote: Vote::new_skip_vote(6),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            rank: 1,
+        })],
+    }, ConsensusMessage::Vote(VoteMessage {
+        vote: Vote::new_skip_vote(6),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        rank: 1,
+    }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
+        let (bls_sender, bls_receiver) = bounded(1024);
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
         // Bind to a random UDP port
@@ -361,7 +394,7 @@ mod tests {
         assert!(bls_sender.send(bls_op).is_ok());
 
         // Start a quick streamer to handle quick control packets
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = bounded(1024);
         let stakes = validator_keypairs
             .iter()
             .map(|x| (x.node_keypair.pubkey(), 100))

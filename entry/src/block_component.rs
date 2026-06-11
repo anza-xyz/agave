@@ -66,30 +66,30 @@
 ///
 /// ### BlockFooterV1 Layout
 /// ```text
-/// ┌─────────────────────────────────────────┐
-/// │ Bank Hash                   (32 bytes)  │
-/// ├─────────────────────────────────────────┤
-/// │ Producer Time Nanos          (8 bytes)  │
-/// ├─────────────────────────────────────────┤
-/// │ User Agent Length            (1 byte)   │
-/// ├─────────────────────────────────────────┤
-/// │ User Agent Bytes          (0-255 bytes) │
-/// ├─────────────────────────────────────────┤
-/// │ Final Cert Present           (1 byte)   │
-/// ├─────────────────────────────────────────┤
-/// │ FinalCertificate (if present, variable) │
-/// ├─────────────────────────────────────────┤
-/// │ Skip reward cert Present     (1 byte)   │
-/// ├─────────────────────────────────────────┤
-/// │ SkipRewardCert (if present, variable)   │
-/// ├─────────────────────────────────────────┤
-/// │ Notar reward cert Present    (1 byte)   │
-/// ├─────────────────────────────────────────┤
-/// │ NotarRewardCert (if present, variable)  │
-/// └─────────────────────────────────────────┘
+/// ┌──────────────────────────────────────────────┐
+/// │ Bank Hash                        (32 bytes)  │
+/// ├──────────────────────────────────────────────┤
+/// │ Producer Time Nanos               (8 bytes)  │
+/// ├──────────────────────────────────────────────┤
+/// │ User Agent Length                 (1 byte)   │
+/// ├──────────────────────────────────────────────┤
+/// │ User Agent Bytes               (0-255 bytes) │
+/// ├──────────────────────────────────────────────┤
+/// │ Block Final Cert Present          (1 byte)   │
+/// ├──────────────────────────────────────────────┤
+/// │ BlockFinalizationCert (if present, variable) │
+/// ├──────────────────────────────────────────────┤
+/// │ Skip reward cert Present     (1 byte)        │
+/// ├──────────────────────────────────────────────┤
+/// │ SkipRewardCert (if present, variable)        │
+/// ├──────────────────────────────────────────────┤
+/// │ Notar reward cert Present    (1 byte)        │
+/// ├──────────────────────────────────────────────┤
+/// │ NotarRewardCert (if present, variable)       │
+/// └──────────────────────────────────────────────┘
 /// ```
 ///
-/// ### FinalCertificate Layout
+/// ### BlockFinalizationCert Layout
 /// ```text
 /// ┌─────────────────────────────────────────┐
 /// │ Slot                         (8 bytes)  │
@@ -132,7 +132,8 @@
 use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType},
+        certificate::{Certificate, CertificateType},
+        consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -210,7 +211,7 @@ pub struct BlockFooterV1 {
     pub block_producer_time_nanos: u64,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u8>>")]
     pub block_user_agent: Vec<u8>,
-    pub final_cert: Option<FinalCertificate>,
+    pub block_final_cert: Option<BlockFinalizationCert>,
     pub skip_reward_cert: Option<SkipRewardCertificate>,
     pub notar_reward_cert: Option<NotarRewardCertificate>,
 }
@@ -229,7 +230,7 @@ pub struct UpdateParentV1 {
 
 /// Attests to genesis block finalization with a BLS aggregate signature.
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct GenesisCertificate {
+pub struct GenesisCertBlockMarker {
     pub slot: Slot,
     pub block_id: Hash,
     #[wincode(with = "PodBLSSignature")]
@@ -238,16 +239,16 @@ pub struct GenesisCertificate {
     pub bitmap: Vec<u8>,
 }
 
-impl GenesisCertificate {
+impl GenesisCertBlockMarker {
     /// Max bitmap size in bytes (supports up to 4096 validators).
     pub const MAX_BITMAP_SIZE: usize = 512;
 }
 
-impl TryFrom<Certificate> for GenesisCertificate {
+impl TryFrom<Certificate> for GenesisCertBlockMarker {
     type Error = String;
 
     fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-        let CertificateType::Genesis(slot, block_id) = cert.cert_type else {
+        let CertificateType::Genesis(block) = cert.cert_type else {
             return Err("expected genesis certificate".into());
         };
         if cert.bitmap.len() > Self::MAX_BITMAP_SIZE {
@@ -258,18 +259,21 @@ impl TryFrom<Certificate> for GenesisCertificate {
             ));
         }
         Ok(Self {
-            slot,
-            block_id,
+            slot: block.slot,
+            block_id: block.block_id,
             bls_signature: cert.signature,
             bitmap: cert.bitmap,
         })
     }
 }
 
-impl From<GenesisCertificate> for Certificate {
-    fn from(cert: GenesisCertificate) -> Self {
+impl From<GenesisCertBlockMarker> for Certificate {
+    fn from(cert: GenesisCertBlockMarker) -> Self {
         Self {
-            cert_type: CertificateType::Genesis(cert.slot, cert.block_id),
+            cert_type: CertificateType::Genesis(Block {
+                slot: cert.slot,
+                block_id: cert.block_id,
+            }),
             signature: cert.bls_signature,
             bitmap: cert.bitmap,
         }
@@ -277,17 +281,17 @@ impl From<GenesisCertificate> for Certificate {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct FinalCertificate {
+pub struct BlockFinalizationCert {
     pub slot: Slot,
     pub block_id: Hash,
     pub final_aggregate: VotesAggregate,
     pub notar_aggregate: Option<VotesAggregate>,
 }
 
-impl FinalCertificate {
+impl BlockFinalizationCert {
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_for_tests() -> FinalCertificate {
-        FinalCertificate {
+    pub fn new_for_tests() -> BlockFinalizationCert {
+        BlockFinalizationCert {
             slot: 1234567890,
             block_id: Hash::new_from_array([1u8; 32]),
             final_aggregate: VotesAggregate {
@@ -363,7 +367,7 @@ pub enum BlockMarkerV1 {
     BlockFooter(LengthPrefixed<VersionedBlockFooter>),
     BlockHeader(LengthPrefixed<VersionedBlockHeader>),
     UpdateParent(LengthPrefixed<VersionedUpdateParent>),
-    GenesisCertificate(LengthPrefixed<GenesisCertificate>),
+    GenesisCertificate(LengthPrefixed<GenesisCertBlockMarker>),
 }
 
 impl BlockMarkerV1 {
@@ -379,7 +383,7 @@ impl BlockMarkerV1 {
         Self::UpdateParent(LengthPrefixed::new(u))
     }
 
-    pub fn new_genesis_certificate(c: GenesisCertificate) -> Self {
+    pub fn new_genesis_certificate(c: GenesisCertBlockMarker) -> Self {
         Self::GenesisCertificate(LengthPrefixed::new(c))
     }
 
@@ -404,7 +408,7 @@ impl BlockMarkerV1 {
         }
     }
 
-    pub fn as_genesis_certificate(&self) -> Option<&GenesisCertificate> {
+    pub fn as_genesis_certificate(&self) -> Option<&GenesisCertBlockMarker> {
         match self {
             Self::GenesisCertificate(lp) => Some(lp.inner()),
             _ => None,
@@ -424,40 +428,40 @@ impl VersionedBlockMarker {
         Self::V1(marker)
     }
 
-    pub fn new_block_footer(f: BlockFooterV1) -> Self {
+    pub fn from_block_footer(f: BlockFooterV1) -> Self {
         let f = VersionedBlockFooter::V1(f);
         let f = BlockMarkerV1::BlockFooter(LengthPrefixed::new(f));
-        VersionedBlockMarker::V1(f)
+        Self::new(f)
     }
 
-    pub fn new_block_header(h: BlockHeaderV1) -> Self {
+    pub fn from_block_header(h: BlockHeaderV1) -> Self {
         let h = VersionedBlockHeader::V1(h);
         let h = BlockMarkerV1::BlockHeader(LengthPrefixed::new(h));
-        VersionedBlockMarker::V1(h)
+        Self::new(h)
     }
 
-    pub fn new_update_parent(u: UpdateParentV1) -> Self {
+    pub fn from_update_parent(u: UpdateParentV1) -> Self {
         let u = VersionedUpdateParent::V1(u);
         let u = BlockMarkerV1::UpdateParent(LengthPrefixed::new(u));
-        VersionedBlockMarker::V1(u)
+        Self::new(u)
     }
 
-    pub fn new_genesis_certificate(g: GenesisCertificate) -> Self {
+    pub fn from_genesis_cert_block_marker(g: GenesisCertBlockMarker) -> Self {
         let g = BlockMarkerV1::GenesisCertificate(LengthPrefixed::new(g));
-        VersionedBlockMarker::V1(g)
+        Self::new(g)
     }
 
     pub fn is_update_parent(&self) -> bool {
         match self {
-            VersionedBlockMarker::V1(BlockMarkerV1::UpdateParent(_)) => true,
-            VersionedBlockMarker::V1(_) => false,
+            Self::V1(BlockMarkerV1::UpdateParent(_)) => true,
+            Self::V1(_) => false,
         }
     }
 
     pub fn is_footer(&self) -> bool {
         match self {
-            VersionedBlockMarker::V1(BlockMarkerV1::BlockFooter(_)) => true,
-            VersionedBlockMarker::V1(_) => false,
+            Self::V1(BlockMarkerV1::BlockFooter(_)) => true,
+            Self::V1(_) => false,
         }
     }
 }
@@ -472,6 +476,7 @@ pub enum BlockComponent {
 impl BlockComponent {
     const MAX_ENTRIES: usize = u32::MAX as usize;
     const ENTRY_COUNT_SIZE: usize = 8;
+    const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
     pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
         if entries.is_empty() {
@@ -497,7 +502,7 @@ impl BlockComponent {
             parent_slot,
             parent_block_id,
         };
-        Self::new_block_marker(VersionedBlockMarker::new_block_header(header))
+        Self::new_block_marker(VersionedBlockMarker::from_block_header(header))
     }
 
     pub const fn as_marker(&self) -> Option<&VersionedBlockMarker> {
@@ -516,6 +521,13 @@ impl BlockComponent {
 
     pub fn infer_is_block_marker(data: &[u8]) -> Option<bool> {
         Self::infer_is_entry_batch(data).map(|is_entry_batch| !is_entry_batch)
+    }
+
+    /// In Alpenglow an empty entry batch will fail to deserialize
+    /// Leader's should only use an empty entry batch to indicate that they
+    /// are aborting the block
+    pub fn infer_is_empty_entry_batch(data: &[u8]) -> bool {
+        *data == Self::EMPTY_ENTRY_BATCH
     }
 }
 
@@ -584,7 +596,7 @@ mod tests {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 1234567890,
             block_user_agent: b"test-agent".to_vec(),
-            final_cert: Some(FinalCertificate::new_for_tests()),
+            block_final_cert: Some(BlockFinalizationCert::new_for_tests()),
             skip_reward_cert: None,
             notar_reward_cert: None,
         }
@@ -609,19 +621,19 @@ mod tests {
             wincode::deserialize::<BlockFooterV1>(&bytes).unwrap()
         );
 
-        let cert = GenesisCertificate {
+        let marker = GenesisCertBlockMarker {
             slot: 999,
             block_id: Hash::new_unique(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![1, 2, 3],
         };
-        let bytes = wincode::serialize(&cert).unwrap();
+        let bytes = wincode::serialize(&marker).unwrap();
         assert_eq!(
-            cert,
-            wincode::deserialize::<GenesisCertificate>(&bytes).unwrap()
+            marker,
+            wincode::deserialize::<GenesisCertBlockMarker>(&bytes).unwrap()
         );
 
-        let marker = VersionedBlockMarker::new_block_footer(footer.clone());
+        let marker = VersionedBlockMarker::from_block_footer(footer.clone());
         let bytes = wincode::serialize(&marker).unwrap();
         assert_eq!(
             marker,

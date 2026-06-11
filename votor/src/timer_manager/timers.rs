@@ -205,7 +205,7 @@ impl Timers {
         standstill_slot: Option<Slot>,
         delta_first_slice: Duration,
         delta_block: Duration,
-    ) {
+    ) -> bool {
         assert!(delta_first_slice <= delta_block);
         assert_eq!(self.heap.len(), self.timers.len());
         let timeout_config = TimeoutConfig {
@@ -225,6 +225,7 @@ impl Timers {
         });
         self.stats
             .incr_timeout_count_with_heap_size(self.heap.len(), new_timer_inserted);
+        new_timer_inserted
     }
 
     /// Call to make progress on the timer states.  If there are still active
@@ -274,7 +275,7 @@ impl Timers {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::unbounded,
+        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::bounded,
         solana_clock::DEFAULT_MS_PER_SLOT,
     };
 
@@ -330,7 +331,7 @@ mod tests {
     fn timers_progress() {
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let mut timers = Timers::new(one_micro, sender);
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());

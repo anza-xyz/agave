@@ -25,7 +25,7 @@ use {
             rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
         },
     },
-    agave_fs::{dirs, io_setup::IoSetupState},
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotKind,
         error::{
@@ -376,11 +376,9 @@ pub fn bank_from_snapshot_dir(
         bank_snapshot.snapshot_dir.display()
     );
 
-    // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
-    // files will be extracted from the snapshot hardlink directories into these run/ directories.
-    for path in account_paths {
-        dirs::remove_dir_contents(path);
-    }
+    // Storages from this snapshot already live under `account_paths`; the storages list
+    // inside the bank snapshot dir tells us which ones belong to it, and stale files
+    // (e.g. from later slots) are pruned by `rebuild_storages_from_snapshot_dir`.
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
 
@@ -837,9 +835,8 @@ mod tests {
             genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
-                clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
-                get_bank_snapshots, get_highest_bank_snapshot, get_highest_loadable_bank_snapshot,
-                purge_all_bank_snapshots, purge_bank_snapshot,
+                create_tmp_accounts_dir_for_tests, get_bank_snapshots, get_highest_bank_snapshot,
+                get_highest_loadable_bank_snapshot, purge_all_bank_snapshots, purge_bank_snapshot,
                 purge_bank_snapshots_older_than_slot, purge_incomplete_bank_snapshots,
                 purge_old_bank_snapshots, purge_old_bank_snapshots_at_startup,
                 snapshot_storage_rebuilder::get_slot_and_append_vec_id,
@@ -850,7 +847,10 @@ mod tests {
             SnapshotVersion, error::VerifySlotDeltasError, paths::get_bank_snapshot_dir,
         },
         semver::Version,
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_accounts_db::{
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsFileId},
+            accounts_file::AccountsFile,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -886,7 +886,7 @@ mod tests {
         genesis_config: &GenesisConfig,
         bank_snapshots_dir: impl AsRef<Path>,
         num_total: usize,
-        should_flush_and_hard_link_storages: bool,
+        should_finalize: bool,
     ) -> Arc<Bank> {
         let (bank0, bank_forks) =
             Bank::new_for_tests(genesis_config).wrap_with_bank_forks_for_tests();
@@ -906,7 +906,7 @@ mod tests {
                 &bank_snapshots_dir,
                 &bank,
                 SnapshotVersion::default(),
-                should_flush_and_hard_link_storages,
+                should_finalize,
             )
             .unwrap();
         }
@@ -915,7 +915,7 @@ mod tests {
     }
 
     /// Creates a bank snapshot from a bank, regardless of state. The Bank will be frozen during
-    /// the process. Passing in should_flush_and_hard_link_storages as true will create a
+    /// the process. Passing in should_finalize as true will create a
     /// a fastbootable bank snapshot
     ///
     /// Requires:
@@ -925,7 +925,7 @@ mod tests {
         bank_snapshots_dir: impl AsRef<Path>,
         bank: &Bank,
         snapshot_version: SnapshotVersion,
-        should_flush_and_hard_link_storages: bool,
+        should_finalize: bool,
     ) -> agave_snapshots::Result<()> {
         assert!(bank.is_complete());
         assert!(bank.block_id().is_some());
@@ -948,7 +948,7 @@ mod tests {
             snapshot_version,
             bank_snapshot_package,
             snapshot_storages.as_slice(),
-            should_flush_and_hard_link_storages,
+            should_finalize,
             &IoSetupState::default(),
         )?;
 
@@ -1673,7 +1673,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bank_snapshot_dir_accounts_hardlinks() {
+    fn test_bank_snapshot_dir_storages_list() {
         let bank = Bank::new_for_tests(&GenesisConfig::default());
         bank.fill_bank_with_ticks_for_tests();
         bank.set_block_id(Some(Hash::default()));
@@ -1687,25 +1687,13 @@ mod tests {
         )
         .unwrap();
 
-        let accounts_hardlinks_dir = get_bank_snapshot_dir(&bank_snapshots_dir, bank.slot())
-            .join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
-        assert!(fs::metadata(&accounts_hardlinks_dir).is_ok());
-
-        let mut hardlink_dirs = Vec::new();
-        // This directory contain symlinks to all accounts snapshot directories.
-        for entry in fs::read_dir(accounts_hardlinks_dir).unwrap() {
-            let entry = entry.unwrap();
-            let symlink = entry.path();
-            let dst_path = fs::read_link(symlink).unwrap();
-            assert!(fs::metadata(&dst_path).is_ok());
-            hardlink_dirs.push(dst_path);
-        }
-
         let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, bank.slot());
-        assert!(purge_bank_snapshot(bank_snapshot_dir).is_ok());
+        let storages_list_file =
+            bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STORAGES_LIST_FILENAME);
+        assert!(fs::metadata(&storages_list_file).is_ok());
 
-        // When the bank snapshot is removed, all the snapshot hardlink directories should be removed.
-        assert!(hardlink_dirs.iter().all(|dir| fs::metadata(dir).is_err()));
+        assert!(purge_bank_snapshot(&bank_snapshot_dir).is_ok());
+        assert!(fs::metadata(&bank_snapshot_dir).is_err());
     }
 
     /// Test versioning when fastbooting
@@ -1765,14 +1753,14 @@ mod tests {
 
     #[test_case(false)]
     #[test_case(true)]
-    fn test_get_highest_bank_snapshot(should_flush_and_hard_link_storages: bool) {
+    fn test_get_highest_bank_snapshot(should_finalize: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             4,
-            should_flush_and_hard_link_storages,
+            should_finalize,
         );
 
         let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
@@ -1803,83 +1791,16 @@ mod tests {
         assert_eq!(snapshot.slot, 1);
     }
 
-    #[test]
-    fn test_clean_orphaned_account_snapshot_dirs() {
-        let genesis_config = GenesisConfig::default();
-        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 2, true);
-
-        let snapshot_dir_slot_2 = bank_snapshots_dir.path().join("2");
-        let accounts_link_dir_slot_2 =
-            snapshot_dir_slot_2.join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
-
-        // the symlinks point to the account snapshot hardlink directories <account_path>/snapshot/<slot>/ for slot 2
-        // get them via read_link
-        let hardlink_dirs_slot_2: Vec<PathBuf> = fs::read_dir(accounts_link_dir_slot_2)
-            .unwrap()
-            .map(|entry| {
-                let symlink = entry.unwrap().path();
-                fs::read_link(symlink).unwrap()
-            })
-            .collect();
-
-        // remove the bank snapshot directory for slot 2, so the account snapshot slot 2 directories become orphaned
-        fs::remove_dir_all(snapshot_dir_slot_2).unwrap();
-
-        // verify the orphaned account snapshot hardlink directories are still there
-        assert!(
-            hardlink_dirs_slot_2
-                .iter()
-                .all(|dir| fs::metadata(dir).is_ok())
-        );
-
-        let account_snapshot_paths: Vec<PathBuf> = hardlink_dirs_slot_2
-            .iter()
-            .map(|dir| dir.parent().unwrap().parent().unwrap().to_path_buf())
-            .collect();
-        // clean the orphaned hardlink directories
-        clean_orphaned_account_snapshot_dirs(&bank_snapshots_dir, &account_snapshot_paths).unwrap();
-
-        // verify the hardlink directories are gone
-        assert!(
-            hardlink_dirs_slot_2
-                .iter()
-                .all(|dir| fs::metadata(dir).is_err())
-        );
-    }
-
-    // Ensure that `clean_orphaned_account_snapshot_dirs()` works correctly for bank snapshots
-    // that *do not* hard link the storages into their staging dir.
-    #[test]
-    fn test_clean_orphaned_account_snapshot_dirs_no_hard_link() {
-        let genesis_config = GenesisConfig::default();
-        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 2, false);
-
-        // Ensure the bank snapshot dir does exist.
-        let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, 2);
-        assert!(fs::exists(&bank_snapshot_dir).unwrap());
-
-        // Ensure the accounts hard links dir does *not* exist for this bank snapshot
-        // (since we asked create_snapshot_dirs_for_tests() to *not* hard link).
-        let bank_snapshot_accounts_hard_link_dir =
-            bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
-        assert!(!fs::exists(&bank_snapshot_accounts_hard_link_dir).unwrap());
-
-        // Now make sure clean_orphaned_account_snapshot_dirs() doesn't error.
-        clean_orphaned_account_snapshot_dirs(&bank_snapshots_dir, &[]).unwrap();
-    }
-
     #[test_case(false)]
     #[test_case(true)]
-    fn test_purge_incomplete_bank_snapshots(should_flush_and_hard_link_storages: bool) {
+    fn test_purge_incomplete_bank_snapshots(should_finalize: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             2,
-            should_flush_and_hard_link_storages,
+            should_finalize,
         );
 
         // remove the "version" files so the snapshots will be purged
@@ -2097,7 +2018,7 @@ mod tests {
         bank2.set_block_id(Some(Hash::default()));
         assert_eq!(bank2.get_balance(&key2.pubkey()), 0);
 
-        // Take a bank snapshot, passing `true` for `should_flush_and_hard_link_storages`.
+        // Take a bank snapshot, passing `true` for `should_finalize`.
         // This ensures that `serialize_snapshot` performs all necessary steps to create
         // a snapshot that supports fastbooting.
         create_bank_snapshot_from_bank(
@@ -2180,7 +2101,7 @@ mod tests {
         bank.fill_bank_with_ticks_for_tests();
         bank.set_block_id(Some(Hash::default()));
 
-        // Take a bank snapshot, passing `true` for `should_flush_and_hard_link_storages`.
+        // Take a bank snapshot, passing `true` for `should_finalize`.
         // This ensures that `serialize_snapshot` performs all necessary steps to create
         // a snapshot that supports fastbooting.
         create_bank_snapshot_from_bank(
@@ -2223,6 +2144,92 @@ mod tests {
         }
         let next_id = bank.accounts().accounts_db.next_id.load(Ordering::Relaxed) as usize;
         assert_eq!(max_id, next_id - 1);
+    }
+
+    /// Drop a stale `<slot>.<id>` file into the account_paths run dir before calling
+    /// `bank_from_snapshot_dir`, and verify that the fastboot rebuild path removes it (because
+    /// the `(slot, id)` pair isn't in the storages list) while keeping the snapshot's own
+    /// storage files in place and producing a working bank.
+    #[test]
+    fn test_bank_from_snapshot_dir_prunes_stale_storage() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            1_000_000 * LAMPORTS_PER_SOL,
+        );
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let bank = Bank::new_for_tests(&genesis_config);
+        bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
+
+        create_bank_snapshot_from_bank(
+            &bank_snapshots_dir,
+            &bank,
+            SnapshotVersion::default(),
+            true,
+        )
+        .unwrap();
+        let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        let account_paths = &bank.rc.accounts.accounts_db.paths;
+
+        // Collect the legit paths (created by `create_bank_snapshot_from_bank` above) before
+        // we drop any stale files, so we can assert they survive the prune.
+        let pre_load_legit_files: Vec<_> = account_paths
+            .iter()
+            .flat_map(|account_path| {
+                fs::read_dir(account_path)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+            })
+            .collect();
+        assert!(
+            !pre_load_legit_files.is_empty(),
+            "expected at least one accounts storage file"
+        );
+
+        // Pick a `(slot, id)` that the snapshot doesn't reference. The snapshot only covers
+        // storages up to `bank.slot()`, so a far-future slot is guaranteed to be stale.
+        let stale_slot = bank.slot() + 1_000;
+        let stale_id = AccountsFileId::MAX;
+        let stale_files: Vec<_> = account_paths
+            .iter()
+            .map(|account_path| {
+                let stale = account_path.join(AccountsFile::file_name(stale_slot, stale_id));
+                fs::write(&stale, b"junk").unwrap();
+                stale
+            })
+            .collect();
+
+        let bank_constructed = bank_from_snapshot_dir(
+            account_paths,
+            &bank_snapshot,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(bank_constructed, bank);
+
+        for stale in stale_files {
+            assert!(
+                !stale.exists(),
+                "stale storage file '{}' should have been pruned",
+                stale.display(),
+            );
+        }
+        for legit in pre_load_legit_files {
+            assert!(
+                legit.exists(),
+                "snapshot storage file '{}' should have survived the prune",
+                legit.display(),
+            );
+        }
     }
 
     /// Ensure bank_from_snapshot_dir() catches a snapshot with incorrect capitalization.
@@ -2280,14 +2287,14 @@ mod tests {
 
     #[test_case(false)]
     #[test_case(true)]
-    fn test_purge_all_bank_snapshots(should_flush_and_hard_link_storages: bool) {
+    fn test_purge_all_bank_snapshots(should_finalize: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             10,
-            should_flush_and_hard_link_storages,
+            should_finalize,
         );
         // Keep bank in this scope so that its account_paths tmp dirs are not released, and purge_all_bank_snapshots
         // can clear the account hardlinks correctly.
@@ -2299,14 +2306,14 @@ mod tests {
 
     #[test_case(false)]
     #[test_case(true)]
-    fn test_purge_old_bank_snapshots(should_flush_and_hard_link_storages: bool) {
+    fn test_purge_old_bank_snapshots(should_finalize: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             10,
-            should_flush_and_hard_link_storages,
+            should_finalize,
         );
         // Keep bank in this scope so that its account_paths tmp dirs are not released, and purge_old_bank_snapshots
         // can clear the account hardlinks correctly.
@@ -2326,7 +2333,7 @@ mod tests {
 
     #[test_case(false)]
     #[test_case(true)]
-    fn test_purge_bank_snapshots_older_than_slot(should_flush_and_hard_link_storages: bool) {
+    fn test_purge_bank_snapshots_older_than_slot(should_finalize: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
 
@@ -2335,7 +2342,7 @@ mod tests {
             &genesis_config,
             &bank_snapshots_dir,
             9,
-            should_flush_and_hard_link_storages,
+            should_finalize,
         );
         let bank_snapshots_before = get_bank_snapshots(&bank_snapshots_dir);
 
@@ -2359,7 +2366,7 @@ mod tests {
 
     #[test_case(false)]
     #[test_case(true)]
-    fn test_purge_old_bank_snapshots_at_startup(should_flush_and_hard_link_storages: bool) {
+    fn test_purge_old_bank_snapshots_at_startup(should_finalize: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
 
@@ -2368,7 +2375,7 @@ mod tests {
             &genesis_config,
             &bank_snapshots_dir,
             9,
-            should_flush_and_hard_link_storages,
+            should_finalize,
         );
 
         purge_old_bank_snapshots_at_startup(&bank_snapshots_dir);

@@ -18,6 +18,8 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
+  `getLatestBlockhash` response together with its context (notably `context.slot`).
 ### Validator
 #### Breaking
 #### Deprecations
@@ -25,6 +27,11 @@ Release channels have their own copy of this changelog:
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
   backward compatibility, but account storages are always accessed via file I/O.
 #### Changes
+* Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+### CLI
+#### Breaking
+#### Changes
+* `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
 
 ## 4.1.0
 ### RPC

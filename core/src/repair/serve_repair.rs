@@ -224,14 +224,14 @@ pub enum BlockIdRepairType {
 
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
-        match self {
-            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => (*slot, *block_id),
-            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => (*slot, *block_id),
+        match *self {
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block { slot, block_id },
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block { slot, block_id },
         }
     }
 
     pub(crate) fn slot(&self) -> Slot {
-        self.block().0
+        self.block().slot
     }
 }
 
@@ -289,8 +289,11 @@ impl RequestResponse for BlockIdRepairType {
                     return false;
                 }
 
-                let parent_info_leaf =
-                    hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+                let parent_info_leaf = hashv(&[
+                    &parent_slot.to_le_bytes(),
+                    parent_block_id.as_ref(),
+                    &fec_set_count.to_le_bytes(),
+                ]);
                 merkle_tree::verify_merkle_proof(
                     parent_info_leaf,
                     *fec_set_count as usize,
@@ -1937,6 +1940,7 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
+        crossbeam_channel::bounded,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -2542,8 +2546,7 @@ mod tests {
             .root_bank()
             .epoch_schedule()
             .clone();
-        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) =
-            crossbeam_channel::unbounded();
+        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = bounded(1024);
         RepairInfo {
             bank_forks,
             cluster_info,
@@ -3207,6 +3210,54 @@ mod tests {
         assert!(
             cache.add(&pong1, remote_socket, within_delay),
             "pong for original ping must still be valid — token was not overwritten"
+        );
+    }
+
+    #[test]
+    fn test_verify_fec_set_count_non_malleable() {
+        let parent_slot = 99u64;
+        let parent_block_id = Hash::new_unique();
+        let fec_set_count: u32 = 2; // even => total leaves = 3, last leaf duplicated
+        let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
+        let real_parent_leaf = hashv(&[
+            &parent_slot.to_le_bytes(),
+            parent_block_id.as_ref(),
+            &fec_set_count.to_le_bytes(),
+        ]);
+        let mut leaves: Vec<Hash> = fec_set_roots;
+        leaves.push(real_parent_leaf);
+        let tree =
+            merkle_tree::MerkleTree::try_new_with_len(leaves.iter().copied().map(Ok), leaves.len())
+                .unwrap();
+        let block_id = *tree.root();
+        let real_parent_proof: Vec<u8> = tree
+            .make_merkle_proof(fec_set_count as usize, leaves.len())
+            .flat_map(|entry| entry.unwrap().iter().copied())
+            .collect();
+
+        let request = BlockIdRepairType::ParentAndFecSetCount {
+            slot: 100,
+            block_id,
+        };
+
+        // honest response verifies
+        assert!(
+            request.verify_response(&BlockIdRepairResponse::ParentFecSetCount {
+                fec_set_count,
+                parent_info: (parent_slot, parent_block_id),
+                parent_proof: real_parent_proof.clone(),
+            })
+        );
+
+        // Attack: claim N+1 and reuse the honest proof. The padded tree puts
+        // `real_parent_leaf` at both positions N and N+1, so without binding
+        // `fec_set_count` into the leaf this proof would verify.
+        assert!(
+            !request.verify_response(&BlockIdRepairResponse::ParentFecSetCount {
+                fec_set_count: fec_set_count + 1,
+                parent_info: (parent_slot, parent_block_id),
+                parent_proof: real_parent_proof.clone(),
+            })
         );
     }
 }

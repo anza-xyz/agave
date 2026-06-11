@@ -1,5 +1,7 @@
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::{Arc, Mutex};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{Arc, Mutex};
 use {
     ahash::{HashMap, HashMapExt as _},
     log::*,
@@ -11,11 +13,6 @@ use {
         collections::{HashSet, hash_map::Entry},
         num::{NonZero, NonZeroUsize},
     },
-};
-#[cfg(not(feature = "shuttle-test"))]
-use {
-    rand::{Rng, rng},
-    std::sync::{Arc, Mutex},
 };
 
 // The maximum number of entries to store in the cache. This is the same as the number of recent
@@ -220,15 +217,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let max_key_index = key.as_ref().len().saturating_sub(CACHED_KEY_SIZE + 1);
 
         // Get the cache entry for this blockhash.
-        let (max_slot, key_index, hash_map) =
-            self.cache.entry(*transaction_blockhash).or_insert_with(|| {
-                // DFS tests need deterministic behavior
-                #[cfg(feature = "shuttle-test")]
-                let key_index = 0;
-                #[cfg(not(feature = "shuttle-test"))]
-                let key_index = rng().random_range(0..max_key_index + 1);
-                (slot, key_index, HashMap::new())
-            });
+        let (max_slot, key_index, hash_map) = self
+            .cache
+            .entry(*transaction_blockhash)
+            .or_insert_with(|| (slot, 0, HashMap::new()));
 
         // Update the max slot observed to contain txs using this blockhash.
         *max_slot = std::cmp::max(slot, *max_slot);

@@ -131,10 +131,16 @@ impl DuplicateShredHandler {
                     shred1.into_payload(),
                     shred2.into_payload(),
                 )?;
-                // Notify duplicate consensus state machine
-                self.duplicate_slots_sender
-                    .send(slot)
-                    .map_err(|_| Error::DuplicateSlotSenderFailure)?;
+
+                // Notify duplicate consensus state machine. Drop if channel is over 50% full
+                // to avoid blocking replay.
+                if self.duplicate_slots_sender.len() * 2
+                    < self.duplicate_slots_sender.capacity().unwrap_or(usize::MAX)
+                {
+                    self.duplicate_slots_sender
+                        .try_send(slot)
+                        .map_err(|_| Error::DuplicateSlotSenderFailure)?;
+                }
             }
             self.consumed.insert(slot, true);
         }
@@ -213,7 +219,7 @@ mod tests {
             epoch_specs::TestEpochSpecs,
             protocol::DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -305,7 +311,7 @@ mod tests {
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let start_slot: Slot = 10;
 
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
@@ -409,7 +415,7 @@ mod tests {
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,

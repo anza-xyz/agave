@@ -3,7 +3,6 @@
 use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     solana_gossip::cluster_info::ClusterInfo,
-    solana_keypair::Keypair,
     solana_ledger::shred::{
         self,
         filter::{ShredFilterContext, TurbineMode},
@@ -65,7 +64,6 @@ impl ShredFetchStage {
             shred_version,
             Some(turbine_mode),
         );
-        let repair_keypair = repair_context.map(RepairContext::keypair);
 
         for mut packet_batch in recvr {
             shred_filter_ctx.maybe_update(sharable_banks.root());
@@ -73,15 +71,13 @@ impl ShredFetchStage {
 
             if let Some(repair_context) = repair_context {
                 debug_assert_eq!(flags, PacketFlags::REPAIR);
-                debug_assert!(repair_keypair.is_some());
-                if let Some(ref keypair) = repair_keypair {
-                    ServeRepair::handle_repair_response_pings(
-                        &repair_context.repair_socket,
-                        keypair,
-                        &mut packet_batch,
-                        &mut shred_filter_ctx.stats,
-                    );
-                }
+                let keypair = repair_context.cluster_info.keypair();
+                ServeRepair::handle_repair_response_pings(
+                    &repair_context.repair_socket,
+                    &keypair,
+                    &mut packet_batch,
+                    &mut shred_filter_ctx.stats,
+                );
                 // Discard packets if repair nonce does not verify.
                 let now = solana_time_utils::timestamp();
                 let mut outstanding_repair_requests =
@@ -248,12 +244,6 @@ impl ShredFetchStage {
             thread_hdl.join()?;
         }
         Ok(())
-    }
-}
-
-impl RepairContext {
-    fn keypair(&self) -> Arc<Keypair> {
-        self.cluster_info.keypair()
     }
 }
 

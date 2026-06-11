@@ -8,8 +8,10 @@ source ci/rust-version.sh stable
 is_crate_version_uploaded() {
   name=$1
   version=$2
-  curl https://crates.io/api/v1/crates/${name}/${version} | \
-  python3 -c "import sys,json; print('version' in json.load(sys.stdin));"
+  # crates.io API docs state to include a user-agent header:
+  # https://crates.io/data-access#api
+  curl --user-agent 'Anza (https://github.com/anza-xyz/agave)' https://crates.io/api/v1/crates/${name}/${version} |
+    python3 -c "import sys,json; print('version' in json.load(sys.stdin));"
 }
 
 # Only package/publish if this is a tagged release

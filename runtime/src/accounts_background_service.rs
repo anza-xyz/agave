@@ -719,7 +719,7 @@ fn cmp_snapshot_request_kinds_by_priority(
 mod test {
     use {
         super::*, crate::genesis_utils::create_genesis_config,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
         solana_account::AccountSharedData, solana_epoch_schedule::EpochSchedule,
         solana_leader_schedule::SlotLeader, solana_pubkey::Pubkey,
     };
@@ -728,7 +728,7 @@ mod test {
     fn test_accounts_background_service_remove_dead_slots() {
         let genesis = create_genesis_config(10);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+        let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };
@@ -768,7 +768,7 @@ mod test {
         let snapshot_config = SnapshotConfig::default();
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller = Arc::new(SnapshotController::new(
             snapshot_request_sender.clone(),
             snapshot_config,
@@ -908,7 +908,7 @@ mod test {
     /// Ensure that we can prune banks with the same slot (if they were on different forks)
     #[test]
     fn test_pruned_banks_request_handler_handle_request() {
-        let (pruned_banks_sender, pruned_banks_receiver) = crossbeam_channel::unbounded();
+        let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };

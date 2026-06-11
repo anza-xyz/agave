@@ -22,7 +22,7 @@ use {
     solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
-    solana_tls_utils::get_pubkey_from_tls_certificate,
+    solana_tls_utils::get_remote_pubkey,
     std::{
         array, fmt,
         iter::repeat_with,
@@ -329,6 +329,16 @@ where
         }
 
         if let Ok(Some(incoming)) = timeout_connection {
+            // our connection/handshake abuse mitigation policy is one of shed
+            // fast and bound resource consumption. attempting to be "smarter"
+            // before a peer has asserted control over their ip address by
+            // completing the retry challenge creates a scenario whereby peers
+            // can attack one another via ip spoofing. employ the following
+            // * limit duration of in-flight connection attempts with a timeout
+            // * protect against connection attempt bursts with a global rate-limiter
+            // * rate-limit abusive peers by (control-asserted) ip
+            // * cap total connections per-peer/ip
+
             stats
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
@@ -401,17 +411,6 @@ where
     }
     tasks.close();
     tasks.wait().await;
-}
-
-pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
-    // Use the client cert only if it is self signed and the chain length is 1.
-    connection
-        .peer_identity()?
-        .downcast::<Vec<rustls::pki_types::CertificateDer>>()
-        .ok()
-        .filter(|certs| certs.len() == 1)?
-        .first()
-        .and_then(get_pubkey_from_tls_certificate)
 }
 
 pub fn get_connection_stake(

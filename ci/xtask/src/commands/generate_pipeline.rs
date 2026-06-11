@@ -24,6 +24,54 @@ pub enum Pipeline {
     Private,
 }
 
+struct Repo {
+    owner: String,
+    name: String,
+}
+
+impl Repo {
+    /// Resolve the GitHub repo from Buildkite's built-in `BUILDKITE_REPO`,
+    /// falling back to the agave repo when it is unset or unparseable.
+    fn from_env() -> Self {
+        match env::var("BUILDKITE_REPO")
+            .ok()
+            .and_then(|url| Self::parse_github_url(&url))
+        {
+            Some(repo) => {
+                info!(
+                    "Resolved repo {}/{} from `BUILDKITE_REPO`",
+                    repo.owner, repo.name
+                );
+                repo
+            }
+            None => {
+                info!("Falling back to default repo anza-xyz/agave");
+                Repo {
+                    owner: String::from("anza-xyz"),
+                    name: String::from("agave"),
+                }
+            }
+        }
+    }
+
+    /// Extract `owner` and `name` from a GitHub remote URL, handling both the
+    /// HTTPS (`https://github.com/owner/name.git`) and scp-like SSH
+    /// (`git@github.com:owner/name.git`) forms.
+    fn parse_github_url(url: &str) -> Option<Self> {
+        let trimmed = url.trim().trim_end_matches('/');
+        let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+        // Both `/` and `:` separate the path, so splitting on either yields the
+        // trailing `.../owner/name` regardless of URL flavor.
+        let mut parts = trimmed.rsplit(['/', ':']);
+        let name = parts.next().filter(|s| !s.is_empty())?;
+        let owner = parts.next().filter(|s| !s.is_empty())?;
+        Some(Repo {
+            owner: owner.to_string(),
+            name: name.to_string(),
+        })
+    }
+}
+
 pub async fn run(args: CommandArgs) -> Result<()> {
     let pipeline = match args.pipeline {
         Pipeline::Agave => generate_agave_pipeline().await?,
@@ -55,8 +103,9 @@ async fn generate_agave_pipeline() -> Result<buildkite::Pipeline> {
                 .parse::<u64>()
                 .map_err(|e| anyhow::anyhow!("failed to parse PR number: {e}"))?;
 
-            annotate_pull_request(pr_number)?;
-            return generate_pull_request_pipeline(pr_number).await;
+            let repo = Repo::from_env();
+            annotate_pull_request(&repo, pr_number)?;
+            return generate_pull_request_pipeline(&repo, pr_number).await;
         }
 
         info!("failed to get PR number from branch: {branch}, running full pipeline.");
@@ -102,7 +151,7 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
     Ok(pipeline)
 }
 
-fn annotate_pull_request(pr_number: u64) -> Result<()> {
+fn annotate_pull_request(repo: &Repo, pr_number: u64) -> Result<()> {
     let is_ci = env::var("CI")
         .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"))
         .unwrap_or(false);
@@ -110,8 +159,10 @@ fn annotate_pull_request(pr_number: u64) -> Result<()> {
         return Ok(());
     }
 
-    let annotation =
-        format!("Github Pull Request: https://github.com/anza-xyz/agave/pull/{pr_number}");
+    let annotation = format!(
+        "Github Pull Request: https://github.com/{}/{}/pull/{pr_number}",
+        repo.owner, repo.name
+    );
 
     let status = Command::new("buildkite-agent")
         .args([
@@ -140,7 +191,7 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     Ok(pipeline)
 }
 
-async fn get_changed_files(pr_number: u64) -> Result<Vec<String>> {
+async fn get_changed_files(repo: &Repo, pr_number: u64) -> Result<Vec<String>> {
     let mut changed_files = vec![];
     let github_client_builder = match env::var("GH_TOKEN") {
         Ok(token) if !token.trim().is_empty() => {
@@ -157,7 +208,7 @@ async fn get_changed_files(pr_number: u64) -> Result<Vec<String>> {
     };
     let github_client = github_client_builder.build()?;
     let stream = github_client
-        .pulls("anza-xyz", "agave")
+        .pulls(&repo.owner, &repo.name)
         .list_files(pr_number)
         .await?
         .into_stream(&github_client);
@@ -168,51 +219,182 @@ async fn get_changed_files(pr_number: u64) -> Result<Vec<String>> {
     Ok(changed_files)
 }
 
-pub async fn generate_pull_request_pipeline(pr_number: u64) -> Result<buildkite::Pipeline> {
-    let changed_files = get_changed_files(pr_number).await?;
+struct PullRequestPipelineFlags {
+    shellcheck: bool,
+    checks: bool,
+    feature_check: bool,
+    miri: bool,
+    frozen_abi: bool,
+    stable: bool,
+    local_cluster: bool,
+    docs: bool,
+    localnet: bool,
+    stable_sbf: bool,
+    shuttle: bool,
+    coverage: bool,
+}
+
+impl PullRequestPipelineFlags {
+    fn from_changed_files(changed_files: &[String]) -> Self {
+        let trigger_all = changed_files.iter().any(|file| {
+            file.starts_with("ci/xtask/")
+                || file.ends_with("ci/rust-version.sh")
+                || file.ends_with("rust-toolchain.toml")
+                || file.ends_with("ci/docker-run-default-image.sh")
+                || file.ends_with("ci/docker-run.sh")
+                || file.ends_with("ci/docker/Dockerfile")
+                || file.ends_with("ci/docker/env.sh")
+        });
+
+        let rust_changed = changed_files.iter().any(|file| {
+            file.ends_with("Cargo.toml") || file.ends_with("Cargo.lock") || file.ends_with(".rs")
+        });
+
+        Self {
+            shellcheck: changed_files.iter().any(|file| file.ends_with(".sh")),
+            checks: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/test-checks.sh")
+                        || file.ends_with("scripts/cargo-for-all-lock-files.sh")
+                        || file.ends_with("scripts/check-dev-context-only-utils.sh")
+                        || file.ends_with("scripts/agave-build-lists.sh")
+                        || file.ends_with("ci/order-crates-for-publishing.py")
+                        || file.ends_with("scripts/cargo-clippy.sh")
+                        || file.ends_with("ci/do-audit.sh")
+                        || file.ends_with("ci/check-install-all.sh")
+                        || file.ends_with("scripts/spl-token-cli-version.sh")
+                        || file.ends_with("scripts/cargo-build-sbf-version.sh")
+                }),
+            feature_check: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.starts_with("ci/feature-check/")),
+            miri: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.ends_with("ci/test-miri.sh")),
+            frozen_abi: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.ends_with("ci/test-frozen-abi.sh")),
+            stable: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/stable/run-partition.sh")
+                        || file.ends_with("ci/stable/common.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                        || file.ends_with("ci/common/limit-threads.sh")
+                }),
+            local_cluster: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/stable/run-local-cluster-partially.sh")
+                        || file.ends_with("ci/stable/common.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                }),
+            docs: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/test-docs.sh")
+                        || file.ends_with("ci/test-stable.sh")
+                        || file.ends_with("scripts/ulimit-n.sh")
+                        || file.ends_with("ci/common/limit-threads.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                }),
+            localnet: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/stable/run-localnet.sh")
+                        || file.ends_with("ci/localnet-sanity.sh")
+                        || file.ends_with("ci/run-sanity.sh")
+                        || file.ends_with("scripts/wallet-sanity.sh")
+                        || file.ends_with("ci/upload-ci-artifact.sh")
+                        || file.ends_with("scripts/configure-metrics.sh")
+                        || file.ends_with("scripts/run.sh")
+                }),
+            stable_sbf: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("ci/test-stable-sbf.sh")
+                        || file.ends_with("ci/test-stable.sh")
+                        || file.ends_with("scripts/ulimit-n.sh")
+                        || file.ends_with("ci/common/limit-threads.sh")
+                        || file.ends_with("ci/common/shared-functions.sh")
+                        || file.ends_with("programs/sbf/install.sh")
+                }),
+            shuttle: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.ends_with("ci/test-shuttle.sh")),
+            coverage: trigger_all
+                || rust_changed
+                || changed_files.iter().any(|file| {
+                    file.ends_with("scripts/coverage.sh")
+                        || file.ends_with("ci/test-coverage.sh")
+                        || file.starts_with("ci/coverage/")
+                }),
+        }
+    }
+}
+
+async fn generate_pull_request_pipeline(
+    repo: &Repo,
+    pr_number: u64,
+) -> Result<buildkite::Pipeline> {
+    let changed_files = get_changed_files(repo, pr_number).await?;
+    let flags = PullRequestPipelineFlags::from_changed_files(&changed_files);
 
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    if changed_files.iter().any(|file| file.ends_with(".sh")) {
+    if flags.shellcheck {
         pipeline.add_step(default_shellcheck_step());
     }
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    let rust_changed = changed_files.iter().any(|file| {
-        file.ends_with("Cargo.toml")
-            || file.ends_with("Cargo.lock")
-            || file.ends_with(".rs")
-            || file.ends_with("rust-toolchain.toml")
-            || file.ends_with("ci/rust-version.sh")
-            || file.ends_with("ci/docker/Dockerfile")
-    });
-    let coverage_scripts_changed = changed_files.iter().any(|file| {
-        file.ends_with("scripts/coverage.sh")
-            || file.ends_with("ci/test-coverage.sh")
-            || file.starts_with("ci/coverage/")
-    });
-
-    if rust_changed {
+    if flags.checks {
         pipeline.add_step(default_checks_step());
+    }
+    if flags.feature_check {
         pipeline.add_step(default_feature_check_step(5));
+    }
+    if flags.miri {
         pipeline.add_step(default_miri_step());
+    }
+    if flags.frozen_abi {
         pipeline.add_step(default_frozen_abi_step());
+    }
 
-        pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
+    if flags.stable {
         pipeline.add_step(default_stable_step(3));
+    }
+    if flags.local_cluster {
         pipeline.add_step(default_local_cluster_step(10));
+    }
+    if flags.docs {
         pipeline.add_step(default_docs_check_step());
+    }
+    if flags.localnet {
         pipeline.add_step(default_localnet_step());
+    }
 
-        pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
+    if flags.stable_sbf {
         pipeline.add_step(default_stable_sbf_step());
+    }
+    if flags.shuttle {
         pipeline.add_step(default_shuttle_step());
-        pipeline.add_step(default_coverage_step(3));
-    } else if coverage_scripts_changed {
+    }
+    if flags.coverage {
         pipeline.add_step(default_coverage_step(3));
     }
 
@@ -551,11 +733,32 @@ fn default_trigger_secondary_step() -> buildkite::Step {
 mod tests {
     use {super::*, pretty_assertions::assert_eq};
 
+    #[test]
+    fn test_parse_github_url() {
+        for url in [
+            "https://github.com/anza-xyz/agave.git",
+            "https://github.com/anza-xyz/agave",
+            "git@github.com:anza-xyz/agave.git",
+            "git@github.com:anza-xyz/agave",
+            "ssh://git@github.com/anza-xyz/agave.git",
+            "  https://github.com/anza-xyz/agave.git/  ",
+        ] {
+            let repo =
+                Repo::parse_github_url(url).unwrap_or_else(|| panic!("failed to parse url: {url}"));
+            assert_eq!(repo.owner, "anza-xyz", "url: {url}");
+            assert_eq!(repo.name, "agave", "url: {url}");
+        }
+    }
+
     // PR 1850 is a good large PR for testing
     #[cfg_attr(not(feature = "integration-tests"), ignore = "requires github api")]
     #[tokio::test]
     async fn test_get_changed_files_for_pr_1850() {
-        let changed_files = get_changed_files(1850).await.unwrap();
+        let repo = Repo {
+            owner: String::from("anza-xyz"),
+            name: String::from("agave"),
+        };
+        let changed_files = get_changed_files(&repo, 1850).await.unwrap();
         assert_eq!(changed_files.len(), 68);
         assert!(changed_files.contains(&String::from("Cargo.lock")));
         assert!(changed_files.contains(&String::from("Cargo.toml")));
@@ -633,5 +836,93 @@ mod tests {
         assert!(changed_files.contains(&String::from("rbpf/tests/elfs/syscall_static.rs")));
         assert!(changed_files.contains(&String::from("rbpf/tests/elfs/syscall_static.so")));
         assert!(changed_files.contains(&String::from("rbpf/tests/elfs/syscalls.rs")));
+    }
+
+    fn flags(files: &[&str]) -> PullRequestPipelineFlags {
+        let owned: Vec<String> = files.iter().map(|s| s.to_string()).collect();
+        PullRequestPipelineFlags::from_changed_files(&owned)
+    }
+
+    #[test]
+    fn test_readme_triggers_nothing() {
+        let f = flags(&["README.md"]);
+        assert!(!f.shellcheck);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.docs);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
+    }
+
+    #[test]
+    fn test_docker_change_triggers_all() {
+        let f = flags(&["ci/docker/Dockerfile"]);
+        assert!(f.checks);
+        assert!(f.feature_check);
+        assert!(f.miri);
+        assert!(f.frozen_abi);
+        assert!(f.stable);
+        assert!(f.local_cluster);
+        assert!(f.docs);
+        assert!(f.localnet);
+        assert!(f.stable_sbf);
+        assert!(f.shuttle);
+        assert!(f.coverage);
+    }
+
+    #[test]
+    fn test_rust_change_triggers_all() {
+        let f = flags(&["core/src/lib.rs"]);
+        assert!(f.checks);
+        assert!(f.feature_check);
+        assert!(f.miri);
+        assert!(f.frozen_abi);
+        assert!(f.stable);
+        assert!(f.local_cluster);
+        assert!(f.docs);
+        assert!(f.localnet);
+        assert!(f.stable_sbf);
+        assert!(f.shuttle);
+        assert!(f.coverage);
+    }
+
+    #[test]
+    fn test_unimportant_shell_triggers_shellcheck_only() {
+        let f = flags(&["some/random/script.sh"]);
+        assert!(f.shellcheck);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.docs);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
+    }
+
+    #[test]
+    fn test_test_docs_sh_triggers_docs_only() {
+        let f = flags(&["ci/test-docs.sh"]);
+        assert!(f.shellcheck);
+        assert!(f.docs);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
     }
 }

@@ -2,7 +2,8 @@ use {
     agave_bls_cert_verify::cert_verify::{aggregate_pubkeys, collect_pubkeys, verify_certificate},
     agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType, VoteMessage},
+        certificate::{Certificate, CertificateType},
+        consensus_message::{Block, VoteMessage},
         vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -35,7 +36,10 @@ fn create_signed_vote_message(bls_keypair: &BlsKeypair, vote: Vote, rank: usize)
 fn create_base2_cert(keypairs: &[BlsKeypair], num_signers: usize) -> Certificate {
     let slot = 100;
     let hash = Hash::new_unique();
-    let cert_type = CertificateType::Notarize(slot, hash);
+    let cert_type = CertificateType::Notarize(Block {
+        slot,
+        block_id: hash,
+    });
     let vote = cert_type.to_source_vote();
 
     let vote_messages: Vec<VoteMessage> = (0..num_signers)
@@ -56,10 +60,19 @@ fn create_base3_cert(
 ) -> Certificate {
     let slot = 100;
     let hash = Hash::new_unique();
-    let cert_type = CertificateType::NotarizeFallback(slot, hash);
+    let cert_type = CertificateType::NotarizeFallback(Block {
+        slot,
+        block_id: hash,
+    });
 
-    let vote_notarize = Vote::new_notarization_vote(slot, hash);
-    let vote_fallback = Vote::new_notarization_fallback_vote(slot, hash);
+    let vote_notarize = Vote::new_notarization_vote(Block {
+        slot,
+        block_id: hash,
+    });
+    let vote_fallback = Vote::new_notarization_fallback_vote(Block {
+        slot,
+        block_id: hash,
+    });
 
     let mut vote_messages = Vec::new();
 

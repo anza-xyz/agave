@@ -10,7 +10,6 @@ use {
     solana_ledger::deshred_transaction_notifier_interface::DeshredTransactionNotifier,
     solana_measure::measure::Measure,
     solana_message::v0::LoadedAddresses,
-    solana_metrics::*,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
     std::sync::Arc,
@@ -77,12 +76,6 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             }
         }
         measure.stop();
-        inc_new_counter_debug!(
-            "geyser-plugin-notify_plugins_of_deshred_transaction_info-us",
-            measure.as_us() as usize,
-            10000,
-            10000
-        );
     }
 
     fn alt_resolution_enabled(&self) -> bool {

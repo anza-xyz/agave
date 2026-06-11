@@ -24,6 +24,9 @@ pub enum SnapshotError {
     #[error("deserialization error: {0}")]
     DeserializeWincode(#[from] wincode::ReadError),
 
+    #[error("serialization error: {0}")]
+    SerializeWincode(#[from] wincode::WriteError),
+
     #[error("crossbeam send error: {0}")]
     CrossbeamSend(#[from] crossbeam_channel::SendError<PathBuf>),
 
@@ -71,9 +74,6 @@ pub enum SnapshotError {
 
     #[error("snapshot epoch stakes are invalid: {0}")]
     VerifyEpochStakes(#[from] VerifyEpochStakesError),
-
-    #[error("slot in storages map {0} exceeds snapshot slot: {1}")]
-    MismatchedSnapshotStorageSlot(Slot, Slot),
 
     #[error("bank_snapshot_info new_from_dir failed: {0}")]
     NewFromDir(#[from] SnapshotNewFromDirError),
@@ -199,9 +199,6 @@ pub enum AddBankSnapshotError {
     #[error("failed to flush storage '{1}': {0}")]
     FlushStorage(#[source] AccountsFileError, PathBuf),
 
-    #[error("failed to hard link storages: {0}")]
-    HardLinkStorages(#[source] HardLinkStoragesToSnapshotError),
-
     #[error("failed to serialize bank: {0}")]
     SerializeBank(#[source] Box<SnapshotError>),
 
@@ -210,6 +207,9 @@ pub enum AddBankSnapshotError {
 
     #[error("failed to serialize obsolete accounts: {0}")]
     SerializeObsoleteAccounts(#[source] Box<SnapshotError>),
+
+    #[error("failed to write storages list: {0}")]
+    WriteStoragesList(#[source] Box<SnapshotError>),
 
     #[error("failed to write snapshot version file '{1}': {0}")]
     WriteSnapshotVersionFile(#[source] io::Error, PathBuf),
@@ -274,34 +274,4 @@ pub enum ArchiveSnapshotPackageError {
 
     #[error("failed to initialize file buffered reader: {0}")]
     StorageFileBufReaderError(#[source] io::Error),
-}
-
-/// Errors that can happen in `hard_link_storages_to_snapshot()`
-#[derive(Error, Debug)]
-pub enum HardLinkStoragesToSnapshotError {
-    #[error("failed to create accounts hard links dir '{1}': {0}")]
-    CreateAccountsHardLinksDir(#[source] io::Error, PathBuf),
-
-    #[error("failed to get the snapshot's accounts hard link dir: {0}")]
-    GetSnapshotHardLinksDir(#[from] GetSnapshotAccountsHardLinkDirError),
-
-    #[error("failed to hard link storage from '{1}' to '{2}': {0}")]
-    HardLinkStorage(#[source] io::Error, PathBuf, PathBuf),
-}
-
-/// Errors that can happen in `get_snapshot_accounts_hardlink_dir()`
-#[derive(Error, Debug)]
-pub enum GetSnapshotAccountsHardLinkDirError {
-    #[error("invalid account storage path '{0}'")]
-    GetAccountPath(PathBuf),
-
-    #[error("failed to create the snapshot hard link dir '{1}': {0}")]
-    CreateSnapshotHardLinkDir(#[source] io::Error, PathBuf),
-
-    #[error("failed to symlink snapshot hard link dir '{link}' to '{original}': {source}")]
-    SymlinkSnapshotHardLinkDir {
-        source: io::Error,
-        original: PathBuf,
-        link: PathBuf,
-    },
 }

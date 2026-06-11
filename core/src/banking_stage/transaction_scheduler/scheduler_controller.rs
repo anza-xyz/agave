@@ -20,6 +20,7 @@ use {
         },
         validator::SchedulerPacing,
     },
+    agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -36,6 +37,13 @@ use {
 };
 
 const CHECK_CHUNK: usize = 128;
+
+/// Publish the priority floor once the scheduler's retained transaction buffer is
+/// this full. Capacity is enforced on the buffer, not just the priority queue:
+/// scheduled transactions still occupy buffer space until workers finish them.
+const SATURATION_BUFFER_PCT: u8 = 99;
+/// Clear the priority floor once the retained buffer drains below this watermark.
+const DESATURATION_BUFFER_PCT: u8 = 95;
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -55,6 +63,56 @@ impl Default for SchedulerConfig {
 const DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS: u64 = 50;
 pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
     NonZeroU64::new(DEFAULT_MS_PER_SLOT - DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS).unwrap();
+
+/// Detects saturation and publishes the priority floor for dropping low-priority transactions upstream.
+struct SaturationState {
+    priority_floor: Arc<SchedulerPriorityFloor>,
+    saturated: bool,
+    saturation_watermark: usize,
+    desaturation_watermark: usize,
+}
+
+impl SaturationState {
+    fn new(priority_floor: Arc<SchedulerPriorityFloor>, container_capacity: usize) -> Self {
+        let saturation_watermark =
+            container_capacity.saturating_mul(SATURATION_BUFFER_PCT as usize) / 100;
+        let desaturation_watermark =
+            container_capacity.saturating_mul(DESATURATION_BUFFER_PCT as usize) / 100;
+        Self {
+            priority_floor,
+            saturated: false,
+            saturation_watermark,
+            desaturation_watermark,
+        }
+    }
+
+    /// Update the saturation state.
+    fn update(&mut self, buffer_size: usize, num_dropped_on_capacity: usize) -> bool {
+        if self.saturated {
+            if buffer_size < self.desaturation_watermark && num_dropped_on_capacity == 0 {
+                self.saturated = false;
+            }
+        } else if buffer_size >= self.saturation_watermark || num_dropped_on_capacity > 0 {
+            self.saturated = true;
+        }
+
+        self.saturated
+    }
+
+    /// Publish the priority floor.
+    fn publish_floor(&self, floor: u64) {
+        self.priority_floor.set(floor);
+    }
+}
+
+impl Drop for SaturationState {
+    fn drop(&mut self) {
+        // The priority floor outlives individual scheduler controllers (it's
+        // shared with sigverify). Clear it on tear-down so a stale floor
+        // from this controller can't keep sigverify dropping packets.
+        self.priority_floor.clear();
+    }
+}
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<R, S>
@@ -88,6 +146,8 @@ where
     recheck_cursor: Option<TransactionPriorityId>,
     /// Recheck IDs scratch space.
     recheck_chunk: Vec<TransactionPriorityId>,
+    /// Saturation detection and priority floor publication.
+    saturation_state: SaturationState,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -103,14 +163,18 @@ where
         sharable_banks: SharableBanks,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+        priority_floor: Arc<SchedulerPriorityFloor>,
     ) -> Self {
+        priority_floor.clear();
+        let container_capacity = TOTAL_BUFFERED_PACKETS;
+        let saturation_state = SaturationState::new(priority_floor, container_capacity);
         Self {
             exit,
             config,
             decision_maker,
             receive_and_buffer,
             sharable_banks,
-            container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
+            container: R::Container::with_capacity(container_capacity),
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
@@ -118,6 +182,7 @@ where
             scheduling_details: SchedulingDetails::default(),
             recheck_cursor: None,
             recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
+            saturation_state,
         }
     }
 
@@ -195,7 +260,7 @@ where
                     timing_metrics.clean_time_us += clean_time_us;
                 });
             }
-            self.receive_and_buffer_packets(&decision).map_err(|_| {
+            let receiving_stats = self.receive_and_buffer_packets(&decision).map_err(|_| {
                 SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
             })?;
             // Report metrics only if there is data.
@@ -205,6 +270,7 @@ where
             self.count_metrics.update(|count_metrics| {
                 count_metrics.update_priority_stats(priority_min_max);
             });
+            self.update_scheduler_priority_floor(receiving_stats.num_dropped_on_capacity);
             self.count_metrics
                 .maybe_report_and_reset_interval(should_report);
             self.timing_metrics
@@ -263,6 +329,27 @@ where
         };
 
         Ok(scheduled)
+    }
+
+    /// Update the scheduler priority floor.
+    ///
+    /// Semantics: when the retained scheduler buffer is nearly full, drop
+    /// arrivals that are at-or-below the current queue-min priority, i.e. no
+    /// better than what the bounded scheduler candidate set would evict.
+    fn update_scheduler_priority_floor(&mut self, num_dropped_on_capacity: usize) {
+        let buffer_size = self.container.buffer_size();
+        let saturated = self
+            .saturation_state
+            .update(buffer_size, num_dropped_on_capacity);
+        let priority_floor = if saturated {
+            self.container
+                .get_min_max_priority()
+                .map_or(0, |(min, _)| min)
+        } else {
+            0
+        };
+
+        self.saturation_state.publish_floor(priority_floor);
     }
 
     /// Clears the transaction state container.
@@ -449,7 +536,7 @@ mod tests {
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
-        crossbeam_channel::{Receiver, Sender, unbounded},
+        crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
@@ -469,7 +556,7 @@ mod tests {
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
-        (0..num).map(|_| unbounded()).unzip()
+        (0..num).map(|_| bounded(1024)).unzip()
     }
 
     // Helper struct to create tests that hold channels, files, etc.
@@ -516,12 +603,12 @@ mod tests {
 
         let decision_maker = DecisionMaker::new(shared_leader_state.clone());
 
-        let (banking_packet_sender, banking_packet_receiver) = unbounded();
+        let (banking_packet_sender, banking_packet_receiver) = bounded(1024);
         let receive_and_buffer =
             create_receive_and_buffer(banking_packet_receiver, bank_forks.clone());
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
-        let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
+        let (finished_consume_work_sender, finished_consume_work_receiver) = bounded(1024);
 
         let test_frame = TestFrame {
             bank,
@@ -547,6 +634,7 @@ mod tests {
             bank_forks.read().unwrap().sharable_banks(),
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
+            Arc::new(SchedulerPriorityFloor::default()),
         );
 
         (test_frame, scheduler_controller)
@@ -993,5 +1081,95 @@ mod tests {
             .map(|tx| tx.message_hash())
             .collect_vec();
         assert_eq!(message_hashes, vec![&tx1_hash]);
+    }
+}
+
+#[cfg(test)]
+mod saturation_state_tests {
+    use super::*;
+
+    fn saturation_watermark() -> usize {
+        TOTAL_BUFFERED_PACKETS.saturating_mul(SATURATION_BUFFER_PCT as usize) / 100
+    }
+
+    fn desaturation_watermark() -> usize {
+        TOTAL_BUFFERED_PACKETS.saturating_mul(DESATURATION_BUFFER_PCT as usize) / 100
+    }
+
+    fn make_state() -> (SaturationState, Arc<SchedulerPriorityFloor>) {
+        let priority_floor = Arc::new(SchedulerPriorityFloor::new());
+        let state = SaturationState::new(priority_floor.clone(), TOTAL_BUFFERED_PACKETS);
+        (state, priority_floor)
+    }
+
+    #[test]
+    fn starts_unsaturated() {
+        let (mut state, floor) = make_state();
+        assert!(!state.update(0, 0));
+        assert_eq!(floor.get(), 0);
+    }
+
+    #[test]
+    fn does_not_enter_when_buffer_below_saturation_watermark() {
+        let (mut state, floor) = make_state();
+        assert!(!state.update(saturation_watermark() - 1, 0));
+        assert_eq!(floor.get(), 0);
+    }
+
+    #[test]
+    fn enters_when_buffer_reaches_saturation_watermark() {
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+    }
+
+    #[test]
+    fn enters_on_capacity_drops_even_below_watermark() {
+        // Direct trigger: any on-capacity drop saturates regardless of
+        // buffer-watermark — invariant to future changes in the trim policy.
+        let (mut state, _floor) = make_state();
+        assert!(state.update(0, 1));
+    }
+
+    #[test]
+    fn publish_floor_writes_value() {
+        let (state, floor) = make_state();
+        state.publish_floor(42);
+        assert_eq!(floor.get(), 42);
+    }
+
+    #[test]
+    fn stays_saturated_at_desaturation_watermark() {
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+        assert!(state.update(desaturation_watermark(), 0));
+    }
+
+    #[test]
+    fn exits_when_buffer_drops_below_desaturation_watermark() {
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+        assert!(!state.update(desaturation_watermark() - 1, 0));
+    }
+
+    #[test]
+    fn stays_saturated_on_drops_even_below_desaturation_watermark() {
+        // Direct trigger keeps us saturated even if the buffer has drained,
+        // because drops in the same tick mean we still need backpressure.
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+        assert!(state.update(desaturation_watermark() - 1, 1));
+    }
+
+    #[test]
+    fn drop_clears_floor() {
+        // The floor outlives the controller (it's shared with sigverify), so
+        // tear-down must clear any stale value.
+        let floor = Arc::new(SchedulerPriorityFloor::new());
+        {
+            let state = SaturationState::new(floor.clone(), TOTAL_BUFFERED_PACKETS);
+            state.publish_floor(123);
+            assert_eq!(floor.get(), 123);
+        }
+        assert_eq!(floor.get(), 0);
     }
 }

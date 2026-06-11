@@ -33,7 +33,6 @@ log = { workspace = true }
 nix = { workspace = true, features = ["net", "poll", "signal"] }
 num_cpus = { workspace = true }
 pem = { workspace = true }
-percentage = { workspace = true }
 quinn = { workspace = true }
 rand = { workspace = true }
 rustls = { workspace = true }

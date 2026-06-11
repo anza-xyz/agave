@@ -22,7 +22,7 @@ use {
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
-            active_vote_account_exists_in_bank_alpenglow,
+            should_require_vote_history_file,
         },
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
@@ -913,14 +913,15 @@ impl AdminRpcImpl {
             }
 
             if require_vote_history {
-                let voting_has_been_active = {
+                let should_require_vote_history = {
                     let bank_forks = post_init.bank_forks.read().unwrap();
-                    active_vote_account_exists_in_bank_alpenglow(
-                        &bank_forks.root_bank(),
+                    should_require_vote_history_file(
+                        &bank_forks.working_bank(),
                         &post_init.vote_account,
+                        &identity_keypair.pubkey(),
                     )
                 };
-                if voting_has_been_active {
+                if should_require_vote_history {
                     let _ = VoteHistory::restore(
                         meta.vote_history_storage.as_ref(),
                         &identity_keypair.pubkey(),
@@ -1102,7 +1103,7 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor::event::VotorEventSender,
         assert_matches::assert_matches,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         serde_json::Value,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -1168,7 +1169,7 @@ mod tests {
                 },
             });
 
-            let (snapshot_request_sender, _) = unbounded();
+            let (snapshot_request_sender, _) = bounded(1024);
             let snapshot_controller = Arc::new(SnapshotController::new(
                 snapshot_request_sender.clone(),
                 SnapshotConfig::default(),
@@ -1182,7 +1183,7 @@ mod tests {
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::new()));
             let votor_event_sender = config.votor_event_sender.unwrap_or_else(|| {
-                let (votor_event_sender, _) = unbounded();
+                let (votor_event_sender, _) = bounded(1024);
                 votor_event_sender
             });
             let meta = AdminRpcRequestMetadata {
@@ -1242,7 +1243,7 @@ mod tests {
     // Bank but without validator.
     #[test]
     fn test_set_identity() {
-        let (votor_event_sender, votor_event_receiver) = unbounded();
+        let (votor_event_sender, votor_event_receiver) = bounded(1024);
         let rpc = RpcHandler::start_with_config(TestConfig {
             account_indexes: AccountSecondaryIndexes::default(),
             votor_event_sender: Some(votor_event_sender),

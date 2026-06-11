@@ -107,8 +107,10 @@ pub struct StoreAccountsForShrinkStats {
     pub last_report: AtomicInterval,
     pub flush_read_cache_us: AtomicU64,
     pub write_to_storage_us: AtomicU64,
+    pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
     pub update_index_us: AtomicU64,
     pub num_accounts_stored: AtomicU64,
+    pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
 }
 
 impl StoreAccountsForShrinkStats {
@@ -133,6 +135,12 @@ impl StoreAccountsForShrinkStats {
                 i64
             ),
             (
+                "mark_zero_lamport_single_ref_accounts_us",
+                self.mark_zero_lamport_single_ref_accounts_us
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "update_index_us",
                 self.update_index_us.swap(0, Ordering::Relaxed),
                 i64
@@ -140,6 +148,12 @@ impl StoreAccountsForShrinkStats {
             (
                 "num_accounts_stored",
                 self.num_accounts_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_zero_lamport_single_ref_accounts_marked",
+                self.num_zero_lamport_single_ref_accounts_marked
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -339,6 +353,7 @@ pub struct FlushStats {
     pub num_bytes_purged: Saturating<u64>,
     pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
+    pub select_pubkeys_us: Saturating<u64>,
 }
 
 impl FlushStats {
@@ -350,6 +365,7 @@ impl FlushStats {
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
+        self.select_pubkeys_us += other.select_pubkeys_us;
     }
 }
 

@@ -3,6 +3,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![deny(missing_docs)]
 
+pub mod certificate;
 pub mod consensus_message;
 pub mod fraction;
 pub mod migration;

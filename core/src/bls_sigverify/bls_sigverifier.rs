@@ -7,16 +7,17 @@ use {
         errors::SigVerifyError,
         stats::SigVerifierStats,
     },
-    crate::cluster_info_vote_listener::VerifiedVoterSlotsSender,
+    crate::{
+        block_creation_loop::rewards::{certs_builder::wants_vote, msg_types::AddVoteMessage},
+        cluster_info_vote_listener::VerifiedVoterSlotsSender,
+    },
     agave_votor::{
-        consensus_metrics::ConsensusMetricsEventSender,
-        consensus_rewards::{self},
-        generated_cert_types::GeneratedCertTypes,
+        consensus_metrics::ConsensusMetricsEventSender, generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
-        consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
+        certificate::CertificateType,
+        consensus_message::{ConsensusMessage, SigVerifiedBatch, VoteMessage},
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -63,7 +64,7 @@ pub(crate) struct SigVerifierChannels {
     pub(crate) packet_receiver: Receiver<PacketBatch>,
     pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
-    pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
+    pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
     pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
 }
 
@@ -200,7 +201,7 @@ impl SigVerifier {
     fn maybe_prune_caches(&mut self, root_slot: Slot) {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
-            self.verified_certs.retain(|cert| cert.slot() > root_slot);
+            self.verified_certs.retain(|cert| cert.slot() >= root_slot);
         }
     }
 
@@ -241,7 +242,7 @@ impl SigVerifier {
                     }
                 }
                 ConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() <= root_slot {
+                    if cert.cert_type.slot() < root_slot {
                         self.stats.num_old_certs_received += 1;
                         continue;
                     }
@@ -285,8 +286,7 @@ impl SigVerifier {
         if vote.vote.slot() > root_slot {
             return ret;
         }
-        if consensus_rewards::wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote)
-        {
+        if wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
             return ret;
         }
         self.stats.num_old_votes_received += 1;
@@ -338,11 +338,12 @@ mod tests {
             consensus_pool::certificate_builder::CertificateBuilder,
         },
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+            certificate::{Certificate, CertificateType},
+            consensus_message::{Block, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},
-        crossbeam_channel::{Receiver, TryRecvError},
+        crossbeam_channel::{Receiver, TryRecvError, bounded},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
@@ -375,20 +376,20 @@ mod tests {
         _packet_sender: Sender<PacketBatch>,
         repair_receiver: VerifiedVoterSlotsReceiver,
         _reward_receiver: Receiver<AddVoteMessage>,
-        pool_receiver: Receiver<Vec<ConsensusMessage>>,
+        pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,
     }
 
     impl TestContext {
         fn new() -> Self {
-            let (channel_to_pool, pool_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_pool, pool_receiver) = bounded(1024);
             Self::new_with_pool_channel(channel_to_pool, pool_receiver)
         }
 
         fn new_with_pool_channel(
-            channel_to_pool: Sender<Vec<ConsensusMessage>>,
-            pool_receiver: Receiver<Vec<ConsensusMessage>>,
+            channel_to_pool: Sender<SigVerifiedBatch>,
+            pool_receiver: Receiver<SigVerifiedBatch>,
         ) -> Self {
             let num_validators = 10;
             let validator_keypairs = (0..num_validators)
@@ -416,10 +417,10 @@ mod tests {
             let leader_schedule =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-            let (channel_to_repair, repair_receiver) = crossbeam_channel::unbounded();
-            let (channel_to_reward, reward_receiver) = crossbeam_channel::unbounded();
-            let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
-            let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_repair, repair_receiver) = bounded(1024);
+            let (channel_to_reward, reward_receiver) = bounded(1024);
+            let (packet_sender, packet_receiver) = bounded(1024);
+            let (channel_to_metrics, metrics_receiver) = bounded(1024);
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let banlist = new_test_banlist();
@@ -527,7 +528,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages1))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
         let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
@@ -542,7 +543,10 @@ mod tests {
         let vote_rank2 = 3;
         let vote_message2 = create_signed_vote_message(
             &ctx.validator_keypairs,
-            Vote::new_notarization_vote(6, Hash::new_unique()),
+            Vote::new_notarization_vote(Block {
+                slot: 6,
+                block_id: Hash::new_unique(),
+            }),
             vote_rank2,
         );
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
@@ -551,7 +555,7 @@ mod tests {
             .verify_and_send_batches(messages_to_batches(&messages2))
             .unwrap();
 
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
         let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
@@ -566,7 +570,10 @@ mod tests {
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
             &ctx.validator_keypairs,
-            Vote::new_notarization_fallback_vote(7, Hash::new_unique()),
+            Vote::new_notarization_fallback_vote(Block {
+                slot: 7,
+                block_id: Hash::new_unique(),
+            }),
             vote_rank3,
         );
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
@@ -574,7 +581,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages3))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
         let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
@@ -641,29 +648,50 @@ mod tests {
         let (channel_to_pool, pool_receiver) = crossbeam_channel::bounded(1);
         let mut ctx = TestContext::new_with_pool_channel(channel_to_pool, pool_receiver);
 
-        let msg1 = ConsensusMessage::Vote(create_signed_vote_message(
+        let msg1 =
+            create_signed_vote_message(&ctx.validator_keypairs, Vote::new_finalization_vote(5), 0);
+        let msg2 = create_signed_vote_message(
             &ctx.validator_keypairs,
-            Vote::new_finalization_vote(5),
-            0,
-        ));
-        let msg2 = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.validator_keypairs,
-            Vote::new_notarization_fallback_vote(6, Hash::new_unique()),
+            Vote::new_notarization_fallback_vote(Block {
+                slot: 6,
+                block_id: Hash::new_unique(),
+            }),
             2,
-        ));
+        );
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg1)))
-            .unwrap();
-        ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&[msg2]))
+            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(
+                &ConsensusMessage::Vote(msg1.clone()),
+            )))
             .unwrap();
 
-        // We failed to send the second message because the channel is full.
-        let msgs = ctx.pool_receiver.try_iter().flatten().collect::<Vec<_>>();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs, vec![msg1]);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_channel_full, 1);
+        // The cap-1 channel is now full.  The second send hits Full and falls
+        // back to a blocking send (see `send_votes_to_pool`); drain in a
+        // background thread so the blocking send can complete.
+        let pool_receiver = ctx.pool_receiver.clone();
+        let drain = std::thread::spawn(move || {
+            let m1 = pool_receiver.recv().expect("recv msg1");
+            let m2 = pool_receiver.recv().expect("recv msg2");
+            // No leftover messages on the channel after both deliveries.
+            assert!(matches!(
+                pool_receiver.try_recv(),
+                Err(crossbeam_channel::TryRecvError::Empty)
+            ));
+            (m1, m2)
+        });
+
+        ctx.verifier
+            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(
+                &ConsensusMessage::Vote(msg2.clone()),
+            )))
+            .unwrap();
+
+        let (m1_recv, m2_recv) = drain.join().expect("drain joined");
+        // Both messages were eventually delivered (no silent drop).
+        assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
+        assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
+        // pool_sent counts every message that made it onto the channel,
+        // whether via try_send or the blocking fallback.
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 2);
     }
 
     #[test]
@@ -733,11 +761,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
-            num_votes,
-            "Did not send all valid packets"
-        );
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
     }
 
     #[test]
@@ -751,7 +782,10 @@ mod tests {
 
         let vote1 = Vote::new_skip_vote(42);
         let _vote1_payload = wincode::serialize(&vote1).expect("Failed to serialize vote");
-        let vote2 = Vote::new_notarization_vote(43, Hash::new_unique());
+        let vote2 = Vote::new_notarization_vote(Block {
+            slot: 43,
+            block_id: Hash::new_unique(),
+        });
         let _vote2_payload = wincode::serialize(&vote2).expect("Failed to serialize vote");
 
         // Group 1 votes
@@ -789,11 +823,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
-            num_votes,
-            "Did not send all valid packets"
-        );
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
         assert_eq!(
             ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
             1
@@ -853,19 +890,28 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
-        assert_eq!(
-            sent_messages.len(),
-            num_votes - 1,
-            "Only valid votes should be sent"
-        );
-        assert!(!sent_messages.iter().any(|msg| {
-            if let ConsensusMessage::Vote(vm) = msg {
-                vm.vote == vote2 && vm.rank == invalid_rank
-            } else {
-                false
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes - 1);
             }
-        }));
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+
+        let mut found_msg = false;
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                for vote in votes {
+                    if vote.vote == vote2 && vote.rank == invalid_rank {
+                        found_msg = true;
+                        break;
+                    }
+                }
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+        assert!(!found_msg);
     }
 
     #[test]
@@ -907,21 +953,29 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
-        assert_eq!(
-            sent_messages.len(),
-            num_votes - 1,
-            "Only valid votes should be sent"
-        );
+        let batches: Vec<_> = ctx.pool_receiver.try_iter().collect();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes - 1);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
 
         // Ensure the message with the invalid rank is not in the sent messages.
-        assert!(!sent_messages.iter().any(|msg| {
-            if let ConsensusMessage::Vote(vm) = msg {
-                vm.rank == invalid_rank
-            } else {
-                false
+        let mut found_msg = false;
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                for vote in votes {
+                    if vote.rank == invalid_rank {
+                        found_msg = true;
+                        break;
+                    }
+                }
             }
-        }));
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+        assert!(!found_msg);
     }
 
     #[test]
@@ -930,7 +984,10 @@ mod tests {
 
         // 2/3 of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 2).div_ceil(3);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,
@@ -943,7 +1000,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base2 certificate should be sent"
         );
@@ -955,7 +1012,10 @@ mod tests {
 
         // 60% of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 6).div_ceil(10);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,
@@ -968,7 +1028,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base2 certificate should be sent"
         );
@@ -981,7 +1041,10 @@ mod tests {
         // < 60% of validators sign the cert
         assert!(ctx.validator_keypairs.len() >= 2);
         let num_signers = (ctx.validator_keypairs.len() * 6) / 10 - 1;
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
             cert_type,
@@ -995,7 +1058,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             0,
             "This certificate should be invalid"
         );
@@ -1008,8 +1071,12 @@ mod tests {
 
         let slot = 20;
         let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
@@ -1025,7 +1092,7 @@ mod tests {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -1038,7 +1105,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base3 certificate should be sent"
         );
@@ -1050,8 +1117,12 @@ mod tests {
 
         let slot = 20;
         let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
@@ -1067,7 +1138,7 @@ mod tests {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -1080,7 +1151,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             1,
             "Valid Base3 certificate should be sent"
         );
@@ -1092,8 +1163,12 @@ mod tests {
 
         let slot = 20;
         let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
@@ -1109,7 +1184,7 @@ mod tests {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -1122,7 +1197,7 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().count(),
             0,
             "This certificate should be invalid"
         );
@@ -1137,7 +1212,10 @@ mod tests {
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
         let slot = 10;
         let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(slot, block_hash);
+        let cert_type = CertificateType::Notarize(Block {
+            slot,
+            block_id: block_hash,
+        });
         let mut bitmap = BitVec::<u8, Lsb0>::new();
         bitmap.resize(num_signers, false);
         for i in 0..num_signers {
@@ -1186,8 +1264,11 @@ mod tests {
 
         // 70% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
-        let cert_original_vote = Vote::new_notarization_vote(10, cert_type.to_block().unwrap().1);
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let cert_original_vote = Vote::new_notarization_vote(cert_type.to_block().unwrap());
         let cert_payload = wincode::serialize(&cert_original_vote).unwrap();
 
         let cert_vote_messages: Vec<VoteMessage> = (0..num_signers)
@@ -1215,11 +1296,30 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().flatten().count(),
-            num_votes + 1,
-            "All valid messages in a mixed batch should be sent"
-        );
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 2);
+
+        let batch_0_was_votes = match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), num_votes);
+                true
+            }
+            SigVerifiedBatch::Certificates(certs) => {
+                assert_eq!(certs.len(), 1);
+                false
+            }
+        };
+
+        match &batches[1] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert!(!batch_0_was_votes);
+                assert_eq!(votes.len(), num_votes);
+            }
+            SigVerifiedBatch::Certificates(certs) => {
+                assert!(batch_0_was_votes);
+                assert_eq!(certs.len(), 1);
+            }
+        }
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, num_votes as u64);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
     }
@@ -1250,10 +1350,10 @@ mod tests {
 
     #[test]
     fn test_verify_old_vote_and_cert() {
-        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
-        let (votes_for_repair_sender, _) = crossbeam_channel::unbounded();
-        let (consensus_metrics_sender, _) = crossbeam_channel::unbounded();
-        let (reward_votes_sender, _reward_votes_receiver) = crossbeam_channel::unbounded();
+        let (message_sender, message_receiver) = bounded(1024);
+        let (votes_for_repair_sender, _) = bounded(1024);
+        let (consensus_metrics_sender, _) = bounded(1024);
+        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -1281,7 +1381,7 @@ mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let (_packet_sender, packet_receiver) = crossbeam_channel::unbounded();
+        let (_packet_sender, packet_receiver) = bounded(1024);
         let mut sig_verifier = SigVerifier::new(
             SigVerifierContext {
                 migration_status: Arc::new(MigrationStatus::default()),
@@ -1342,8 +1442,12 @@ mod tests {
         let num_signers = (ctx.validator_keypairs.len() * 8).div_ceil(10);
         let slot = 10;
         let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(slot, block_hash);
-        let original_vote = Vote::new_notarization_vote(slot, block_hash);
+        let block = Block {
+            slot,
+            block_id: block_hash,
+        };
+        let cert_type = CertificateType::Notarize(block);
+        let original_vote = Vote::new_notarization_vote(block);
         let signed_payload = wincode::serialize(&original_vote).unwrap();
         let mut vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
@@ -1368,7 +1472,7 @@ mod tests {
             .verify_and_send_batches(packet_batches1)
             .unwrap();
 
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 1);
 
@@ -1401,7 +1505,10 @@ mod tests {
         ));
         let cert_message = ConsensusMessage::Certificate(create_signed_certificate_message(
             &ctx.validator_keypairs,
-            CertificateType::Notarize(43, Hash::new_unique()),
+            CertificateType::Notarize(Block {
+                slot: 43,
+                block_id: Hash::new_unique(),
+            }),
             &(0..7).collect::<Vec<_>>(),
         ));
         let vote_sender = Pubkey::new_unique();
@@ -1414,7 +1521,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert!(!ctx.banlist.is_banned(&vote_sender));
         assert!(!ctx.banlist.is_banned(&cert_sender));
     }
@@ -1450,7 +1557,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Votes(votes) => {
+                assert_eq!(votes.len(), 3);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
 
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
@@ -1475,7 +1589,10 @@ mod tests {
         let messages: Vec<_> = (0..5)
             .map(|i| {
                 let slot = 10 + i as u64;
-                let cert_type = CertificateType::Notarize(slot, Hash::new_unique());
+                let cert_type = CertificateType::Notarize(Block {
+                    slot,
+                    block_id: Hash::new_unique(),
+                });
                 let mut cert = create_signed_certificate_message(
                     &ctx.validator_keypairs,
                     cert_type,
@@ -1491,7 +1608,14 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
             .unwrap();
-        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Certificates(certs) => {
+                assert_eq!(certs.len(), 3);
+            }
+            rest => panic!("unexpected type: {rest:?}"),
+        }
 
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {

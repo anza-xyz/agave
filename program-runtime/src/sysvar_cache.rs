@@ -91,7 +91,7 @@ impl SysvarCache {
             }
             sysvar::slot_hashes::ID => {
                 let slot_hashes: SlotHashes =
-                    bincode::deserialize(&data).expect("Failed to deserialize SlotHashes sysvar.");
+                    wincode::deserialize(&data).expect("Failed to deserialize SlotHashes sysvar.");
                 self.slot_hashes = Some(data);
                 self.slot_hashes_obj = Some(Arc::new(slot_hashes));
             }
@@ -229,7 +229,7 @@ impl SysvarCache {
 
         if self.slot_hashes.is_none() {
             get_account_data(&SlotHashes::id(), &mut |data: &[u8]| {
-                if let Ok(obj) = bincode::deserialize::<SlotHashes>(data) {
+                if let Ok(obj) = wincode::deserialize::<SlotHashes>(data) {
                     self.slot_hashes = Some(data.to_vec());
                     self.slot_hashes_obj = Some(Arc::new(obj));
                 }

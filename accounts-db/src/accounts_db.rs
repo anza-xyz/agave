@@ -64,6 +64,7 @@ use {
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
+    ahash::HashMapExt,
     bv::BitVec,
     dashmap::{DashMap, DashSet},
     log::*,
@@ -821,6 +822,8 @@ struct CleanKeyTimings {
     delta_key_count: u64,
     dirty_pubkeys_count: u64,
     oldest_dirty_slot: Slot,
+    zero_lamport_single_ref_slots_added_to_shrink_count: u64,
+    zero_lamport_sweep_us: u64,
 }
 
 pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
@@ -963,6 +966,10 @@ pub struct AccountsDb {
     /// for incremental snapshot support.
     zero_lamport_accounts_to_purge_after_full_snapshot: DashSet<(Slot, Pubkey)>,
 
+    /// Set by `set_latest_full_snapshot_slot` when the snapshot advances. Read and cleared by
+    /// clean
+    latest_full_snapshot_slot_advanced_since_clean: AtomicBool,
+
     /// GeyserPlugin accounts update notifier
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 
@@ -984,6 +991,10 @@ pub struct AccountsDb {
     /// The latest full snapshot slot dictates how to handle zero lamport accounts
     /// Note, this is None if we're told to *not* take snapshots
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
+
+    /// The full snapshot slot we last swept for zero-lamport-single-ref shrink
+    /// eligibility.
+    last_swept_full_snapshot_slot: AtomicU64,
 
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
@@ -1147,8 +1158,10 @@ impl AccountsDb {
             is_bank_drop_callback_enabled: AtomicBool::default(),
             dirty_stores: DashMap::default(),
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
+            latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
+            last_swept_full_snapshot_slot: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
         };
 
@@ -1593,31 +1606,82 @@ impl AccountsDb {
 
         timings.delta_key_count = Self::count_pubkeys(&candidates);
 
-        // Check if we should purge any of the
-        // zero_lamport_accounts_to_purge_later, based on the
-        // latest_full_snapshot_slot.
-        let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-        assert!(
-            latest_full_snapshot_slot.is_some()
+        debug_assert!(
+            self.latest_full_snapshot_slot().is_some()
                 || self
                     .zero_lamport_accounts_to_purge_after_full_snapshot
                     .is_empty(),
             "if snapshots are disabled, then zero_lamport_accounts_to_purge_later should always \
              be empty"
         );
-        if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
-            self.zero_lamport_accounts_to_purge_after_full_snapshot
-                .retain(|(slot, pubkey)| {
-                    let is_candidate_for_clean =
-                        max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
-                    if is_candidate_for_clean {
-                        insert_candidate(*pubkey, true);
-                    }
-                    !is_candidate_for_clean
-                });
+
+        // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
+        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and
+        // search for newly shrinkable storages.
+        if self
+            .latest_full_snapshot_slot_advanced_since_clean
+            .swap(false, Ordering::Acquire)
+        {
+            if let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot() {
+                self.zero_lamport_accounts_to_purge_after_full_snapshot
+                    .retain(|(slot, pubkey)| {
+                        let is_candidate_for_clean =
+                            max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
+                        if is_candidate_for_clean {
+                            insert_candidate(*pubkey, true);
+                        }
+                        !is_candidate_for_clean
+                    });
+
+                let last_swept_full_snapshot_slot =
+                    self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
+                let (added_to_shrink_count, sweep_us) =
+                    measure_us!(self.check_shrink_eligibility_after_snapshot(
+                        last_swept_full_snapshot_slot,
+                        latest_full_snapshot_slot
+                    ));
+                timings.zero_lamport_single_ref_slots_added_to_shrink_count +=
+                    added_to_shrink_count;
+                timings.zero_lamport_sweep_us += sweep_us;
+            }
         }
 
         (candidates, min_dirty_slot)
+    }
+
+    /// Loop through slots in `[last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
+    /// check each storage to determine if it is eligible for shrink, since zero-lamport single-ref
+    /// accounts become shrinkable after a full snapshot advances past their slot. Advances the
+    /// `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    ///
+    /// Returns the count of storages that were added to the shrink candidates set
+    fn check_shrink_eligibility_after_snapshot(
+        &self,
+        last_swept_full_snapshot_slot: Slot,
+        latest_full_snapshot_slot: Slot,
+    ) -> u64 {
+        let start = last_swept_full_snapshot_slot.saturating_add(1);
+
+        let mut added_to_shrink_count = 0;
+        // Held for the full scan. Safe because the only paths that take this lock in production
+        // validator code run in earlier/later phases of the same AccountsBackgroundService
+        // iteration, never concurrently with clean_accounts.
+        let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
+        for slot in start..=latest_full_snapshot_slot {
+            if let Some(store) = self.storage.get_slot_storage_entry(slot)
+                && self.is_shrinking_productive(&store)
+                && self.is_candidate_for_shrink(&store)
+            {
+                if shrink_candidates.insert(slot) {
+                    added_to_shrink_count += 1;
+                }
+            }
+        }
+        drop(shrink_candidates);
+
+        self.last_swept_full_snapshot_slot
+            .store(latest_full_snapshot_slot, Ordering::Relaxed);
+        added_to_shrink_count
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -2063,6 +2127,12 @@ impl AccountsDb {
             ("delta_insert_us", key_timings.delta_insert_us, i64),
             ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
+            (
+                "zero_lamport_single_ref_slots_added_to_shrink_count",
+                key_timings.zero_lamport_single_ref_slots_added_to_shrink_count,
+                i64
+            ),
+            ("zero_lamport_sweep_us", key_timings.zero_lamport_sweep_us, i64),
             ("useful_keys", useful_accum.load(Ordering::Relaxed), i64),
             ("total_keys_count", num_candidates, i64),
             ("retained_keys_count", retained_keys_count, i64),
@@ -2615,6 +2685,7 @@ impl AccountsDb {
 
     /// These accounts were found during shrink of `slot` to be slot_list=[slot] and ref_count == 1 and lamports = 0.
     /// This means this slot contained the only account data for this pubkey and it is zero lamport.
+    /// And also `slot` is <= the latest full snapshot slot, and can purge zero lamport accounts.
     /// Thus, we did NOT treat this as an alive account, so we did NOT copy the zero lamport account to the new
     /// storage. So, the account will no longer be alive or exist at `slot`.
     /// So, first, remove the ref count since this newly shrunk storage will no longer access it.
@@ -4603,6 +4674,7 @@ impl AccountsDb {
                 flush_stats.store_accounts_timing.handle_reclaims_elapsed,
                 i64
             ),
+            ("select_pubkeys_us", flush_stats.select_pubkeys_us.0, i64),
         );
     }
 
@@ -4618,20 +4690,9 @@ impl AccountsDb {
         // If there is a long running scan going on, this could prevent any cleaning
         // based on updates from slots > `max_clean_root`.
         let max_clean_root = self.max_clean_root(requested_flush_root);
-
-        let mut written_accounts = HashSet::new();
-
-        let mut should_flush_f = {
-            Some(move |&pubkey: &Pubkey| {
-                // if not in hashset, then not flushed previously, so flush it
-                written_accounts.insert(pubkey)
-            })
-        };
-
         self.flush_rooted_accounts_cache(
             requested_flush_root,
-            max_clean_root,
-            should_flush_f.as_mut(),
+            FlushShouldClean::Yes { max_clean_root },
         )
     }
 
@@ -4639,15 +4700,19 @@ impl AccountsDb {
     // to storage but older versions of the accounts are still required. For example, the
     // older versions may be needed for snapshotting.
     fn flush_rooted_accounts_cache_without_clean(&self) -> (usize, usize, FlushStats) {
-        self.flush_rooted_accounts_cache(None, None, None::<&mut fn(&_) -> bool>)
+        self.flush_rooted_accounts_cache(None, FlushShouldClean::No)
     }
 
     /// Flush all rooted slots up to `requested_flush_root`.
+    ///
+    /// When `should_clean` is `Yes`, only the newest version of each account across the
+    /// flushed roots (at or below its `max_clean_root`) is written to storage; older
+    /// versions are purged from the index instead. When `No`, every account in
+    /// every flushed root is written.
     fn flush_rooted_accounts_cache(
         &self,
         requested_flush_root: Option<Slot>,
-        max_clean_root: Option<Slot>,
-        mut should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
+        should_clean: FlushShouldClean,
     ) -> (usize, usize, FlushStats) {
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
         let flushed_roots: BTreeSet<Slot> =
@@ -4655,14 +4720,28 @@ impl AccountsDb {
         let max_flush_root = flushed_roots.last().copied();
         let num_new_roots = flushed_roots.len();
 
-        // Iterate from highest to lowest so that we don't need to flush earlier
-        // outdated updates in earlier roots
+        // For each root being flushed, which of its cached accounts to write to storage.
+        let (pubkeys_to_flush, select_pubkeys_us) = match should_clean {
+            FlushShouldClean::Yes { max_clean_root } => {
+                measure_us!(self.select_pubkeys_to_flush(&flushed_roots, max_clean_root))
+            }
+            // Not cleaning: every root writes all of its accounts.
+            FlushShouldClean::No => (
+                flushed_roots
+                    .iter()
+                    .map(|&root| (root, PubkeysToFlush::All))
+                    .collect(),
+                0,
+            ),
+        };
+
         let mut num_roots_flushed = 0;
-        let mut flush_stats = FlushStats::default();
-        for root in flushed_roots.into_iter().rev() {
-            if let Some(stats) =
-                self.flush_slot_cache(root, should_flush_f.as_mut(), max_clean_root)
-            {
+        let mut flush_stats = FlushStats {
+            select_pubkeys_us: Saturating(select_pubkeys_us),
+            ..FlushStats::default()
+        };
+        for root in flushed_roots {
+            if let Some(stats) = self.flush_slot_cache(root, &pubkeys_to_flush[&root]) {
                 num_roots_flushed += 1;
                 flush_stats.accumulate(&stats);
             }
@@ -4676,37 +4755,69 @@ impl AccountsDb {
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 
+    /// Determines which of each flushed root's accounts to write to storage when cleaning: each
+    /// root keeps `Only` the newest version of each account, deduped newest-first. A root above
+    /// `max_clean_root` instead flushes `All`, since an in-flight scan may still need those
+    /// versions; `None` means there is no bound and every flushed root is cleaned.
+    fn select_pubkeys_to_flush(
+        &self,
+        flushed_roots: &BTreeSet<Slot>,
+        max_clean_root: Option<Slot>,
+    ) -> IntMap<Slot, PubkeysToFlush> {
+        let mut pubkeys_to_flush = IntMap::with_capacity(flushed_roots.len());
+
+        // Presize the dedup set from the newest root (flushed first), doubled to leave room
+        // for unique accounts contributed by older roots.
+        let dedup_capacity = flushed_roots
+            .last()
+            .and_then(|&root| self.accounts_cache.slot_cache(root))
+            .map_or(0, |slot_cache| slot_cache.len() * 2);
+        let mut written_accounts =
+            HashSet::with_capacity_and_hasher(dedup_capacity, PubkeyHasherBuilder::default());
+
+        // Iterate from newest root to oldest root being flushed in this batch
+        for &root in flushed_roots.iter().rev() {
+            let cleaned = max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
+            let to_flush = if !cleaned {
+                PubkeysToFlush::All
+            } else {
+                let mut flush_keys = HashSet::default();
+                if let Some(slot_cache) = self.accounts_cache.slot_cache(root) {
+                    for entry in slot_cache.iter() {
+                        let pubkey = *entry.key();
+                        // If not seen in a newer root, this is the newest version, so flush it.
+                        if written_accounts.insert(pubkey) {
+                            flush_keys.insert(pubkey);
+                        }
+                    }
+                }
+                PubkeysToFlush::Only(flush_keys)
+            };
+            pubkeys_to_flush.insert(root, to_flush);
+        }
+        pubkeys_to_flush
+    }
+
     fn do_flush_slot_cache(
         &self,
         slot: Slot,
         slot_cache: &SlotCache,
-        mut should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
-        max_clean_root: Option<Slot>,
+        pubkeys_to_flush: &PubkeysToFlush,
     ) -> FlushStats {
         debug_assert!(self.accounts_index.is_alive_root(slot));
         let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
-        let mut pubkeys: Vec<Pubkey> = vec![];
-        if should_flush_f.is_some() {
-            if let Some(max_clean_root) = max_clean_root {
-                if slot > max_clean_root {
-                    // Only if the root is greater than the `max_clean_root` do we
-                    // have to prevent cleaning, otherwise, just default to `should_flush_f`
-                    // for any slots <= `max_clean_root`
-                    should_flush_f = None;
-                }
-            }
-        }
+        let mut purged_pubkeys: Vec<Pubkey> = vec![];
 
         let accounts: Vec<(&Pubkey, &AccountSharedData)> = iter_items
             .iter()
             .filter_map(|iter_item| {
                 let key = iter_item.key();
                 let account = &iter_item.value().account;
-                let should_flush = should_flush_f
-                    .as_mut()
-                    .map(|should_flush_f| should_flush_f(key))
-                    .unwrap_or(true);
+                let should_flush = match pubkeys_to_flush {
+                    PubkeysToFlush::All => true,
+                    PubkeysToFlush::Only(flush_keys) => flush_keys.contains(key),
+                };
                 if should_flush {
                     flush_stats.num_bytes_flushed +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
@@ -4715,7 +4826,7 @@ impl AccountsDb {
                 } else {
                     // If we don't flush, we have to remove the entry from the
                     // index, since it's equivalent to purging
-                    pubkeys.push(*key);
+                    purged_pubkeys.push(*key);
                     flush_stats.num_bytes_purged +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_purged += 1;
@@ -4727,17 +4838,16 @@ impl AccountsDb {
         let is_dead_slot = accounts.is_empty();
         // Remove the account index entries from earlier roots that are outdated by later roots.
         // Safe because queries to the index will be reading updates from later roots.
-        self.purge_slot_cache_pubkeys(slot, pubkeys, is_dead_slot);
+        self.purge_slot_cache_pubkeys(slot, purged_pubkeys, is_dead_slot);
 
-        // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning
-        // Cleaning is enabled if `should_flush_f` is Some.
-        // should_flush_f is set to None when
+        // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning.
+        // Cleaning is enabled if pubkeys_to_flush is PubkeysToFlush::Only
+        // pubkeys_to_flush is PubkeysToFlush::All when
         // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
         // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
-        let reclaim_method = if should_flush_f.is_some() {
-            UpsertReclaim::ReclaimOldSlots
-        } else {
-            UpsertReclaim::IgnoreReclaims
+        let reclaim_method = match pubkeys_to_flush {
+            PubkeysToFlush::Only(_) => UpsertReclaim::ReclaimOldSlots,
+            PubkeysToFlush::All => UpsertReclaim::IgnoreReclaims,
         };
 
         if !is_dead_slot {
@@ -4793,19 +4903,18 @@ impl AccountsDb {
         flush_stats
     }
 
-    /// `should_flush_f` is an optional closure that determines whether a given
-    /// account should be flushed. Passing `None` will by default flush all
-    /// accounts
+    /// `pubkeys_to_flush` selects which accounts are written to storage: `Only(set)` flushes
+    /// just the pubkeys in the set (purging the rest from the index), while `All` flushes
+    /// every account in the slot.
     fn flush_slot_cache(
         &self,
         slot: Slot,
-        should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
-        max_clean_root: Option<Slot>,
+        pubkeys_to_flush: &PubkeysToFlush,
     ) -> Option<FlushStats> {
         // If a slot cache exists for this slot, flush it.
-        self.accounts_cache.slot_cache(slot).map(|slot_cache| {
-            self.do_flush_slot_cache(slot, &slot_cache, should_flush_f, max_clean_root)
-        })
+        self.accounts_cache
+            .slot_cache(slot)
+            .map(|slot_cache| self.do_flush_slot_cache(slot, &slot_cache, pubkeys_to_flush))
     }
 
     fn report_store_stats(&self) {
@@ -4846,6 +4955,7 @@ impl AccountsDb {
     ///
     /// Only intended to be called at startup (or by tests).
     /// Only intended to be used while testing the experimental accumulator hash.
+    /// NOT safe to call concurrently with flush operations
     pub fn calculate_accounts_lt_hash_at_startup_from_index(
         &self,
         ancestors: &Ancestors,
@@ -4857,7 +4967,7 @@ impl AccountsDb {
         // A different parallel implementation that iterated over the bins *sequentially* and then
         // hashed the accounts *within* a bin in parallel took about 600 seconds.  That impl uses
         // less memory, as only a single index bin is loaded into mem at a time.
-        let lt_hash = self
+        let mut lt_hash = self
             .accounts_index
             .account_maps
             .par_iter()
@@ -4895,6 +5005,36 @@ impl AccountsDb {
                 accum
             });
 
+        let cache_lt_hash = {
+            let mut cache_lt_hash = LtHash::identity();
+            for pubkey in self.accounts_cache.cached_pubkeys().iter() {
+                // mix out whatever older version the index walk produced (if any)
+                self.accounts_index.get_with_and_then(
+                    pubkey,
+                    ancestors,
+                    false,
+                    |(slot, account_info)| {
+                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                            .get_loaded_account(|loaded_account| {
+                                cache_lt_hash
+                                    .mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
+                            });
+                    },
+                );
+                // mix in the cache version
+                if let Some((account, _slot)) = self.load(
+                    ancestors,
+                    pubkey,
+                    LoadHint::FixedMaxRoot,
+                    PopulateReadCache::False,
+                ) {
+                    cache_lt_hash.mix_in(&Self::lt_hash_account(&account, pubkey).0);
+                }
+            }
+            cache_lt_hash
+        };
+        lt_hash.mix_in(&cache_lt_hash);
+
         AccountsLtHash(lt_hash)
     }
 
@@ -4907,34 +5047,66 @@ impl AccountsDb {
     ///
     /// Only intended to be called at startup by ledger-tool or tests.
     pub fn calculate_capitalization_at_startup_from_index(&self, ancestors: &Ancestors) -> u64 {
-        self.accounts_index
+        let stored_lamports = |pubkey: &Pubkey| {
+            self.accounts_index
+                .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
+                    (!account_info.is_zero_lamport()).then(|| {
+                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                            .get_loaded_account(|loaded_account| loaded_account.lamports())
+                            // SAFETY: The index said this pubkey exists, so
+                            // there must be an account to load.
+                            .unwrap()
+                    })
+                })
+                .flatten()
+                .unwrap_or(0)
+        };
+
+        let storage_capitialization = self
+            .accounts_index
             .account_maps
             .par_iter()
             .map(|accounts_index_bin| {
                 accounts_index_bin
                     .keys()
                     .into_iter()
-                    .map(|pubkey| {
-                        self.accounts_index
-                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
-                                (!account_info.is_zero_lamport()).then(|| {
-                                    self.get_account_accessor(
-                                        slot,
-                                        &pubkey,
-                                        &account_info.storage_location(),
-                                    )
-                                    .get_loaded_account(|loaded_account| loaded_account.lamports())
-                                    // SAFETY: The index said this pubkey exists, so
-                                    // there must be an account to load.
-                                    .unwrap()
-                                })
-                            })
-                            .flatten()
-                            .unwrap_or(0)
-                    })
+                    .map(|pubkey| stored_lamports(&pubkey))
                     .try_fold(0, u64::checked_add)
             })
             .try_reduce(|| 0, u64::checked_add)
+            .expect("capitalization cannot overflow");
+
+        // Sum as i128 because there is potential (although unlikely) for the cache updates to
+        // overflow i64::MAX. For example, if the cache has multiple transactions that transfer a
+        // large amount of lamports from one account to another, it could sum all of the transfers
+        // from accounts first, overflow i128. Wrapping logic could also handle this properly (ie.
+        // come to the correct answer), but then detection of overflow would be broken.
+        let cached_update = self
+            .accounts_cache
+            .cached_pubkeys()
+            .iter()
+            .map(|pubkey| {
+                // subtract out whatever older version the index walk produced (if any)
+                let stored_lamports = stored_lamports(pubkey);
+
+                // add in the cached amount of lamports
+                let cached_lamports = self
+                    .load(
+                        ancestors,
+                        pubkey,
+                        LoadHint::FixedMaxRoot,
+                        PopulateReadCache::False,
+                    )
+                    .map(|(account, _slot)| account.lamports())
+                    .unwrap_or(0);
+
+                cached_lamports as i128 - stored_lamports as i128
+            })
+            .sum::<i128>();
+
+        i128::from(storage_capitialization)
+            .checked_add(cached_update)
+            .and_then(|result| u64::try_from(result).ok())
             .expect("capitalization cannot overflow")
     }
 
@@ -5136,7 +5308,7 @@ impl AccountsDb {
     /// not touched, since shrink only changes `(store_id, offset)` and they index by pubkey.
     fn update_index_for_shrink<'a>(
         &self,
-        infos: Vec<AccountInfo>,
+        infos: &[AccountInfo],
         accounts: &impl StorableAccounts<'a>,
         update_index_thread_selection: UpdateIndexThreadSelection,
         thread_pool: &ThreadPool,
@@ -5597,9 +5769,14 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
+        let mark_zero_lamport_single_ref_time = Measure::start("mark_zero_lamport_single_ref");
+        let num_zero_lamport_single_ref_accounts_marked =
+            self.mark_zero_lamport_single_ref_accounts_for_shrink(&infos, &accounts, storage);
+        let mark_zero_lamport_single_ref_us = mark_zero_lamport_single_ref_time.end_as_us();
+
         let update_index_time = Measure::start("update_index");
         self.update_index_for_shrink(
-            infos,
+            &infos,
             &accounts,
             update_index_thread_selection,
             &self.thread_pool_background,
@@ -5613,11 +5790,18 @@ impl AccountsDb {
             .write_to_storage_us
             .fetch_add(write_accounts_us, Ordering::Relaxed);
         stats
+            .mark_zero_lamport_single_ref_accounts_us
+            .fetch_add(mark_zero_lamport_single_ref_us, Ordering::Relaxed);
+        stats
             .update_index_us
             .fetch_add(update_index_us, Ordering::Relaxed);
         stats
             .num_accounts_stored
             .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
+        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
+            num_zero_lamport_single_ref_accounts_marked,
+            Ordering::Relaxed,
+        );
         stats.report();
 
         StoreAccountsTiming {
@@ -5652,7 +5836,7 @@ impl AccountsDb {
 
         let mark_zero_lamport_time = Measure::start("mark_zero_lamport");
         let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling);
+            self.mark_zero_lamport_single_ref_accounts_for_flush(&infos, storage, reclaim_handling);
         let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
@@ -5862,7 +6046,7 @@ impl AccountsDb {
     /// Marks zero lamport single reference accounts in the storage during store_accounts_for_flush
     ///
     /// Returns the number of accounts marked.
-    fn mark_zero_lamport_single_ref_accounts(
+    fn mark_zero_lamport_single_ref_accounts_for_flush(
         &self,
         account_infos: &[AccountInfo],
         storage: &AccountStorageEntry,
@@ -5894,6 +6078,39 @@ impl AccountsDb {
             }
         }
 
+        num_marked
+    }
+
+    /// Marks zero lamport single reference accounts in the storage during store_accounts_for_shrink
+    ///
+    /// Returns the number of accounts marked.
+    fn mark_zero_lamport_single_ref_accounts_for_shrink<'a>(
+        &self,
+        account_infos: &[AccountInfo],
+        accounts: &impl StorableAccounts<'a>,
+        storage: &AccountStorageEntry,
+    ) -> u64 {
+        debug_assert_eq!(account_infos.len(), accounts.len());
+        let mut num_marked = 0;
+        for (i, account_info) in account_infos.iter().enumerate() {
+            if account_info.is_zero_lamport() {
+                let pubkey = accounts.pubkey(i);
+                let is_single_ref = self.accounts_index.get_and_then(pubkey, |entry| {
+                    let is_single_ref = entry.is_some_and(|entry| {
+                        entry.ref_count() == 1 && entry.slot_list_lock_read_len() == 1
+                    });
+                    (false, is_single_ref)
+                });
+                if is_single_ref {
+                    debug_assert!(!account_info.is_cached());
+                    debug_assert_eq!(account_info.store_id(), storage.id());
+                    if storage.insert_zero_lamport_single_ref_account_offset(account_info.offset())
+                    {
+                        num_marked += 1;
+                    }
+                }
+            }
+        }
         num_marked
     }
 
@@ -6029,6 +6246,23 @@ impl AccountsDb {
     /// Sets the latest full snapshot slot to `slot`
     pub fn set_latest_full_snapshot_slot(&self, slot: Slot) {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
+        self.latest_full_snapshot_slot_advanced_since_clean
+            .store(true, Ordering::Release);
+    }
+
+    /// Marks slots <= slot as already swept for zero-lamport-single-ref shrink eligibility
+    pub fn set_last_swept_full_snapshot_slot(&self, slot: Slot) {
+        // Prior to setting this, the latest full snapshot slot must be set, and
+        // last_swept_full_snapshot_slot value must be less than or equal to it.
+        assert!(
+            self.latest_full_snapshot_slot()
+                .is_some_and(|snapshot_slot| slot <= snapshot_slot),
+            "last swept full snapshot slot {slot} cannot be greater than latest full snapshot \
+             slot {:?}",
+            self.latest_full_snapshot_slot()
+        );
+        self.last_swept_full_snapshot_slot
+            .store(slot, Ordering::Relaxed);
     }
 
     fn generate_index_for_slot<'a>(
@@ -6727,6 +6961,30 @@ impl AccountsDb {
     }
 }
 
+/// Whether a rooted-cache flush should clean (dedup across roots, keeping only the newest
+/// version of each account and reclaiming older ones) or write every account untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlushShouldClean {
+    /// Write every account in every flushed root. Older versions must be preserved (e.g. for
+    /// snapshotting).
+    No,
+    /// Clean roots at or below `max_clean_root`; roots above it still flush all their accounts
+    /// (`None` means clean every flushed root).
+    Yes { max_clean_root: Option<Slot> },
+}
+
+/// Which of a slot's cached accounts to write to storage when flushing it.
+#[derive(Debug, PartialEq, Eq)]
+enum PubkeysToFlush {
+    /// Flush every account in the slot, reclaiming nothing. Used for roots above
+    /// `max_clean_root` and when not cleaning, since an in-flight scan may still need
+    /// those versions.
+    All,
+    /// Flush only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
+    /// purging the rest from the index and reclaiming older versions.
+    Only(HashSet<Pubkey, PubkeyHasherBuilder>),
+}
+
 /// Specify whether obsolete accounts should be marked or not during reclaims
 /// They should only be marked if they are also getting unreffed in the index
 /// Temporarily allow dead code until the feature is implemented
@@ -6818,7 +7076,7 @@ impl AccountsDb {
                 .contains(&slot),
             "slot: {slot}"
         );
-        self.flush_slot_cache(slot, None::<&mut fn(&_) -> bool>, None);
+        self.flush_slot_cache(slot, &PubkeysToFlush::All);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache

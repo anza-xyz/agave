@@ -16,7 +16,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
-    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_syscalls::create_program_runtime_environment,
@@ -54,6 +54,18 @@ static SVM_BUILTINS: &[SvmBuiltinPrototype] = &[
         program_id: solana_sdk_ids::compute_budget::id(),
         name: "compute_budget_program",
         register_fn: solana_compute_budget_program::Entrypoint::register,
+    },
+    #[cfg(feature = "conformance")]
+    SvmBuiltinPrototype {
+        program_id: solana_vote_program::id(),
+        name: "vote_program",
+        register_fn: solana_vote_program::vote_processor::Entrypoint::register,
+    },
+    #[cfg(feature = "conformance")]
+    SvmBuiltinPrototype {
+        program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
+        name: "zk_elgamal_proof_program",
+        register_fn: solana_zk_elgamal_proof_program::Entrypoint::register,
     },
 ];
 
@@ -165,8 +177,6 @@ pub fn fill_program_cache_from_accounts(
 }
 
 struct FillFromAccountsCallback<'a>(&'a [(Pubkey, Account)]);
-
-impl InvokeContextCallback for FillFromAccountsCallback<'_> {}
 
 impl TransactionProcessingCallback for FillFromAccountsCallback<'_> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, u64)> {

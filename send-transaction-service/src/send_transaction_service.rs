@@ -158,7 +158,7 @@ pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
     pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
         client: Client,
         config: Config,
@@ -178,7 +178,7 @@ impl SendTransactionService {
         );
 
         let retry_thread = Self::retry_thread(
-            bank_forks.clone(),
+            bank_forks,
             client,
             retry_transactions,
             config,
@@ -561,7 +561,7 @@ mod test {
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client.clone(),
             Config {
@@ -598,7 +598,7 @@ mod test {
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client.clone(),
             Config {

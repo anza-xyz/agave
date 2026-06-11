@@ -21,7 +21,10 @@ use {
         blockstore_processor::AsyncVerificationProgress,
     },
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteSender},
+    solana_runtime::{
+        bank::Bank, bank_forks::BankForks, leader_schedule_utils::leader_slot_index,
+        vote_sender_types::ReplayVoteSender,
+    },
     std::{
         collections::BTreeSet,
         sync::{Arc, RwLock},
@@ -42,7 +45,7 @@ pub(super) enum ChildBankReplayStart {
 /// Return the UpdateParent replay offset recorded in SlotMeta, if it is
 /// usable from the currently rooted fork.
 fn update_parent_replay_offset(slot: Slot, slot_meta: &SlotMeta, root: Slot) -> Option<u64> {
-    if !slot_meta.has_update_parent() {
+    if !slot_meta.has_update_parent() || leader_slot_index(slot) != 0 {
         return None;
     }
     let parent_slot = slot_meta.parent_slot?;
@@ -297,7 +300,7 @@ pub(super) fn handle_abandoned_bank(
     bank: &Arc<Bank>,
     bank_slot: Slot,
     update_parent: &VersionedUpdateParent,
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: &RwLock<BankForks>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
@@ -364,7 +367,7 @@ pub(super) fn handle_abandoned_bank(
     // parent by generate_new_bank_forks on the next iteration.
     ReplayStage::clear_banks(
         &BTreeSet::from([bank_slot]),
-        bank_forks.as_ref(),
+        bank_forks,
         progress,
         async_verification_freelist,
     );

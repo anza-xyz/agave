@@ -23,10 +23,60 @@ of the account.
   [vote-update-validator](../../cli/usage.md#solana-vote-update-validator).
 - To change the [vote authority](#vote-authority), use
   [vote-authorize-voter-checked](../../cli/usage.md#solana-vote-authorize-voter-checked).
+- To set the BLS public key associated with the
+  [vote authority](#vote-authority), use
+  [vote-authorize-voter-checked](../../cli/usage.md#solana-vote-authorize-voter-checked)
+  after SIMD-0387 is active on the cluster.
 - To change the [authorized withdrawer](#authorized-withdrawer), use
   [vote-authorize-withdrawer-checked](../../cli/usage.md#solana-vote-authorize-withdrawer-checked).
 - To change the [commission](#commission), use
   [vote-update-commission](../../cli/usage.md#solana-vote-update-commission).
+
+### Set the BLS Public Key
+
+Voting validators must set the BLS public key associated with their authorized voter
+after SIMD-0387, BLS pubkey management, is active on the target cluster. The
+Solana CLI will not set the BLS public key before the feature is active.
+
+> **IMPORTANT** As of June 2026, SIMD-0387 is active only on testnet. Setting
+> the BLS public key is a prerequisite for SIMD-0357. If the BLS public key is
+> not set, the vote account will behave as unstaked once SIMD-0357 is active.
+
+For almost all validators, the authorized voter is the validator identity. If
+you are unsure which keypair is the current authorized voter, run:
+
+```bash
+solana vote-account <VOTE_ACCOUNT> | grep "Vote Authority"
+```
+
+Then set the BLS public key by running the following command.
+
+```bash
+solana vote-authorize-voter-checked <VOTE_ACCOUNT> <AUTHORIZED_VOTER_KEYPAIR> <AUTHORIZED_VOTER_KEYPAIR>
+```
+
+This does not change the authorized voter. It fills in the BLS public key
+associated with the authorized voter.
+
+For a new vote account, follow the normal
+[create vote account](#create-a-vote-account) instructions first, then run the
+same `vote-authorize-voter-checked` command above to set the BLS public key.
+
+To check whether the BLS public key is set on chain, run:
+
+```bash
+solana vote-account <VOTE_ACCOUNT> | grep "BLS Public Key"
+```
+
+If the command does not print a `BLS Public Key` line, the vote account does not
+have a BLS public key set.
+
+To view the BLS public key derived from the authorized voter keypair locally,
+run:
+
+```bash
+solana-keygen bls_pubkey <AUTHORIZED_VOTER_KEYPAIR>
+```
 
 ## Vote Account Structure
 

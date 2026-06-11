@@ -321,14 +321,6 @@ impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for Accoun
     }
 }
 
-// NOTE this is a required subtrait of TransactionProcessingCallback.
-// It may make sense to break out a second subtrait just for the above two functions,
-// but this would be a nontrivial breaking change and require careful consideration.
-impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallback
-    for AccountLoader<'_, CB>
-{
-}
-
 /// Set the rent epoch to u64::MAX if the account is rent exempt.
 ///
 /// TODO: This function is used to update the rent epoch of an account. Once we
@@ -689,7 +681,7 @@ mod tests {
         },
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+        solana_svm_callback::TransactionProcessingCallback,
         solana_system_transaction::transfer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{
@@ -729,8 +721,6 @@ mod tests {
             }
         }
     }
-
-    impl InvokeContextCallback for TestCallbacks {}
 
     impl TransactionProcessingCallback for TestCallbacks {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
@@ -1155,14 +1145,14 @@ mod tests {
             acc.increase_calculated_data_size(data_size, &mut error_metrics)
                 .is_ok()
         );
-        assert_eq!(data_size as u32, acc.clone().into());
+        assert_eq!(data_size as u32, u32::from(acc.clone()));
 
         // OK - loaded data size meets limit
         assert!(
             acc.increase_calculated_data_size(1, &mut error_metrics)
                 .is_ok()
         );
-        assert_eq!(requested_data_size_limit, acc.clone().into());
+        assert_eq!(requested_data_size_limit, u32::from(acc.clone()));
 
         // fail - loading more data would exceed limit
         // data size helper reports the limit only
@@ -1170,7 +1160,7 @@ mod tests {
             acc.increase_calculated_data_size(1, &mut error_metrics),
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         );
-        assert_eq!(requested_data_size_limit, acc.into());
+        assert_eq!(requested_data_size_limit, u32::from(acc));
 
         let mut acc = LoadedTransactionDataSize::with_max_size(requested_data_size_limit);
 
@@ -1180,7 +1170,7 @@ mod tests {
             acc.increase_calculated_data_size(u32::MAX as usize + 1, &mut error_metrics),
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         );
-        assert_eq!(requested_data_size_limit, acc.into());
+        assert_eq!(requested_data_size_limit, u32::from(acc));
     }
 
     struct ValidateFeePayerTestParameter {

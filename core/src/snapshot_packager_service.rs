@@ -286,6 +286,11 @@ impl SnapshotPackagerService {
                 // the "storages flushed" file, so return early.
                 return;
             }
+            // Pin the storage file so it outlives the validator-exit Drop chain (which would
+            // otherwise remove it via AppendVec::drop) and is available for fastboot on restart.
+            // The next startup opens a fresh AppendVec over the file; that one defaults back to
+            // removing-on-drop, so normal runtime cleanup (shrink, clean) still applies later.
+            storage.disable_remove_on_drop();
         }
         info!("Flushing account storages... Done in {:?}", start.elapsed());
 
@@ -294,21 +299,21 @@ impl SnapshotPackagerService {
             snapshot_slot,
         );
 
-        info!("Hard linking account storages...");
+        info!("Writing account storages list...");
         let start = Instant::now();
-        let result = snapshot_utils::hard_link_storages_to_snapshot(
+        let result = snapshot_utils::write_storages_list_to_snapshot(
             &bank_snapshot_dir,
-            snapshot_slot,
             &snapshot_storages,
+            &io_setup,
         );
         if let Err(err) = result {
-            warn!("Failed to hard link account storages: {err}");
-            // If hard linking the storages failed, we do *NOT* want to mark the bank snapshot as
+            warn!("Failed to write account storages list: {err}");
+            // If writing the storages list failed, we do *NOT* want to mark the bank snapshot as
             // loadable so return early.
             return;
         }
         info!(
-            "Hard linking account storages... Done in {:?}",
+            "Writing account storages list... Done in {:?}",
             start.elapsed(),
         );
 

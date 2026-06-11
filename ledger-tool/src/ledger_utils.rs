@@ -10,10 +10,7 @@ use {
     log::*,
     solana_accounts_db::{
         accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
-        utils::{
-            create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
-            validate_account_paths_for_direct_io,
-        },
+        utils::{create_all_accounts_run_and_snapshot_dirs, validate_account_paths_for_direct_io},
     },
     solana_clock::Slot,
     solana_core::{
@@ -35,7 +32,6 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
-    solana_measure::measure_time,
     solana_pubkey::Pubkey,
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::{
@@ -45,7 +41,7 @@ use {
         },
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils,
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -81,9 +77,6 @@ const PROCESS_SLOTS_HELP_STRING: &str =
 
 #[derive(Error, Debug)]
 pub(crate) enum LoadAndProcessLedgerError {
-    #[error("failed to clean orphaned account snapshot directories: {0}")]
-    CleanOrphanedAccountSnapshotDirectories(#[source] std::io::Error),
-
     #[error("failed to create all run and snapshot directories: {0}")]
     CreateAllAccountsRunAndSnapshotDirectories(#[source] std::io::Error),
 
@@ -279,25 +272,7 @@ pub fn load_and_process_ledger(
     )
     .map_err(LoadAndProcessLedgerError::ValidateAccountPaths)?;
 
-    let (_, measure_clean_account_paths) = measure_time!(
-        account_paths.iter().for_each(|path| {
-            if path.exists() {
-                info!("Cleaning contents of account path: {}", path.display());
-                move_and_async_delete_path_contents(path);
-            }
-        }),
-        "Cleaning account paths"
-    );
-    info!("{measure_clean_account_paths}");
-
     snapshot_utils::purge_incomplete_bank_snapshots(&snapshot_config.bank_snapshots_dir);
-
-    info!("Cleaning contents of account snapshot paths: {account_snapshot_paths:?}");
-    clean_orphaned_account_snapshot_dirs(
-        &snapshot_config.bank_snapshots_dir,
-        &account_snapshot_paths,
-    )
-    .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
 
     let geyser_plugin_active = arg_matches.is_present("geyser_plugin_config");
     let (accounts_update_notifier, transaction_notifier) = if geyser_plugin_active {
@@ -375,6 +350,11 @@ pub fn load_and_process_ledger(
         )
         .transpose()
         .unwrap_or_else(|| {
+            // Clean run from genesis — must not use any existing state from previous runs.
+            bank_forks_utils::discard_previous_run_state(
+                &snapshot_config.bank_snapshots_dir,
+                &account_paths,
+            );
             bank_forks_utils::load_bank_forks_from_genesis(
                 genesis_config,
                 &blockstore,
@@ -387,6 +367,26 @@ pub fn load_and_process_ledger(
             )
         })
         .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
+
+    // With hard-linking gone, an AppendVec's Drop removes the only copy of the storage file by
+    // default. For a fastboot load we don't want that — the files belong to the validator's
+    // local state and need to outlive this process. Storages ledger-tool creates itself (archive
+    // or genesis load) can be cleaned up normally. We detect fastboot via the bank snapshot dir
+    // at the root slot: archive/genesis paths went through `discard_previous_run_state`, which
+    // purges those dirs, so its presence here means we loaded from it.
+    {
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let loaded_from_fastboot = snapshot_config
+            .bank_snapshots_dir
+            .join(root_bank.slot().to_string())
+            .is_dir();
+        if loaded_from_fastboot {
+            for storage in root_bank.get_snapshot_storages(None) {
+                storage.disable_remove_on_drop();
+            }
+        }
+    }
+
     let leader_schedule_cache =
         LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
 

@@ -7,6 +7,7 @@ mod account_saver;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod account_saver;
 pub mod accounts_background_service;
+mod alpenglow_epoch_type;
 pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
@@ -39,6 +40,7 @@ pub mod snapshot_utils;
 mod stake_account;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod stake_account;
+mod stake_delegation;
 pub mod stake_history;
 pub mod stake_utils;
 pub mod stake_weighted_timestamp;

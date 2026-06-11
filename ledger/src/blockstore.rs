@@ -50,7 +50,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -197,10 +197,11 @@ pub enum PossibleDuplicateShred {
         shred::Payload, // conflict
     ),
     // Merkle root chaining conflict with previous fec set
-    ChainedMerkleRootConflict(
-        Shred,          // original
-        shred::Payload, // conflict
-    ),
+    // As part of SIMD-0340
+    ChainedMerkleRootConflict(Slot),
+    // Secondary chained merkle root conflict with previous fec set
+    // As part of SIMD-0340
+    FixedFECChainedMerkleRootConflict(Slot),
 }
 
 impl PossibleDuplicateShred {
@@ -210,7 +211,8 @@ impl PossibleDuplicateShred {
             Self::LastIndexConflict(shred, _) => shred.slot(),
             Self::ErasureConflict(shred, _) => shred.slot(),
             Self::MerkleRootConflict(shred, _) => shred.slot(),
-            Self::ChainedMerkleRootConflict(shred, _) => shred.slot(),
+            Self::ChainedMerkleRootConflict(slot)
+            | Self::FixedFECChainedMerkleRootConflict(slot) => *slot,
         }
     }
 }
@@ -396,13 +398,6 @@ impl SlotMetaWorkingSetEntry {
     }
 }
 
-pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
-    let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
-        return 0;
-    };
-    hashes_per_tick
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParentInfo {
     /// Parent slot to expose through SlotMeta and replay.
@@ -493,6 +488,14 @@ impl ParentInfo {
     /// True when this metadata came from an `UpdateParent` marker.
     fn has_update_parent(&self) -> bool {
         self.replay_fec_set_index > 0
+    }
+
+    fn validate_update_parent_slot(&self, slot: Slot) -> Result<()> {
+        if self.has_update_parent() && leader_slot_index(slot) != 0 {
+            return Err(BlockstoreError::UpdateParentNotFirstInLeaderWindow(slot));
+        }
+
+        Ok(())
     }
 
     /// True when this metadata came from the slot's block header.
@@ -869,6 +872,33 @@ impl Blockstore {
         )
     }
 
+    /// Attempts to find the previous consecutive erasure set for `erasure_set`
+    /// using the fact that FEC sets are fixed in size at DATA_SHREDS_PER_FEC_BLOCK
+    /// data shreds.
+    ///
+    /// Only for use in the `Original` column
+    fn previous_fec_set_shred_id(
+        &self,
+        erasure_set: &ErasureSetId,
+        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
+    ) -> Option<ShredId> {
+        let prev_erasure_set = erasure_set.previous_fec_set()?;
+        let prev_merkle_root_meta = merkle_root_metas
+            .get(&(BlockLocation::Original, prev_erasure_set))
+            .map(WorkingEntry::as_ref)
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                self.merkle_root_meta(prev_erasure_set)
+                    .unwrap()
+                    .map(Cow::Owned)
+            })?;
+        Some(ShredId::new(
+            erasure_set.slot(),
+            prev_merkle_root_meta.first_received_shred_index(),
+            prev_merkle_root_meta.first_received_shred_type(),
+        ))
+    }
+
     /// Attempts to find the previous consecutive erasure set for `erasure_set`.
     ///
     /// Checks the map `erasure_metas`, if not present scans blockstore. Returns None
@@ -990,11 +1020,14 @@ impl Blockstore {
         };
 
         // Block was full above, get_block_location returned Some, but may have
-        // been purged by BlockstoreCleanupService in between.
-        let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)? else {
-            return Ok(None);
-        };
-        Ok(Some((dmm, location)))
+        // been purged by BlockstoreCleanupService in between, or swapped out.
+        if let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)?
+            && dmm.double_merkle_root == block_id
+        {
+            Ok(Some((dmm, location)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Gets the double merkle meta for the given block.
@@ -1149,6 +1182,11 @@ impl Blockstore {
         let Some(new_parent_info) = new_parent_info else {
             return Ok(());
         };
+
+        if let Err(err) = new_parent_info.validate_update_parent_slot(slot) {
+            self.mark_invalid_parent_info_dead(write_batch, new_parent_info, slot, location, &err)?;
+            return Err(err);
+        }
 
         let max_root = self.max_root();
         if let Err(err) = new_parent_info.validate_shred_parent(slot, shred_parent_slot, max_root) {
@@ -1718,9 +1756,6 @@ impl Blockstore {
                 continue;
             }
             let (slot, _) = erasure_set.store_key();
-            if self.has_duplicate_shreds_in_slot(slot) {
-                continue;
-            }
 
             // First coding shred from this erasure batch, check the forward merkle root chaining
             // Note: This check is not performed on Alternate columns, as we cannot repair coding shreds
@@ -1738,13 +1773,20 @@ impl Blockstore {
                 .get(&(BlockLocation::Original, shred_id))
                 .expect("Erasure meta was just created, initial shred must exist");
 
-            self.check_forward_chained_merkle_root_consistency(
-                shred,
-                erasure_meta,
-                &shred_insertion_tracker.just_inserted_shreds,
-                &shred_insertion_tracker.merkle_root_metas,
-                &mut shred_insertion_tracker.duplicate_shreds,
-            );
+            // Forward check for SIMD-0340
+            if let Some(next_fec_set_index) = erasure_meta.next_fec_set_index() {
+                let next_erasure_set = ErasureSetId::new(slot, next_fec_set_index);
+                if !self.check_forward_chained_merkle_root_consistency(
+                    shred,
+                    next_erasure_set,
+                    &shred_insertion_tracker.just_inserted_shreds,
+                    &shred_insertion_tracker.merkle_root_metas,
+                ) {
+                    shred_insertion_tracker
+                        .duplicate_shreds
+                        .push(PossibleDuplicateShred::ChainedMerkleRootConflict(slot));
+                }
+            }
         }
 
         for ((location, erasure_set), working_merkle_root_meta) in
@@ -1755,9 +1797,6 @@ impl Blockstore {
                 continue;
             }
             let (slot, _) = erasure_set.store_key();
-            if self.has_duplicate_shreds_in_slot(slot) {
-                continue;
-            }
 
             // First shred from this erasure batch, check the backwards merkle root chaining
             // Note: this check is not performed on Alternate columns as they are already validated
@@ -1777,12 +1816,60 @@ impl Blockstore {
                 .get(&(*location, shred_id))
                 .expect("Merkle root meta was just created, initial shred must exist");
 
-            self.check_backwards_chained_merkle_root_consistency(
-                shred,
-                &shred_insertion_tracker.just_inserted_shreds,
-                &shred_insertion_tracker.erasure_metas,
-                &mut shred_insertion_tracker.duplicate_shreds,
-            );
+            // Backward check for SIMD-0340
+            if let Some((_prev_erasure_set, prev_erasure_meta)) = self
+                .previous_erasure_set(*erasure_set, &shred_insertion_tracker.erasure_metas)
+                .expect("Expect database operations to succeed")
+            {
+                let prev_shred_id = ShredId::new(
+                    slot,
+                    prev_erasure_meta
+                        .first_received_coding_shred_index()
+                        .expect("First received coding index must fit in u32"),
+                    ShredType::Code,
+                );
+                if !self.check_backwards_chained_merkle_root_consistency(
+                    shred,
+                    prev_shred_id,
+                    &shred_insertion_tracker.just_inserted_shreds,
+                ) {
+                    shred_insertion_tracker
+                        .duplicate_shreds
+                        .push(PossibleDuplicateShred::ChainedMerkleRootConflict(slot));
+                    continue;
+                }
+            }
+
+            // Encompassing forward check for SIMD-0340
+            if let Some(next_erasure_set) = erasure_set.next_fec_set() {
+                if !self.check_forward_chained_merkle_root_consistency(
+                    shred,
+                    next_erasure_set,
+                    &shred_insertion_tracker.just_inserted_shreds,
+                    &shred_insertion_tracker.merkle_root_metas,
+                ) {
+                    shred_insertion_tracker.duplicate_shreds.push(
+                        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
+                    );
+                    continue;
+                }
+            }
+
+            // Encompassing backward check for SIMD-0340
+            if let Some(prev_shred_id) = self
+                .previous_fec_set_shred_id(erasure_set, &shred_insertion_tracker.merkle_root_metas)
+            {
+                if !self.check_backwards_chained_merkle_root_consistency(
+                    shred,
+                    prev_shred_id,
+                    &shred_insertion_tracker.just_inserted_shreds,
+                ) {
+                    shred_insertion_tracker.duplicate_shreds.push(
+                        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
+                    );
+                    continue;
+                }
+            }
         }
     }
 
@@ -1880,10 +1967,15 @@ impl Blockstore {
                     .map_err(|_| shred::Error::InvalidMerkleRoot)
                     .and_then(|mr| mr.ok_or(shred::Error::InvalidMerkleRoot))
             })
-            // Add parent info as the last leaf
+            // Add parent info as the last leaf. The `fec_set_count` is bound
+            // into this leaf so that an adversary cannot convince a verifier
+            // that the count is off-by-one when the number of FEC sets is
+            // even (which makes the total leaf count odd and causes the last
+            // leaf to be hashed with itself during tree construction).
             .chain(std::iter::once(Ok(hashv(&[
                 &parent_slot.to_le_bytes(),
                 parent_block_id.as_ref(),
+                &fec_set_count.to_le_bytes(),
             ]))));
 
         MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count as usize + 1)
@@ -3018,21 +3110,14 @@ impl Blockstore {
     fn check_forward_chained_merkle_root_consistency(
         &self,
         shred: &Shred,
-        erasure_meta: &ErasureMeta,
+        next_erasure_set: ErasureSetId,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
-        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
-        debug_assert!(erasure_meta.check_coding_shred(shred));
         let slot = shred.slot();
         let erasure_set = shred.erasure_set();
 
         // If a shred from the next fec set has already been inserted, check the chaining
-        let Some(next_fec_set_index) = erasure_meta.next_fec_set_index() else {
-            error!("Invalid erasure meta, unable to compute next fec set index {erasure_meta:?}");
-            return false;
-        };
-        let next_erasure_set = ErasureSetId::new(slot, next_fec_set_index);
         let Some(next_merkle_root_meta) = merkle_root_metas
             .get(&(BlockLocation::Original, next_erasure_set))
             .map(WorkingEntry::as_ref)
@@ -3059,10 +3144,9 @@ impl Blockstore {
         )
         .map(Cow::into_owned) else {
             error!(
-                "Shred {next_shred_id:?} indicated by merkle root meta {next_merkle_root_meta:?} \
-                 is missing from blockstore. This should only happen in extreme cases where \
-                 blockstore cleanup has caught up to the root. Skipping the forward chained \
-                 merkle root consistency check"
+                "Shred {next_shred_id:?} is missing from blockstore. This should only happen in \
+                 extreme cases where  blockstore cleanup has caught up to the root. Skipping the \
+                 forward chained merkle root consistency check"
             );
             return true;
         };
@@ -3079,12 +3163,6 @@ impl Blockstore {
                 next_merkle_root_meta.first_received_shred_type(),
             );
 
-            if !self.has_duplicate_shreds_in_slot(shred.slot()) {
-                duplicate_shreds.push(PossibleDuplicateShred::ChainedMerkleRootConflict(
-                    shred.clone(),
-                    next_shred,
-                ));
-            }
             return false;
         }
 
@@ -3106,12 +3184,10 @@ impl Blockstore {
     fn check_backwards_chained_merkle_root_consistency(
         &self,
         shred: &Shred,
+        prev_shred_id: ShredId,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-        erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
         let slot = shred.slot();
-        let erasure_set = shred.erasure_set();
         let fec_set_index = shred.fec_set_index();
 
         if fec_set_index == 0 {
@@ -3122,26 +3198,6 @@ impl Blockstore {
             return true;
         }
 
-        // If a shred from the previous fec set has already been inserted, check the chaining.
-        // Since we cannot compute the previous fec set index, we check the in memory map, otherwise
-        // check the previous key from blockstore to see if it is consecutive with our current set.
-        let Some((prev_erasure_set, prev_erasure_meta)) = self
-            .previous_erasure_set(erasure_set, erasure_metas)
-            .expect("Expect database operations to succeed")
-        else {
-            // No shreds from the previous erasure batch have been received,
-            // so nothing to check. Once the previous erasure batch is received,
-            // we will verify this chain through the forward check above.
-            return true;
-        };
-
-        let prev_shred_id = ShredId::new(
-            slot,
-            prev_erasure_meta
-                .first_received_coding_shred_index()
-                .expect("First received coding index must fit in u32"),
-            ShredType::Code,
-        );
         let Some(prev_shred) = Self::get_shred_from_just_inserted_or_db(
             self,
             just_inserted_shreds,
@@ -3150,10 +3206,9 @@ impl Blockstore {
         )
         .map(Cow::into_owned) else {
             warn!(
-                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} is \
-                 missing from blockstore. This can happen if you have recently upgraded from a \
-                 version < v1.18.13, or if blockstore cleanup has caught up to the root. Skipping \
-                 the backwards chained merkle root consistency check"
+                "Shred {prev_shred_id:?} is missing from blockstore. This can happen if \
+                 blockstore cleanup has caught up to the root. Skipping the backwards chained \
+                 merkle root consistency check"
             );
             return true;
         };
@@ -3163,19 +3218,12 @@ impl Blockstore {
         if !self.check_chaining(merkle_root, chained_merkle_root) {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
-                 chains to merkle root {chained_merkle_root:?}, however previous fec set coding \
-                 shred {prev_erasure_set:?} has merkle root {merkle_root:?}. Reporting as \
-                 duplicate",
+                 chains to merkle root {chained_merkle_root:?}, however previous fec set shred \
+                 {prev_shred_id:?} has merkle root {merkle_root:?}. Reporting as duplicate",
                 shred.erasure_set(),
                 shred.shred_type(),
             );
 
-            if !self.has_duplicate_shreds_in_slot(shred.slot()) {
-                duplicate_shreds.push(PossibleDuplicateShred::ChainedMerkleRootConflict(
-                    shred.clone(),
-                    prev_shred,
-                ));
-            }
             return false;
         }
 
@@ -4989,9 +5037,13 @@ impl Blockstore {
             wincode::deserialize(&payload)
                 .map(|component| vec![component])
                 .map_err(|e| {
-                    BlockstoreError::InvalidShredData(format!(
-                        "could not reconstruct block component: {e}"
-                    ))
+                    if BlockComponent::infer_is_empty_entry_batch(&payload) {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component: {e}"
+                        ))
+                    }
                 })
         })
     }
@@ -6141,9 +6193,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    // Slot-0 tick entries are created before a Bank exists, so derive the
-    // effective hashes-per-tick directly from genesis feature state here.
-    let hashes_per_tick = hashes_per_tick_for_ledger(genesis_config);
+    // Slot-0 tick entries are created before a Bank exists, so use the
+    // genesis PoH config directly.
+    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);
@@ -6411,123 +6463,6 @@ pub fn make_many_slot_entries(
     }
 
     (shreds, entries)
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-pub fn test_all_empty_or_min(blockstore: &Blockstore, min_slot: Slot) {
-    let condition_met = blockstore
-        .meta_cf
-        .iter(IteratorMode::Start)
-        .unwrap()
-        .next()
-        .map(|(slot, _)| slot >= min_slot)
-        .unwrap_or(true)
-        & blockstore
-            .roots_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|(slot, _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .data_shred_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _), _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .code_shred_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _), _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .dead_slots_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|(slot, _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .duplicate_slots_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|(slot, _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .erasure_meta_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _), _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .orphans_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|(slot, _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .index_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|(slot, _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((_, slot), _)| slot >= min_slot || slot == 0)
-            .unwrap_or(true)
-        & blockstore
-            .address_signatures_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((_, slot, _, _), _)| slot >= min_slot || slot == 0)
-            .unwrap_or(true)
-        & blockstore
-            .rewards_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|(slot, _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .alt_meta_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _), _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .alt_index_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _), _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .alt_data_shred_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _, _), _)| slot >= min_slot)
-            .unwrap_or(true)
-        & blockstore
-            .alt_merkle_root_meta_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .next()
-            .map(|((slot, _, _), _)| slot >= min_slot)
-            .unwrap_or(true);
-    assert!(condition_met);
 }
 
 // Create shreds for slots that have a parent-child relationship defined by the input `chain`

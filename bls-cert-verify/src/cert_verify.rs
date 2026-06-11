@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType},
+        certificate::{Certificate, CertificateType},
         vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -108,14 +108,14 @@ pub fn verify_certificate(
 
 fn get_vote_payloads(cert_type: CertificateType) -> (Vote, Option<Vote>) {
     match cert_type {
-        CertificateType::Notarize(slot, hash) | CertificateType::FinalizeFast(slot, hash) => {
-            (Vote::new_notarization_vote(slot, hash), None)
+        CertificateType::Notarize(block) | CertificateType::FinalizeFast(block) => {
+            (Vote::new_notarization_vote(block), None)
         }
         CertificateType::Finalize(slot) => (Vote::new_finalization_vote(slot), None),
-        CertificateType::Genesis(slot, hash) => (Vote::new_genesis_vote(slot, hash), None),
-        CertificateType::NotarizeFallback(slot, hash) => (
-            Vote::new_notarization_vote(slot, hash),
-            Some(Vote::new_notarization_fallback_vote(slot, hash)),
+        CertificateType::Genesis(block) => (Vote::new_genesis_vote(block), None),
+        CertificateType::NotarizeFallback(block) => (
+            Vote::new_notarization_vote(block),
+            Some(Vote::new_notarization_fallback_vote(block)),
         ),
         CertificateType::Skip(slot) => (
             Vote::new_skip_vote(slot),
@@ -272,7 +272,10 @@ mod test {
     use {
         super::*,
         agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
-        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        agave_votor_messages::{
+            consensus_message::{Block, VoteMessage},
+            vote::Vote,
+        },
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
         },
@@ -323,7 +326,10 @@ mod test {
     #[test]
     fn test_verify_certificate_base2_valid() {
         let bls_keypairs = create_bls_keypairs(10);
-        let cert_type = CertificateType::Notarize(10, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
         let cert = create_signed_certificate_message(
             &bls_keypairs,
             cert_type,
@@ -341,10 +347,12 @@ mod test {
     #[test]
     fn test_verify_certificate_base3_valid() {
         let bls_keypairs = create_bls_keypairs(10);
-        let slot = 20;
-        let block_hash = Hash::new_unique();
-        let notarize_vote = Vote::new_notarization_vote(slot, block_hash);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let block = Block {
+            slot: 20,
+            block_id: Hash::new_unique(),
+        };
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(&bls_keypairs, notarize_vote, i))
@@ -356,7 +364,7 @@ mod test {
                 i,
             ))
         });
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
@@ -376,9 +384,11 @@ mod test {
         let bls_keypairs = create_bls_keypairs(10);
 
         let num_signers = 7;
-        let slot = 10;
-        let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(slot, block_hash);
+        let block = Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        };
+        let cert_type = CertificateType::Notarize(block);
         let mut bitmap = BitVec::new();
         bitmap.resize(num_signers, false);
         for i in 0..num_signers {
@@ -404,11 +414,13 @@ mod test {
     fn base3_cert_with_no_primary_verifies() {
         let max_validators = 10;
         let bls_keypairs = create_bls_keypairs(max_validators);
-        let slot = 20;
-        let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let block = Block {
+            slot: 20,
+            block_id: Hash::new_unique(),
+        };
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
-        let vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let vote = Vote::new_notarization_fallback_vote(block);
         let vote_msgs = (0..max_validators)
             .map(|i| create_signed_vote_message(&bls_keypairs, vote, i))
             .collect::<Vec<_>>();

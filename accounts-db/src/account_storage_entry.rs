@@ -211,6 +211,12 @@ impl AccountStorageEntry {
         self.accounts.flush()
     }
 
+    /// Detach the on-disk file from this storage's lifetime; see
+    /// [`AccountsFile::disable_remove_on_drop`].
+    pub fn disable_remove_on_drop(&self) {
+        self.accounts.disable_remove_on_drop();
+    }
+
     pub(crate) fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {
         self.num_alive_accounts
             .fetch_add(num_accounts, Ordering::Release);
@@ -251,5 +257,9 @@ impl AccountStorageEntry {
     // Function to modify the list in the account storage entry directly. Only intended for use in testing
     pub(crate) fn obsolete_accounts(&self) -> &RwLock<ObsoleteAccounts> {
         &self.obsolete_accounts
+    }
+
+    pub(crate) fn zero_lamport_single_ref_offsets(&self) -> &RwLock<IntSet<Offset>> {
+        &self.zero_lamport_single_ref_offsets
     }
 }
