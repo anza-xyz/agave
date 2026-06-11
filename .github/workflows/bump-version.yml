@@ -20,14 +20,30 @@ jobs:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
       pull-requests: write
+    environment: "Version Bump"
     steps:
+      - name: Create github app token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        id: app-token
+        with:
+          client-id: ${{ vars.CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - name: Set git config
+        run: |
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: Checkout code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           fetch-depth: 0
-          token: ${{ secrets.VERSION_BUMP_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
       - name: Setup
         run: |
@@ -39,10 +55,6 @@ jobs:
             --git https://github.com/anza-xyz/xtask \
             --rev 930e3baec27a17cb4491b5585515b33f94dbd039 \
             --bin xtask
-
-          # git config
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
 
       - name: Process
         id: process
