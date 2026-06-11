@@ -8,10 +8,6 @@ use {
         fraction::Fraction,
     },
     crossbeam_channel::Sender,
-    rayon::{
-        ThreadPool,
-        iter::{IntoParallelIterator, ParallelIterator},
-    },
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
@@ -43,22 +39,19 @@ enum CertVerifyError {
 
 /// Verifies certificates and sends the verified certificates to the consensus pool.
 ///
-/// Additionally inserts valid [`CertificateType`]s into `verified_certs_set`.
-/// Any certificate that fails verification will have its sender banlisted.
+/// The `seen_certs` contains
+/// certificate types that have already been successfully verified. `certs` are
+/// verified in the order in which they appear in the `Vec`.
 ///
-/// Function expects that the caller has already deduped the certs to verify i.e.
-/// none of the certs appear in the [`verified_certs_set`].
+/// A certificate is inserted into `seen_certs` only after successful
+/// verification.
 pub(super) fn verify_and_send_certificates(
-    verified_certs_set: &mut HashSet<CertificateType>,
+    seen_certs: &mut HashSet<CertificateType>,
     certs: Vec<CertPayload>,
     root_bank: &Bank,
     channel_to_pool: &Sender<SigVerifiedBatch>,
     banlist: &SimpleQosBanlist,
-    thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
-    for cert in certs.iter().map(|cert_payload| &cert_payload.cert) {
-        debug_assert!(!verified_certs_set.contains(&cert.cert_type));
-    }
     let mut measure = Measure::start("verify_and_send_certificates");
     let mut stats = SigVerifyCertStats::default();
 
@@ -66,57 +59,25 @@ pub(super) fn verify_and_send_certificates(
         return Ok(stats);
     }
 
-    stats.certs_to_sig_verify += certs.len() as u64;
-    let messages = verify_certs(
-        certs,
-        root_bank,
-        verified_certs_set,
-        &mut stats,
-        banlist,
-        thread_pool,
-    );
-    stats.sig_verified_certs += messages.len() as u64;
-    send_certs_to_pool(messages, channel_to_pool, &mut stats)?;
+    let mut messages = Vec::with_capacity(certs.len());
 
-    measure.stop();
-    stats
-        .fn_verify_and_send_certs_stats
-        .add_sample(measure.as_us());
-    Ok(stats)
-}
+    for cert_payload in certs {
+        let cert_type = cert_payload.cert.cert_type;
 
-/// Verifies certificates in `certs`, stores a local copy, and prepares them for forwarding.
-///
-/// The valid certs are inserted into the [`verified_certs_set`].
-/// Invalid cert senders are banlisted.
-/// Returns a [`SigVerifiedBatch`] constructed from the valid certs.
-fn verify_certs(
-    certs: Vec<CertPayload>,
-    root_bank: &Bank,
-    verified_certs_set: &mut HashSet<CertificateType>,
-    stats: &mut SigVerifyCertStats,
-    banlist: &SimpleQosBanlist,
-    thread_pool: &ThreadPool,
-) -> SigVerifiedBatch {
-    let verified = thread_pool.install(|| {
-        certs
-            .into_par_iter()
-            .map(|cert_payload| {
-                let res = verify_cert(&cert_payload.cert, root_bank);
-                (cert_payload, res)
-            })
-            .collect::<Vec<_>>()
-    });
+        if seen_certs.contains(&cert_type) {
+            continue;
+        }
 
-    let certs = verified
-        .into_iter()
-        .filter_map(|(cert_payload, res)| match res {
+        stats.certs_to_sig_verify += 1;
+
+        let verify_result = verify_cert(&cert_payload.cert, root_bank);
+
+        match verify_result {
             Ok(()) => {
                 let cert = cert_payload.cert;
-                if !verified_certs_set.insert(cert.cert_type) {
-                    stats.unnecessary_certs_verified += 1;
-                }
-                Some(cert)
+
+                seen_certs.insert(cert.cert_type);
+                messages.push(cert);
             }
             Err(e) => {
                 match &e {
@@ -145,24 +106,36 @@ fn verify_certs(
                         stats.too_far_in_future += 1;
                     }
                 };
-                None
             }
-        })
-        .collect();
-    SigVerifiedBatch::Certificates(certs)
+        }
+    }
+
+    stats.sig_verified_certs += messages.len() as u64;
+
+    send_certs_to_pool(messages, channel_to_pool, &mut stats)?;
+
+    measure.stop();
+    stats
+        .fn_verify_and_send_certs_stats
+        .add_sample(measure.as_us());
+
+    Ok(stats)
 }
 
 fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyError> {
     let cert_slot = cert.cert_type.slot();
     let root_slot = root_bank.slot();
+
     if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
         return Err(CertVerifyError::TooFarInFuture {
             cert_slot,
             root_slot,
         });
     }
+
     let (aggregate_stake, total_stake) = root_bank.verify_certificate(cert)?;
     debug_assert!(aggregate_stake <= total_stake);
+
     verify_stake(cert, aggregate_stake, total_stake)
 }
 
@@ -172,8 +145,9 @@ fn verify_stake(
     total_stake: u64,
 ) -> Result<(), CertVerifyError> {
     let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
-    let total_stake = NonZeroU64::new(total_stake).expect("Total stake cannot be zero");
+    let total_stake = NonZeroU64::new(total_stake).expect("total stake cannot be zero");
     let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+
     if cert_fraction >= required_fraction {
         Ok(())
     } else {
