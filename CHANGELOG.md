@@ -17,6 +17,7 @@ Release channels have their own copy of this changelog:
 ## 4.2.0-Unreleased
 ### RPC
 #### Breaking
+* The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
 #### Changes
 * Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
   `getLatestBlockhash` response together with its context (notably `context.slot`).
