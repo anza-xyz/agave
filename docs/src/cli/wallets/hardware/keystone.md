@@ -12,20 +12,6 @@ This page explains how to use a Keystone device to interact with Solana via the 
 - [Learn about BIP-32](https://trezor.io/learn/a/what-is-bip32)
 - [Learn about BIP-44](https://trezor.io/learn/a/what-is-bip44)
 
-If you build the Solana CLI from source, Keystone support is enabled by default
-for the CLI binaries you use:
-
-```bash
-cargo build -p solana-keygen
-cargo build -p solana-cli
-```
-
-For local development, you can run these binaries with Keystone support directly:
-
-```bash
-cargo run -p solana-keygen -- pubkey "usb://keystone?key=0/0"
-```
-
 ## Using Keystone with the Solana CLI
 
 1. Connect your Keystone device to your computer via USB

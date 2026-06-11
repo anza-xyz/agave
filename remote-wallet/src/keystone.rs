@@ -98,27 +98,9 @@ struct UsbIo {
     transfer_type: rusb::TransferType,
 }
 
-impl UsbIo {
-    fn new(
-        interface_number: u8,
-        setting_number: u8,
-        endpoint_out: u8,
-        endpoint_in: u8,
-        transfer_type: rusb::TransferType,
-    ) -> Self {
-        Self {
-            interface_number,
-            setting_number,
-            endpoint_out,
-            endpoint_in,
-            transfer_type,
-        }
-    }
-}
-
 struct EndpointPair {
-    out: u8,
-    in_: u8,
+    output: u8,
+    input: u8,
 }
 
 struct EapduHeader {
@@ -158,11 +140,7 @@ impl EapduHeader {
 pub struct KeystoneWallet {
     pub device: rusb::Device<rusb::Context>,
     pub handle: rusb::DeviceHandle<rusb::Context>,
-    pub interface_number: u8,
-    pub setting_number: u8,
-    pub endpoint_out: u8,
-    pub endpoint_in: u8,
-    pub transfer_type: rusb::TransferType,
+    usb_io: UsbIo,
     pub pretty_path: String,
     pub version: Option<FirmwareVersion>,
     pub mfp: Option<[u8; 4]>,
@@ -204,11 +182,7 @@ impl KeystoneWallet {
         Ok(Self {
             device,
             handle,
-            interface_number: usb_io.interface_number,
-            setting_number: usb_io.setting_number,
-            endpoint_out: usb_io.endpoint_out,
-            endpoint_in: usb_io.endpoint_in,
-            transfer_type: usb_io.transfer_type,
+            usb_io,
             pretty_path: String::default(),
             version: None,
             mfp: None,
@@ -231,13 +205,13 @@ impl KeystoneWallet {
                 }
                 for transfer_type in [rusb::TransferType::Bulk, rusb::TransferType::Interrupt] {
                     if let Some(endpoints) = find_endpoint_pair(&descriptor, transfer_type) {
-                        return Ok(UsbIo::new(
-                            descriptor.interface_number(),
-                            descriptor.setting_number(),
-                            endpoints.out,
-                            endpoints.in_,
+                        return Ok(UsbIo {
+                            interface_number: descriptor.interface_number(),
+                            setting_number: descriptor.setting_number(),
+                            endpoint_out: endpoints.output,
+                            endpoint_in: endpoints.input,
                             transfer_type,
-                        ));
+                        });
                     }
                 }
             }
@@ -248,13 +222,13 @@ impl KeystoneWallet {
             for interface in config.interfaces() {
                 for descriptor in interface.descriptors() {
                     if let Some(endpoints) = find_endpoint_pair(&descriptor, wanted_type) {
-                        return Ok(UsbIo::new(
-                            descriptor.interface_number(),
-                            descriptor.setting_number(),
-                            endpoints.out,
-                            endpoints.in_,
-                            wanted_type,
-                        ));
+                        return Ok(UsbIo {
+                            interface_number: descriptor.interface_number(),
+                            setting_number: descriptor.setting_number(),
+                            endpoint_out: endpoints.output,
+                            endpoint_in: endpoints.input,
+                            transfer_type: wanted_type,
+                        });
                     }
                 }
             }
@@ -493,14 +467,14 @@ impl KeystoneWallet {
 
     /// Low-level USB write to device
     fn device_write(&self, data: &[u8]) -> Result<(), RemoteWalletError> {
-        match self.transfer_type {
+        match self.usb_io.transfer_type {
             rusb::TransferType::Interrupt => self
                 .handle
-                .write_interrupt(self.endpoint_out, data, USB_TIMEOUT)
+                .write_interrupt(self.usb_io.endpoint_out, data, USB_TIMEOUT)
                 .map_err(|e| RemoteWalletError::Hid(format!("USB write failed: {e}")))?,
             rusb::TransferType::Bulk => self
                 .handle
-                .write_bulk(self.endpoint_out, data, USB_TIMEOUT)
+                .write_bulk(self.usb_io.endpoint_out, data, USB_TIMEOUT)
                 .map_err(|e| RemoteWalletError::Hid(format!("USB write failed: {e}")))?,
             _ => {
                 return Err(RemoteWalletError::Protocol(
@@ -530,13 +504,14 @@ impl KeystoneWallet {
     fn device_read_raw(&self, timeout: std::time::Duration) -> Result<Vec<u8>, rusb::Error> {
         let mut buf = vec![0u8; HID_PACKET_SIZE];
 
-        let bytes_read = match self.transfer_type {
+        let bytes_read = match self.usb_io.transfer_type {
             rusb::TransferType::Interrupt => {
                 self.handle
-                    .read_interrupt(self.endpoint_in, &mut buf, timeout)?
+                    .read_interrupt(self.usb_io.endpoint_in, &mut buf, timeout)?
             }
             rusb::TransferType::Bulk => {
-                self.handle.read_bulk(self.endpoint_in, &mut buf, timeout)?
+                self.handle
+                    .read_bulk(self.usb_io.endpoint_in, &mut buf, timeout)?
             }
             _ => return Err(rusb::Error::NotSupported),
         };
@@ -576,7 +551,7 @@ fn find_endpoint_pair(
         }
     }
     match (endpoint_out, endpoint_in) {
-        (Some(out), Some(in_)) => Some(EndpointPair { out, in_ }),
+        (Some(output), Some(input)) => Some(EndpointPair { output, input }),
         _ => None,
     }
 }
