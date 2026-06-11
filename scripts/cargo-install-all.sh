@@ -130,17 +130,17 @@ while [[ -n $1 ]]; do
 done
 
 
-if [[ -n "$installDir" ]]; then
+if [[ -n "$dcouCheckOnly" ]]; then
+  echo "(dcou check mode: ignore installDir)"
+else
+  if [[ -z "$installDir" ]]; then
+    usage "Install directory not specified"
+  fi
+
   installDir="$(mkdir -p "$installDir"; cd "$installDir"; pwd)"
   mkdir -p "$installDir/bin/deps"
 
   echo "Install location: $installDir ($buildProfile)"
-else
-  if [[ -n "$dcouCheckOnly" ]]; then
-    echo "(dcou check mode: ignore installDir validation)"
-  else
-    usage "Install directory not specified"
-  fi
 fi
 
 cd "$(dirname "$0")"/..
