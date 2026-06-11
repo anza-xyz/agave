@@ -17,6 +17,7 @@ use {
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
+        ops::Deref,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
 };
@@ -36,6 +37,9 @@ impl StakesCacheV2State {
     }
 }
 
+/// A hash map that contains per-fork changes to the stake accounts.
+type Overlay = HashMap<Pubkey, Option<Arc<StakeAccount>>>;
+
 /// Rooted stake delegation entry.
 #[derive(Clone, Debug)]
 struct RootEntry {
@@ -43,11 +47,55 @@ struct RootEntry {
     stake_account: Arc<StakeAccount>,
 }
 
+/// Rooted stake delegation entry that might be a tombstone.
+#[derive(Clone, Debug)]
+struct MaybeRootEntry(Option<RootEntry>);
+
+impl Deref for MaybeRootEntry {
+    type Target = Option<RootEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl MaybeRootEntry {
+    /// Returns a new entry for a stake account.
+    fn new(stake_pubkey: Pubkey, stake_account: Arc<StakeAccount>) -> Self {
+        Self(Some(RootEntry {
+            stake_pubkey,
+            stake_account,
+        }))
+    }
+
+    /// Returns a new tombstone.
+    fn tombstone() -> Self {
+        Self(None)
+    }
+
+    /// Returns a stake account with a potential change from the overlay applied.
+    fn apply_overlay<'a>(&'a self, overlay: &'a Overlay) -> Option<(&'a Pubkey, &'a StakeAccount)> {
+        self.0.as_ref().and_then(|root_entry| {
+            match overlay.get(&root_entry.stake_pubkey) {
+                // Overlay updates the stake.
+                Some(Some(stake_account)) => {
+                    Some((&root_entry.stake_pubkey, stake_account.as_ref()))
+                }
+                // Overlay removes the stake.
+                Some(None) => None,
+                // Overlay doesn't modify the stake.
+                None => Some((&root_entry.stake_pubkey, root_entry.stake_account.as_ref())),
+            }
+        })
+    }
+}
+
 #[derive(Debug)]
 struct StakeDelegationIndexInner {
-    root_entries: Vec<Option<RootEntry>>,
+    root_entries: Vec<MaybeRootEntry>,
     root_positions: HashMap<Pubkey, usize>,
     free_root_indices: Vec<usize>,
+    len: usize,
 }
 
 /// Index of rooted stake delegations, shared across banks.
@@ -64,65 +112,54 @@ struct FrontierEntry {
 /// Merged stake-delegation view for one bank frontier.
 #[derive(Debug)]
 pub(crate) struct FrontierQuery<'a> {
+    /// Lock guard holding the index of rooted stake delegations.
     inner: RwLockReadGuard<'a, StakeDelegationIndexInner>,
-    /// Rooted slots that remain visible after applying unrooted deltas. We
-    /// materialize the visible set once so repeated frontier iterations do
-    /// not have to rescan all rooted entries and skip the hidden ones.
-    visible_root_indices: Vec<usize>,
     overlay: HashMap<Pubkey, Option<Arc<StakeAccount>>>,
     overlay_only_inserts: Vec<FrontierEntry>,
 }
 
 impl<'a> FrontierQuery<'a> {
     pub(crate) fn len(&self) -> usize {
-        self.visible_root_indices.len() + self.overlay_only_inserts.len()
+        self.inner.len + self.overlay_only_inserts.len()
     }
 
     pub(crate) fn par_iter(
         &'a self,
-    ) -> impl IndexedParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
-        self.visible_root_indices
+    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
+        self.inner
+            .root_entries
             .par_iter()
-            .map(move |root_index| {
-                let root_entry = self.inner.root_entries[*root_index]
-                    .as_ref()
-                    .expect("visible rooted frontier entry must exist");
-                let stake_account = self
-                    .overlay
-                    .get(&root_entry.stake_pubkey)
-                    .and_then(|stake_account| stake_account.as_ref())
-                    .map_or(root_entry.stake_account.as_ref(), Arc::as_ref);
-                (&root_entry.stake_pubkey, stake_account)
-            })
+            .map(|root_entry| root_entry.apply_overlay(&self.overlay))
             .chain(
                 self.overlay_only_inserts
                     .par_iter()
-                    .map(|entry| (&entry.stake_pubkey, entry.stake_account.as_ref())),
+                    .map(|entry| Some((&entry.stake_pubkey, entry.stake_account.as_ref()))),
             )
+    }
+
+    pub(crate) fn par_iter_some(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
+        self.par_iter().filter_map(|maybe_stake| maybe_stake)
     }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 impl<'a> FrontierQuery<'a> {
-    pub(crate) fn iter(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
-        self.visible_root_indices
+    pub(crate) fn iter(&'a self) -> impl Iterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
+        self.inner
+            .root_entries
             .iter()
-            .map(move |root_index| {
-                let root_entry = self.inner.root_entries[*root_index]
-                    .as_ref()
-                    .expect("visible rooted frontier entry must exist");
-                let stake_account = self
-                    .overlay
-                    .get(&root_entry.stake_pubkey)
-                    .and_then(|stake_account| stake_account.as_ref())
-                    .map_or(root_entry.stake_account.as_ref(), Arc::as_ref);
-                (&root_entry.stake_pubkey, stake_account)
-            })
+            .map(|root_entry| root_entry.apply_overlay(&self.overlay))
             .chain(
                 self.overlay_only_inserts
                     .iter()
-                    .map(|entry| (&entry.stake_pubkey, entry.stake_account.as_ref())),
+                    .map(|entry| Some((&entry.stake_pubkey, entry.stake_account.as_ref()))),
             )
+    }
+
+    pub(crate) fn iter_some(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
+        self.iter().filter_map(|maybe_stake| maybe_stake)
     }
 }
 
@@ -137,31 +174,28 @@ impl StakeDelegationIndex {
                 match maybe_stake_account {
                     Some(stake_account) => {
                         if let Some(index) = inner.root_positions.get(&stake_pubkey).copied() {
-                            inner.root_entries[index] = Some(RootEntry {
-                                stake_pubkey,
-                                stake_account,
-                            });
+                            inner.root_entries[index] =
+                                MaybeRootEntry::new(stake_pubkey, stake_account);
                         } else {
                             let index = inner
                                 .free_root_indices
                                 .pop()
                                 .unwrap_or_else(|| inner.root_entries.len());
                             inner.root_positions.insert(stake_pubkey, index);
-                            let root_entry = Some(RootEntry {
-                                stake_pubkey,
-                                stake_account,
-                            });
+                            let root_entry = MaybeRootEntry::new(stake_pubkey, stake_account);
                             if index == inner.root_entries.len() {
                                 inner.root_entries.push(root_entry);
                             } else {
                                 inner.root_entries[index] = root_entry;
                             }
+                            inner.len = inner.len.wrapping_add(1);
                         }
                     }
                     None => {
                         if let Some(index) = inner.root_positions.remove(&stake_pubkey) {
-                            inner.root_entries[index] = None;
+                            inner.root_entries[index] = MaybeRootEntry::tombstone();
                             inner.free_root_indices.push(index);
+                            inner.len = inner.len.wrapping_sub(1);
                         }
                     }
                 }
@@ -185,35 +219,6 @@ pub(crate) struct StakesCacheV2 {
 }
 
 impl StakesCacheV2 {
-    fn from_root_entries_and_state(
-        root_entries: Vec<Option<RootEntry>>,
-        epoch: Epoch,
-        stake_history: StakeHistory,
-    ) -> Self {
-        let mut root_positions = HashMap::with_capacity(root_entries.len());
-        for (index, root_entry) in root_entries.iter().enumerate() {
-            let stake_pubkey = root_entry
-                .as_ref()
-                .expect("stake delegation root entry must be populated")
-                .stake_pubkey;
-            root_positions.insert(stake_pubkey, index);
-        }
-        Self {
-            stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
-                StakeDelegationIndexInner {
-                    root_entries,
-                    root_positions,
-                    free_root_indices: Vec::new(),
-                },
-            ))),
-            fork_delta: RwLock::new(HashMap::default()),
-            state: RwLock::new(StakesCacheV2State {
-                epoch,
-                stake_history,
-            }),
-        }
-    }
-
     pub(crate) fn new_from_accounts_for_genesis<'a, T: ReadableAccount + 'a>(
         accounts: impl IntoIterator<Item = (&'a Pubkey, &'a T)>,
     ) -> Self {
@@ -222,6 +227,7 @@ impl StakesCacheV2 {
         let mut vote_accounts = VoteAccountsHashMap::default();
         let mut delegated_stakes: HashMap<Pubkey, u64> = HashMap::default();
         let mut root_entries = Vec::new();
+        let mut root_positions = HashMap::new();
 
         for (pubkey, account) in accounts {
             if account.lamports() == 0 {
@@ -244,20 +250,34 @@ impl StakesCacheV2 {
                     #[expect(deprecated, reason = "we still use the legacy stake calculation")]
                     let stake = delegation.stake(epoch, &stake_history, None);
                     *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
-                    root_entries.push(Some(RootEntry {
-                        stake_pubkey: *pubkey,
-                        stake_account: Arc::new(stake_account),
-                    }));
+                    root_entries.push(MaybeRootEntry::new(*pubkey, Arc::new(stake_account)));
+                    root_positions.insert(*pubkey, root_entries.len() - 1);
                 }
             }
         }
+
+        let len = root_entries.len();
 
         let mut vote_accounts = VoteAccounts::from(Arc::new(vote_accounts));
         for (vote_pubkey, stake) in delegated_stakes {
             vote_accounts.add_stake(&vote_pubkey, stake);
         }
 
-        Self::from_root_entries_and_state(root_entries, epoch, stake_history)
+        Self {
+            stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
+                StakeDelegationIndexInner {
+                    root_entries,
+                    root_positions,
+                    free_root_indices: Vec::new(),
+                    len,
+                },
+            ))),
+            fork_delta: RwLock::new(HashMap::default()),
+            state: RwLock::new(StakesCacheV2State {
+                epoch,
+                stake_history,
+            }),
+        }
     }
 
     pub(crate) fn load_from_deserialized_delegations<F>(
@@ -267,12 +287,12 @@ impl StakesCacheV2 {
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
-        let root_entries_len = stakes.stake_delegations.len();
-        let mut root_entries = Vec::with_capacity(root_entries_len);
+        let len = stakes.stake_delegations.len();
+        let mut root_entries = Vec::with_capacity(len);
         root_entries
             .spare_capacity_mut()
             .par_iter_mut()
-            .take(root_entries_len)
+            .take(len)
             .zip_eq(stakes.stake_delegations.into_par_iter())
             .try_for_each(|(root_entry, (pubkey, delegation))| {
                 let Some(stake_account) = get_account(&pubkey) else {
@@ -281,10 +301,7 @@ impl StakesCacheV2 {
 
                 let stake_account = StakeAccount::try_from(stake_account)?;
                 if stake_account.delegation() == &delegation {
-                    root_entry.write(Some(RootEntry {
-                        stake_pubkey: pubkey,
-                        stake_account: Arc::new(stake_account),
-                    }));
+                    root_entry.write(MaybeRootEntry::new(pubkey, Arc::new(stake_account)));
                     Ok(())
                 } else {
                     Err(Error::InvalidDelegation(pubkey))
@@ -293,13 +310,39 @@ impl StakesCacheV2 {
         // SAFETY: We initialized all the `root_entries` elements up to
         // `root_entries_len`.
         unsafe {
-            root_entries.set_len(root_entries_len);
+            root_entries.set_len(len);
         }
-        Ok(Self::from_root_entries_and_state(
-            root_entries,
-            stakes.epoch,
-            stakes.stake_history,
-        ))
+
+        let mut root_positions = HashMap::with_capacity(root_entries.len());
+        for (index, root_entry) in root_entries.iter().enumerate() {
+            let stake_pubkey = root_entry
+                .as_ref()
+                .expect("stake delegation root entry must be populated")
+                .stake_pubkey;
+            root_positions.insert(stake_pubkey, index);
+        }
+
+        let DeserializableStakes {
+            epoch,
+            stake_history,
+            ..
+        } = stakes;
+
+        Ok(Self {
+            stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
+                StakeDelegationIndexInner {
+                    root_entries,
+                    root_positions,
+                    free_root_indices: Vec::new(),
+                    len,
+                },
+            ))),
+            fork_delta: RwLock::new(HashMap::default()),
+            state: RwLock::new(StakesCacheV2State {
+                epoch,
+                stake_history,
+            }),
+        })
     }
 
     pub(crate) fn new_from_parent(parent: &Self) -> Self {
@@ -310,11 +353,6 @@ impl StakesCacheV2 {
             fork_delta: RwLock::new(HashMap::default()),
             state: RwLock::new(state),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn empty(epoch: Epoch) -> Self {
-        Self::from_root_entries_and_state(Vec::new(), epoch, StakeHistory::default())
     }
 
     pub(crate) fn frontier_query<'a>(
@@ -336,16 +374,6 @@ impl StakesCacheV2 {
         }
 
         let inner = self.stake_delegation_index.0.read().unwrap();
-        let mut visible_root_indices = Vec::with_capacity(inner.root_positions.len());
-        for (root_index, root_entry) in inner.root_entries.iter().enumerate() {
-            let Some(root_entry) = root_entry.as_ref() else {
-                continue;
-            };
-            if matches!(overlay.get(&root_entry.stake_pubkey), Some(None)) {
-                continue;
-            }
-            visible_root_indices.push(root_index);
-        }
 
         let mut overlay_only_inserts = overlay
             .iter()
@@ -365,7 +393,6 @@ impl StakesCacheV2 {
 
         FrontierQuery {
             inner,
-            visible_root_indices,
             overlay,
             overlay_only_inserts,
         }
@@ -428,25 +455,63 @@ impl StakesCacheV2 {
 }
 
 #[cfg(test)]
+impl StakesCacheV2 {
+    pub(crate) fn new_from_accounts(
+        accounts: impl ExactSizeIterator<Item = (Pubkey, StakeAccount)>,
+        epoch: Epoch,
+    ) -> Self {
+        let mut root_entries = Vec::with_capacity(accounts.len());
+        let mut root_positions = HashMap::with_capacity(accounts.len());
+
+        for (pubkey, account) in accounts {
+            root_entries.push(MaybeRootEntry::new(pubkey, Arc::new(account)));
+            root_positions.insert(pubkey, root_entries.len() - 1);
+        }
+
+        let len = root_entries.len();
+
+        Self {
+            stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
+                StakeDelegationIndexInner {
+                    root_entries,
+                    root_positions,
+                    free_root_indices: Vec::new(),
+                    len,
+                },
+            ))),
+            fork_delta: RwLock::new(HashMap::default()),
+            state: RwLock::new(StakesCacheV2State {
+                epoch,
+                stake_history: StakeHistory::default(),
+            }),
+        }
+    }
+
+    pub(crate) fn empty(epoch: Epoch) -> Self {
+        Self {
+            stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
+                StakeDelegationIndexInner {
+                    root_entries: Vec::new(),
+                    root_positions: HashMap::new(),
+                    free_root_indices: Vec::new(),
+                    len: 0,
+                },
+            ))),
+            fork_delta: RwLock::new(HashMap::default()),
+            state: RwLock::new(StakesCacheV2State {
+                epoch,
+                stake_history: StakeHistory::default(),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use {
-        super::*, crate::stakes::tests::create_stake_account, rayon::ThreadPoolBuilder,
-        solana_pubkey::new_rand, solana_rent::Rent,
+        super::*, crate::stakes::tests::create_stake_account, solana_pubkey::new_rand,
+        solana_rent::Rent,
     };
-
-    fn root_entries_from_stake_accounts(
-        stake_delegations: impl IntoIterator<Item = (Pubkey, StakeAccount)>,
-    ) -> Vec<Option<RootEntry>> {
-        stake_delegations
-            .into_iter()
-            .map(|(stake_pubkey, stake_account)| {
-                Some(RootEntry {
-                    stake_pubkey,
-                    stake_account: Arc::new(stake_account),
-                })
-            })
-            .collect()
-    }
 
     #[test]
     fn test_frontier_query_overlays_root_and_deltas() {
@@ -460,18 +525,20 @@ mod tests {
         let root_account_a = create_stake_account(10, &vote_pubkey_a, &stake_pubkey_a, &rent);
         let root_account_b = create_stake_account(20, &vote_pubkey_b, &stake_pubkey_b, &rent);
 
-        let root_entries = root_entries_from_stake_accounts([
-            (
-                stake_pubkey_a,
-                StakeAccount::try_from(root_account_a).unwrap(),
-            ),
-            (
-                stake_pubkey_b,
-                StakeAccount::try_from(root_account_b).unwrap(),
-            ),
-        ]);
-        let root_cache =
-            StakesCacheV2::from_root_entries_and_state(root_entries, 0, StakeHistory::default());
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [
+                (
+                    stake_pubkey_a,
+                    StakeAccount::try_from(root_account_a).unwrap(),
+                ),
+                (
+                    stake_pubkey_b,
+                    StakeAccount::try_from(root_account_b).unwrap(),
+                ),
+            ]
+            .into_iter(),
+            0,
+        );
         let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
         let updated_account_a = create_stake_account(30, &vote_pubkey_b, &stake_pubkey_a, &rent);
         let inserted_account_c = create_stake_account(40, &vote_pubkey_a, &stake_pubkey_c, &rent);
@@ -485,10 +552,8 @@ mod tests {
             StakeAccount::try_from(inserted_account_c).unwrap(),
         );
 
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let frontier_query = root_cache.frontier_query([&fork_cache]);
-        let stake_delegations =
-            thread_pool.install(|| frontier_query.par_iter().collect::<Vec<_>>());
+        let stake_delegations = frontier_query.iter_some().collect::<Vec<_>>();
         assert_eq!(stake_delegations.len(), 2);
         assert!(stake_delegations.iter().any(|(pubkey, account)| {
             **pubkey == stake_pubkey_a && account.delegation().stake == 30
@@ -526,18 +591,20 @@ mod tests {
         let root_account_a = create_stake_account(10, &vote_pubkey_a, &stake_pubkey_a, &rent);
         let root_account_b = create_stake_account(20, &vote_pubkey_b, &stake_pubkey_b, &rent);
 
-        let root_entries = root_entries_from_stake_accounts([
-            (
-                stake_pubkey_a,
-                StakeAccount::try_from(root_account_a).unwrap(),
-            ),
-            (
-                stake_pubkey_b,
-                StakeAccount::try_from(root_account_b).unwrap(),
-            ),
-        ]);
-        let root_cache =
-            StakesCacheV2::from_root_entries_and_state(root_entries, 0, StakeHistory::default());
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [
+                (
+                    stake_pubkey_a,
+                    StakeAccount::try_from(root_account_a).unwrap(),
+                ),
+                (
+                    stake_pubkey_b,
+                    StakeAccount::try_from(root_account_b).unwrap(),
+                ),
+            ]
+            .into_iter(),
+            0,
+        );
         let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
         let updated_account_a = create_stake_account(30, &vote_pubkey_b, &stake_pubkey_a, &rent);
         let inserted_account_c = create_stake_account(40, &vote_pubkey_a, &stake_pubkey_c, &rent);
@@ -551,14 +618,11 @@ mod tests {
             StakeAccount::try_from(inserted_account_c).unwrap(),
         );
 
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let frontier_query = root_cache.frontier_query([&fork_cache]);
-        let query_entries = thread_pool.install(|| {
-            frontier_query
-                .par_iter()
-                .map(|(pubkey, stake_account)| (*pubkey, stake_account.delegation().stake))
-                .collect::<Vec<_>>()
-        });
+        let query_entries = frontier_query
+            .iter_some()
+            .map(|(pubkey, stake_account)| (*pubkey, stake_account.delegation().stake))
+            .collect::<Vec<_>>();
         assert_eq!(
             &query_entries,
             &[(stake_pubkey_a, 30), (stake_pubkey_c, 40)]
@@ -577,18 +641,20 @@ mod tests {
         let root_account_a = create_stake_account(10, &vote_pubkey_a, &stake_pubkey_a, &rent);
         let root_account_b = create_stake_account(20, &vote_pubkey_b, &stake_pubkey_b, &rent);
 
-        let root_entries = root_entries_from_stake_accounts([
-            (
-                stake_pubkey_a,
-                StakeAccount::try_from(root_account_a).unwrap(),
-            ),
-            (
-                stake_pubkey_b,
-                StakeAccount::try_from(root_account_b).unwrap(),
-            ),
-        ]);
-        let root_cache =
-            StakesCacheV2::from_root_entries_and_state(root_entries, 0, StakeHistory::default());
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [
+                (
+                    stake_pubkey_a,
+                    StakeAccount::try_from(root_account_a).unwrap(),
+                ),
+                (
+                    stake_pubkey_b,
+                    StakeAccount::try_from(root_account_b).unwrap(),
+                ),
+            ]
+            .into_iter(),
+            0,
+        );
         let index = &root_cache.stake_delegation_index;
         let removed_index = {
             let inner = index.0.read().unwrap();

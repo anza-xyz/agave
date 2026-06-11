@@ -102,12 +102,28 @@ impl<'a> StakeDelegationsView<'a> {
 
     pub(crate) fn par_iter(
         &'a self,
-    ) -> impl IndexedParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
+    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
         match self {
             Self::FrontierQuery(stake_delegations) => Either::Left(stake_delegations.par_iter()),
+            Self::Legacy(stake_delegations) => {
+                Either::Right(stake_delegations.par_iter().map(|(pubkey, stake_account)|
+                        // Dereference `&&` to `&`.
+                        Some((*pubkey, *stake_account))))
+            }
+        }
+    }
+
+    pub(crate) fn par_iter_some(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
+        match self {
+            Self::FrontierQuery(stake_delegations) => {
+                Either::Left(stake_delegations.par_iter_some())
+            }
             Self::Legacy(stake_delegations) => Either::Right(
                 stake_delegations
                     .par_iter()
+                    // Replace `&(&&K, &&V)` with `(&K, &V)`.
                     .map(|(pubkey, stake_account)| (*pubkey, *stake_account)),
             ),
         }
@@ -491,7 +507,7 @@ impl Stakes<StakeAccount> {
         // prev epoch.
         let (stake_history_entry, effective_delegated_stakes) = thread_pool.install(|| {
             stake_delegations
-                .par_iter()
+                .par_iter_some()
                 .fold(
                     || (StakeActivationStatus::default(), HashMap::default()),
                     |(acc, mut delegated_stakes), (_stake_pubkey, stake_account)| {
@@ -838,7 +854,7 @@ fn refresh_vote_accounts(
     }
     let delegated_stakes = thread_pool.install(|| {
         stake_delegations
-            .par_iter()
+            .par_iter_some()
             .fold(
                 DelegatedStakes::default,
                 |mut delegated_stakes, (_stake_pubkey, stake_account)| {

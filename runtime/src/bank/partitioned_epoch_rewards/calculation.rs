@@ -739,39 +739,48 @@ impl Bank {
                 .par_iter()
                 .zip_eq(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
-                .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
-                    let maybe_reward_record = self.redeem_delegation_rewards(
-                        rewarded_epoch,
-                        stake_pubkey,
-                        stake_account,
-                        &point_value,
-                        stake_history,
-                        &cached_vote_accounts,
-                        reward_calc_tracer.as_ref(),
-                        new_warmup_cooldown_rate_epoch,
-                        delay_commission_updates,
-                        commission_rate_in_basis_points,
-                        adjust_delegations_for_rent,
-                        ag_epoch_type,
-                        custom_commission_collector,
-                        use_fixed_point_stake_math,
-                    );
+                .filter_map(|(maybe_stake, stake_reward_ref)| {
+                    let (stake_reward, maybe_reward_record) = match maybe_stake {
+                        Some((stake_pubkey, stake_account)) => {
+                            let maybe_reward_record = self.redeem_delegation_rewards(
+                                rewarded_epoch,
+                                stake_pubkey,
+                                stake_account,
+                                &point_value,
+                                stake_history,
+                                &cached_vote_accounts,
+                                reward_calc_tracer.as_ref(),
+                                new_warmup_cooldown_rate_epoch,
+                                delay_commission_updates,
+                                commission_rate_in_basis_points,
+                                adjust_delegations_for_rent,
+                                ag_epoch_type,
+                                custom_commission_collector,
+                                use_fixed_point_stake_math,
+                            );
 
-                    let (stake_reward, maybe_reward_record) = match maybe_reward_record {
-                        Some(res) => {
-                            let InflationRewardWithCommission {
-                                inflation,
-                                commission_pubkey,
-                                reward_commission,
-                            } = res;
-                            let stakers_reward = inflation.stake_reward;
-                            (
-                                Some(PartitionedStakeReward {
-                                    stake_pubkey: *stake_pubkey,
-                                    inflation,
-                                }),
-                                Some((stakers_reward, commission_pubkey, reward_commission)),
-                            )
+                            match maybe_reward_record {
+                                Some(res) => {
+                                    let InflationRewardWithCommission {
+                                        inflation,
+                                        commission_pubkey,
+                                        reward_commission,
+                                    } = res;
+                                    let stakers_reward = inflation.stake_reward;
+                                    (
+                                        Some(PartitionedStakeReward {
+                                            stake_pubkey: *stake_pubkey,
+                                            inflation,
+                                        }),
+                                        Some((
+                                            stakers_reward,
+                                            commission_pubkey,
+                                            reward_commission,
+                                        )),
+                                    )
+                                }
+                                None => (None, None),
+                            }
                         }
                         None => (None, None),
                     };
@@ -864,7 +873,7 @@ impl Bank {
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
-                .par_iter()
+                .par_iter_some()
                 .map(|(_stake_pubkey, stake_account)| {
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
 

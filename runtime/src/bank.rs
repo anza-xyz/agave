@@ -7144,9 +7144,11 @@ impl Bank {
     /// Get stake and stake node accounts
     pub(crate) fn get_stake_accounts(&self, minimized_account_set: &DashSet<Pubkey>) {
         if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
-            stake_delegation_frontier.iter().for_each(|(pubkey, _)| {
-                minimized_account_set.insert(*pubkey);
-            });
+            stake_delegation_frontier
+                .iter_some()
+                .for_each(|(pubkey, _)| {
+                    minimized_account_set.insert(*pubkey);
+                });
         } else {
             self.stakes_cache
                 .stakes()
