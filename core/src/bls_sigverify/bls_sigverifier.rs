@@ -18,6 +18,7 @@ use {
         certificate::CertificateType,
         consensus_message::{ConsensusMessage, SigVerifiedBatch, VoteMessage},
         migration::MigrationStatus,
+        wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -220,7 +221,7 @@ impl SigVerifier {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
-            let Ok(msg) = packet.deserialize_slice::<ConsensusMessage, _>(..) else {
+            let Ok(msg) = packet.deserialize_slice::<VersionedWireConsensusMessage, _>(..) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
@@ -229,6 +230,7 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
+            let msg = msg.into();
             match msg {
                 ConsensusMessage::Vote(vote) => {
                     if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
@@ -341,6 +343,7 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::{Block, ConsensusMessage, VoteMessage},
             vote::Vote,
+            wire::VersionedWireConsensusMessage,
         },
         bitvec::prelude::{BitVec, Lsb0},
         crossbeam_channel::{Receiver, TryRecvError, bounded},
@@ -500,8 +503,12 @@ mod tests {
     }
 
     fn message_to_packet(message: &ConsensusMessage, remote_pubkey: Pubkey) -> Packet {
+        let msg = match message {
+            ConsensusMessage::Vote(v) => VersionedWireConsensusMessage::from(v.clone()),
+            ConsensusMessage::Certificate(c) => VersionedWireConsensusMessage::from(c.clone()),
+        };
         let mut packet = Packet::default();
-        packet.populate_packet(None, message).unwrap();
+        packet.populate_packet(None, &msg).unwrap();
         packet.meta_mut().set_remote_pubkey(remote_pubkey);
         packet
     }

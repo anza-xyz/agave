@@ -4,8 +4,8 @@ use {
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
     agave_votor_messages::{
-        certificate::Certificate,
-        consensus_message::{ConsensusMessage, VoteMessage},
+        certificate::Certificate, consensus_message::VoteMessage,
+        wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
@@ -168,7 +168,7 @@ impl VotingService {
     fn broadcast_consensus_message(
         slot: Slot,
         cluster_info: &ClusterInfo,
-        message: &ConsensusMessage,
+        message: &VersionedWireConsensusMessage,
         connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
@@ -218,11 +218,10 @@ impl VotingService {
                 measure.stop();
                 trace!("{measure}");
                 let slot = vote.vote.slot();
-                let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
                 Self::broadcast_consensus_message(
                     slot,
                     cluster_info,
-                    &msg,
+                    &VersionedWireConsensusMessage::from(Arc::unwrap_or_clone(vote)),
                     connection_cache,
                     additional_listeners,
                     staked_validators_cache,
@@ -231,11 +230,10 @@ impl VotingService {
             BLSOp::PushCertificates { certificates } => {
                 for certificate in certificates {
                     let slot = certificate.cert_type.slot();
-                    let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
                     Self::broadcast_consensus_message(
                         slot,
                         cluster_info,
-                        &message,
+                        &VersionedWireConsensusMessage::from(Arc::unwrap_or_clone(certificate)),
                         connection_cache,
                         additional_listeners,
                         staked_validators_cache,
@@ -245,11 +243,10 @@ impl VotingService {
             BLSOp::RefreshVotes { votes } => {
                 for vote in votes {
                     let slot = vote.vote.slot();
-                    let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
                     Self::broadcast_consensus_message(
                         slot,
                         cluster_info,
-                        &msg,
+                        &VersionedWireConsensusMessage::from(Arc::unwrap_or_clone(vote)),
                         connection_cache,
                         additional_listeners,
                         staked_validators_cache,
@@ -424,7 +421,7 @@ mod tests {
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
         let received_message = packet
-            .deserialize_slice::<ConsensusMessage, _>(..)
+            .deserialize_slice::<VersionedWireConsensusMessage, _>(..)
             .unwrap_or_else(|err| {
                 panic!(
                     "Failed to deserialize BLSMessage: {:?} {:?}",
@@ -432,7 +429,7 @@ mod tests {
                     err
                 )
             });
-        assert_eq!(received_message, expected_message);
+        assert_eq!(received_message, expected_message.into());
         cancel.cancel();
         quic_server_thread.join().unwrap();
     }
