@@ -217,7 +217,7 @@ check_dcou() {
   # building so that `--dcou-check` can verify both expectations up front.
   if [[ ${#dcouBinArgs[@]} -gt 0 ]]; then
     if ! check_dcou --manifest-path "dev-bins/Cargo.toml" "${dcouBinArgs[@]}"; then
-       echo 'dcou feature activation is incorrectly remain to be deactivated!'
+       echo 'dcou feature activation is incorrectly deactivated!'
        exit 1
     fi
   fi
