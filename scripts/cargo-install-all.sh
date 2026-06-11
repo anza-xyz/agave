@@ -70,7 +70,7 @@ noSPLToken=
 
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
-    if [[ $1 = --dcou-check ]]; then
+    if [[ $1 = --dcou-check-only ]]; then
       dcouCheckOnly=true
       shift
     elif [[ $1 = --debug ]]; then
