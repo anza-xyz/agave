@@ -111,7 +111,6 @@ use {
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::cost_tracker::CostTracker,
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -139,7 +138,8 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionConfiguration,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{
         bpf_loader_upgradeable, incinerator, native_loader, system_program, sysvar as sysvar_id,
@@ -3293,25 +3293,16 @@ impl Bank {
             self.load_message_nonce_data(message)
                 .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
         })?;
-        Some(self.get_fee_for_message_with_lamports_per_signature(message))
-    }
 
-    pub fn get_fee_for_message_with_lamports_per_signature(
-        &self,
-        message: &impl SVMMessage,
-    ) -> u64 {
-        let prioritization_fee = process_compute_budget_instructions(
-            message.program_instructions_iter(),
-            &self.feature_set,
-        )
-        .unwrap_or_default()
-        .get_prioritization_fee();
-        solana_fee::calculate_fee(
+        let transaction_configuration =
+            TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)
+                .ok()?;
+        Some(solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
-            prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(self.feature_set.as_ref()),
-        )
+        ))
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
