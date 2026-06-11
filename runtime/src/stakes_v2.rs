@@ -406,20 +406,15 @@ impl StakesCacheV2 {
     }
 
     pub(crate) fn apply_rooted_stake_delegation_deltas<'a>(
-        &self,
+        &'a self,
         caches_in_ancestor_order: impl IntoIterator<Item = &'a Self>,
     ) {
         let deltas_in_ancestor_order = caches_in_ancestor_order
             .into_iter()
+            .chain([self])
             .filter_map(|cache| {
                 let mut fork_delta = cache.fork_delta.write().unwrap();
                 (!fork_delta.is_empty()).then(|| std::mem::take(&mut *fork_delta))
-            })
-            .chain({
-                let mut fork_delta = self.fork_delta.write().unwrap();
-                (!fork_delta.is_empty())
-                    .then(|| std::mem::take(&mut *fork_delta))
-                    .into_iter()
             });
         self.stake_delegation_index
             .apply_rooted_deltas(deltas_in_ancestor_order);
