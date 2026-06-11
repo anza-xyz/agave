@@ -64,6 +64,7 @@ use {
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
+    ahash::HashMapExt,
     bv::BitVec,
     dashmap::{DashMap, DashSet},
     log::*,
@@ -1023,18 +1024,6 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
         accounts_db.add_root_and_flush_write_cache(0);
         accounts_db
     }
-}
-
-/// Which of a slot's cached accounts to write to storage when flushing it.
-#[derive(Debug, PartialEq, Eq)]
-enum PubkeysToFlush {
-    /// Flush every account in the slot, reclaiming nothing. Used for roots above
-    /// `max_clean_root` and when not cleaning, since an in-flight scan may still need
-    /// those versions.
-    All,
-    /// Flush only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
-    /// purging the rest from the index and reclaiming older versions.
-    Only(HashSet<Pubkey, PubkeyHasherBuilder>),
 }
 
 impl AccountsDb {
@@ -4701,27 +4690,29 @@ impl AccountsDb {
         // If there is a long running scan going on, this could prevent any cleaning
         // based on updates from slots > `max_clean_root`.
         let max_clean_root = self.max_clean_root(requested_flush_root);
-        self.flush_rooted_accounts_cache(requested_flush_root, max_clean_root, true)
+        self.flush_rooted_accounts_cache(
+            requested_flush_root,
+            FlushShouldClean::Yes { max_clean_root },
+        )
     }
 
     // Flush all rooted slots without cleaning. This is used when rooted accounts must be flushed
     // to storage but older versions of the accounts are still required. For example, the
     // older versions may be needed for snapshotting.
     fn flush_rooted_accounts_cache_without_clean(&self) -> (usize, usize, FlushStats) {
-        self.flush_rooted_accounts_cache(None, None, false)
+        self.flush_rooted_accounts_cache(None, FlushShouldClean::No)
     }
 
     /// Flush all rooted slots up to `requested_flush_root`.
     ///
-    /// When `should_clean` is true, only the newest version of each account across the
-    /// flushed roots (at or below `max_clean_root`) is written to storage; older
-    /// versions are purged from the index instead. When false, every account in
+    /// When `should_clean` is `Yes`, only the newest version of each account across the
+    /// flushed roots (at or below its `max_clean_root`) is written to storage; older
+    /// versions are purged from the index instead. When `No`, every account in
     /// every flushed root is written.
     fn flush_rooted_accounts_cache(
         &self,
         requested_flush_root: Option<Slot>,
-        max_clean_root: Option<Slot>,
-        should_clean: bool,
+        should_clean: FlushShouldClean,
     ) -> (usize, usize, FlushStats) {
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
         let flushed_roots: BTreeSet<Slot> =
@@ -4730,8 +4721,19 @@ impl AccountsDb {
         let num_new_roots = flushed_roots.len();
 
         // For each root being flushed, which of its cached accounts to write to storage.
-        let (pubkeys_to_flush, select_pubkeys_us) =
-            measure_us!(self.select_pubkeys_to_flush(&flushed_roots, max_clean_root, should_clean));
+        let (pubkeys_to_flush, select_pubkeys_us) = match should_clean {
+            FlushShouldClean::Yes { max_clean_root } => {
+                measure_us!(self.select_pubkeys_to_flush(&flushed_roots, max_clean_root))
+            }
+            // Not cleaning: every root writes all of its accounts.
+            FlushShouldClean::No => (
+                flushed_roots
+                    .iter()
+                    .map(|&root| (root, PubkeysToFlush::All))
+                    .collect(),
+                0,
+            ),
+        };
 
         // Iterate from highest to lowest so that we don't need to flush earlier
         // outdated updates in earlier roots
@@ -4755,35 +4757,29 @@ impl AccountsDb {
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 
-    /// Determines which of each flushed root's accounts to write to storage. A root normally
-    /// keeps `Only` the newest version of each account, deduped newest-first; a root above
-    /// `max_clean_root` (or any root when not cleaning) instead flushes `All`.
+    /// Determines which of each flushed root's accounts to write to storage when cleaning: each
+    /// root keeps `Only` the newest version of each account, deduped newest-first. A root above
+    /// `max_clean_root` instead flushes `All`, since an in-flight scan may still need those
+    /// versions; `None` means there is no bound and every flushed root is cleaned.
     fn select_pubkeys_to_flush(
         &self,
         flushed_roots: &BTreeSet<Slot>,
         max_clean_root: Option<Slot>,
-        should_clean: bool,
     ) -> IntMap<Slot, PubkeysToFlush> {
-        let mut pubkeys_to_flush =
-            IntMap::with_capacity_and_hasher(flushed_roots.len(), BuildNoHashHasher::default());
+        let mut pubkeys_to_flush = IntMap::with_capacity(flushed_roots.len());
 
         // Presize the dedup set from the newest root (flushed first), doubled to leave room
         // for unique accounts contributed by older roots.
-        let dedup_capacity = if should_clean {
-            flushed_roots
-                .last()
-                .and_then(|&root| self.accounts_cache.slot_cache(root))
-                .map_or(0, |slot_cache| slot_cache.len() * 2)
-        } else {
-            0
-        };
+        let dedup_capacity = flushed_roots
+            .last()
+            .and_then(|&root| self.accounts_cache.slot_cache(root))
+            .map_or(0, |slot_cache| slot_cache.len() * 2);
         let mut written_accounts =
             HashSet::with_capacity_and_hasher(dedup_capacity, PubkeyHasherBuilder::default());
 
         // Iterate from newest root to oldest root being flushed in this batch
         for &root in flushed_roots.iter().rev() {
-            let cleaned =
-                should_clean && max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
+            let cleaned = max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
             let to_flush = if !cleaned {
                 PubkeysToFlush::All
             } else {
@@ -6965,6 +6961,30 @@ impl AccountsDb {
             );
         }
     }
+}
+
+/// Whether a rooted-cache flush should clean (dedup across roots, keeping only the newest
+/// version of each account and reclaiming older ones) or write every account untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlushShouldClean {
+    /// Write every account in every flushed root. Older versions must be preserved (e.g. for
+    /// snapshotting).
+    No,
+    /// Clean roots at or below `max_clean_root`; roots above it still flush all their accounts
+    /// (`None` means clean every flushed root).
+    Yes { max_clean_root: Option<Slot> },
+}
+
+/// Which of a slot's cached accounts to write to storage when flushing it.
+#[derive(Debug, PartialEq, Eq)]
+enum PubkeysToFlush {
+    /// Flush every account in the slot, reclaiming nothing. Used for roots above
+    /// `max_clean_root` and when not cleaning, since an in-flight scan may still need
+    /// those versions.
+    All,
+    /// Flush only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
+    /// purging the rest from the index and reclaiming older versions.
+    Only(HashSet<Pubkey, PubkeyHasherBuilder>),
 }
 
 /// Specify whether obsolete accounts should be marked or not during reclaims

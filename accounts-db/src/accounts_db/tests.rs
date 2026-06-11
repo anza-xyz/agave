@@ -3331,8 +3331,7 @@ fn test_load_with_read_only_accounts_cache() {
 }
 
 /// `select_pubkeys_to_flush` keeps only the newest version of each account across the
-/// cleaned roots, flushes roots above `max_clean_root` in full, and flushes everything
-/// when not cleaning.
+/// cleaned roots and flushes roots above `max_clean_root` in full.
 #[test]
 fn test_select_pubkeys_to_flush() {
     let db = AccountsDb::new_single_for_tests();
@@ -3348,24 +3347,25 @@ fn test_select_pubkeys_to_flush() {
     let shared_only = PubkeysToFlush::Only([shared].into_iter().collect());
     let deduped = PubkeysToFlush::Only(HashSet::default());
 
-    // All roots cleaned: `shared` is written only at its newest root (15), deduped from 5 and 10.
-    let plans = db.select_pubkeys_to_flush(&roots, Some(15), true);
+    // No bound: every flushed root is cleaned, so `shared` is written only at its newest root
+    // (15), deduped from 5 and 10.
+    let plans = db.select_pubkeys_to_flush(&roots, None);
+    assert_eq!(plans[&15], shared_only);
+    assert_eq!(plans[&10], deduped);
+    assert_eq!(plans[&5], deduped);
+
+    // max_clean_root = 15 (== newest root): same result, every root is at or below the bound.
+    let plans = db.select_pubkeys_to_flush(&roots, Some(15));
     assert_eq!(plans[&15], shared_only);
     assert_eq!(plans[&10], deduped);
     assert_eq!(plans[&5], deduped);
 
     // max_clean_root = 10: root 15 is above the boundary and flushes `All` (no dedup), so
     // `shared` is not dropped from root 10 — a scan at root 10 may still need that version.
-    let plans = db.select_pubkeys_to_flush(&roots, Some(10), true);
+    let plans = db.select_pubkeys_to_flush(&roots, Some(10));
     assert_eq!(plans[&15], PubkeysToFlush::All);
     assert_eq!(plans[&10], shared_only);
     assert_eq!(plans[&5], deduped);
-
-    // Not cleaning: every root flushes `All`.
-    let plans = db.select_pubkeys_to_flush(&roots, Some(15), false);
-    for root in &roots {
-        assert_eq!(plans[root], PubkeysToFlush::All);
-    }
 }
 
 #[test]
