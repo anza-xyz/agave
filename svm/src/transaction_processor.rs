@@ -1037,19 +1037,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let ExecutionRecord {
             accounts,
             return_data,
-            touched_flags,
+            mut touched_flags,
             accounts_resize_delta,
         } = execution_record;
-
-        // We now own the flags and no longer need interior mutability, so unwrap
-        // the per-element `Cell`s into a plain `Box<[bool]>`. `Vec::from` reuses
-        // the box's allocation, and the mapped collect reuses that same buffer in
-        // place (`Cell<bool>` and `bool` have identical layout), so no
-        // reallocation occurs.
-        let mut touched_flags: Box<[bool]> = Vec::from(touched_flags)
-            .into_iter()
-            .map(|flag| flag.into_inner())
-            .collect();
 
         // changed_account_count reflects the accounts the VM actually modified,
         // counted before the fee payer is force-marked below.

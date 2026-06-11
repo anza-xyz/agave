@@ -613,7 +613,7 @@ pub struct ExecutionRecord {
     pub accounts: Vec<KeyedAccountSharedData>,
     pub return_data: TransactionReturnData,
     /// Parallel to `accounts`: whether each account was modified by the VM.
-    pub touched_flags: Box<[Cell<bool>]>,
+    pub touched_flags: Box<[bool]>,
     pub accounts_resize_delta: i64,
 }
 
@@ -624,6 +624,16 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
+
+        // The flags only needed interior mutability while the VM was running.
+        // Now that we own them, unwrap the per-element `Cell`s into a plain
+        // `Box<[bool]>`. `Vec::from` reuses the box's allocation and the mapped
+        // collect reuses that same buffer in place (`Cell<bool>` and `bool` have
+        // identical layout), so no reallocation occurs.
+        let touched_flags: Box<[bool]> = Vec::from(touched_flags)
+            .into_iter()
+            .map(|flag| flag.into_inner())
+            .collect();
 
         let return_data = TransactionReturnData {
             program_id: context.transaction_frame.return_data_pubkey,
