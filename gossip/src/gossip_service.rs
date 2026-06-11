@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        XdpSender,
         cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
@@ -15,7 +16,7 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        streamer::{self, StreamerReceiveStats},
+        streamer::{self, GossipResponderSocket, StreamerReceiveStats},
     },
     std::{
         collections::HashSet,
@@ -40,6 +41,7 @@ impl GossipService {
         cluster_info: &Arc<ClusterInfo>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         gossip_sockets: Arc<[UdpSocket]>,
+        xdp_sender: Option<XdpSender>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -91,12 +93,18 @@ impl GossipService {
             gossip_validators,
             exit.clone(),
         );
+        let gossip_responder_socket = match xdp_sender {
+            Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
+            None => GossipResponderSocket::Udp {
+                sockets: gossip_sockets.clone(),
+                bind_ip_addrs: cluster_info.bind_ip_addrs(),
+                socket_addr_space,
+            },
+        };
         let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_sockets,
-            cluster_info.bind_ip_addrs(),
+            gossip_responder_socket,
             response_receiver,
-            socket_addr_space,
             stats_reporter_sender,
         );
         let t_metrics = Builder::new()
@@ -329,6 +337,7 @@ pub fn make_node(
         None,
         gossip_sockets,
         None,
+        None,
         should_check_duplicate_instance,
         None,
         exit,
@@ -357,6 +366,7 @@ mod tests {
             &c,
             None,
             tn.sockets.gossip,
+            None,
             None,
             true, // should_check_duplicate_instance
             None,
