@@ -690,4 +690,200 @@ mod tests {
             Some(stake_pubkey_c)
         );
     }
+
+    #[test]
+    fn test_apply_rooted_stake_delegation_deltas_applies_updates() {
+        let rent = Rent::default();
+        let vote_pubkey = new_rand();
+        let stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey, &stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(stake_pubkey, StakeAccount::try_from(root_account).unwrap())].into_iter(),
+            0,
+        );
+
+        let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
+        let updated_account = create_stake_account(50, &vote_pubkey, &stake_pubkey, &rent);
+        fork_cache.upsert_stake_delegation(
+            stake_pubkey,
+            StakeAccount::try_from(updated_account).unwrap(),
+        );
+
+        root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
+
+        let inner = root_cache.stake_delegation_index.0.read().unwrap();
+        let entry = inner
+            .root_entries
+            .iter()
+            .find(|e| e.as_ref().map(|e| e.stake_pubkey) == Some(stake_pubkey))
+            .unwrap();
+        assert_eq!(entry.as_ref().unwrap().stake_account.delegation().stake, 50);
+    }
+
+    #[test]
+    fn test_apply_rooted_stake_delegation_deltas_overrides_ancestor_deltas() {
+        let rent = Rent::default();
+        let vote_pubkey = new_rand();
+        let stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey, &stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(stake_pubkey, StakeAccount::try_from(root_account).unwrap())].into_iter(),
+            0,
+        );
+
+        let ancestor = StakesCacheV2::new_from_parent(&root_cache);
+        let grandchild = StakesCacheV2::new_from_parent(&ancestor);
+
+        // Ancestor updates stake to 20
+        let ancestor_account = create_stake_account(20, &vote_pubkey, &stake_pubkey, &rent);
+        ancestor.upsert_stake_delegation(
+            stake_pubkey,
+            StakeAccount::try_from(ancestor_account).unwrap(),
+        );
+
+        // Grandchild updates stake to 30 (should override ancestor's 20)
+        let grandchild_account = create_stake_account(30, &vote_pubkey, &stake_pubkey, &rent);
+        grandchild.upsert_stake_delegation(
+            stake_pubkey,
+            StakeAccount::try_from(grandchild_account).unwrap(),
+        );
+
+        root_cache.apply_rooted_stake_delegation_deltas([&ancestor, &grandchild]);
+
+        let inner = root_cache.stake_delegation_index.0.read().unwrap();
+        let entry = inner
+            .root_entries
+            .iter()
+            .find(|e| e.as_ref().map(|e| e.stake_pubkey) == Some(stake_pubkey))
+            .unwrap();
+        assert_eq!(entry.as_ref().unwrap().stake_account.delegation().stake, 30);
+    }
+
+    #[test]
+    fn test_apply_rooted_stake_delegation_deltas_deletes_via_none() {
+        let rent = Rent::default();
+        let vote_pubkey = new_rand();
+        let stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey, &stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(stake_pubkey, StakeAccount::try_from(root_account).unwrap())].into_iter(),
+            0,
+        );
+
+        let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
+        // Remove the stake via None delta
+        fork_cache
+            .fork_delta
+            .write()
+            .unwrap()
+            .insert(stake_pubkey, None);
+
+        root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
+
+        let inner = root_cache.stake_delegation_index.0.read().unwrap();
+        assert_eq!(inner.len, 0);
+        assert!(inner.root_entries.iter().all(|e| e.is_none()));
+    }
+
+    #[test]
+    fn test_apply_rooted_stake_delegation_deltas_skips_empty_deltas() {
+        let rent = Rent::default();
+        let vote_pubkey = new_rand();
+        let stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey, &stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(stake_pubkey, StakeAccount::try_from(root_account).unwrap())].into_iter(),
+            0,
+        );
+
+        let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
+        // fork_cache has an empty fork_delta by default
+
+        root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
+
+        // The rooted entry should be unchanged
+        let inner = root_cache.stake_delegation_index.0.read().unwrap();
+        assert_eq!(inner.len, 1);
+        let entry = inner
+            .root_entries
+            .iter()
+            .find(|e| e.as_ref().map(|e| e.stake_pubkey) == Some(stake_pubkey))
+            .unwrap();
+        assert_eq!(entry.as_ref().unwrap().stake_account.delegation().stake, 10);
+    }
+
+    #[test]
+    fn test_apply_rooted_stake_delegation_deltas_inserts_new_entries() {
+        let rent = Rent::default();
+        let vote_pubkey_a = new_rand();
+        let vote_pubkey_b = new_rand();
+        let existing_stake_pubkey = new_rand();
+        let new_stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey_a, &existing_stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(
+                existing_stake_pubkey,
+                StakeAccount::try_from(root_account).unwrap(),
+            )]
+            .into_iter(),
+            0,
+        );
+
+        let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
+        let new_account = create_stake_account(20, &vote_pubkey_b, &new_stake_pubkey, &rent);
+        fork_cache.upsert_stake_delegation(
+            new_stake_pubkey,
+            StakeAccount::try_from(new_account).unwrap(),
+        );
+
+        root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
+
+        let inner = root_cache.stake_delegation_index.0.read().unwrap();
+        assert_eq!(inner.len, 2);
+        assert!(inner.root_positions.contains_key(&existing_stake_pubkey));
+        assert!(inner.root_positions.contains_key(&new_stake_pubkey));
+    }
+
+    #[test]
+    fn test_apply_rooted_stake_delegation_deltas_applies_own_delta_last() {
+        let rent = Rent::default();
+        let vote_pubkey = new_rand();
+        let stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey, &stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(stake_pubkey, StakeAccount::try_from(root_account).unwrap())].into_iter(),
+            0,
+        );
+
+        let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
+        // Ancestor sets stake to 20
+        let ancestor_account = create_stake_account(20, &vote_pubkey, &stake_pubkey, &rent);
+        fork_cache.upsert_stake_delegation(
+            stake_pubkey,
+            StakeAccount::try_from(ancestor_account).unwrap(),
+        );
+
+        // Root cache itself sets stake to 30 (should override ancestor)
+        let root_update_account = create_stake_account(30, &vote_pubkey, &stake_pubkey, &rent);
+        root_cache.upsert_stake_delegation(
+            stake_pubkey,
+            StakeAccount::try_from(root_update_account).unwrap(),
+        );
+
+        root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
+
+        let inner = root_cache.stake_delegation_index.0.read().unwrap();
+        let entry = inner
+            .root_entries
+            .iter()
+            .find(|e| e.as_ref().map(|e| e.stake_pubkey) == Some(stake_pubkey))
+            .unwrap();
+        assert_eq!(entry.as_ref().unwrap().stake_account.delegation().stake, 30);
+    }
 }
