@@ -79,7 +79,7 @@ use {
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::NonZeroUsize,
-        ops::Div,
+        ops::{Div, Range},
         path::{Path, PathBuf},
         rc::Rc,
         result::Result,
@@ -120,8 +120,8 @@ const CHANNEL_CONSUME_CAPACITY: usize = 1024;
 pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 4096; // 2^12
 const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
 pub(crate) const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
-// max amount of time we wait for a Pong before pinging again
-pub(crate) const GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT: Duration = Duration::from_secs(2);
+/// Per-entry Pong wait timeout is drawn uniformly from this range (in milliseconds).
+pub(crate) const GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS: Range<u64> = 1_000..2_000;
 pub const DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS: u64 = 10_000;
 pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
 // Limit number of unique pubkeys in the crds table.
@@ -189,7 +189,7 @@ impl ClusterInfo {
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
                 GOSSIP_PING_CACHE_TTL,
-                GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+                GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             stats: GossipStats::default(),

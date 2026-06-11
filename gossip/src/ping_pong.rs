@@ -14,6 +14,7 @@ use {
     std::{
         borrow::Cow,
         net::{IpAddr, SocketAddr},
+        ops::Range,
         time::{Duration, Instant},
     },
     wincode::{SchemaRead, SchemaWrite},
@@ -51,11 +52,11 @@ pub struct Pong {
 pub struct PingCache<const N: usize> {
     // Time-to-live of received pong messages.
     ttl: Duration,
-    // Max time to wait for a Pong before considering the ping timed out.
-    outstanding_ping_timeout: Duration,
+    // Timeout range (ms) waiting for a Pong. Randomized per-entry to stagger expiry.
+    outstanding_ping_timeout_ms: Range<u64>,
     // Capacity for the pings store.
     max_pings: usize,
-    // Timestamp and expected pong hash for each pinged remote node.
+    // Expiry time and expected pong hash for each pinged remote node.
     pings: IndexMap<(Pubkey, SocketAddr), (Instant, Hash)>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
@@ -64,8 +65,9 @@ pub struct PingCache<const N: usize> {
 }
 
 /// max number of slots in [`PingCache::pings`] to check when looking for
-/// a free entry for a new ping probe
-const MAX_PING_PROBES: usize = 4;
+/// a free entry for a new ping probe.
+/// Gives ~90% success rate for a cache that is half full: 0.5^(1/8) ~ 0.917
+const MAX_PING_PROBES: usize = 8;
 
 impl<const N: usize> Ping<N> {
     pub fn new(token: [u8; N], keypair: &Keypair) -> Self {
@@ -154,15 +156,19 @@ impl Signable for Pong {
 }
 
 impl<const N: usize> PingCache<N> {
-    pub fn new(ttl: Duration, outstanding_ping_timeout: Duration, max_pings: usize) -> Self {
+    pub fn new(ttl: Duration, outstanding_ping_timeout_ms: Range<u64>, max_pings: usize) -> Self {
         assert!(
-            outstanding_ping_timeout <= ttl / 2,
-            "outstanding_ping_timeout should be < ttl"
+            outstanding_ping_timeout_ms.start < outstanding_ping_timeout_ms.end,
+            "outstanding_ping_timeout_ms must be non-empty"
+        );
+        assert!(
+            outstanding_ping_timeout_ms.end <= (ttl / 2).as_millis() as u64,
+            "outstanding_ping_timeout_ms.end must be <= ttl/2"
         );
         assert!(max_pings > 0, "Must cache nonzero amount of hosts");
         Self {
             ttl,
-            outstanding_ping_timeout,
+            outstanding_ping_timeout_ms,
             max_pings,
             pings: IndexMap::with_capacity(max_pings),
             pongs: LruCache::new(max_pings),
@@ -206,10 +212,9 @@ impl<const N: usize> PingCache<N> {
         now: Instant,
         remote_node: (Pubkey, SocketAddr),
     ) -> Option<Ping<N>> {
-        // If the existing ping is still in-flight (age < outstanding_ping_timeout),
-        // don't send another one.
-        let is_new_key = if let Some((t, _)) = self.pings.get(&remote_node) {
-            if now.saturating_duration_since(*t) < self.outstanding_ping_timeout {
+        // If the existing ping is still in-flight don't send another one.
+        let is_new_key = if let Some((expiry, _)) = self.pings.get(&remote_node) {
+            if now < *expiry {
                 return None;
             }
             false // existing entry will be updated in-place
@@ -219,7 +224,7 @@ impl<const N: usize> PingCache<N> {
 
         // If this is a new entry and the pings store is at capacity,
         // probe random existing entries and evict the first timed-out one
-        // (age >= outstanding_ping_timeout, peer never responded).
+        // (expiry in the past, peer never responded).
         // Decline if all probes are in-flight — avoids evicting challenges
         // still awaiting a Pong.
         if is_new_key && self.pings.len() >= self.max_pings {
@@ -227,8 +232,8 @@ impl<const N: usize> PingCache<N> {
             let mut evicted = false;
             for _ in 0..MAX_PING_PROBES {
                 let idx = rng.random_range(0..n);
-                if let Some((_, (t, _))) = self.pings.get_index(idx) {
-                    if now.saturating_duration_since(*t) >= self.outstanding_ping_timeout {
+                if let Some((_, (expiry, _))) = self.pings.get_index(idx) {
+                    if now >= *expiry {
                         self.pings.swap_remove_index(idx);
                         evicted = true;
                         break;
@@ -250,9 +255,14 @@ impl<const N: usize> PingCache<N> {
                 .expect("token is known to fit FILL bytes") = entropy;
             token
         };
+        // Deadline by which we expect a reply. Randomized to stagger expiries across entries.
+        let expiry = now
+            + Duration::from_millis(rng.random_range(
+                self.outstanding_ping_timeout_ms.start..self.outstanding_ping_timeout_ms.end,
+            ));
         // The hash we expect to see in the Pong message
         let ping_hash = hash_ping_token(&token);
-        self.pings.insert(remote_node, (now, ping_hash));
+        self.pings.insert(remote_node, (expiry, ping_hash));
         self.ping_times.put(remote_node.1.ip(), Instant::now());
         Some(Ping::new(token, keypair))
     }
@@ -307,7 +317,9 @@ fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
 mod tests {
     use {
         super::*,
-        crate::cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT, GOSSIP_PING_CACHE_TTL},
+        crate::cluster_info::{
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL,
+        },
         std::{
             collections::HashSet,
             iter::repeat_with,
@@ -338,7 +350,8 @@ mod tests {
         let mut rng = rand::rng();
         let ttl = Duration::from_millis(256);
         let delay = ttl / 64;
-        let mut cache = PingCache::new(ttl, delay, /*cap=*/ 1000);
+        let delay_ms = delay.as_millis() as u64;
+        let mut cache = PingCache::new(ttl, delay_ms..delay_ms + 1, /*cap=*/ 1000);
         let this_node = Keypair::new();
         let sockets: Vec<_> = (1u8..=3)
             .map(|i| {
@@ -505,7 +518,7 @@ mod tests {
         let cap = 3usize;
         let mut cache = PingCache::<32>::new(
             GOSSIP_PING_CACHE_TTL,
-            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             cap,
         );
         let sockets: Vec<SocketAddr> = (1u8..=4)
@@ -565,7 +578,7 @@ mod tests {
         let cap = 3usize;
         let mut cache = PingCache::<32>::new(
             GOSSIP_PING_CACHE_TTL,
-            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             cap,
         );
         let sockets: Vec<SocketAddr> = (1u8..=4)
@@ -583,7 +596,8 @@ mod tests {
         assert_eq!(cache.pings.len(), cap, "Cache should be at capacity");
 
         // Advance time so all in-flight pings are now stale
-        let expired = now + GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT + Duration::from_millis(1);
+        let expired =
+            now + Duration::from_millis(GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.end + 1);
 
         // 4th node should get a ping by reclaiming a stale slot
         let node4 = (keypairs[3].pubkey(), sockets[3]);
@@ -612,7 +626,7 @@ mod tests {
         let mut now = Instant::now();
         let mut cache = PingCache::<32>::new(
             GOSSIP_PING_CACHE_TTL,
-            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             /*cap=*/ 1000,
         );
 

@@ -660,7 +660,7 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::{
-            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT, GOSSIP_PING_CACHE_TTL},
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             crds_data::CrdsData,
             protocol::Protocol,
         },
@@ -735,7 +735,7 @@ pub(crate) mod tests {
     fn new_ping_cache() -> PingCache {
         PingCache::new(
             GOSSIP_PING_CACHE_TTL,
-            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             128, // capacity (small for tests)
         )
     }

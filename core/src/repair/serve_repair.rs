@@ -64,6 +64,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
+        ops::Range,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -94,7 +95,7 @@ pub const MAX_ANCESTOR_RESPONSES: usize =
 const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
 pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
 pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
-const REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT: Duration = Duration::from_secs(2);
+const REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS: Range<u64> = 1_000..2_000;
 pub(crate) const REPAIR_RESPONSE_SERIALIZED_PING_BYTES: usize =
     4 /*enum discriminator*/ + PUBKEY_BYTES + REPAIR_PING_TOKEN_SIZE + SIGNATURE_BYTES;
 const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 min
@@ -1339,11 +1340,11 @@ impl ServeRepair {
         const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
         // ping timeout should be greater than the repair request iteration delay
-        assert!(REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT > Duration::from_millis(REPAIR_MS));
+        assert!(REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.start > REPAIR_MS as u64);
 
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
 
@@ -2003,7 +2004,7 @@ mod tests {
         let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
@@ -3188,7 +3189,7 @@ mod tests {
         let remote_node = (remote_keypair.pubkey(), remote_socket);
         let mut cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
         let now = Instant::now();
@@ -3196,8 +3197,9 @@ mod tests {
         let (_, ping1) = cache.check(&mut rng, &this_node, now, remote_node);
         let ping1 = ping1.expect("should generate ping for unknown node");
 
+        // Use the minimum possible expiry minus 1ms — guaranteed to be before any expiry.
         let within_delay =
-            now + REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT - Duration::from_millis(1);
+            now + Duration::from_millis(REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.start - 1);
         let (_, ping2) = cache.check(&mut rng, &this_node, within_delay, remote_node);
         assert!(
             ping2.is_none(),

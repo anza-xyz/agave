@@ -394,7 +394,7 @@ mod test {
     use {
         super::*,
         crate::{
-            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT, GOSSIP_PING_CACHE_TTL},
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             contact_info::ContactInfo,
         },
         solana_sha256_hasher::hash,
@@ -420,7 +420,7 @@ mod test {
             .unwrap();
         let ping_cache = PingCache::new(
             GOSSIP_PING_CACHE_TTL,
-            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             128, // capacity (small for tests)
         );
         let ping_cache = Mutex::new(ping_cache);
