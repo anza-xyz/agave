@@ -167,16 +167,15 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             })
         }
         ConfidentialTransferInstruction::Deposit => {
-            check_num_token_accounts(account_indexes, 4)?;
+            check_num_token_accounts(account_indexes, 3)?;
             let deposit_data: DepositInstructionData = *decode_instruction_data(instruction_data)
                 .map_err(|_| {
                 ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
             })?;
             let amount: u64 = deposit_data.amount.into();
             let mut value = json!({
-                "source": account_keys[account_indexes[0] as usize].to_string(),
-                "destination": account_keys[account_indexes[1] as usize].to_string(),
-                "mint": account_keys[account_indexes[2] as usize].to_string(),
+                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_keys[account_indexes[1] as usize].to_string(),
                 "amount": amount,
                 "decimals": deposit_data.decimals,
 
@@ -184,7 +183,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             let map = value.as_object_mut().unwrap();
             parse_signers(
                 map,
-                3,
+                2,
                 account_keys,
                 account_indexes,
                 "owner",
@@ -196,16 +195,15 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             })
         }
         ConfidentialTransferInstruction::Withdraw => {
-            check_num_token_accounts(account_indexes, 5)?;
+            check_num_token_accounts(account_indexes, 4)?;
             let withdrawal_data: WithdrawInstructionData =
                 *decode_instruction_data(instruction_data).map_err(|_| {
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let amount: u64 = withdrawal_data.amount.into();
             let mut value = json!({
-                "source": account_keys[account_indexes[0] as usize].to_string(),
-                "destination": account_keys[account_indexes[1] as usize].to_string(),
-                "mint": account_keys[account_indexes[2] as usize].to_string(),
+                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_keys[account_indexes[1] as usize].to_string(),
                 "amount": amount,
                 "decimals": withdrawal_data.decimals,
                 "newDecryptableAvailableBalance": format!("{}", withdrawal_data.new_decryptable_available_balance),
@@ -213,7 +211,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 "rangeProofInstructionOffset": withdrawal_data.range_proof_instruction_offset,
 
             });
-            let mut offset = 3;
+            let mut offset = 2;
             let map = value.as_object_mut().unwrap();
             if offset < account_indexes.len() - 1
                 && (withdrawal_data.equality_proof_instruction_offset != 0
@@ -714,6 +712,85 @@ mod test {
             .unwrap();
             check_no_panic(instruction);
         }
+    }
+
+    #[test]
+    fn test_deposit() {
+        let token_account = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let instruction = deposit(
+            &spl_token_2022_interface::id(),
+            &token_account,
+            &mint,
+            42,
+            9,
+            &owner,
+            &[],
+        )
+        .unwrap();
+        let message = Message::new(&[instruction], None);
+        let compiled_instruction = &message.instructions[0];
+        assert_eq!(
+            parse_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "depositConfidentialTransfer".to_string(),
+                info: json!({
+                    "account": token_account.to_string(),
+                    "mint": mint.to_string(),
+                    "amount": 42,
+                    "decimals": 9,
+                    "owner": owner.to_string(),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_withdraw_account_mapping() {
+        let token_account = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let equality_context = Pubkey::new_unique();
+        let range_context = Pubkey::new_unique();
+        let instruction = inner_withdraw(
+            &spl_token_2022_interface::id(),
+            &token_account,
+            &mint,
+            1,
+            2,
+            &PodAeCiphertext::default(),
+            &owner,
+            &[],
+            ProofLocation::ContextStateAccount(&equality_context),
+            ProofLocation::ContextStateAccount(&range_context),
+        )
+        .unwrap();
+        let message = Message::new(&[instruction], None);
+        let compiled_instruction = &message.instructions[0];
+        let parsed = parse_token(
+            compiled_instruction,
+            &AccountKeys::new(&message.account_keys, None),
+        )
+        .unwrap();
+        assert_eq!(parsed.instruction_type, "withdrawConfidentialTransfer");
+        assert_eq!(parsed.info["account"], json!(token_account.to_string()));
+        assert_eq!(parsed.info["mint"], json!(mint.to_string()));
+        assert_eq!(parsed.info["owner"], json!(owner.to_string()));
+        assert_eq!(
+            parsed.info["equalityProofContextStateAccount"],
+            json!(equality_context.to_string())
+        );
+        assert_eq!(
+            parsed.info["rangeProofContextStateAccount"],
+            json!(range_context.to_string())
+        );
+        assert!(parsed.info.get("destination").is_none());
+        assert_ne!(parsed.info["mint"], parsed.info["owner"]);
     }
 
     #[test]
