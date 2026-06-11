@@ -340,7 +340,37 @@ enum WireConsensusMessageKind {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead, Deserialize, Serialize)]
 pub struct WireConsensusMessageV1 {
     kind: WireConsensusMessageKind,
-    // TODO: add shred version
+    /// The shred version for this run of the cluster
+    pub shred_version: u16,
+}
+
+impl WireConsensusMessageV1 {
+    /// Constructs a new version 1 wire consensus message.
+    pub fn new(msg: ConsensusMessage, shred_version: u16) -> Self {
+        let kind = WireConsensusMessageKind::from(msg);
+        Self {
+            kind,
+            shred_version,
+        }
+    }
+
+    /// Constructs a new version 1 wire consensus message from a vote.
+    pub fn new_from_vote(vote: VoteMessage, shred_version: u16) -> Self {
+        let kind = WireConsensusMessageKind::from(vote);
+        Self {
+            kind,
+            shred_version,
+        }
+    }
+
+    /// Constructs a new version 1 wire consensus message from a cert.
+    pub fn new_from_cert(cert: Certificate, shred_version: u16) -> Self {
+        let kind = WireConsensusMessageKind::from(cert);
+        Self {
+            kind,
+            shred_version,
+        }
+    }
 }
 
 impl From<WireConsensusMessageV1> for ConsensusMessage {
@@ -373,6 +403,26 @@ pub enum VersionedWireConsensusMessage {
     V1(WireConsensusMessageV1),
 }
 
+impl VersionedWireConsensusMessage {
+    /// Constructs a new versionsed wire consensus message.
+    pub fn new(msg: ConsensusMessage, shred_version: u16) -> Self {
+        let v1 = WireConsensusMessageV1::new(msg, shred_version);
+        Self::V1(v1)
+    }
+
+    /// Constructs a new versioned wire consensus message from a vote.
+    pub fn new_from_vote(vote: VoteMessage, shred_version: u16) -> Self {
+        let v1 = WireConsensusMessageV1::new_from_vote(vote, shred_version);
+        Self::V1(v1)
+    }
+
+    /// Constructs a new versioned wire consensus message from a cert.
+    pub fn new_from_cert(cert: Certificate, shred_version: u16) -> Self {
+        let v1 = WireConsensusMessageV1::new_from_cert(cert, shred_version);
+        Self::V1(v1)
+    }
+}
+
 impl From<VersionedWireConsensusMessage> for ConsensusMessage {
     fn from(msg: VersionedWireConsensusMessage) -> Self {
         match msg {
@@ -381,9 +431,9 @@ impl From<VersionedWireConsensusMessage> for ConsensusMessage {
     }
 }
 
-impl From<VoteMessage> for VersionedWireConsensusMessage {
+impl From<VoteMessage> for WireConsensusMessageKind {
     fn from(msg: VoteMessage) -> Self {
-        let kind = match msg.vote {
+        match msg.vote {
             Vote::Notarize(v) => WireConsensusMessageKind::NotarVote(WireNotarVoteMessage {
                 vote: WireNotarVote { block: v.block },
                 signature: msg.into(),
@@ -412,14 +462,13 @@ impl From<VoteMessage> for VersionedWireConsensusMessage {
                 vote: WireGenesisVote { block: v.block },
                 signature: msg.into(),
             }),
-        };
-        Self::V1(WireConsensusMessageV1 { kind })
+        }
     }
 }
 
-impl From<Certificate> for VersionedWireConsensusMessage {
+impl From<Certificate> for WireConsensusMessageKind {
     fn from(cert: Certificate) -> Self {
-        let kind = match cert.cert_type {
+        match cert.cert_type {
             CertificateType::Finalize(slot) => {
                 WireConsensusMessageKind::FinalizeCert(WireFinalizeCertMessage {
                     cert: WireFinalizeCert { slot },
@@ -456,12 +505,11 @@ impl From<Certificate> for VersionedWireConsensusMessage {
                     signature: cert.into(),
                 })
             }
-        };
-        Self::V1(WireConsensusMessageV1 { kind })
+        }
     }
 }
 
-impl From<ConsensusMessage> for VersionedWireConsensusMessage {
+impl From<ConsensusMessage> for WireConsensusMessageKind {
     fn from(msg: ConsensusMessage) -> Self {
         match msg {
             ConsensusMessage::Vote(v) => Self::from(v),

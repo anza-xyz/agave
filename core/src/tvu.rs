@@ -329,6 +329,7 @@ impl Tvu {
                     leader_schedule: leader_schedule_cache.clone(),
                     num_threads: tvu_config.bls_sigverify_threads.get(),
                     generated_cert_types: generated_cert_types.clone(),
+                    shred_version: tvu_config.shred_version,
                 },
                 SigVerifierChannels {
                     packet_receiver: bls_packet_receiver,
@@ -593,6 +594,7 @@ impl Tvu {
 
         let bls_voting_service = BLSVotingService::new(
             bls_receiver,
+            tvu_config.shred_version,
             cluster_info.clone(),
             vote_history_storage,
             bls_connection_cache,
