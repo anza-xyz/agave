@@ -142,19 +142,19 @@ impl RpcSender for HttpSender {
 
         let request_id = self.request_id.fetch_add(1, Ordering::Relaxed);
         let request_json = request.build_request_json(request_id, params).to_string();
+        let request_builder = self
+            .client
+            .post(&self.url)
+            .header(CONTENT_TYPE, "application/json")
+            .body(request_json);
 
         let mut too_many_requests_retries = 5;
         loop {
-            let response = {
-                let client = self.client.clone();
-                let request_json = request_json.clone();
-                client
-                    .post(&self.url)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(request_json)
-                    .send()
-                    .await
-            }?;
+            let response = request_builder
+                .try_clone()
+                .expect("rpc request builder should be cloneable")
+                .send()
+                .await?;
 
             if !response.status().is_success() {
                 if response.status() == StatusCode::TOO_MANY_REQUESTS
