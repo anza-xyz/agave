@@ -210,7 +210,8 @@ fn unpack_entry<'a, R: Read>(
         }
         return Ok(());
     }
-    files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
+    let content_len = entry.size();
+    files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry, Some(content_len))?;
 
     Ok(())
 }
