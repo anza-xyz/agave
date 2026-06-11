@@ -92,9 +92,16 @@ impl MaybeRootEntry {
 
 #[derive(Debug)]
 struct StakeDelegationIndexInner {
+    /// Rooted stake entries, that might be either defined stakes or
+    /// tombstones.
+    ///
+    /// Indices of all tombstones are stored in `free_root_indices`.
     root_entries: Vec<MaybeRootEntry>,
+    /// Positions of the given pubkeys inside `root_entries`.
     root_positions: HashMap<Pubkey, usize>,
+    /// Indices of all tombstones in `root_entries`.
     free_root_indices: Vec<usize>,
+    /// Manually tracked length of the cache.
     len: usize,
 }
 
