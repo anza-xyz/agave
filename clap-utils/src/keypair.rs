@@ -399,6 +399,7 @@ const SIGNER_SOURCE_FILEPATH: &str = "file";
 const SIGNER_SOURCE_USB: &str = "usb";
 const SIGNER_SOURCE_STDIN: &str = "stdin";
 const SIGNER_SOURCE_PUBKEY: &str = "pubkey";
+const SIGNER_SOURCE_OWS: &str = "ows";
 
 pub(crate) enum SignerSourceKind {
     Prompt,
@@ -406,6 +407,9 @@ pub(crate) enum SignerSourceKind {
     Usb(RemoteWalletLocator),
     Stdin,
     Pubkey(Pubkey),
+    /// OWS (Open Wallet Standard) encrypted vault.
+    /// The string is the wallet name or UUID.
+    Ows(String),
 }
 
 impl AsRef<str> for SignerSourceKind {
@@ -416,6 +420,7 @@ impl AsRef<str> for SignerSourceKind {
             Self::Usb(_) => SIGNER_SOURCE_USB,
             Self::Stdin => SIGNER_SOURCE_STDIN,
             Self::Pubkey(_) => SIGNER_SOURCE_PUBKEY,
+            Self::Ows(_) => SIGNER_SOURCE_OWS,
         }
     }
 }
@@ -484,6 +489,9 @@ pub(crate) fn parse_signer_source<S: AsRef<str>>(
                         legacy: false,
                     }),
                     SIGNER_SOURCE_STDIN => Ok(SignerSource::new(SignerSourceKind::Stdin)),
+                    SIGNER_SOURCE_OWS => Ok(SignerSource::new(
+                        SignerSourceKind::Ows(uri.path().to_string()),
+                    )),
                     _ => {
                         #[cfg(target_family = "windows")]
                         // On Windows, an absolute path's drive letter will be parsed as the URI
@@ -801,6 +809,19 @@ pub fn signer_from_path_with_config(
             } else {
                 Err(RemoteWalletError::NoDeviceFound.into())
             }
+        }
+        SignerSourceKind::Ows(wallet_name) => {
+            let key_bytes = ows_lib::decrypt_signing_key(
+                &wallet_name,
+                ows_core::ChainType::Solana,
+                "",
+                None,
+                None,
+            )
+            .map_err(|e| std::io::Error::other(format!("OWS decrypt failed: {e}")))?;
+            Ok(Box::new(Keypair::from_bytes(key_bytes.expose()).map_err(
+                |e| std::io::Error::other(format!("invalid OWS key: {e}")),
+            )?))
         }
         SignerSourceKind::Pubkey(pubkey) => {
             let presigner = pubkeys_sigs_of(matches, SIGNER_ARG.name)
