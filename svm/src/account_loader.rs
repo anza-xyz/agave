@@ -8,7 +8,6 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
     },
     ahash::{AHashMap, AHashSet},
-    core::cell::Cell,
     solana_account::{
         Account, AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
     },
@@ -145,7 +144,7 @@ pub struct LoadedTransaction {
     pub accounts: Vec<KeyedAccountSharedData>,
     /// Parallel to `accounts`: whether each account must be written back. Empty
     /// until execution.
-    pub touched_flags: Box<[Cell<bool>]>,
+    pub touched_flags: Box<[bool]>,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
@@ -294,7 +293,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         &mut self,
         message: &impl SVMMessage,
         transaction_accounts: &[KeyedAccountSharedData],
-        touched_flags: &[Cell<bool>],
+        touched_flags: &[bool],
         current_slot: Slot,
     ) {
         for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
@@ -303,7 +302,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             }
 
             // Skip write-locked accounts the transaction left unmodified.
-            if !touched_flags[i].get() {
+            if !touched_flags[i] {
                 continue;
             }
 
@@ -842,7 +841,7 @@ mod tests {
 
         // Fee payer (index 0) and the VM-modified account (index 1) are marked;
         // the writable account at index 2 is left untouched.
-        let touched_flags: Box<[Cell<bool>]> = [true, true, false, false].map(Cell::new).into();
+        let touched_flags: Box<[bool]> = [true, true, false, false].into();
 
         let callbacks = TestCallbacks::default();
         let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();

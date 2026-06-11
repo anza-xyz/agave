@@ -1041,15 +1041,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts_resize_delta,
         } = execution_record;
 
-        // changed_account_count reflects the accounts the VM actually modified.
-        let touched_account_count = touched_flags.iter().filter(|touched| touched.get()).count();
+        // We now own the flags and no longer need interior mutability, so
+        // reinterpret them as a plain `Box<[bool]>`, reusing the allocation.
+        // SAFETY: `Cell<bool>` is `repr(transparent)` over `bool`, so
+        // `[Cell<bool>]` and `[bool]` have identical layout, and every flag holds
+        // a valid `bool`.
+        let mut touched_flags: Box<[bool]> =
+            unsafe { Box::from_raw(Box::into_raw(touched_flags) as *mut [bool]) };
+
+        // changed_account_count reflects the accounts the VM actually modified,
+        // counted before the fee payer is force-marked below.
+        let touched_account_count = touched_flags.iter().filter(|touched| **touched).count();
 
         // The fee payer (account index 0) is debited during loading, outside the
-        // VM, so it carries no VM touch flag but must still be written back. Mark
-        // it as touched so account collection can treat "needs store" uniformly
-        // as "was touched".
-        if let Some(fee_payer_touched) = touched_flags.first() {
-            fee_payer_touched.set(true);
+        // VM, so it carries no VM touch flag but must still be written back.
+        if let Some(fee_payer_touched) = touched_flags.first_mut() {
+            *fee_payer_touched = true;
         }
 
         if post_account_state_info_result.is_ok()

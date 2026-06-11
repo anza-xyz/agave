@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    core::{borrow::Borrow, cell::Cell},
+    core::borrow::Borrow,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -110,7 +110,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
     transaction_accounts: &'a [KeyedAccountSharedData],
-    touched_flags: &[Cell<bool>],
+    touched_flags: &[bool],
 ) {
     for (i, (address, account)) in (0..transaction.account_keys().len()).zip(transaction_accounts) {
         if !transaction.is_writable(i) {
@@ -118,7 +118,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
         }
 
         // Skip write-locked accounts the transaction left unmodified.
-        if !touched_flags[i].get() {
+        if !touched_flags[i] {
             continue;
         }
 
@@ -186,10 +186,8 @@ mod tests {
 
     /// Builds touched flags for `num_total` accounts with the first
     /// `num_touched` of them marked as touched.
-    fn touched_flags_for_test(num_touched: usize, num_total: usize) -> Box<[Cell<bool>]> {
-        (0..num_total)
-            .map(|index| Cell::new(index < num_touched))
-            .collect()
+    fn touched_flags_for_test(num_touched: usize, num_total: usize) -> Box<[bool]> {
+        (0..num_total).map(|index| index < num_touched).collect()
     }
 
     fn new_sanitized_tx<T: Signers>(
