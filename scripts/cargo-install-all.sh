@@ -33,7 +33,7 @@ usage: $0 [+<cargo version>] [options] <install directory>
   +<cargo version>      Build using <cargo version> instead of the version defined in rust-toolchain.toml.
 
   Options:
-    --dcou-check                Only check that dcou feature activation is correct and exit (no build).
+    --dcou-check-only                Only check that dcou feature activation is correct and exit (no build).
     --debug                     Build with debug profile instead of release profile.
     --release-with-debug        Build with release-with-debug profile instead of release profile.
     --release-with-lto          Build with release-with-lto profile instead of release profile.
