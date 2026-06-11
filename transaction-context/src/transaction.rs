@@ -607,46 +607,13 @@ pub struct TransactionReturnData {
     pub data: Vec<u8>,
 }
 
-/// Bit set tracking which transaction accounts were modified, indexed by
-/// account index. A transaction may reference at most `MAX_TX_ACCOUNT_LOCKS`
-/// (128) accounts, so a `u128` always has room for every account and avoids a
-/// per-transaction heap allocation.
-#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TouchedAccounts(u128);
-
-#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
-impl TouchedAccounts {
-    /// Mark the account at `index` as modified. Caller must ensure
-    /// `index < 128`, which always holds for transaction account indices.
-    #[inline]
-    pub fn touch(&mut self, index: usize) {
-        debug_assert!(index < 128, "transaction account index out of range");
-        self.0 |= 1u128 << index;
-    }
-
-    /// Whether the account at `index` was modified. Caller must ensure
-    /// `index < 128`, which always holds for transaction account indices.
-    #[inline]
-    pub fn is_touched(&self, index: usize) -> bool {
-        debug_assert!(index < 128, "transaction account index out of range");
-        (self.0 >> index) & 1 == 1
-    }
-
-    /// Number of accounts marked as modified.
-    #[inline]
-    pub fn count(&self) -> u64 {
-        u64::from(self.0.count_ones())
-    }
-}
-
 /// Everything that needs to be recorded from a TransactionContext after execution
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct ExecutionRecord {
     pub accounts: Vec<KeyedAccountSharedData>,
     pub return_data: TransactionReturnData,
-    /// Which accounts were modified by the VM (indexed by account index).
-    pub touched: TouchedAccounts,
+    /// Parallel to `accounts`: whether each account was modified by the VM.
+    pub touched_flags: Box<[Cell<bool>]>,
     pub accounts_resize_delta: i64,
 }
 
@@ -657,12 +624,6 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        let mut touched = TouchedAccounts::default();
-        for (index, was_touched) in touched_flags.iter().enumerate() {
-            if was_touched.get() {
-                touched.touch(index);
-            }
-        }
 
         let return_data = TransactionReturnData {
             program_id: context.transaction_frame.return_data_pubkey,
@@ -672,7 +633,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         Self {
             accounts,
             return_data,
-            touched,
+            touched_flags,
             accounts_resize_delta: Cell::into_inner(resize_delta),
         }
     }
@@ -681,29 +642,6 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_touched_accounts() {
-        let mut touched = TouchedAccounts::default();
-        // Nothing is touched by default.
-        assert_eq!(touched.count(), 0);
-        for index in 0..128 {
-            assert!(!touched.is_touched(index));
-        }
-
-        // Marking is per-index and idempotent.
-        touched.touch(0);
-        touched.touch(5);
-        touched.touch(127); // highest valid transaction account index
-        touched.touch(5);
-
-        assert!(touched.is_touched(0));
-        assert!(touched.is_touched(5));
-        assert!(touched.is_touched(127));
-        assert!(!touched.is_touched(1));
-        assert!(!touched.is_touched(126));
-        assert_eq!(touched.count(), 3);
-    }
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {

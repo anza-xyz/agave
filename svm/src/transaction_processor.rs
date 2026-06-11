@@ -569,7 +569,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             account_loader.update_accounts_for_successful_tx(
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
-                                executed_tx.loaded_transaction.touched,
+                                &executed_tx.loaded_transaction.touched_flags,
                                 self.slot,
                             );
                             // Also update local program cache with modifications made by the
@@ -1037,18 +1037,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let ExecutionRecord {
             accounts,
             return_data,
-            mut touched,
+            touched_flags,
             accounts_resize_delta,
         } = execution_record;
 
         // changed_account_count reflects the accounts the VM actually modified.
-        let touched_account_count = touched.count();
+        let touched_account_count = touched_flags.iter().filter(|touched| touched.get()).count();
 
         // The fee payer (account index 0) is debited during loading, outside the
         // VM, so it carries no VM touch flag but must still be written back. Mark
         // it as touched so account collection can treat "needs store" uniformly
         // as "was touched".
-        touched.touch(0);
+        if let Some(fee_payer_touched) = touched_flags.first() {
+            fee_payer_touched.set(true);
+        }
 
         if post_account_state_info_result.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
@@ -1075,9 +1077,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap_or_else(|err| (Err(err), None));
 
         loaded_transaction.accounts = accounts;
-        loaded_transaction.touched = touched;
+        loaded_transaction.touched_flags = touched_flags;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
-        execute_timings.details.changed_account_count += touched_account_count;
+        execute_timings.details.changed_account_count += touched_account_count as u64;
 
         let return_data = if config.recording_config.enable_return_data_recording
             && !return_data.data.is_empty()
@@ -1292,7 +1294,7 @@ mod tests {
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
         solana_transaction::sanitized::SanitizedTransaction,
-        solana_transaction_context::transaction::{TouchedAccounts, TransactionContext},
+        solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
         std::{borrow::Cow, collections::HashMap},
         test_case::test_case,
@@ -1594,7 +1596,7 @@ mod tests {
 
         let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
-            touched: TouchedAccounts::default(),
+            touched_flags: Box::default(),
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -1689,7 +1691,7 @@ mod tests {
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
             ],
-            touched: TouchedAccounts::default(),
+            touched_flags: Box::default(),
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),

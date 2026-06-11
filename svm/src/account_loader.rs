@@ -8,6 +8,7 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
     },
     ahash::{AHashMap, AHashSet},
+    core::cell::Cell,
     solana_account::{
         Account, AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
     },
@@ -30,9 +31,7 @@ use {
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction_context::{
-        IndexOfAccount, transaction::TouchedAccounts, transaction_accounts::KeyedAccountSharedData,
-    },
+    solana_transaction_context::{IndexOfAccount, transaction_accounts::KeyedAccountSharedData},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
 };
 
@@ -144,8 +143,9 @@ pub(crate) struct LoadedTransactionAccount {
 )]
 pub struct LoadedTransaction {
     pub accounts: Vec<KeyedAccountSharedData>,
-    /// Set of indices of accounts which must be written back. Empty until execution.
-    pub touched: TouchedAccounts,
+    /// Parallel to `accounts`: whether each account must be written back. Empty
+    /// until execution.
+    pub touched_flags: Box<[Cell<bool>]>,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
@@ -294,7 +294,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         &mut self,
         message: &impl SVMMessage,
         transaction_accounts: &[KeyedAccountSharedData],
-        touched: TouchedAccounts,
+        touched_flags: &[Cell<bool>],
         current_slot: Slot,
     ) {
         for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
@@ -303,7 +303,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             }
 
             // Skip write-locked accounts the transaction left unmodified.
-            if !touched.is_touched(i) {
+            if !touched_flags[i].get() {
                 continue;
             }
 
@@ -430,7 +430,7 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                 Ok(accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
                     accounts,
                     // Populated after execution by execute_loaded_transaction.
-                    touched: TouchedAccounts::default(),
+                    touched_flags: Box::default(),
                     fee_details: tx_details.fee_details,
                     rollback_accounts: tx_details.rollback_accounts,
                     compute_budget: tx_details.compute_budget,
@@ -842,16 +842,14 @@ mod tests {
 
         // Fee payer (index 0) and the VM-modified account (index 1) are marked;
         // the writable account at index 2 is left untouched.
-        let mut touched = TouchedAccounts::default();
-        touched.touch(0);
-        touched.touch(1);
+        let touched_flags: Box<[Cell<bool>]> = [true, true, false, false].map(Cell::new).into();
 
         let callbacks = TestCallbacks::default();
         let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();
         account_loader.update_accounts_for_successful_tx(
             &message,
             &transaction_accounts,
-            touched,
+            &touched_flags,
             5,
         );
 
@@ -2209,7 +2207,7 @@ mod tests {
                     ),
                     (key3.pubkey(), account_data),
                 ],
-                touched: TouchedAccounts::default(),
+                touched_flags: Box::default(),
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
                 compute_budget: SVMTransactionExecutionBudget::default(),

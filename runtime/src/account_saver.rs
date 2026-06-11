@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    core::borrow::Borrow,
+    core::{borrow::Borrow, cell::Cell},
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -13,9 +13,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_context::{
-        transaction::TouchedAccounts, transaction_accounts::KeyedAccountSharedData,
-    },
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
 };
 
 // Used to approximate how many accounts will be calculated for storage so that
@@ -82,7 +80,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                         transaction,
                         transaction_ref,
                         &executed_tx.loaded_transaction.accounts,
-                        executed_tx.loaded_transaction.touched,
+                        &executed_tx.loaded_transaction.touched_flags,
                     );
                 } else {
                     collect_accounts_for_failed_tx(
@@ -112,7 +110,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
     transaction_accounts: &'a [KeyedAccountSharedData],
-    touched: TouchedAccounts,
+    touched_flags: &[Cell<bool>],
 ) {
     for (i, (address, account)) in (0..transaction.account_keys().len()).zip(transaction_accounts) {
         if !transaction.is_writable(i) {
@@ -120,7 +118,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
         }
 
         // Skip write-locked accounts the transaction left unmodified.
-        if !touched.is_touched(i) {
+        if !touched_flags[i].get() {
             continue;
         }
 
@@ -186,13 +184,12 @@ mod tests {
         std::collections::{HashMap, HashSet},
     };
 
-    /// Builds a [`TouchedAccounts`] with the given account `indices` marked.
-    fn touched_set(indices: impl IntoIterator<Item = usize>) -> TouchedAccounts {
-        let mut touched = TouchedAccounts::default();
-        for index in indices {
-            touched.touch(index);
-        }
-        touched
+    /// Builds touched flags for `num_total` accounts with the first
+    /// `num_touched` of them marked as touched.
+    fn touched_flags_for_test(num_touched: usize, num_total: usize) -> Box<[Cell<bool>]> {
+        (0..num_total)
+            .map(|index| Cell::new(index < num_touched))
+            .collect()
     }
 
     fn new_sanitized_tx<T: Signers>(
@@ -270,20 +267,22 @@ mod tests {
         ];
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
 
-        let touched0 = touched_set(0..transaction_accounts0.len());
+        let touched0 =
+            touched_flags_for_test(transaction_accounts0.len(), transaction_accounts0.len());
         let loaded0 = LoadedTransaction {
             accounts: transaction_accounts0,
-            touched: touched0,
+            touched_flags: touched0,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
         };
 
-        let touched1 = touched_set(0..transaction_accounts1.len());
+        let touched1 =
+            touched_flags_for_test(transaction_accounts1.len(), transaction_accounts1.len());
         let loaded1 = LoadedTransaction {
             accounts: transaction_accounts1,
-            touched: touched1,
+            touched_flags: touched1,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -362,8 +361,8 @@ mod tests {
         // modified. Here only index 1 was modified; the writable account at
         // index 2 was left untouched and must not be written back.
         let loaded = LoadedTransaction {
+            touched_flags: touched_flags_for_test(2, transaction_accounts.len()),
             accounts: transaction_accounts,
-            touched: touched_set([0, 1]),
             ..Default::default()
         };
 
@@ -403,12 +402,13 @@ mod tests {
 
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
-        let touched = touched_set(0..transaction_accounts.len());
+        let touched_flags =
+            touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
             // Worst case: every writable account appears modified, yet a failed
             // tx must still persist only its rollback accounts.
-            touched,
+            touched_flags,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer: (from_address, from_account_pre.clone()),
@@ -497,12 +497,13 @@ mod tests {
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
-        let touched = touched_set(0..transaction_accounts.len());
+        let touched_flags =
+            touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
             // Worst case: every writable account appears modified, yet a failed
             // tx must still persist only its rollback accounts.
-            touched,
+            touched_flags,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -608,12 +609,13 @@ mod tests {
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
 
-        let touched = touched_set(0..transaction_accounts.len());
+        let touched_flags =
+            touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
             // Worst case: every writable account appears modified, yet a failed
             // tx must still persist only its rollback accounts.
-            touched,
+            touched_flags,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
