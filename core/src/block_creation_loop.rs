@@ -517,7 +517,7 @@ fn produce_block_footer(
 
     if let Some(parent_bank) = bank.parent() {
         // Get parent time from alpenglow clock (nanoseconds) or fall back to clock sysvar (seconds -> nanoseconds)
-        let parent_time_nanos = bank
+        let parent_time_nanos = parent_bank
             .get_nanosecond_clock()
             .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
         let parent_slot = parent_bank.slot();
