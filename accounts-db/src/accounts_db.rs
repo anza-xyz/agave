@@ -4740,7 +4740,7 @@ impl AccountsDb {
             select_pubkeys_us: Saturating(select_pubkeys_us),
             ..FlushStats::default()
         };
-        for root in flushed_roots.into_iter() {
+        for root in flushed_roots {
             if let Some(stats) = self.flush_slot_cache(root, &pubkeys_to_flush[&root]) {
                 num_roots_flushed += 1;
                 flush_stats.accumulate(&stats);
