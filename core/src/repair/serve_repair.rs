@@ -2759,7 +2759,12 @@ mod tests {
     #[test]
     fn test_run_ancestor_hashes() {
         fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
-            wincode::deserialize(packet.data(..).unwrap_or_default()).unwrap()
+            wincode::deserialize(
+                packet
+                    .data(..(packet.meta().size - SIZE_OF_NONCE))
+                    .unwrap_or_default(),
+            )
+            .unwrap()
         }
 
         agave_logger::setup();

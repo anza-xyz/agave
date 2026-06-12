@@ -1244,7 +1244,8 @@ mod tests {
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            wincode::deserialize_from(&mut Cursor::new(packet_data)).unwrap();
+            wincode::config::deserialize_from(&mut Cursor::new(packet_data), PacketConfig::new())
+                .unwrap();
 
         match deser_response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -1295,18 +1296,20 @@ mod tests {
         // Empty packet
         let packet = make_packet(&[]);
         let packet_data = packet.data(..).unwrap();
-        assert!(
-            wincode::deserialize_from::<BlockIdRepairResponse>(&mut Cursor::new(packet_data))
-                .is_err()
-        );
+        wincode::config::deserialize_from::<BlockIdRepairResponse, PacketConfig>(
+            &mut Cursor::new(packet_data),
+            PacketConfig::new(),
+        )
+        .unwrap_err();
 
         // Garbage data
         let packet = make_packet(&[0xff, 0xff, 0xff, 0xff]);
         let packet_data = packet.data(..).unwrap();
-        assert!(
-            wincode::deserialize_from::<BlockIdRepairResponse>(&mut Cursor::new(packet_data))
-                .is_err()
-        );
+        wincode::config::deserialize_from::<BlockIdRepairResponse, PacketConfig>(
+            &mut Cursor::new(packet_data),
+            PacketConfig::new(),
+        )
+        .unwrap_err();
     }
 
     #[test]

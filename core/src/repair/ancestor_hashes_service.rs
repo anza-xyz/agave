@@ -377,10 +377,8 @@ impl AncestorHashesService {
         };
 
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = wincode::config::deserialize_from(
-            packet.data(..).unwrap_or_default(),
-            PacketConfig::new(),
-        ) else {
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
+        else {
             stats.invalid_packets += 1;
             return None;
         };
