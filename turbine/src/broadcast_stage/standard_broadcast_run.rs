@@ -998,17 +998,11 @@ mod test {
                 .is_none()
         );
 
-        // Try to fetch the incomplete ticks from blockstore, should succeed
-        assert_eq!(
-            blockstore.get_slot_entries(1, header_shred_offset).unwrap(),
-            ticks0
-        );
-        assert_eq!(
-            blockstore
-                .get_slot_entries(1, shred_multiplier * num_shreds_per_slot)
-                .unwrap(),
-            vec![],
-        );
+        // Try to fetch the incomplete ticks from blockstore, will fail because
+        // broadcast interruption serializes an empty entry batch into shreds
+        // which is an invalid block
+        assert!(blockstore.get_slot_entries(1, header_shred_offset).is_err());
+        assert!(blockstore.get_slot_entries(1, 0).is_err());
     }
 
     #[test]
