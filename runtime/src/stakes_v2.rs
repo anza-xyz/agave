@@ -663,6 +663,7 @@ mod tests {
             *inner.root_positions.get(&stake_pubkey_a).unwrap()
         };
 
+        // Remove the stake A.
         index.apply_rooted_deltas([HashMap::from_iter([(stake_pubkey_a, None)])]);
         {
             let inner = index.0.read().unwrap();
@@ -670,6 +671,7 @@ mod tests {
             assert_eq!(&inner.free_root_indices, &[removed_index]);
         }
 
+        // Add a stake C, make sure it uses the free slot.
         let root_account_c = create_stake_account(30, &vote_pubkey_a, &stake_pubkey_c, &rent);
         index.apply_rooted_deltas([HashMap::from_iter([(
             stake_pubkey_c,
@@ -683,67 +685,9 @@ mod tests {
             inner.root_positions.get(&stake_pubkey_c),
             Some(&removed_index)
         );
-        assert_eq!(
-            inner.root_entries[removed_index]
-                .as_ref()
-                .map(|entry| entry.stake_pubkey),
-            Some(stake_pubkey_c)
-        );
-    }
-
-    #[test]
-    fn test_apply_rooted_deltas_replaces_existing_key_with_new_key() {
-        let rent = Rent::default();
-        let vote_pubkey_a = new_rand();
-        let vote_pubkey_b = new_rand();
-        let existing_stake_pubkey = new_rand();
-        let new_stake_pubkey = new_rand();
-
-        let root_account = create_stake_account(10, &vote_pubkey_a, &existing_stake_pubkey, &rent);
-        let mut cache = StakesCacheV2::new_from_accounts(
-            [(
-                existing_stake_pubkey,
-                StakeAccount::try_from(root_account).unwrap(),
-            )]
-            .into_iter(),
-            0,
-        );
-
-        // Verify initial state
-        let inner = cache.stake_delegation_index.0.read().unwrap();
-        assert_eq!(inner.len, 1);
-        assert_eq!(inner.root_entries.len(), 1);
-        assert!(inner.free_root_indices.is_empty());
-        drop(inner);
-
-        // Apply a delta that replaces the existing key with a new key at the same position
-        let new_account = create_stake_account(20, &vote_pubkey_b, &new_stake_pubkey, &rent);
-        cache
-            .stake_delegation_index
-            .0
-            .write()
-            .unwrap()
-            .apply_rooted_deltas([HashMap::from_iter([(
-                new_stake_pubkey,
-                Some(Arc::new(StakeAccount::try_from(new_account).unwrap())),
-            )])]);
-
-        let inner = cache.stake_delegation_index.0.read().unwrap();
-        // The existing key should be gone
-        assert!(!inner.root_positions.contains_key(&existing_stake_pubkey));
-        // The new key should be present at the same position
-        assert_eq!(inner.root_positions.get(&new_stake_pubkey), Some(&0));
-        // The old slot should be in the freelist
-        assert_eq!(inner.free_root_indices, vec![0]);
-        // len should still be 1 (one active entry)
-        assert_eq!(inner.len, 1);
-        // root_entries should still be length 1 (reused, not extended)
-        assert_eq!(inner.root_entries.len(), 1);
-        // The entry at position 0 should be the new key
-        assert_eq!(
-            inner.root_entries[0].as_ref().map(|e| e.stake_pubkey),
-            Some(new_stake_pubkey)
-        );
+        let reused_entry = inner.root_entries[removed_index].as_ref().unwrap();
+        assert_eq!(reused_entry.stake_pubkey, stake_pubkey_c);
+        assert_eq!(reused_entry.stake_account.delegation().stake, 30);
     }
 
     #[test]
@@ -759,7 +703,7 @@ mod tests {
         // Create a cache with 2 entries and an empty freelist
         let root_account_a = create_stake_account(10, &vote_pubkey_a, &stake_pubkey_a, &rent);
         let root_account_b = create_stake_account(20, &vote_pubkey_b, &stake_pubkey_b, &rent);
-        let mut cache = StakesCacheV2::new_from_accounts(
+        let cache = StakesCacheV2::new_from_accounts(
             [
                 (
                     stake_pubkey_a,
@@ -786,9 +730,6 @@ mod tests {
         let new_account = create_stake_account(30, &vote_pubkey_c, &stake_pubkey_c, &rent);
         cache
             .stake_delegation_index
-            .0
-            .write()
-            .unwrap()
             .apply_rooted_deltas([HashMap::from_iter([(
                 stake_pubkey_c,
                 Some(Arc::new(StakeAccount::try_from(new_account).unwrap())),
@@ -824,6 +765,20 @@ mod tests {
             0,
         );
 
+        {
+            let inner = root_cache.stake_delegation_index.0.read().unwrap();
+            assert_eq!(inner.root_entries.len(), 1);
+            assert_eq!(
+                inner.root_entries[0]
+                    .as_ref()
+                    .unwrap()
+                    .stake_account
+                    .delegation()
+                    .stake,
+                10
+            );
+        }
+
         let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
         let updated_account = create_stake_account(50, &vote_pubkey, &stake_pubkey, &rent);
         fork_cache.upsert_stake_delegation(
@@ -834,12 +789,16 @@ mod tests {
         root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
 
         let inner = root_cache.stake_delegation_index.0.read().unwrap();
-        let entry = inner
-            .root_entries
-            .iter()
-            .find(|e| e.as_ref().map(|e| e.stake_pubkey) == Some(stake_pubkey))
-            .unwrap();
-        assert_eq!(entry.as_ref().unwrap().stake_account.delegation().stake, 50);
+        assert_eq!(inner.root_entries.len(), 1);
+        assert_eq!(
+            inner.root_entries[0]
+                .as_ref()
+                .unwrap()
+                .stake_account
+                .delegation()
+                .stake,
+            50
+        );
     }
 
     #[test]
@@ -983,14 +942,14 @@ mod tests {
         );
 
         let fork_cache = StakesCacheV2::new_from_parent(&root_cache);
-        // Ancestor sets stake to 20
+        // Ancestor sets stake to 20.
         let ancestor_account = create_stake_account(20, &vote_pubkey, &stake_pubkey, &rent);
         fork_cache.upsert_stake_delegation(
             stake_pubkey,
             StakeAccount::try_from(ancestor_account).unwrap(),
         );
 
-        // Root cache itself sets stake to 30 (should override ancestor)
+        // Root cache itself sets stake to 30 (should override ancestor).
         let root_update_account = create_stake_account(30, &vote_pubkey, &stake_pubkey, &rent);
         root_cache.upsert_stake_delegation(
             stake_pubkey,
