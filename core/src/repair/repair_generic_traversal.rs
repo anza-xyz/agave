@@ -31,12 +31,11 @@ impl Iterator for GenericTraversal<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.pending.pop();
         if let Some(slot) = next {
-            let children: Vec<_> = self
+            let children = self
                 .tree
                 .children(&(slot, Hash::default()))
                 .unwrap()
-                .map(|(child_slot, _)| *child_slot)
-                .collect();
+                .map(|(child_slot, _)| *child_slot);
             self.pending.extend(children);
         }
         next
