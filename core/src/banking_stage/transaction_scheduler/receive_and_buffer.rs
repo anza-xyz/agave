@@ -275,6 +275,7 @@ impl TransactionViewReceiveAndBuffer {
                         &transactions,
                         &lock_results[..transactions.len()],
                         working_bank.max_processing_age(),
+                        true,
                         &mut error_counters,
                     )
                 };
