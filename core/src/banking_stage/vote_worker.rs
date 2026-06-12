@@ -17,9 +17,7 @@ use {
     agave_transaction_view::{
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
-    arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
-    itertools::Itertools,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
@@ -49,11 +47,6 @@ use {
 mod transaction {
     pub use solana_transaction_error::TransactionResult as Result;
 }
-
-// Process vote packets one at a time to avoid over reserving block CUs during packing,
-// also keep each recorded vote batch as small as possible, which favors entry/FEC-set
-// packing.
-pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 1;
 
 pub struct VoteWorker {
     exit: Arc<AtomicBool>,
@@ -244,109 +237,55 @@ impl VoteWorker {
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
-        let all_vote_packets = self.storage.drain_unprocessed(bank);
-
-        let mut reached_end_of_slot = false;
+        let mut all_vote_packets = self.storage.drain_unprocessed(bank).into_iter();
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
-        let mut resolved_txs = ArrayVec::<_, UNPROCESSED_BUFFER_STEP_SIZE>::new();
-        for chunk in Itertools::chunks(all_vote_packets.into_iter(), UNPROCESSED_BUFFER_STEP_SIZE)
-            .into_iter()
-        {
-            debug_assert!(resolved_txs.is_empty());
-
-            // Short circuit if we've reached the end of slot.
-            if reached_end_of_slot {
-                self.storage.reinsert_packets(chunk.into_iter());
-
+        // Process one vote at a time to avoid over-reserving block CUs during packing.
+        // This also keeps each recorded vote batch small, which favors entry/FEC-set packing.
+        while let Some(packet) = all_vote_packets.next() {
+            let Some(sanitized_transaction) =
+                consume_scan_should_process_packet(bank, packet, &mut error_counters)
+            else {
                 continue;
+            };
+
+            let (process_transactions_summary, process_packets_transactions_us) =
+                measure_us!(self.process_packets_transactions(
+                    bank,
+                    std::slice::from_ref(&sanitized_transaction),
+                    banking_stage_stats,
+                    slot_metrics_tracker,
+                ));
+            slot_metrics_tracker
+                .increment_process_packets_transactions_us(process_packets_transactions_us);
+
+            let ProcessTransactionsSummary {
+                reached_max_poh_height,
+                retryable_transaction_indexes: retryable_vote_indices,
+                ..
+            } = process_transactions_summary;
+
+            let retryable_vote_count = retryable_vote_indices.len();
+            *consumed_buffered_packets_count += usize::from(retryable_vote_count == 0);
+            *rebuffered_packet_count += retryable_vote_count;
+
+            slot_metrics_tracker.increment_retryable_packets_count(retryable_vote_count as u64);
+
+            if retryable_vote_count != 0 {
+                // vote is processed one at a time, so the only valid retryable index is 0
+                assert_eq!(retryable_vote_indices.as_slice(), &[0]);
+
+                self.storage.reinsert_packets(std::iter::once(
+                    sanitized_transaction.into_inner_transaction().into_view(),
+                ));
             }
 
-            // Sanitize & resolve our chunk.
-            for packet in chunk.into_iter() {
-                if let Some(tx) =
-                    consume_scan_should_process_packet(bank, packet, &mut error_counters)
-                {
-                    resolved_txs.push(tx);
-                }
-            }
-
-            if let Some(retryable_vote_indices) = self.do_process_packets(
-                bank,
-                &mut reached_end_of_slot,
-                &resolved_txs,
-                banking_stage_stats,
-                consumed_buffered_packets_count,
-                rebuffered_packet_count,
-                slot_metrics_tracker,
-            ) {
-                self.storage.reinsert_packets(
-                    Self::extract_retryable(&mut resolved_txs, retryable_vote_indices)
-                        .map(|tx| tx.into_inner_transaction().into_view()),
-                );
-            } else {
-                self.storage.reinsert_packets(
-                    resolved_txs
-                        .drain(..)
-                        .map(|tx| tx.into_inner_transaction().into_view()),
-                );
+            if has_reached_end_of_slot(reached_max_poh_height, bank) {
+                self.storage.reinsert_packets(all_vote_packets);
+                return true;
             }
         }
 
-        reached_end_of_slot
-    }
-
-    fn do_process_packets(
-        &self,
-        bank: &Bank,
-        reached_end_of_slot: &mut bool,
-        sanitized_transactions: &[RuntimeTransactionView],
-        banking_stage_stats: &BankingStageStats,
-        consumed_buffered_packets_count: &mut usize,
-        rebuffered_packet_count: &mut usize,
-        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) -> Option<Vec<usize>> {
-        if *reached_end_of_slot {
-            return None;
-        }
-
-        let (process_transactions_summary, process_packets_transactions_us) =
-            measure_us!(self.process_packets_transactions(
-                bank,
-                sanitized_transactions,
-                banking_stage_stats,
-                slot_metrics_tracker,
-            ));
-
-        slot_metrics_tracker
-            .increment_process_packets_transactions_us(process_packets_transactions_us);
-
-        let ProcessTransactionsSummary {
-            reached_max_poh_height,
-            retryable_transaction_indexes,
-            ..
-        } = process_transactions_summary;
-
-        *reached_end_of_slot = has_reached_end_of_slot(reached_max_poh_height, bank);
-
-        // The difference between all transactions passed to execution and the ones that
-        // are retryable were the ones that were either:
-        // 1) Committed into the block
-        // 2) Dropped without being committed because they had some fatal error (too old,
-        // duplicate signature, etc.)
-        //
-        // Note: This assumes that every packet deserializes into one transaction!
-        *consumed_buffered_packets_count += sanitized_transactions
-            .len()
-            .saturating_sub(retryable_transaction_indexes.len());
-
-        // Out of the buffered packets just retried, collect any still unprocessed
-        // transactions in this batch
-        *rebuffered_packet_count += retryable_transaction_indexes.len();
-
-        slot_metrics_tracker
-            .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
-
-        Some(retryable_transaction_indexes)
+        false
     }
 
     fn process_packets_transactions(
@@ -500,25 +439,6 @@ impl VoteWorker {
             .filter_map(|(index, res)| res.as_ref().ok().map(|_| index))
             .collect()
     }
-
-    fn extract_retryable<const N: usize>(
-        vote_packets: &mut ArrayVec<RuntimeTransactionView, N>,
-        retryable_vote_indices: Vec<usize>,
-    ) -> impl Iterator<Item = RuntimeTransactionView> + '_ {
-        debug_assert!(retryable_vote_indices.is_sorted());
-        let mut retryable_vote_indices = retryable_vote_indices.into_iter().peekable();
-
-        vote_packets
-            .drain(..)
-            .enumerate()
-            .filter_map(move |(i, packet)| {
-                (Some(&i) == retryable_vote_indices.peek()).then(|| {
-                    retryable_vote_indices.next();
-
-                    packet
-                })
-            })
-    }
 }
 
 fn consume_scan_should_process_packet(
@@ -575,32 +495,13 @@ mod tests {
         crate::banking_stage::{
             committer::Committer,
             tests::{create_slow_genesis_config, sanitize_transactions},
-            vote_storage::tests::packet_from_slots,
         },
         crossbeam_channel::bounded,
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::BytesPacket,
         solana_poh::record_channels::record_channels,
-        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_svm::account_loader::CheckedTransactionDetails,
         solana_system_transaction as system_transaction,
-        std::collections::HashSet,
     };
-
-    fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
-        let tx =
-            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), true)
-                .unwrap();
-        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            tx,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
-
-        RuntimeTransactionView::try_new(tx, None, &HashSet::default()).unwrap()
-    }
 
     #[test]
     fn test_bank_prepare_filter_for_pending_transaction() {
@@ -654,78 +555,6 @@ mod tests {
             ]),
             [0, 3, 4, 5]
         );
-    }
-
-    #[test]
-    fn extract_retryable_one_all_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets: ArrayVec<_, 1> = ArrayVec::from_iter([to_runtime_transaction_view(
-            packet_from_slots(vec![(1, 1)], &keypair_a, None),
-        )]);
-        let retryable_indices = vec![0];
-
-        // Assert - Able to extract exactly one packet.
-        let expected = *packets[0].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected);
-        assert!(extracted.next().is_none());
-    }
-
-    #[test]
-    fn extract_retryable_one_none_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets: ArrayVec<_, 1> = ArrayVec::from_iter([to_runtime_transaction_view(
-            packet_from_slots(vec![(1, 1)], &keypair_a, None),
-        )]);
-        let retryable_indices = vec![];
-
-        // Assert - Able to extract exactly zero packets.
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert!(extracted.next().is_none());
-    }
-
-    #[test]
-    fn extract_retryable_three_last_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets: ArrayVec<_, 3> = ArrayVec::from_iter(
-            [
-                packet_from_slots(vec![(5, 3)], &keypair_a, None),
-                packet_from_slots(vec![(6, 2)], &keypair_a, None),
-                packet_from_slots(vec![(7, 1)], &keypair_a, None),
-            ]
-            .into_iter()
-            .map(to_runtime_transaction_view),
-        );
-        let retryable_indices = vec![2];
-
-        // Assert - Able to extract exactly one packet.
-        let expected = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected);
-        assert!(extracted.next().is_none());
-    }
-
-    #[test]
-    fn extract_retryable_three_first_last_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets: ArrayVec<_, 3> = ArrayVec::from_iter(
-            [
-                packet_from_slots(vec![(5, 3)], &keypair_a, None),
-                packet_from_slots(vec![(6, 2)], &keypair_a, None),
-                packet_from_slots(vec![(7, 1)], &keypair_a, None),
-            ]
-            .into_iter()
-            .map(to_runtime_transaction_view),
-        );
-        let retryable_indices = vec![0, 2];
-
-        // Assert - Able to extract exactly one packet.
-        let expected0 = *packets[0].message_hash();
-        let expected1 = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
-        assert!(extracted.next().is_none());
     }
 
     #[test]

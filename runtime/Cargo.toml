@@ -68,6 +68,8 @@ bincode = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-queue = { workspace = true }
+crossbeam-utils = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 imbl = { workspace = true, features = ["rayon", "serde"] }
 itertools = { workspace = true }

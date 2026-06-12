@@ -29,6 +29,8 @@ used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
+## Due to recent switch to Rust 2024, should be removed after repo auto-fix before release cut
+collapsible_if = "allow"
 
 [workspace.dependencies]
 agave-feature-set = { path = "../feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -130,7 +132,7 @@ solana-svm-callback = { path = "../svm-callback", version = "=4.2.0-alpha.0", fe
 solana-svm-feature-set = { path = "../svm-feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-log-collector = { path = "../svm-log-collector", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-timings = { path = "../svm-timings", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-svm-transaction = { path = "../svm-transaction", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
+solana-svm-transaction = "4.2.0"
 solana-syscalls = { path = "../syscalls", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

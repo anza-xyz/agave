@@ -73,7 +73,7 @@ use {
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
-    accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
+    accounts_lt_hash::AccountsLtHashAsyncProgress,
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
@@ -81,7 +81,6 @@ use {
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_votor_messages::{certificate::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT},
     ahash::AHashSet,
-    dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::ThreadPool,
@@ -111,7 +110,6 @@ use {
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::cost_tracker::CostTracker,
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -139,7 +137,8 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionConfiguration,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{
         bpf_loader_upgradeable, incinerator, native_loader, system_program, sysvar as sysvar_id,
@@ -649,8 +648,7 @@ impl PartialEq for Bank {
             compute_budget: _,
             transaction_account_lock_limit: _,
             fee_structure: _,
-            cache_for_accounts_lt_hash: _,
-            stats_for_accounts_lt_hash: _,
+            accounts_lt_hash_async_progress: _,
             block_id,
             expected_bank_hash: _,
             bank_hash_stats: _,
@@ -985,17 +983,8 @@ pub struct Bank {
     /// The value is only meaningful after freezing.
     accounts_lt_hash: Mutex<AccountsLtHash>,
 
-    /// A cache of *the initial state* of accounts modified in this slot
-    ///
-    /// The accounts lt hash needs both the initial and final state of each
-    /// account that was modified in this slot.  Cache the initial state here.
-    ///
-    /// Note: The initial state must be strictly from an ancestor,
-    /// and not an intermediate state within this slot.
-    cache_for_accounts_lt_hash: DashMap<Pubkey, AccountsLtHashCacheValue, ahash::RandomState>,
-
-    /// Stats related to the accounts lt hash
-    stats_for_accounts_lt_hash: AccountsLtHashStats,
+    /// Track progress of the asynchronous accounts lt hashing for this Bank.
+    accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress,
 
     /// The unique identifier for the corresponding block for this bank.
     /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
@@ -1225,8 +1214,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
-            cache_for_accounts_lt_hash: DashMap::default(),
-            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
+            accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
             block_id: RwLock::new(None),
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1485,8 +1473,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
-            cache_for_accounts_lt_hash: DashMap::default(),
-            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
+            accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
             block_id: RwLock::new(None),
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1516,7 +1503,6 @@ impl Bank {
             slot,
             parent.slot(),
             new.block_height,
-            prepare_timings.num_accounts_modified_this_slot,
             NewBankTimings {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
@@ -1536,8 +1522,6 @@ impl Bank {
                 cache_preparation_time_us: prepare_timings.cache_preparation_time_us,
                 update_sysvars_time_us: prepare_timings.update_sysvars_time_us,
                 fill_sysvar_cache_time_us: prepare_timings.fill_sysvar_cache_time_us,
-                populate_cache_for_accounts_lt_hash_us: prepare_timings
-                    .populate_cache_for_accounts_lt_hash_us,
             },
         );
 
@@ -1984,34 +1968,12 @@ impl Bank {
                 .fill_missing_sysvar_cache_entries(self)
         );
 
-        let (num_accounts_modified_this_slot, populate_cache_for_accounts_lt_hash_us) =
-            measure_us!({
-                // The cache for accounts lt hash needs to be made aware of accounts modified
-                // before transaction processing begins.  Otherwise we may calculate the wrong
-                // accounts lt hash due to having the wrong initial state of the account.  The
-                // lt hash cache's initial state must always be from an ancestor, and cannot be
-                // an intermediate state within this Bank's slot.  If the lt hash cache has the
-                // wrong initial account state, we'll mix out the wrong lt hash value, and thus
-                // have the wrong overall accounts lt hash, and diverge.
-                let accounts_modified_this_slot =
-                    self.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
-                let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
-                for pubkey in accounts_modified_this_slot {
-                    self.cache_for_accounts_lt_hash
-                        .entry(pubkey)
-                        .or_insert(AccountsLtHashCacheValue::BankNew);
-                }
-                num_accounts_modified_this_slot
-            });
-
         PrepareBlockExecutionStats {
             update_epoch_time_us,
             distribute_rewards_time_us,
             cache_preparation_time_us,
             update_sysvars_time_us,
             fill_sysvar_cache_time_us,
-            num_accounts_modified_this_slot,
-            populate_cache_for_accounts_lt_hash_us,
         }
     }
 
@@ -2170,8 +2132,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
-            cache_for_accounts_lt_hash: DashMap::default(),
-            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
+            accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
             block_id: RwLock::new(fields.block_id),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
@@ -3022,7 +2983,7 @@ impl Bank {
             self.freeze_started.store(true, Relaxed);
             // updating the accounts lt hash must happen *outside* of hash_internal_state() so
             // that rehash() can be called and *not* modify self.accounts_lt_hash.
-            self.update_accounts_lt_hash();
+            self.finish_accounts_lt_hash_updates();
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
@@ -3293,25 +3254,16 @@ impl Bank {
             self.load_message_nonce_data(message)
                 .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
         })?;
-        Some(self.get_fee_for_message_with_lamports_per_signature(message))
-    }
 
-    pub fn get_fee_for_message_with_lamports_per_signature(
-        &self,
-        message: &impl SVMMessage,
-    ) -> u64 {
-        let prioritization_fee = process_compute_budget_instructions(
-            message.program_instructions_iter(),
-            &self.feature_set,
-        )
-        .unwrap_or_default()
-        .get_prioritization_fee();
-        solana_fee::calculate_fee(
+        let transaction_configuration =
+            TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)
+                .ok()?;
+        Some(solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
-            prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(self.feature_set.as_ref()),
-        )
+        ))
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
@@ -4294,6 +4246,7 @@ impl Bank {
 
             let to_store = (self.slot(), accounts_to_store.as_slice());
             self.update_bank_hash_stats(&to_store);
+            self.enqueue_accounts_lt_hash_updates(&to_store);
             // See https://github.com/solana-labs/solana/pull/31455 for discussion
             // on *not* updating the index within a threadpool.
             self.rc
@@ -4689,6 +4642,7 @@ impl Bank {
     fn store_accounts_without_stakes_cache<'a>(&self, accounts: impl StorableAccounts<'a>) {
         assert!(!self.freeze_started());
         self.update_bank_hash_stats(&accounts);
+        self.enqueue_accounts_lt_hash_updates(&accounts);
         self.rc
             .accounts
             .store_accounts_par(accounts, None, &self.ancestors);
@@ -6679,8 +6633,8 @@ impl TransactionProcessingCallback for Bank {
             .load_with_fixed_root(&self.ancestors, pubkey)
     }
 
-    fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
-        self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
+    fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
+        // nothing to do here
     }
 }
 
