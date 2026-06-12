@@ -477,7 +477,7 @@ impl ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
-            delay_leader_block_for_pending_fork: false,
+            delay_leader_block_for_pending_fork: true,
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
