@@ -3,10 +3,7 @@ use {
     crate::{
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, ConsensusMessage, VoteMessage},
-        vote::{
-            FinalizationVote, GenesisVote, NotarizationFallbackVote, NotarizationVote,
-            SkipFallbackVote, SkipVote, Vote,
-        },
+        vote::Vote,
     },
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
@@ -21,13 +18,49 @@ pod_wrapper! {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct VoteSignature {
+struct WireNotarVote {
+    block: Block,
+    shred_version: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
+struct WireNotarFallbackVote {
+    block: Block,
+    shred_version: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
+struct WireGenesisVote {
+    block: Block,
+    shred_version: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
+struct WireFinalizeVote {
+    slot: Slot,
+    shred_version: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
+struct WireSkipVote {
+    slot: Slot,
+    shred_version: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
+struct WireSkipFallbackVote {
+    slot: Slot,
+    shred_version: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
+struct WireVoteSignature {
     #[wincode(with = "PodBLSSignature")]
     signature: BLSSignature,
     rank: u16,
 }
 
-impl From<VoteMessage> for VoteSignature {
+impl From<VoteMessage> for WireVoteSignature {
     fn from(msg: VoteMessage) -> Self {
         Self {
             signature: msg.signature,
@@ -36,10 +69,11 @@ impl From<VoteMessage> for VoteSignature {
     }
 }
 
+/// wire format of a notar vote message
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireNotarVoteMessage {
-    vote: NotarizationVote,
-    signature: VoteSignature,
+pub struct WireNotarVoteMessage {
+    vote: WireNotarVote,
+    signature: WireVoteSignature,
 }
 
 impl From<WireNotarVoteMessage> for VoteMessage {
@@ -53,10 +87,11 @@ impl From<WireNotarVoteMessage> for VoteMessage {
     }
 }
 
+/// wire format of a notar fallback vote message
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireNotarFallbackVoteMessage {
-    vote: NotarizationFallbackVote,
-    signature: VoteSignature,
+pub struct WireNotarFallbackVoteMessage {
+    vote: WireNotarFallbackVote,
+    signature: WireVoteSignature,
 }
 
 impl From<WireNotarFallbackVoteMessage> for VoteMessage {
@@ -70,10 +105,11 @@ impl From<WireNotarFallbackVoteMessage> for VoteMessage {
     }
 }
 
+/// wire format of a genesis vote message
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireGenesisVoteMessage {
-    vote: GenesisVote,
-    signature: VoteSignature,
+pub struct WireGenesisVoteMessage {
+    vote: WireGenesisVote,
+    signature: WireVoteSignature,
 }
 
 impl From<WireGenesisVoteMessage> for VoteMessage {
@@ -87,10 +123,11 @@ impl From<WireGenesisVoteMessage> for VoteMessage {
     }
 }
 
+/// wire format of a finalize vote message
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireFinalizeVoteMessage {
-    vote: FinalizationVote,
-    signature: VoteSignature,
+pub struct WireFinalizeVoteMessage {
+    vote: WireFinalizeVote,
+    signature: WireVoteSignature,
 }
 
 impl From<WireFinalizeVoteMessage> for VoteMessage {
@@ -104,10 +141,11 @@ impl From<WireFinalizeVoteMessage> for VoteMessage {
     }
 }
 
+/// wire format of a skip vote message
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireSkipVoteMessage {
-    vote: SkipVote,
-    signature: VoteSignature,
+pub struct WireSkipVoteMessage {
+    vote: WireSkipVote,
+    signature: WireVoteSignature,
 }
 
 impl From<WireSkipVoteMessage> for VoteMessage {
@@ -121,10 +159,11 @@ impl From<WireSkipVoteMessage> for VoteMessage {
     }
 }
 
+/// wire format of a skip fallback vote message
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireSkipFallbackVoteMessage {
-    vote: SkipFallbackVote,
-    signature: VoteSignature,
+pub struct WireSkipFallbackVoteMessage {
+    vote: WireSkipFallbackVote,
+    signature: WireVoteSignature,
 }
 
 impl From<WireSkipFallbackVoteMessage> for VoteMessage {
@@ -141,31 +180,37 @@ impl From<WireSkipFallbackVoteMessage> for VoteMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireFinalizeCert {
     slot: Slot,
+    shred_version: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireSkipCert {
     slot: Slot,
+    shred_version: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireFastFinalizeCert {
     block: Block,
+    shred_version: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireNotarCert {
     block: Block,
+    shred_version: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireNotarFallbackCert {
     block: Block,
+    shred_version: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 struct WireGenesisCert {
     block: Block,
+    shred_version: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
@@ -184,8 +229,9 @@ impl From<Certificate> for WireCertSignature {
     }
 }
 
+/// wire format of a finalize cert message
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireFinalizeCertMessage {
+pub struct WireFinalizeCertMessage {
     cert: WireFinalizeCert,
     signature: WireCertSignature,
 }
@@ -201,8 +247,9 @@ impl From<WireFinalizeCertMessage> for Certificate {
     }
 }
 
+/// wire format of a skip cert message
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireSkipCertMessage {
+pub struct WireSkipCertMessage {
     cert: WireSkipCert,
     signature: WireCertSignature,
 }
@@ -218,8 +265,9 @@ impl From<WireSkipCertMessage> for Certificate {
     }
 }
 
+/// wire format of a fast finalize cert message
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireFastFinalizeCertMessage {
+pub struct WireFastFinalizeCertMessage {
     cert: WireFastFinalizeCert,
     signature: WireCertSignature,
 }
@@ -235,8 +283,9 @@ impl From<WireFastFinalizeCertMessage> for Certificate {
     }
 }
 
+/// wire format of a notar cert message
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireNotarCertMessage {
+pub struct WireNotarCertMessage {
     cert: WireNotarCert,
     signature: WireCertSignature,
 }
@@ -252,8 +301,9 @@ impl From<WireNotarCertMessage> for Certificate {
     }
 }
 
+/// wire format of a notar fallback cert message
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireNotarFallbackCertMessage {
+pub struct WireNotarFallbackCertMessage {
     cert: WireNotarFallbackCert,
     signature: WireCertSignature,
 }
@@ -269,8 +319,9 @@ impl From<WireNotarFallbackCertMessage> for Certificate {
     }
 }
 
+/// wire format of a genesis cert message
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
-struct WireGenesisCertMessage {
+pub struct WireGenesisCertMessage {
     cert: WireGenesisCert,
     signature: WireCertSignature,
 }
@@ -286,92 +337,196 @@ impl From<WireGenesisCertMessage> for Certificate {
     }
 }
 
+/// first version of the wire format of consensus message.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead, Deserialize, Serialize)]
 #[wincode(tag_encoding = "u8")]
-enum WireConsensusMessageKind {
+pub enum WireConsensusMessageV1 {
+    /// notar vote variant
     #[wincode(tag = 1)]
     NotarVote(WireNotarVoteMessage),
+    /// finalize vote variant
     #[wincode(tag = 2)]
     FinalizeVote(WireFinalizeVoteMessage),
+    /// skip vote variant
     #[wincode(tag = 3)]
     SkipVote(WireSkipVoteMessage),
+    /// notar fallback vote variant
     #[wincode(tag = 4)]
     NotarFallbackVote(WireNotarFallbackVoteMessage),
+    /// skip fallback vote variant
     #[wincode(tag = 5)]
     SkipFallbackVote(WireSkipFallbackVoteMessage),
+    /// genesis vote variant
     #[wincode(tag = 6)]
     GenesisVote(WireGenesisVoteMessage),
 
+    /// finalize cert variant
     #[wincode(tag = 7)]
     FinalizeCert(WireFinalizeCertMessage),
+    /// fast finalize cert variant
     #[wincode(tag = 8)]
     FastFinalizeCert(WireFastFinalizeCertMessage),
+    /// notar cert variant
     #[wincode(tag = 9)]
     NotarCert(WireNotarCertMessage),
+    /// notar fallback cert variant
     #[wincode(tag = 10)]
     NotarFallbackCert(WireNotarFallbackCertMessage),
+    /// skip cert variant
     #[wincode(tag = 11)]
     SkipCert(WireSkipCertMessage),
+    /// genesis cert variant
     #[wincode(tag = 12)]
     GenesisCert(WireGenesisCertMessage),
-}
-
-/// first version of the wire format of consensus message.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead, Deserialize, Serialize)]
-pub struct WireConsensusMessageV1 {
-    kind: WireConsensusMessageKind,
-    /// The shred version for this run of the cluster
-    pub shred_version: u16,
 }
 
 impl WireConsensusMessageV1 {
     /// Constructs a new version 1 wire consensus message.
     pub fn new(msg: ConsensusMessage, shred_version: u16) -> Self {
-        let kind = WireConsensusMessageKind::from(msg);
-        Self {
-            kind,
-            shred_version,
+        match msg {
+            ConsensusMessage::Vote(v) => Self::new_from_vote(v, shred_version),
+            ConsensusMessage::Certificate(c) => Self::new_from_cert(c, shred_version),
         }
     }
 
     /// Constructs a new version 1 wire consensus message from a vote.
-    pub fn new_from_vote(vote: VoteMessage, shred_version: u16) -> Self {
-        let kind = WireConsensusMessageKind::from(vote);
-        Self {
-            kind,
-            shred_version,
+    pub fn new_from_vote(msg: VoteMessage, shred_version: u16) -> Self {
+        let vote = msg.vote;
+        let signature = WireVoteSignature::from(msg);
+        match vote {
+            Vote::Notarize(n) => Self::NotarVote(WireNotarVoteMessage {
+                vote: WireNotarVote {
+                    block: n.block,
+                    shred_version,
+                },
+                signature,
+            }),
+            Vote::NotarizeFallback(n) => Self::NotarFallbackVote(WireNotarFallbackVoteMessage {
+                vote: WireNotarFallbackVote {
+                    block: n.block,
+                    shred_version,
+                },
+                signature,
+            }),
+            Vote::Finalize(n) => Self::FinalizeVote(WireFinalizeVoteMessage {
+                vote: WireFinalizeVote {
+                    slot: n.slot,
+                    shred_version,
+                },
+                signature,
+            }),
+            Vote::Skip(n) => Self::SkipVote(WireSkipVoteMessage {
+                vote: WireSkipVote {
+                    slot: n.slot,
+                    shred_version,
+                },
+                signature,
+            }),
+            Vote::SkipFallback(n) => Self::SkipFallbackVote(WireSkipFallbackVoteMessage {
+                vote: WireSkipFallbackVote {
+                    slot: n.slot,
+                    shred_version,
+                },
+                signature,
+            }),
+            Vote::Genesis(n) => Self::GenesisVote(WireGenesisVoteMessage {
+                vote: WireGenesisVote {
+                    block: n.block,
+                    shred_version,
+                },
+                signature,
+            }),
         }
     }
 
     /// Constructs a new version 1 wire consensus message from a cert.
     pub fn new_from_cert(cert: Certificate, shred_version: u16) -> Self {
-        let kind = WireConsensusMessageKind::from(cert);
-        Self {
-            kind,
-            shred_version,
+        let cert_type = cert.cert_type;
+        let signature = WireCertSignature::from(cert);
+        match cert_type {
+            CertificateType::Finalize(slot) => Self::FinalizeCert(WireFinalizeCertMessage {
+                cert: WireFinalizeCert {
+                    slot,
+                    shred_version,
+                },
+                signature,
+            }),
+            CertificateType::FinalizeFast(block) => {
+                Self::FastFinalizeCert(WireFastFinalizeCertMessage {
+                    cert: WireFastFinalizeCert {
+                        block,
+                        shred_version,
+                    },
+                    signature,
+                })
+            }
+            CertificateType::Notarize(block) => Self::NotarCert(WireNotarCertMessage {
+                cert: WireNotarCert {
+                    block,
+                    shred_version,
+                },
+                signature,
+            }),
+            CertificateType::NotarizeFallback(block) => {
+                Self::NotarFallbackCert(WireNotarFallbackCertMessage {
+                    cert: WireNotarFallbackCert {
+                        block,
+                        shred_version,
+                    },
+                    signature,
+                })
+            }
+            CertificateType::Skip(slot) => Self::SkipCert(WireSkipCertMessage {
+                cert: WireSkipCert {
+                    slot,
+                    shred_version,
+                },
+                signature,
+            }),
+            CertificateType::Genesis(block) => Self::GenesisCert(WireGenesisCertMessage {
+                cert: WireGenesisCert {
+                    block,
+                    shred_version,
+                },
+                signature,
+            }),
+        }
+    }
+
+    /// returns the shred version
+    pub fn shred_version(&self) -> u16 {
+        match self {
+            Self::NotarVote(v) => v.vote.shred_version,
+            Self::NotarFallbackVote(v) => v.vote.shred_version,
+            Self::FinalizeVote(v) => v.vote.shred_version,
+            Self::SkipVote(v) => v.vote.shred_version,
+            Self::SkipFallbackVote(v) => v.vote.shred_version,
+            Self::GenesisVote(v) => v.vote.shred_version,
+            Self::NotarCert(c) => c.cert.shred_version,
+            Self::SkipCert(c) => c.cert.shred_version,
+            Self::FinalizeCert(c) => c.cert.shred_version,
+            Self::FastFinalizeCert(c) => c.cert.shred_version,
+            Self::NotarFallbackCert(c) => c.cert.shred_version,
+            Self::GenesisCert(c) => c.cert.shred_version,
         }
     }
 }
 
 impl From<WireConsensusMessageV1> for ConsensusMessage {
     fn from(msg: WireConsensusMessageV1) -> Self {
-        match msg.kind {
-            WireConsensusMessageKind::NotarVote(v) => Self::Vote(VoteMessage::from(v)),
-            WireConsensusMessageKind::FinalizeVote(v) => Self::Vote(VoteMessage::from(v)),
-            WireConsensusMessageKind::SkipVote(v) => Self::Vote(VoteMessage::from(v)),
-            WireConsensusMessageKind::NotarFallbackVote(v) => Self::Vote(VoteMessage::from(v)),
-            WireConsensusMessageKind::SkipFallbackVote(v) => Self::Vote(VoteMessage::from(v)),
-            WireConsensusMessageKind::GenesisVote(v) => Self::Vote(VoteMessage::from(v)),
-            WireConsensusMessageKind::FinalizeCert(c) => Self::Certificate(Certificate::from(c)),
-            WireConsensusMessageKind::FastFinalizeCert(c) => {
-                Self::Certificate(Certificate::from(c))
-            }
-            WireConsensusMessageKind::NotarCert(c) => Self::Certificate(Certificate::from(c)),
-            WireConsensusMessageKind::NotarFallbackCert(c) => {
-                Self::Certificate(Certificate::from(c))
-            }
-            WireConsensusMessageKind::SkipCert(c) => Self::Certificate(Certificate::from(c)),
-            WireConsensusMessageKind::GenesisCert(c) => Self::Certificate(Certificate::from(c)),
+        match msg {
+            WireConsensusMessageV1::NotarVote(v) => Self::Vote(VoteMessage::from(v)),
+            WireConsensusMessageV1::FinalizeVote(v) => Self::Vote(VoteMessage::from(v)),
+            WireConsensusMessageV1::SkipVote(v) => Self::Vote(VoteMessage::from(v)),
+            WireConsensusMessageV1::NotarFallbackVote(v) => Self::Vote(VoteMessage::from(v)),
+            WireConsensusMessageV1::SkipFallbackVote(v) => Self::Vote(VoteMessage::from(v)),
+            WireConsensusMessageV1::GenesisVote(v) => Self::Vote(VoteMessage::from(v)),
+            WireConsensusMessageV1::FinalizeCert(c) => Self::Certificate(Certificate::from(c)),
+            WireConsensusMessageV1::FastFinalizeCert(c) => Self::Certificate(Certificate::from(c)),
+            WireConsensusMessageV1::NotarCert(c) => Self::Certificate(Certificate::from(c)),
+            WireConsensusMessageV1::NotarFallbackCert(c) => Self::Certificate(Certificate::from(c)),
+            WireConsensusMessageV1::SkipCert(c) => Self::Certificate(Certificate::from(c)),
+            WireConsensusMessageV1::GenesisCert(c) => Self::Certificate(Certificate::from(c)),
         }
     }
 }
@@ -403,99 +558,19 @@ impl VersionedWireConsensusMessage {
         let v1 = WireConsensusMessageV1::new_from_cert(cert, shred_version);
         Self::V1(v1)
     }
+
+    /// returns the shred version
+    pub fn shred_version(&self) -> u16 {
+        match self {
+            Self::V1(v1) => v1.shred_version(),
+        }
+    }
 }
 
 impl From<VersionedWireConsensusMessage> for ConsensusMessage {
     fn from(msg: VersionedWireConsensusMessage) -> Self {
         match msg {
             VersionedWireConsensusMessage::V1(msg) => Self::from(msg),
-        }
-    }
-}
-
-impl From<VoteMessage> for WireConsensusMessageKind {
-    fn from(msg: VoteMessage) -> Self {
-        match msg.vote {
-            Vote::Notarize(v) => WireConsensusMessageKind::NotarVote(WireNotarVoteMessage {
-                vote: NotarizationVote { block: v.block },
-                signature: msg.into(),
-            }),
-            Vote::NotarizeFallback(v) => {
-                WireConsensusMessageKind::NotarFallbackVote(WireNotarFallbackVoteMessage {
-                    vote: NotarizationFallbackVote { block: v.block },
-                    signature: msg.into(),
-                })
-            }
-            Vote::Finalize(v) => WireConsensusMessageKind::FinalizeVote(WireFinalizeVoteMessage {
-                vote: FinalizationVote { slot: v.slot },
-                signature: msg.into(),
-            }),
-            Vote::Skip(v) => WireConsensusMessageKind::SkipVote(WireSkipVoteMessage {
-                vote: SkipVote { slot: v.slot },
-                signature: msg.into(),
-            }),
-            Vote::SkipFallback(v) => {
-                WireConsensusMessageKind::SkipFallbackVote(WireSkipFallbackVoteMessage {
-                    vote: SkipFallbackVote { slot: v.slot },
-                    signature: msg.into(),
-                })
-            }
-            Vote::Genesis(v) => WireConsensusMessageKind::GenesisVote(WireGenesisVoteMessage {
-                vote: GenesisVote { block: v.block },
-                signature: msg.into(),
-            }),
-        }
-    }
-}
-
-impl From<Certificate> for WireConsensusMessageKind {
-    fn from(cert: Certificate) -> Self {
-        match cert.cert_type {
-            CertificateType::Finalize(slot) => {
-                WireConsensusMessageKind::FinalizeCert(WireFinalizeCertMessage {
-                    cert: WireFinalizeCert { slot },
-                    signature: cert.into(),
-                })
-            }
-            CertificateType::FinalizeFast(block) => {
-                WireConsensusMessageKind::FastFinalizeCert(WireFastFinalizeCertMessage {
-                    cert: WireFastFinalizeCert { block },
-                    signature: cert.into(),
-                })
-            }
-            CertificateType::Notarize(block) => {
-                WireConsensusMessageKind::NotarCert(WireNotarCertMessage {
-                    cert: WireNotarCert { block },
-                    signature: cert.into(),
-                })
-            }
-            CertificateType::NotarizeFallback(block) => {
-                WireConsensusMessageKind::NotarFallbackCert(WireNotarFallbackCertMessage {
-                    cert: WireNotarFallbackCert { block },
-                    signature: cert.into(),
-                })
-            }
-            CertificateType::Skip(slot) => {
-                WireConsensusMessageKind::SkipCert(WireSkipCertMessage {
-                    cert: WireSkipCert { slot },
-                    signature: cert.into(),
-                })
-            }
-            CertificateType::Genesis(block) => {
-                WireConsensusMessageKind::GenesisCert(WireGenesisCertMessage {
-                    cert: WireGenesisCert { block },
-                    signature: cert.into(),
-                })
-            }
-        }
-    }
-}
-
-impl From<ConsensusMessage> for WireConsensusMessageKind {
-    fn from(msg: ConsensusMessage) -> Self {
-        match msg {
-            ConsensusMessage::Vote(v) => Self::from(v),
-            ConsensusMessage::Certificate(c) => Self::from(c),
         }
     }
 }

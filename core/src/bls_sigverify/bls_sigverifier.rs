@@ -229,13 +229,9 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            match &msg {
-                VersionedWireConsensusMessage::V1(v1) => {
-                    if v1.shred_version != self.shred_version {
-                        self.stats.num_malformed_pkts += 1;
-                        continue;
-                    }
-                }
+            if msg.shred_version() != self.shred_version {
+                self.stats.num_malformed_pkts += 1;
+                continue;
             }
             let Some(remote_pubkey) = packet.meta().remote_pubkey() else {
                 debug_assert!(false, "BLS packet missing remote pubkey");
