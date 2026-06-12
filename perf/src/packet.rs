@@ -1,6 +1,6 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(feature = "dev-context-only-utils")]
-use wincode::{SchemaWrite, config::DefaultConfig};
+use wincode::{SchemaWrite, WriteResult, config::DefaultConfig};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bytes::Bytes,
@@ -60,11 +60,11 @@ impl BytesPacket {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn from_data<T>(data: T) -> Result<Self, String>
+    pub fn from_data<T>(data: T) -> WriteResult<Self>
     where
         T: SchemaWrite<DefaultConfig, Src = T>,
     {
-        let buffer = Bytes::from(wincode::serialize(&data).unwrap());
+        let buffer = Bytes::from(wincode::serialize(&data)?);
         let mut meta = Meta::default();
         meta.size = buffer.len();
         Ok(Self { buffer, meta })
