@@ -6131,8 +6131,8 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "read_only_accounts_cache_evictor_wakeup_count_productive",
-                    read_cache_stats.evictor_wakeup_count_productive,
+                    "read_only_accounts_cache_evict_run_count",
+                    read_cache_stats.evict_run_count,
                     i64
                 ),
                 (

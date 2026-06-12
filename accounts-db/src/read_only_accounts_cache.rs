@@ -57,7 +57,7 @@ pub struct ReadOnlyCacheStats {
     pub load_us: u64,
     pub store_us: u64,
     pub evict_us: u64,
-    pub evictor_wakeup_count_productive: u64,
+    pub evict_run_count: u64,
 }
 
 #[derive(Default, Debug)]
@@ -68,7 +68,7 @@ struct AtomicReadOnlyCacheStats {
     load_us: AtomicU64,
     store_us: AtomicU64,
     evict_us: AtomicU64,
-    evictor_wakeup_count_productive: AtomicU64,
+    evict_run_count: AtomicU64,
 }
 
 /// Shared state between the cache and its evictor thread, used to signal
@@ -272,10 +272,7 @@ impl ReadOnlyAccountsCache {
         let load_us = self.stats.load_us.swap(0, Ordering::Relaxed);
         let store_us = self.stats.store_us.swap(0, Ordering::Relaxed);
         let evict_us = self.stats.evict_us.swap(0, Ordering::Relaxed);
-        let evictor_wakeup_count_productive = self
-            .stats
-            .evictor_wakeup_count_productive
-            .swap(0, Ordering::Relaxed);
+        let evict_run_count = self.stats.evict_run_count.swap(0, Ordering::Relaxed);
 
         ReadOnlyCacheStats {
             hits,
@@ -284,7 +281,7 @@ impl ReadOnlyAccountsCache {
             load_us,
             store_us,
             evict_us,
-            evictor_wakeup_count_productive,
+            evict_run_count,
         }
     }
 
@@ -320,9 +317,7 @@ impl ReadOnlyAccountsCache {
                     if data_size.load(Ordering::Relaxed) <= max_data_size_hi {
                         continue;
                     }
-                    stats
-                        .evictor_wakeup_count_productive
-                        .fetch_add(1, Ordering::Relaxed);
+                    stats.evict_run_count.fetch_add(1, Ordering::Relaxed);
 
                     #[cfg(not(feature = "dev-context-only-utils"))]
                     let (num_evicts, evict_us) = measure_us!(Self::evict(
