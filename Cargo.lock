@@ -8315,9 +8315,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.5.0"
+version = "3.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9385c5dc5555c010a96504d80f47be914ec4637a320d99b2e26d964ecd32691a"
+checksum = "3ce2a1f17252391f44f620d4e47d1e3e0bec173f760a86ee7de2426db9ea7496"
 dependencies = [
  "proc-macro2",
  "quote",
