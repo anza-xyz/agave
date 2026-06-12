@@ -392,7 +392,12 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::contact_info::ContactInfo, solana_sha256_hasher::hash,
+        super::*,
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            contact_info::ContactInfo,
+        },
+        solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
     };
 
@@ -414,9 +419,9 @@ mod test {
             )
             .unwrap();
         let ping_cache = PingCache::new(
-            Duration::from_secs(20 * 60),      // ttl
-            Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
         );
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(
