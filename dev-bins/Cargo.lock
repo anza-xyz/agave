@@ -7797,6 +7797,7 @@ dependencies = [
  "solana-transaction-context",
  "solana-vote",
  "solana-vote-program",
+ "wincode",
 ]
 
 [[package]]

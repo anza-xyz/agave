@@ -7565,6 +7565,7 @@ dependencies = [
  "solana-signature",
  "solana-time-utils",
  "solana-transaction-context",
+ "wincode",
 ]
 
 [[package]]

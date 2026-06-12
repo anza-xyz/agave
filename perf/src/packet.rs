@@ -1,6 +1,6 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(feature = "dev-context-only-utils")]
-use bytes::{BufMut, BytesMut};
+use wincode::{SchemaWrite, config::DefaultConfig};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bytes::Bytes,
@@ -60,22 +60,13 @@ impl BytesPacket {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
+    pub fn from_data<T>(data: T) -> Result<Self, String>
     where
-        T: solana_packet::Encode,
+        T: SchemaWrite<DefaultConfig, Src = T>,
     {
-        let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
-        let mut writer = buffer.writer();
-        data.encode(&mut writer)?;
-        let buffer = writer.into_inner();
-        let buffer = buffer.freeze();
-
+        let buffer = Bytes::from(wincode::serialize(&data).unwrap());
         let mut meta = Meta::default();
         meta.size = buffer.len();
-        if let Some(dest) = dest {
-            meta.set_socket_addr(dest);
-        }
-
         Ok(Self { buffer, meta })
     }
 
