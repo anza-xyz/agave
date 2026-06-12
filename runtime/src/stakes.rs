@@ -100,6 +100,16 @@ impl<'a> StakeDelegationsView<'a> {
         }
     }
 
+    /// Returns an indexed parallel iterator (with a known size) over all stake
+    /// delegations.
+    ///
+    /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for tombstones
+    /// that should be skipped.
+    ///
+    /// # Performance
+    ///
+    /// Known size of the iterator makes it a good choice for usage that
+    /// involves allocating collections.
     pub(crate) fn par_iter(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
@@ -113,6 +123,14 @@ impl<'a> StakeDelegationsView<'a> {
         }
     }
 
+    /// Returns a parallel iterator (with an unknown size) over all valid stake
+    /// delegations, filtering out any tombstones.
+    ///
+    /// # Performance
+    ///
+    /// Unknown size of the iterator makes it a bad choice for usage that
+    /// involves allocating collections, where [`StakeDelegationsView::par_iter`]
+    /// should be used instead.
     pub(crate) fn par_iter_some(
         &'a self,
     ) -> impl ParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {

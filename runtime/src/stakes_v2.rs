@@ -32,6 +32,7 @@ pub(crate) struct StakesCacheV2State {
 }
 
 impl StakesCacheV2State {
+    /// Returns the stake history associated with this state.
     pub(crate) fn stake_history(&self) -> &StakeHistory {
         &self.stake_history
     }
@@ -60,7 +61,7 @@ impl Deref for MaybeRootEntry {
 }
 
 impl MaybeRootEntry {
-    /// Returns a new entry for a stake account.
+    /// Creates a new entry wrapping the given stake account.
     fn new(stake_pubkey: Pubkey, stake_account: Arc<StakeAccount>) -> Self {
         Self(Some(RootEntry {
             stake_pubkey,
@@ -68,12 +69,17 @@ impl MaybeRootEntry {
         }))
     }
 
-    /// Returns a new tombstone.
+    /// Creates a tombstone entry representing a removed stake.
     fn tombstone() -> Self {
         Self(None)
     }
 
-    /// Returns a stake account with a potential change from the overlay applied.
+    /// Returns the stake pubkey and account, applying any overlay updates.
+    ///
+    /// If the overlay contains an update for this entry's stake pubkey,
+    /// the overlayed value is returned. If the overlay marks the stake as
+    /// removed (`None`), `None` is returned. Otherwise the root entry's
+    /// value is returned.
     fn apply_overlay<'a>(&'a self, overlay: &'a Overlay) -> Option<(&'a Pubkey, &'a StakeAccount)> {
         self.0.as_ref().and_then(|root_entry| {
             match overlay.get(&root_entry.stake_pubkey) {
@@ -126,10 +132,22 @@ pub(crate) struct FrontierQuery<'a> {
 }
 
 impl<'a> FrontierQuery<'a> {
+    /// Returns the total number of stake delegations, including both rooted
+    /// entries and frontier-only inserts.
     pub(crate) fn len(&self) -> usize {
         self.inner.len + self.overlay_only_inserts.len()
     }
 
+    /// Returns an indexed parallel iterator (with a known size) over all stake
+    /// delegations.
+    ///
+    /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for tombstones
+    /// that should be skipped.
+    ///
+    /// # Performance
+    ///
+    /// Known size of the iterator makes it a good choice for usage that
+    /// involves allocating collections.
     pub(crate) fn par_iter(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
@@ -144,6 +162,14 @@ impl<'a> FrontierQuery<'a> {
             )
     }
 
+    /// Returns a parallel iterator (with an unknown size) over all valid stake
+    /// delegations, filtering out any tombstones.
+    ///
+    /// # Performance
+    ///
+    /// Unknown size of the iterator makes it a bad choice for usage that
+    /// involves allocating collections, where [`FrontierQuery::par_iter`]
+    /// should be used instead.
     pub(crate) fn par_iter_some(
         &'a self,
     ) -> impl ParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
@@ -153,6 +179,8 @@ impl<'a> FrontierQuery<'a> {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl<'a> FrontierQuery<'a> {
+    /// Returns a sequential iterator over all stake delegations, including rooted
+    /// entries with overlay applied and frontier-only inserts.
     pub(crate) fn iter(&'a self) -> impl Iterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
         self.inner
             .root_entries
@@ -165,12 +193,16 @@ impl<'a> FrontierQuery<'a> {
             )
     }
 
+    /// Returns a sequential iterator over all valid stake delegations, filtering
+    /// out any tombstones.
     pub(crate) fn iter_some(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
         self.iter().flatten()
     }
 }
 
 impl StakeDelegationIndex {
+    /// Applies rooted stake delegation deltas (in ancestor order) to the index,
+    /// updating or removing entries and reusing freed slots via the freelist.
     fn apply_rooted_deltas(
         &self,
         deltas_in_ancestor_order: impl IntoIterator<Item = HashMap<Pubkey, Option<Arc<StakeAccount>>>>,
@@ -226,6 +258,8 @@ pub(crate) struct StakesCacheV2 {
 }
 
 impl StakesCacheV2 {
+    /// Creates a new `StakesCacheV2` from genesis accounts, extracting vote
+    /// accounts and stake delegations to build the initial rooted index.
     pub(crate) fn new_from_accounts_for_genesis<'a, T: ReadableAccount + 'a>(
         accounts: impl IntoIterator<Item = (&'a Pubkey, &'a T)>,
     ) -> Self {
@@ -287,6 +321,8 @@ impl StakesCacheV2 {
         }
     }
 
+    /// Loads `StakesCacheV2` from deserialized stake delegations, fetching each
+    /// full stake account via `get_account` and verifying delegation consistency.
     pub(crate) fn load_from_deserialized_delegations<F>(
         stakes: DeserializableStakes<Delegation>,
         get_account: F,
@@ -352,6 +388,8 @@ impl StakesCacheV2 {
         })
     }
 
+    /// Creates a new `StakesCacheV2` from a parent bank, sharing the rooted
+    /// index but starting with an empty fork delta.
     pub(crate) fn new_from_parent(parent: &Self) -> Self {
         let stake_delegation_index = Arc::clone(&parent.stake_delegation_index);
         let state = parent.state.read().unwrap().clone();
@@ -362,6 +400,9 @@ impl StakesCacheV2 {
         }
     }
 
+    /// Builds a `FrontierQuery` by merging rooted entries with all fork deltas
+    /// in ancestor order, applying overlay updates and collecting frontier-only
+    /// inserts.
     pub(crate) fn frontier_query<'a>(
         &self,
         caches_in_ancestor_order: impl IntoIterator<Item = &'a Self>,
@@ -405,6 +446,8 @@ impl StakesCacheV2 {
         }
     }
 
+    /// Applies rooted stake delegation deltas from ancestor caches and this
+    /// bank's own fork delta, updating the shared rooted index.
     pub(crate) fn apply_rooted_stake_delegation_deltas<'a>(
         &'a self,
         caches_in_ancestor_order: impl IntoIterator<Item = &'a Self>,
@@ -420,6 +463,8 @@ impl StakesCacheV2 {
             .apply_rooted_deltas(deltas_in_ancestor_order);
     }
 
+    /// Checks if an account is a stake program account and either stores a new
+    /// delegation or removes an existing one if the account is empty or invalid.
     pub(crate) fn check_and_store(&self, pubkey: &Pubkey, account: &impl ReadableAccount) {
         if !stake_program::check_id(account.owner()) {
             return;
@@ -434,6 +479,8 @@ impl StakesCacheV2 {
         }
     }
 
+    /// Inserts or updates a stake delegation in the fork delta, making it visible
+    /// to subsequent frontier queries.
     pub(crate) fn upsert_stake_delegation(&self, pubkey: Pubkey, stake_account: StakeAccount) {
         self.fork_delta
             .write()
@@ -441,14 +488,21 @@ impl StakesCacheV2 {
             .insert(pubkey, Some(Arc::new(stake_account)));
     }
 
+    /// Removes a stake delegation from the fork delta. Subsequent frontier queries
+    /// will not include this stake.
     pub(crate) fn remove_stake_delegation(&self, pubkey: &Pubkey) {
         self.fork_delta.write().unwrap().insert(*pubkey, None);
     }
 
-    pub(crate) fn state(&self) -> RwLockReadGuard<'_, StakesCacheV2State> {
+    /// Returns the current epoch and stake history associated with this cache.
+    pub(crate) fn state(&self) -> std::sync::RwLockReadGuard<'_, StakesCacheV2State> {
         self.state.read().unwrap()
     }
 
+    /// Advances the epoch to `next_epoch` and updates the stake history.
+    ///
+    /// This method is called at epoch boundary to finalize rooted deltas and
+    /// update the stake history for stake-weighted calculations.
     pub(crate) fn activate_epoch(&self, next_epoch: Epoch, stake_history: StakeHistory) {
         let mut state = self.state.write().unwrap();
         state.epoch = next_epoch;
