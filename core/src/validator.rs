@@ -1245,8 +1245,6 @@ impl Validator {
             json_rpc_service,
             rpc_subscriptions,
             pubsub_service,
-            completed_data_sets_sender,
-            completed_data_sets_service,
             rpc_completed_slots_service,
             sample_performance_service,
             optimistically_confirmed_bank_tracker,
@@ -1329,27 +1327,6 @@ impl Validator {
                 Some(pubsub_service)
             };
 
-            let (completed_data_sets_sender, completed_data_sets_service) =
-                if !config.rpc_config.full_api {
-                    (None, None)
-                } else {
-                    let (completed_data_sets_sender, completed_data_sets_receiver) =
-                        bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
-                    let completed_data_sets_service = CompletedDataSetsService::new(
-                        completed_data_sets_receiver,
-                        blockstore.clone(),
-                        rpc_subscriptions.clone(),
-                        deshred_transaction_notifier.clone(),
-                        exit.clone(),
-                        max_slots.clone(),
-                        bank_forks.clone(),
-                    );
-                    (
-                        Some(completed_data_sets_sender),
-                        Some(completed_data_sets_service),
-                    )
-                };
-
             let rpc_completed_slots_service =
                 if config.rpc_config.full_api || geyser_plugin_service.is_some() {
                     let (completed_slots_sender, completed_slots_receiver) =
@@ -1399,16 +1376,42 @@ impl Validator {
                 Some(json_rpc_service),
                 Some(rpc_subscriptions),
                 pubsub_service,
-                completed_data_sets_sender,
-                completed_data_sets_service,
                 rpc_completed_slots_service,
                 sample_performance_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
+
+        // CompletedDataSetsService feeds two independent sinks: RPC signatureSubscribe
+        // notifications (which need rpc_subscriptions) and the geyser deshred-transaction notifier
+        // (which does not). Spawn it whenever either sink wants it, kept out of the rpc_addrs block
+        // above so a geyser node started without --rpc-port still gets deshred notifications.
+        // Gating on the notifier itself rather than on a plugin being loaded keeps the per-data-set
+        // blockstore reads off nodes whose plugins don't subscribe; --geyser-plugin-always-enabled
+        // is the exception, where the notifier is present with no subscribers.
+        let (completed_data_sets_sender, completed_data_sets_service) =
+            if config.rpc_config.full_api || deshred_transaction_notifier.is_some() {
+                let (completed_data_sets_sender, completed_data_sets_receiver) =
+                    bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
+                let completed_data_sets_service = CompletedDataSetsService::new(
+                    completed_data_sets_receiver,
+                    blockstore.clone(),
+                    rpc_subscriptions.clone(),
+                    deshred_transaction_notifier.clone(),
+                    exit.clone(),
+                    max_slots.clone(),
+                    bank_forks.clone(),
+                );
+                (
+                    Some(completed_data_sets_sender),
+                    Some(completed_data_sets_service),
+                )
+            } else {
+                (None, None)
+            };
 
         let ip_echo_server = match node.sockets.ip_echo {
             None => None,
