@@ -77,6 +77,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls-sigverify"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "agave-bls-cert-verify",
+ "agave-math-utils",
+ "agave-votor-messages",
+ "bitvec",
+ "crossbeam-channel",
+ "log",
+ "parking_lot 0.12.2",
+ "qualifier_attr",
+ "rayon",
+ "solana-bls-signatures",
+ "solana-clock",
+ "solana-gossip",
+ "solana-ledger",
+ "solana-measure",
+ "solana-metrics",
+ "solana-pubkey 4.2.0",
+ "solana-runtime",
+ "solana-signer-store",
+ "solana-streamer",
+ "thiserror 2.0.18",
+ "wincode",
+]
+
+[[package]]
 name = "agave-cpu-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -341,6 +368,7 @@ dependencies = [
 name = "agave-votor"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-bls-sigverify",
  "agave-logger",
  "agave-math-utils",
  "agave-votor-messages",
@@ -388,6 +416,7 @@ name = "agave-votor-messages"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "crossbeam-channel",
  "log",
  "serde",
  "solana-address 2.6.1",
@@ -6497,6 +6526,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
+ "agave-bls-sigverify",
  "agave-feature-set",
  "agave-fs",
  "agave-logger",

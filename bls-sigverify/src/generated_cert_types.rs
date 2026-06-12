@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     agave_votor_messages::certificate::CertificateType, parking_lot::RwLock, solana_clock::Slot,
     std::collections::HashSet,
@@ -17,13 +15,12 @@ impl GeneratedCertTypes {
     }
 
     /// Inserts the `cert_type` into the container.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn insert_cert(&self, cert_type: CertificateType) {
+    pub fn insert_cert(&self, cert_type: CertificateType) {
         self.0.write().insert(cert_type);
     }
 
     /// Prunes the container, it drops all certs older than `root_slot` as they are no longer needed.
-    pub(crate) fn prune(&self, root_slot: Slot) {
+    pub fn prune(&self, root_slot: Slot) {
         self.0.write().retain(|c| c.slot() >= root_slot);
     }
 }

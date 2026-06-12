@@ -11,6 +11,7 @@ members = [
     "banks-server",
     "bloom",
     "bls-cert-verify",
+    "bls-sigverify",
     "bucket_map",
     "builtins",
     "builtins-default-costs",
@@ -171,6 +172,7 @@ collapsible_if = "allow"
 Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
+agave-bls-sigverify = { path = "bls-sigverify", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-cpu-utils = { path = "cpu-utils", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

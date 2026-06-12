@@ -15,9 +15,9 @@ use {
             parent_ready_tracker::{BlockProductionParent, ParentReady},
         },
         event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
-        generated_cert_types::GeneratedCertTypes,
         voting_service::BLSOp,
     },
+    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, ConsensusMessage, SigVerifiedBatch},

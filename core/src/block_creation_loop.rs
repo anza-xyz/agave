@@ -8,8 +8,7 @@ use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor,
-            msg_types::{AddVoteMessage, RewardRespSucc},
+            certs_requestor::CertsRequestor, msg_types::RewardRespSucc,
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -17,7 +16,7 @@ use {
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,

@@ -1,12 +1,11 @@
 use {
     crate::{
         block_creation_loop::rewards::{
-            certs_builder::CertsBuilder,
-            certs_requestor::CertsRequestor,
-            msg_types::{AddVoteMessage, RewardRequest},
+            certs_builder::CertsBuilder, certs_requestor::CertsRequestor, msg_types::RewardRequest,
         },
         tvu::MAX_ALPENGLOW_PACKET_NUM,
     },
+    agave_votor_messages::reward_certificate::AddVoteMessage,
     crossbeam_channel::{Receiver, Sender, bounded, select_biased},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,

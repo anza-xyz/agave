@@ -3,7 +3,6 @@
 use {
     super::standard_repair_handler::StandardRepairHandler,
     crate::{
-        cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
             ancestor_hashes_service::{
@@ -18,7 +17,7 @@ use {
             },
         },
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
     rand::prelude::IndexedRandom as _,
