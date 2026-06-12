@@ -732,10 +732,7 @@ mod tests {
         // The existing key should be gone
         assert!(!inner.root_positions.contains_key(&existing_stake_pubkey));
         // The new key should be present at the same position
-        assert_eq!(
-            inner.root_positions.get(&new_stake_pubkey),
-            Some(&0)
-        );
+        assert_eq!(inner.root_positions.get(&new_stake_pubkey), Some(&0));
         // The old slot should be in the freelist
         assert_eq!(inner.free_root_indices, vec![0]);
         // len should still be 1 (one active entry)
@@ -744,9 +741,7 @@ mod tests {
         assert_eq!(inner.root_entries.len(), 1);
         // The entry at position 0 should be the new key
         assert_eq!(
-            inner.root_entries[0]
-                .as_ref()
-                .map(|e| e.stake_pubkey),
+            inner.root_entries[0].as_ref().map(|e| e.stake_pubkey),
             Some(new_stake_pubkey)
         );
     }
@@ -810,14 +805,9 @@ mod tests {
         // freelist should still be empty (no slots were freed)
         assert!(inner.free_root_indices.is_empty());
         // Verify the new entry is at position 2
+        assert_eq!(inner.root_positions.get(&stake_pubkey_c), Some(&2));
         assert_eq!(
-            inner.root_positions.get(&stake_pubkey_c),
-            Some(&2)
-        );
-        assert_eq!(
-            inner.root_entries[2]
-                .as_ref()
-                .map(|e| e.stake_pubkey),
+            inner.root_entries[2].as_ref().map(|e| e.stake_pubkey),
             Some(stake_pubkey_c)
         );
     }
