@@ -780,6 +780,15 @@ impl Blockstore {
         self.meta_cf.get(slot)
     }
 
+    /// Returns the [`SlotMetaRepair`] of the specified slot.
+    pub fn meta_repair(&self, slot: Slot) -> Result<Option<SlotMetaRepair>> {
+        self.meta_cf
+            .get_slice(slot)?
+            .as_deref()
+            .map(|bytes| Ok(wincode::deserialize::<SlotMetaRepair>(bytes)?))
+            .transpose()
+    }
+
     /// Returns the SlotMeta of the specified slot from the specified location
     pub fn meta_from_location(
         &self,

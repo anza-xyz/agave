@@ -28,8 +28,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Signer,
     solana_ledger::{
-        blockstore::{Blockstore, SlotMeta},
-        blockstore_meta::BlockLocation,
+        blockstore::Blockstore,
+        blockstore_meta::{BlockLocation, SlotMetaRepair},
         shred,
     },
     solana_measure::measure::Measure,
@@ -153,7 +153,7 @@ impl RepairEligibility {
     /// highest received shred falls in an older FEC, that FEC was already
     /// timestamped; if it falls in a future FEC, resizing the vector backfills
     /// any skipped FECs with the same timestamp.
-    fn observe_slot(&mut self, slot: Slot, slot_meta: &SlotMeta) {
+    fn observe_slot(&mut self, slot: Slot, slot_meta: &SlotMetaRepair) {
         let Some(last_received_index) = slot_meta.received.checked_sub(1) else {
             // Have not observed any shreds for this slot yet.
             return;
@@ -207,7 +207,7 @@ impl RepairEligibility {
     pub(crate) fn is_highest_shred_eligible(
         &self,
         slot: Slot,
-        slot_meta: &SlotMeta,
+        slot_meta: &SlotMetaRepair,
         now_ms: u64,
     ) -> bool {
         if slot_meta.last_index.is_some() {
@@ -230,7 +230,11 @@ impl RepairEligibility {
     /// This keeps traversal tests focused on ordering and duplicate suppression
     /// without sleeping in every setup path.
     #[cfg(test)]
-    pub(crate) fn observe_slot_as_elapsed_for_tests(&mut self, slot: Slot, slot_meta: &SlotMeta) {
+    pub(crate) fn observe_slot_as_elapsed_for_tests(
+        &mut self,
+        slot: Slot,
+        slot_meta: &SlotMetaRepair,
+    ) {
         self.observe_slot(slot, slot_meta);
         if let Some(slot_repair) = self.slots.get_mut(&slot) {
             let elapsed_time = timestamp().saturating_sub(FEC_REPAIR_DELAY.as_millis() as u64);
@@ -250,7 +254,7 @@ impl RepairEligibility {
     ) -> Self {
         let mut repair_eligibility = Self::default();
         for slot in slots {
-            if let Some(slot_meta) = blockstore.meta(slot).unwrap() {
+            if let Some(slot_meta) = blockstore.meta_repair(slot).unwrap() {
                 repair_eligibility.observe_slot_as_elapsed_for_tests(slot, &slot_meta);
             }
         }
@@ -966,7 +970,7 @@ impl RepairService {
     pub(crate) fn generate_repairs_for_slot(
         blockstore: &Blockstore,
         slot: Slot,
-        slot_meta: &SlotMeta,
+        slot_meta: &SlotMetaRepair,
         repair_eligibility: &mut RepairEligibility,
         max_repairs: usize,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -1022,7 +1026,7 @@ impl RepairService {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
             let slot = pending_slots.pop().unwrap();
-            if let Some(slot_meta) = blockstore.meta(slot).unwrap() {
+            if let Some(slot_meta) = blockstore.meta_repair(slot).unwrap() {
                 let new_repairs = Self::generate_repairs_for_slot(
                     blockstore,
                     slot,
@@ -1202,11 +1206,11 @@ impl RepairService {
             }
 
             let meta = blockstore
-                .meta(slot)
+                .meta_repair(slot)
                 .expect("Unable to lookup slot meta")
-                .unwrap_or(SlotMeta {
+                .unwrap_or(SlotMetaRepair {
                     slot,
-                    ..SlotMeta::default()
+                    ..SlotMetaRepair::default()
                 });
             repair_eligibility.observe_slot_as_elapsed_for_tests(slot, &meta);
 
@@ -1229,7 +1233,7 @@ impl RepairService {
         blockstore: &Blockstore,
         slot: Slot,
     ) -> Option<Vec<ShredRepairType>> {
-        if let Some(slot_meta) = blockstore.meta(slot).unwrap() {
+        if let Some(slot_meta) = blockstore.meta_repair(slot).unwrap() {
             if slot_meta.is_full() {
                 // If the slot is full, no further need to repair this slot
                 None
@@ -1647,7 +1651,7 @@ mod test {
                 false,
             )
             .unwrap();
-        let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+        let slot_meta = blockstore.meta_repair(slot).unwrap().unwrap();
         let mut repair_eligibility = RepairEligibility::default();
         assert_eq!(
             RepairService::generate_repairs_for_slot(
@@ -1686,7 +1690,7 @@ mod test {
             .insert_shreds(shreds_to_insert, None, false)
             .unwrap();
 
-        let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+        let slot_meta = blockstore.meta_repair(slot).unwrap().unwrap();
         let mut repair_eligibility = RepairEligibility::default();
         assert_eq!(
             RepairService::generate_repairs_for_slot(
@@ -1788,7 +1792,7 @@ mod test {
             .insert_shreds(vec![shreds_by_index.get(&0).unwrap().clone()], None, false)
             .unwrap();
         let mut repair_eligibility = RepairEligibility::default();
-        let slot_meta = blockstore.meta(0).unwrap().unwrap();
+        let slot_meta = blockstore.meta_repair(0).unwrap().unwrap();
         assert_eq!(
             RepairService::generate_repairs_for_slot(
                 &blockstore,
@@ -1804,7 +1808,7 @@ mod test {
         blockstore
             .insert_shreds(vec![shreds_by_index.get(&1).unwrap().clone()], None, false)
             .unwrap();
-        let slot_meta = blockstore.meta(0).unwrap().unwrap();
+        let slot_meta = blockstore.meta_repair(0).unwrap().unwrap();
         assert_eq!(
             RepairService::generate_repairs_for_slot(
                 &blockstore,

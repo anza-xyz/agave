@@ -185,6 +185,24 @@ pub struct SlotMetaV3 {
 
 pub type SlotMeta = SlotMetaV3;
 
+/// Lighter-weight version of [`SlotMeta`] containing just the set
+/// of fields needed for repair.
+///
+/// wincode deserializes in field declaration order, so [`SlotMetaRepair`]
+/// can always be deserialized from [`SlotMeta`].
+#[derive(Clone, Debug, Default, SchemaRead, Eq, PartialEq)]
+pub struct SlotMetaRepair {
+    pub slot: Slot,
+    pub consumed: u64,
+    pub received: u64,
+    pub first_shred_timestamp: u64,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub last_index: Option<u64>,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub parent_slot: Option<Slot>,
+    pub next_slots: Vec<Slot>,
+}
+
 // Wincode implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod wincode_compat {
@@ -517,32 +535,33 @@ impl FromIterator<u64> for ShredIndex {
     }
 }
 
-impl SlotMeta {
-    pub fn is_full(&self) -> bool {
-        // last_index is None when it has no information about how
-        // many shreds will fill this slot.
-        // Note: A full slot with zero shreds is not possible.
-        // Should never happen
-        if self
-            .last_index
-            .map(|ix| self.consumed > ix + 1)
-            .unwrap_or_default()
-        {
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
-                        self.consumed,
-                        self.last_index.map(|ix| ix + 1),
-                    ),
-                    String
-                )
-            );
-        }
+fn slot_meta_is_full(last_index: Option<u64>, consumed: u64) -> bool {
+    // last_index is None when it has no information about how
+    // many shreds will fill this slot.
+    // Note: A full slot with zero shreds is not possible.
+    // Should never happen
+    if last_index.map(|ix| consumed > ix + 1).unwrap_or_default() {
+        datapoint_error!(
+            "blockstore_error",
+            (
+                "error",
+                format!(
+                    "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
+                    consumed,
+                    last_index.map(|ix| ix + 1),
+                ),
+                String
+            )
+        );
+    }
 
-        Some(self.consumed) == self.last_index.map(|ix| ix + 1)
+    Some(consumed) == last_index.map(|ix| ix + 1)
+}
+
+impl SlotMeta {
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        slot_meta_is_full(self.last_index, self.consumed)
     }
 
     /// Returns a boolean indicating whether this meta's parent slot is known.
@@ -642,6 +661,13 @@ impl SlotMeta {
     /// `UpdateParent` marker.
     pub fn has_update_parent(&self) -> bool {
         self.replay_fec_set_index > 0
+    }
+}
+
+impl SlotMetaRepair {
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        slot_meta_is_full(self.last_index, self.consumed)
     }
 }
 
@@ -980,6 +1006,71 @@ mod test {
                 index.range(indices.clone()).collect::<Vec<_>>(),
                 indices.into_iter().collect::<Vec<_>>()
             );
+        }
+    }
+
+    fn arb_slot_meta() -> impl Strategy<Value = SlotMeta> {
+        (
+            any::<Slot>(),
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(any::<Slot>()),
+            proptest::collection::vec(any::<Slot>(), 0..32),
+            any::<u8>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u32, 0..64),
+            any::<[u8; HASH_BYTES]>(),
+            any::<u32>(),
+        )
+            .prop_map(
+                |(
+                    slot,
+                    consumed,
+                    received,
+                    first_shred_timestamp,
+                    last_index,
+                    parent_slot,
+                    next_slots,
+                    connected_flags,
+                    completed_data_indexes,
+                    parent_block_id,
+                    replay_fec_set_index,
+                )| SlotMeta {
+                    slot,
+                    consumed,
+                    received,
+                    first_shred_timestamp,
+                    last_index,
+                    parent_slot,
+                    next_slots,
+                    connected_flags: ConnectedFlags::from_bits_truncate(connected_flags),
+                    completed_data_indexes: completed_data_indexes.into_iter().collect(),
+                    parent_block_id: Hash::new_from_array(parent_block_id),
+                    replay_fec_set_index,
+                },
+            )
+    }
+
+    proptest! {
+        // Property: `SlotMetaRepair` is always deserializable from serialized `SlotMeta`.
+        #[test]
+        fn test_slot_meta_repair_deserialization(
+            slot_meta in arb_slot_meta(),
+        ) {
+            let serialized = wincode::serialize(&slot_meta).unwrap();
+            let deserialized: SlotMetaRepair = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, slot_meta.slot);
+            prop_assert_eq!(deserialized.consumed, slot_meta.consumed);
+            prop_assert_eq!(deserialized.received, slot_meta.received);
+            prop_assert_eq!(
+                deserialized.first_shred_timestamp,
+                slot_meta.first_shred_timestamp
+            );
+            prop_assert_eq!(deserialized.last_index, slot_meta.last_index);
+            prop_assert_eq!(deserialized.parent_slot, slot_meta.parent_slot);
+            prop_assert_eq!(deserialized.next_slots, slot_meta.next_slots);
         }
     }
 

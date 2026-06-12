@@ -8,7 +8,7 @@ use {
     },
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMeta},
+    solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMetaRepair},
     std::collections::{HashMap, HashSet},
 };
 
@@ -79,7 +79,7 @@ impl Iterator for RepairWeightTraversal<'_> {
 pub fn get_best_repair_shreds(
     tree: &HeaviestSubtreeForkChoice,
     blockstore: &Blockstore,
-    slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+    slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
     repairs: &mut Vec<ShredRepairType>,
     max_new_shreds: usize,
     repair_eligibility: &mut RepairEligibility,
@@ -99,7 +99,7 @@ pub fn get_best_repair_shreds(
 
         let slot_meta = slot_meta_cache
             .entry(next.slot())
-            .or_insert_with(|| blockstore.meta(next.slot()).unwrap());
+            .or_insert_with(|| blockstore.meta_repair(next.slot()).unwrap());
 
         // May not exist if blockstore purged the SlotMeta due to something
         // like duplicate slots. TODO: Account for duplicate slot may be in orphans, especially
