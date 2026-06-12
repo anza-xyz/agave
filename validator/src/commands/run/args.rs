@@ -1221,6 +1221,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
+            .conflicts_with("allow_private_addr")
             .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
             .help("Use the specified CPU cores for XDP"),
     )

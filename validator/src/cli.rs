@@ -165,6 +165,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(true)
             .value_name("CPU_LIST")
             .conflicts_with("xdp_cpu_cores")
+            .conflicts_with("allow_private_addr")
             .validator(|value| {
                 validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
             })

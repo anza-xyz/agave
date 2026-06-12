@@ -10538,6 +10538,7 @@ dependencies = [
  "rustls",
  "smallvec",
  "solana-keypair",
+ "solana-measure",
  "solana-message",
  "solana-metrics",
  "solana-net-utils",
