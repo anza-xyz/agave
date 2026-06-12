@@ -21,7 +21,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         hash::{Hash, Hasher},
         ops::RangeInclusive,
     },
@@ -34,6 +34,9 @@ const SLOTS_PER_LEADER_WINDOW: Slot = 4;
 const DEFAULT_NETWORK_FAULTS: usize = 8;
 /// Number of corruption windows per schedule.
 const DEFAULT_CORRUPTION_WINDOWS: usize = 8;
+/// A node may only be isolated if its stake is under this percent of total, so
+/// the online core stays above the 60% quorum and consensus can still progress.
+const MAX_ISOLATED_STAKE_PERCENT: u128 = 40;
 
 /// Isolates a set of nodes for a window of slots.  Any message whose source or
 /// destination is isolated is dropped while the window is active.
@@ -53,15 +56,38 @@ pub(crate) struct FaultSchedule {
 impl FaultSchedule {
     /// Sample a schedule deterministically from `seed`.  All randomness is
     /// consumed here, single-threaded, before any cluster thread races.
-    pub(crate) fn sample(seed: u64, nodes: &[Pubkey], max_slot: Slot) -> Self {
+    pub(crate) fn sample(
+        seed: u64,
+        nodes: &[Pubkey],
+        stakes: &HashMap<Pubkey, u64>,
+        max_slot: Slot,
+    ) -> Self {
         let mut rng = AlpenglowRng::seed_from_u64(seed);
-        // Isolate one node per network fault so the remaining nodes keep a
-        // fully connected core — with four nodes that core always holds a
-        // supermajority, so partitions cause skips and recovery, not deadlock.
+        // Only nodes under MAX_ISOLATED_STAKE_PERCENT may be isolated, so the
+        // online core always keeps above the 60% quorum.
+        let total_stake = stakes.values().map(|stake| *stake as u128).sum::<u128>();
+        let isolatable = nodes
+            .iter()
+            .copied()
+            .filter(|node| {
+                let stake = stakes.get(node).copied().unwrap_or(0) as u128;
+                stake * 100 < MAX_ISOLATED_STAKE_PERCENT * total_stake
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !isolatable.is_empty(),
+            "byzfuzz: no node is under {MAX_ISOLATED_STAKE_PERCENT}% stake to isolate",
+        );
+        // Each network fault isolates one isolatable node, and the windows are
+        // placed in disjoint time buckets so at most one node is ever isolated
+        // at once.  Together that keeps the online core a supermajority, so
+        // partitions cause skips and recovery rather than deadlock.  (Requires
+        // DEFAULT_NETWORK_FAULTS * SLOTS_PER_LEADER_WINDOW <= max_slot.)
+        let bucket = (max_slot / DEFAULT_NETWORK_FAULTS.max(1) as Slot).max(1);
         let network_faults = (0..DEFAULT_NETWORK_FAULTS)
-            .map(|_| {
-                let window = random_window(&mut rng, max_slot);
-                let isolated = HashSet::from([nodes[rng.random_range(0..nodes.len())]]);
+            .map(|index| {
+                let window = bucketed_window(&mut rng, index as Slot, bucket, max_slot);
+                let isolated = HashSet::from([isolatable[rng.random_range(0..isolatable.len())]]);
                 NetworkFault { window, isolated }
             })
             .collect();
@@ -121,6 +147,29 @@ pub(crate) fn message_slot(message: &ConsensusMessage) -> Slot {
 fn random_window(rng: &mut AlpenglowRng, max_slot: Slot) -> RangeInclusive<Slot> {
     let last_start = max_slot.saturating_sub(SLOTS_PER_LEADER_WINDOW).max(1);
     let start = rng.random_range(1..=last_start);
+    let end = start
+        .saturating_add(SLOTS_PER_LEADER_WINDOW.saturating_sub(1))
+        .min(max_slot);
+    start..=end
+}
+
+// A window of SLOTS_PER_LEADER_WINDOW slots jittered inside bucket `index`
+// (slots `[index * bucket + 1, (index + 1) * bucket]`).  Keeping the window
+// within its bucket guarantees windows in different buckets never overlap.
+fn bucketed_window(
+    rng: &mut AlpenglowRng,
+    index: Slot,
+    bucket: Slot,
+    max_slot: Slot,
+) -> RangeInclusive<Slot> {
+    let bucket_start = index.saturating_mul(bucket).saturating_add(1);
+    let max_offset = bucket.saturating_sub(SLOTS_PER_LEADER_WINDOW);
+    let offset = if max_offset > 0 {
+        rng.random_range(0..=max_offset)
+    } else {
+        0
+    };
+    let start = bucket_start.saturating_add(offset);
     let end = start
         .saturating_add(SLOTS_PER_LEADER_WINDOW.saturating_sub(1))
         .min(max_slot);

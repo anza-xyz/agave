@@ -80,17 +80,6 @@ fn test_alpenglow_byzfuzz() {
     let byzantine_message_count = Arc::new(AtomicU64::new(0));
     let byzantine_message_count_for_policy = byzantine_message_count.clone();
 
-    // Sample the entire fault schedule from the seed before the cluster starts,
-    // so the faults a run applies depend only on the seed.  Logged here so a
-    // failing run prints its own reproduction recipe.
-    let schedule = Arc::new(FaultSchedule::sample(
-        random_seed,
-        &node_pubkeys,
-        ROOT_SLOT_TO_WAIT_FOR,
-    ));
-    info!("byzfuzz fault schedule (seed {random_seed}): {schedule:?}");
-    let schedule_for_policy = schedule.clone();
-
     // set stakes
     let total_cluster_stake: u64 = DEFAULT_NODE_STAKE.saturating_mul(NUM_NODES as u64);
     let node_stakes = vec![
@@ -105,6 +94,18 @@ fn test_alpenglow_byzfuzz() {
         .copied()
         .zip(node_stakes.iter().copied())
         .collect::<HashMap<_, _>>();
+
+    // Sample the entire fault schedule from the seed before the cluster starts,
+    // so the faults a run applies depend only on the seed.  Logged here so a
+    // failing run prints its own reproduction recipe.
+    let schedule = Arc::new(FaultSchedule::sample(
+        random_seed,
+        &node_pubkeys,
+        &source_stakes,
+        ROOT_SLOT_TO_WAIT_FOR,
+    ));
+    info!("byzfuzz fault schedule (seed {random_seed}): {schedule:?}");
+    let schedule_for_policy = schedule.clone();
 
     // Centralize all Alpenglow messages here before adding fuzz actions.
     let proxy = AlpenglowInterceptor::new(&validator_keys, move |intercepted| {
