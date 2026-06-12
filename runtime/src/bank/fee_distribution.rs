@@ -103,7 +103,7 @@ impl Bank {
         &self,
         fee_details: &CollectorFeeDetails,
     ) -> FeeDistribution {
-        if fee_details.transaction_fee == 0 {
+        if fee_details.total_transaction_fee() == 0 {
             return FeeDistribution::default();
         }
 
@@ -681,6 +681,21 @@ pub mod tests {
     }
 
     #[test]
+    fn test_calculate_reward_and_burn_fee_details_priority_only() {
+        let genesis = create_genesis_config(0);
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let priority_fee = 200;
+
+        let fee_distribution = bank.calculate_reward_and_burn_fee_details(&CollectorFeeDetails {
+            transaction_fee: 0,
+            priority_fee,
+        });
+
+        assert_eq!(fee_distribution.deposit, priority_fee);
+        assert_eq!(fee_distribution.burn, 0);
+    }
+
+    #[test]
     fn test_distribute_transaction_fee_details_normal() {
         let initial_balance = 1000;
         let genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), initial_balance);
@@ -726,6 +741,35 @@ pub mod tests {
             RewardType::Fee,
             "The reward type should be Fee"
         );
+    }
+
+    #[test]
+    fn test_distribute_transaction_fee_details_priority_only() {
+        let initial_balance = 1000;
+        let genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), initial_balance);
+        let mut bank = Bank::new_for_tests(&genesis.genesis_config);
+        let priority_fee = 200;
+        bank.collector_fee_details = RwLock::new(CollectorFeeDetails {
+            transaction_fee: 0,
+            priority_fee,
+        });
+
+        let collector_id = *bank.leader_id();
+        let initial_capitalization = bank.capitalization();
+        let initial_collector_balance = bank.get_balance(&collector_id);
+
+        bank.distribute_transaction_fee_details();
+
+        assert_eq!(
+            initial_collector_balance + priority_fee,
+            bank.get_balance(&collector_id)
+        );
+        assert_eq!(initial_capitalization, bank.capitalization());
+
+        let rewards = bank.rewards.read().unwrap();
+        assert_eq!(rewards.len(), 1);
+        assert_eq!(rewards[0].1.lamports, priority_fee as i64);
+        assert_eq!(rewards[0].1.reward_type, RewardType::Fee);
     }
 
     #[test]
