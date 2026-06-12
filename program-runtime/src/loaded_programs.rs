@@ -709,7 +709,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         cooperative_loading_task
     }
 
-    /// Called by Bank::replenish_program_cache() for each program that is done loading.
+    /// Called by TransactionBatchProcessor::replenish_program_cache() for each program that is done loading.
     pub fn finish_cooperative_loading_task(
         &mut self,
         program_runtime_environment: &ProgramRuntimeEnvironment,
@@ -724,6 +724,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             } => {
                 let loading_thread = loading_entries.get_mut().unwrap().remove(&key);
                 debug_assert_eq!(loading_thread, Some((current_slot, thread::current().id())));
+                if current_slot < self.latest_root_slot {
+                    self.loading_task_waiter.notify();
+                    return true;
+                }
                 // Check that it will be visible to our own fork once inserted
                 if loaded_program.deployment_slot > self.latest_root_slot
                     && !matches!(
