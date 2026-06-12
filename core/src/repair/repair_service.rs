@@ -19,6 +19,7 @@ use {
         },
     },
     agave_votor_messages::migration::MigrationStatus,
+    bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
     rand::prelude::IndexedRandom as _,
@@ -34,6 +35,7 @@ use {
         shred,
     },
     solana_measure::measure::Measure,
+    solana_net_utils::PinnedXdpSender,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
@@ -622,6 +624,7 @@ impl RepairService {
         repair_info: RepairInfo,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
         repair_service_channels: RepairServiceChannels,
+        xdp_sender: Option<PinnedXdpSender>,
     ) -> Self {
         let t_repair = {
             let blockstore = blockstore.clone();
@@ -637,6 +640,7 @@ impl RepairService {
                         repair_service_channels.repair_channels,
                         repair_info,
                         &outstanding_requests,
+                        xdp_sender.as_ref(),
                     )
                 })
                 .unwrap()
@@ -801,6 +805,7 @@ impl RepairService {
         repair_info: &RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
+        xdp_sender: Option<&PinnedXdpSender>,
         repair_metrics: &mut RepairMetrics,
     ) {
         let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
@@ -827,15 +832,23 @@ impl RepairService {
         let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
         if !batch.is_empty() {
             let num_pkts = batch.len();
-            let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
-            match batch_send(repair_socket, batch) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(err, num_failed)) => {
-                    error!(
-                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error \
-                         {err:?}",
-                        repair_info.cluster_info.id()
-                    );
+            if let Some(xdp) = xdp_sender {
+                for (i, (bytes, addr)) in batch.into_iter().enumerate() {
+                    if let Err(e) = xdp.try_send(i, addr, Bytes::from(bytes)) {
+                        warn!("repair xdp send failed: {e:?}");
+                    }
+                }
+            } else {
+                let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
+                match batch_send(repair_socket, batch) {
+                    Ok(()) => (),
+                    Err(SendPktsError::IoError(err, num_failed)) => {
+                        error!(
+                            "{} batch_send failed to send {num_failed}/{num_pkts} packets first \
+                             error {err:?}",
+                            repair_info.cluster_info.id()
+                        );
+                    }
                 }
             }
         }
@@ -852,6 +865,7 @@ impl RepairService {
         repair_tracker: &mut RepairTracker,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
+        xdp_sender: Option<&PinnedXdpSender>,
         migration_status: &MigrationStatus,
     ) {
         let RepairChannels {
@@ -908,6 +922,7 @@ impl RepairService {
             repair_info,
             outstanding_requests,
             repair_socket,
+            xdp_sender,
             repair_metrics,
         );
     }
@@ -919,6 +934,7 @@ impl RepairService {
         repair_channels: RepairChannels,
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
+        xdp_sender: Option<&PinnedXdpSender>,
     ) {
         let (sharable_banks, migration_status) = {
             let bank_forks_r = repair_info.bank_forks.read().unwrap();
@@ -955,6 +971,7 @@ impl RepairService {
                 &mut repair_tracker,
                 outstanding_requests,
                 repair_socket,
+                xdp_sender,
                 migration_status.as_ref(),
             );
             repair_tracker.repair_metrics.maybe_report();
@@ -1096,6 +1113,7 @@ impl RepairService {
         slot: u64,
         shred_index: u64,
         repair_socket: &UdpSocket,
+        xdp_sender: Option<&PinnedXdpSender>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
     ) {
         let mut repair_peers = vec![];
@@ -1128,6 +1146,7 @@ impl RepairService {
                 slot,
                 shred_index,
                 repair_socket,
+                xdp_sender,
                 outstanding_repair_requests.clone(),
             );
         }
@@ -1140,6 +1159,7 @@ impl RepairService {
         slot: u64,
         shred_index: u64,
         repair_socket: &UdpSocket,
+        xdp_sender: Option<&PinnedXdpSender>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
     ) {
         // Setup repair request
@@ -1161,16 +1181,21 @@ impl RepairService {
         let packet_buf =
             ServeRepair::repair_proto_to_bytes(&request_proto, &identity_keypair).unwrap();
 
-        // Prepare packet batch to send
-        let reqs = [(&packet_buf, address)];
-
-        // Send packet batch
-        match batch_send(repair_socket, reqs) {
-            Ok(()) => {
-                debug!("successfully sent repair request to {pubkey} / {address}!");
+        if let Some(xdp) = xdp_sender {
+            if let Err(e) = xdp.try_send(0, address, Bytes::from(packet_buf)) {
+                warn!("repair xdp send to {pubkey} ({address}) failed: {e:?}");
+            } else {
+                debug!("successfully sent repair request via XDP to {pubkey} / {address}!");
             }
-            Err(SendPktsError::IoError(err, _num_failed)) => {
-                error!("batch_send failed to send packet - error = {err:?}");
+        } else {
+            let reqs = [(&packet_buf, address)];
+            match batch_send(repair_socket, reqs) {
+                Ok(()) => {
+                    debug!("successfully sent repair request to {pubkey} / {address}!");
+                }
+                Err(SendPktsError::IoError(err, _num_failed)) => {
+                    error!("batch_send failed to send packet - error = {err:?}");
+                }
             }
         }
     }
@@ -1438,6 +1463,7 @@ mod test {
             slot,
             shred_index,
             &sender,
+            None,
             outstanding_repair_requests,
         );
 

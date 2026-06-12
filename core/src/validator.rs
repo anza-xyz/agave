@@ -95,7 +95,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{PinnedXdpSender, SocketAddrSpace},
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -1562,7 +1562,7 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
-        let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender) =
+        let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender, repair_xdp_sender) =
             if let Some(XdpTransmitSetup {
                 transmitter_builder,
                 src_ip,
@@ -1572,6 +1572,12 @@ impl Validator {
                     .local_addr()
                     .expect("retransmit socket should have local address")
                     .port();
+                let repair_src_port = node
+                    .sockets
+                    .repair
+                    .local_addr()
+                    .expect("repair socket should have local address")
+                    .port();
 
                 let (transmitter, sender) = transmitter_builder.build();
                 (
@@ -1580,10 +1586,14 @@ impl Validator {
                         sender.clone(),
                         SocketAddrV4::new(src_ip, turbine_src_port),
                     )),
-                    Some((sender, src_ip)),
+                    Some((sender.clone(), src_ip)),
+                    Some(PinnedXdpSender::new(
+                        sender,
+                        SocketAddrV4::new(src_ip, repair_src_port),
+                    )),
                 )
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
 
         // disable all2all tests if not allowed for a given cluster type
@@ -1644,6 +1654,7 @@ impl Validator {
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
                 bls_sigverify_threads: config.tvu_bls_sigverify_threads,
                 turbine_xdp_sender: turbine_xdp_sender.clone(),
+                repair_xdp_sender,
             },
             &max_slots,
             block_metadata_notifier,
