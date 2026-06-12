@@ -68,8 +68,11 @@ impl From<ProtoInstrContext> for InstrContext {
             })
             .collect::<Vec<_>>();
 
+        // Match Firedancer harness limit (FD_INSTR_ACCT_MAX = 1094)
+        // which is derived from the MTU
+        // (see FD_BPF_INSTR_ACCT_MAX comment in Firedancer)
         assert!(
-            instruction_accounts.len() <= 128,
+            instruction_accounts.len() <= 1094,
             "too many instruction accounts",
         );
 
