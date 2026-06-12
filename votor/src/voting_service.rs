@@ -423,15 +423,14 @@ mod tests {
 
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
-        let received_message =
-            wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap_or_default())
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "Failed to deserialize BLSMessage: {:?} {:?}",
-                        size_of::<ConsensusMessage>(),
-                        err
-                    )
-                });
+        let received_message = wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to deserialize BLSMessage: {:?} {:?}",
+                    size_of::<ConsensusMessage>(),
+                    err
+                )
+            });
         assert_eq!(received_message, expected_message);
         cancel.cancel();
         quic_server_thread.join().unwrap();
