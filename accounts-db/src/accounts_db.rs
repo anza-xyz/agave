@@ -5199,10 +5199,10 @@ impl AccountsDb {
     }
 
     /// Updates the accounts index with the given `infos` and `accounts`.
-    /// Used when storing accounts to storage.
+    /// Used when storing accounts to storage for flush.
     /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
     /// The element of the returned vector is guaranteed to be non-empty.
-    fn update_index_stored_accounts<'a>(
+    fn update_index_for_flush<'a>(
         &self,
         infos: Vec<AccountInfo>,
         accounts: &impl StorableAccounts<'a>,
@@ -5816,7 +5816,7 @@ impl AccountsDb {
         let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
-        let reclaims = self.update_index_stored_accounts(
+        let reclaims = self.update_index_for_flush(
             infos,
             &accounts,
             reclaim_handling,
