@@ -1855,8 +1855,8 @@ impl ServeRepair {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
-            if let Ok(RepairResponse::Ping(ping)) =
-                wincode::deserialize(packet.data(..).unwrap_or_default())
+            if let Some(data) = packet.data(..)
+                && let Ok(RepairResponse::Ping(ping)) = wincode::deserialize(data)
             {
                 if !ping.verify() {
                     // Do _not_ set `discard` to allow shred processing to attempt to

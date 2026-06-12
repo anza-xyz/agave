@@ -1080,7 +1080,7 @@ mod tests {
         solana_perf::packet::Packet,
         solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
         solana_sha256_hasher::hashv,
-        std::{io::Cursor, sync::RwLock},
+        std::sync::RwLock,
     };
 
     /// Helper to build a merkle tree from leaf hashes and return the root and proofs
@@ -1244,8 +1244,7 @@ mod tests {
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            wincode::config::deserialize_from(&mut Cursor::new(packet_data), PacketConfig::new())
-                .unwrap();
+            wincode::config::deserialize(packet_data, PacketConfig::new()).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -1276,8 +1275,7 @@ mod tests {
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
-        let deser_response: BlockIdRepairResponse =
-            wincode::deserialize_from(&mut Cursor::new(packet_data)).unwrap();
+        let deser_response: BlockIdRepairResponse = wincode::deserialize(packet_data).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::FecSetRoot {
@@ -1296,8 +1294,8 @@ mod tests {
         // Empty packet
         let packet = make_packet(&[]);
         let packet_data = packet.data(..).unwrap();
-        wincode::config::deserialize_from::<BlockIdRepairResponse, PacketConfig>(
-            &mut Cursor::new(packet_data),
+        wincode::config::deserialize::<BlockIdRepairResponse, PacketConfig>(
+            packet_data,
             PacketConfig::new(),
         )
         .unwrap_err();
@@ -1305,8 +1303,8 @@ mod tests {
         // Garbage data
         let packet = make_packet(&[0xff, 0xff, 0xff, 0xff]);
         let packet_data = packet.data(..).unwrap();
-        wincode::config::deserialize_from::<BlockIdRepairResponse, PacketConfig>(
-            &mut Cursor::new(packet_data),
+        wincode::config::deserialize::<BlockIdRepairResponse, PacketConfig>(
+            packet_data,
             PacketConfig::new(),
         )
         .unwrap_err();
