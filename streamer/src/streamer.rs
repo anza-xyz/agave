@@ -23,6 +23,7 @@ use {
     std::{
         cmp::Reverse,
         collections::HashMap,
+        io,
         net::{IpAddr, SocketAddr, UdpSocket},
         sync::{
             Arc,
@@ -569,7 +570,7 @@ impl GossipUdpSocketProvider {
 }
 
 pub trait ResponseSender {
-    /// Send a batch of packets as responses to gossip requests.
+    /// Send a batch of packets.
     ///
     /// Returns Ok if all the packets with valid destination within batch were sent successfully,
     /// and returns an error if any packet within the batch failed to send with number of failed
@@ -609,27 +610,45 @@ impl ResponseSender for GossipXdpSender {
             }
         });
 
-        let mut dropped_full = 0;
-        let mut disconnected = 0;
+        let mut num_sent = 0;
+        let mut num_dropped_full = 0;
+        let mut num_dropped_disconnected = 0;
 
         for (idx, (payload, addr)) in packets.enumerate() {
             match self.try_send(idx, addr, bytes::Bytes::copy_from_slice(payload)) {
-                Ok(()) => {}
+                Ok(()) => {
+                    num_sent += 1;
+                }
                 Err(TrySendError::Full(_)) => {
-                    dropped_full += 1;
+                    num_dropped_full += 1;
                     continue;
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    disconnected += 1;
-                    break;
+                    num_dropped_disconnected += 1;
+                    continue;
                 }
             }
         }
-        if dropped_full > 0 || disconnected > 0 {
-            info!(
-                "XDP sender dropped {dropped_full} packets due to full send queue, and had \
-                 {disconnected} disconnected errors"
-            );
+
+        let num_failed = num_dropped_full + num_dropped_disconnected;
+        if num_failed > 0 {
+            let kind = if num_dropped_disconnected != 0 {
+                io::ErrorKind::BrokenPipe
+            } else {
+                io::ErrorKind::WouldBlock
+            };
+            return Err(SendPktsError::IoError(
+                io::Error::new(
+                    kind,
+                    format!(
+                        "XDP sender failed to enqueue {num_failed} out of {num_total} gossip \
+                         packets ({num_dropped_full} full queue, {num_dropped_disconnected} \
+                         disconnected)",
+                        num_total = num_sent + num_failed
+                    ),
+                ),
+                num_failed,
+            ));
         }
         Ok(())
     }
@@ -645,6 +664,7 @@ fn responder_loop<G: ResponseSender>(
     let mut errors = 0;
     let mut last_error = None;
     let mut send_elapsed_us: u64 = 0;
+    let mut send_batch_count: u64 = 0;
 
     let mut now = Instant::now();
     let mut stats = None;
@@ -670,18 +690,33 @@ fn responder_loop<G: ResponseSender>(
         }
         measure_send.stop();
         send_elapsed_us = send_elapsed_us.saturating_add(measure_send.as_us());
+        send_batch_count = send_batch_count.saturating_add(1);
 
         // Metrics reporting
-        if now.elapsed() > SEND_REPORTING_INTERVAL {
+        let sample_duration = now.elapsed();
+        if sample_duration > SEND_REPORTING_INTERVAL {
             datapoint_info!(
                 name,
                 // how long it took to send batches of packets during this interval
                 ("streamer-send-egress_time_us", send_elapsed_us as i64, i64),
+                (
+                    "streamer-send-egress_batch_count",
+                    send_batch_count as i64,
+                    i64
+                ),
+                (
+                    "streamer-send-egress_sample_duration_ms",
+                    sample_duration.as_millis() as i64,
+                    i64
+                ),
             );
             send_elapsed_us = 0;
+            send_batch_count = 0;
             if errors != 0 {
                 datapoint_info!(name, ("errors", errors, i64),);
                 info!("{name} last-error: {last_error:?} count: {errors}");
+                errors = 0;
+                last_error = None;
             }
             now = Instant::now();
         }
