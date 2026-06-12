@@ -505,10 +505,7 @@ pub fn responder_atomic(
             } => responder_loop(
                 name,
                 r,
-                GossipUdpSocketProvider {
-                    socket_provider: MultihomedSocketProvider::new(sockets, bind_ip_addrs),
-                    socket_addr_space,
-                },
+                GossipUdpSocketProvider::new(sockets, bind_ip_addrs, socket_addr_space),
                 stats_reporter_sender,
             ),
             GossipResponderSocket::Xdp(xdp_sender) => {
@@ -516,6 +513,18 @@ pub fn responder_atomic(
             }
         })
         .unwrap()
+}
+
+struct ServeRepairSocketProvider {
+    socket: Arc<UdpSocket>,
+    socket_addr_space: SocketAddrSpace,
+}
+
+impl ResponseSender for ServeRepairSocketProvider {
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
+        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
+    }
 }
 
 pub fn responder(
@@ -531,8 +540,8 @@ pub fn responder(
             responder_loop(
                 name,
                 r,
-                GossipUdpSocketProvider {
-                    socket_provider: FixedSocketProvider::new(sock),
+                ServeRepairSocketProvider {
+                    socket: sock,
                     socket_addr_space,
                 },
                 stats_reporter_sender,
@@ -541,32 +550,53 @@ pub fn responder(
         .unwrap()
 }
 
-struct GossipUdpSocketProvider<P> {
-    socket_provider: P,
+struct GossipUdpSocketProvider {
+    socket_provider: MultihomedSocketProvider,
     socket_addr_space: SocketAddrSpace,
 }
 
-pub trait GossipResponseSender {
+impl GossipUdpSocketProvider {
+    pub fn new(
+        sockets: Arc<[UdpSocket]>,
+        bind_ip_addrs: Arc<BindIpAddrs>,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        Self {
+            socket_provider: MultihomedSocketProvider::new(sockets, bind_ip_addrs),
+            socket_addr_space,
+        }
+    }
+}
+
+pub trait ResponseSender {
     /// Send a batch of packets as responses to gossip requests.
     ///
-    /// Returns Ok if all the packets within batch were sent successfully, and returns an error if
-    /// any packet within the batch failed to send with number of failed packets.
+    /// Returns Ok if all the packets with valid destination within batch were sent successfully,
+    /// and returns an error if any packet within the batch failed to send with number of failed
+    /// packets.
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError>;
 }
 
-impl<P: SocketProvider> GossipResponseSender for GossipUdpSocketProvider<P> {
+fn filter_packets_by_socket_addr_space<'a>(
+    packets: impl Iterator<Item = PacketRef<'a>> + 'a,
+    socket_addr_space: &'a SocketAddrSpace,
+) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
+    packets.filter_map(move |pkt| {
+        let addr = pkt.meta().socket_addr();
+        let data = pkt.data(..)?;
+        socket_addr_space.check(&addr).then_some((data, addr))
+    })
+}
+
+impl ResponseSender for GossipUdpSocketProvider {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
         let sock = self.socket_provider.current_socket_ref();
-        let packets = batch.iter().filter_map(|pkt| {
-            let addr = pkt.meta().socket_addr();
-            let data = pkt.data(..)?;
-            self.socket_addr_space.check(&addr).then_some((data, addr))
-        });
         batch_send(sock, packets.collect::<Vec<_>>())
     }
 }
 
-impl GossipResponseSender for GossipXdpSender {
+impl ResponseSender for GossipXdpSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
             let addr = pkt.meta().socket_addr();
