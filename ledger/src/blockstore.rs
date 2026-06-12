@@ -93,6 +93,8 @@ use {
     wincode::{Deserialize as _, containers::Vec as WincodeVec},
 };
 
+#[cfg(feature = "dev-context-only-utils")]
+pub mod admin;
 pub mod blockstore_purge;
 pub mod column;
 pub mod error;
