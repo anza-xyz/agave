@@ -36,7 +36,7 @@ use {
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
-        accounts_cache::{AccountsCache, CachedAccount, SlotCache, SlotStatus},
+        accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
             ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
@@ -3471,7 +3471,7 @@ impl AccountsDb {
                 break;
             }
 
-            if let Some((cached_account, slot, _)) =
+            if let Some((cached_account, slot)) =
                 self.accounts_cache.load_latest(&pubkey, ancestors)
             {
                 cached_versions.insert(pubkey, (cached_account, slot));
@@ -4060,38 +4060,20 @@ impl AccountsDb {
     ) -> Option<(AccountSharedData, Slot)> {
         let starting_max_root = self.accounts_index.max_root_inclusive();
 
-        // First check the write cache
-        let cache_result = self.accounts_cache.load_latest(pubkey, ancestors);
-
-        if let Some((cached_account, cached_slot, slot_status)) = &cache_result {
-            // If the slot is an ancestor or an unflushed root, it hasn't been flushed to
-            // storage yet, so the write cache is authoritative — return it directly.
-            if matches!(
-                slot_status,
-                SlotStatus::Ancestor | SlotStatus::UnflushedRoot
-            ) {
-                self.load_account_stats
-                    .num_loaded_from_write_cache
-                    .fetch_add(1, Ordering::Relaxed);
-                return Some((cached_account.account.clone(), *cached_slot));
-            }
+        // Check the write cache first; a hit is the freshest version visible on this fork,
+        // so return it
+        if let Some((cached_account, cached_slot)) =
+            self.accounts_cache.load_latest(pubkey, ancestors)
+        {
+            self.load_account_stats
+                .num_loaded_from_write_cache
+                .fetch_add(1, Ordering::Relaxed);
+            return Some((cached_account.account.clone(), cached_slot));
         }
 
         let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
-
-        if let Some((cached_account, cached_slot, _)) = &cache_result {
-            if *cached_slot >= slot {
-                // The write cache holds a version at a slot at least as new as what the
-                // index returned, so it represents the freshest visible value and can be
-                // returned directly without going through the storage accessor.
-                self.load_account_stats
-                    .num_loaded_from_write_cache
-                    .fetch_add(1, Ordering::Relaxed);
-                return Some((cached_account.account.clone(), *cached_slot));
-            }
-        }
 
         let in_write_cache = storage_location.is_cached();
         if !in_write_cache {
@@ -4115,17 +4097,12 @@ impl AccountsDb {
         // since the cache could be flushed in between the 2 calls.
         let in_write_cache = matches!(account_accessor, LoadedAccountAccessor::Cached(_));
         if in_write_cache {
-            // While the account wasn't loaded directly from the write cache, the write cache
-            // provided the correct slot, so count this as a load from the write cache
-            if cache_result.is_some_and(|(_, cached_slot, _)| cached_slot == slot) {
-                self.load_account_stats
-                    .num_loaded_from_write_cache
-                    .fetch_add(1, Ordering::Relaxed);
-            } else {
-                self.load_account_stats
-                    .num_loaded_from_index_cache
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            // `load_latest` missed above (otherwise we'd have returned early), but the account
+            // was written to the cache between then and the index lookup, so the index pointed
+            // us back at the cache.
+            self.load_account_stats
+                .num_loaded_from_index_cache
+                .fetch_add(1, Ordering::Relaxed);
         } else {
             self.load_account_stats
                 .num_loaded_from_index_storage
@@ -5250,22 +5227,28 @@ impl AccountsDb {
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
                 debug_assert!(!info.is_cached());
-                accounts.account(i, |account| {
-                    let old_slot = accounts.slot(i);
-                    self.accounts_index.upsert(
-                        target_slot,
-                        old_slot,
-                        account.pubkey(),
-                        info,
-                        &mut reclaims,
-                        reclaim,
-                    );
-                    self.accounts_index.update_secondary_indexes(
-                        account.pubkey(),
-                        &account,
-                        &self.account_indexes,
-                    );
-                });
+                let old_slot = accounts.slot(i);
+                let pubkey = accounts.pubkey(i);
+                self.accounts_index.upsert(
+                    target_slot,
+                    old_slot,
+                    pubkey,
+                    info,
+                    &mut reclaims,
+                    reclaim,
+                );
+
+                if !self.account_indexes.is_empty() {
+                    // Since StorableAccounts::account() may read the account from disk,
+                    // avoid calling it unless secondary indexes are enabled.
+                    accounts.account(i, |account| {
+                        self.accounts_index.update_secondary_indexes(
+                            pubkey,
+                            &account,
+                            &self.account_indexes,
+                        );
+                    });
+                }
             });
             reclaims
         };
@@ -5320,11 +5303,10 @@ impl AccountsDb {
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
                 debug_assert!(!info.is_cached());
-                accounts.account(i, |account| {
-                    let old_slot = accounts.slot(i);
-                    self.accounts_index
-                        .replace(target_slot, old_slot, account.pubkey(), info);
-                });
+                let old_slot = accounts.slot(i);
+                let pubkey = accounts.pubkey(i);
+                self.accounts_index
+                    .replace(target_slot, old_slot, pubkey, info);
             });
         };
 
@@ -5912,29 +5894,12 @@ impl AccountsDb {
     /// Returns whether the latest version of pubkey from ancestors is zero-lamport
     /// Returns `None` if the account doesn't exist
     fn is_ancestor_zero_lamport(&self, pubkey: &Pubkey, ancestors: &Ancestors) -> Option<bool> {
-        if let Some((cached_account, cache_slot, status)) =
+        if let Some((cached_account, _cache_slot)) =
             self.accounts_cache.load_latest(pubkey, ancestors)
         {
-            let cache_is_zero_lamport = cached_account.account.lamports() == 0;
-            // When the slot isn't being flushed, the cache is definitely the newest
-            if matches!(status, SlotStatus::Ancestor | SlotStatus::UnflushedRoot) {
-                return Some(cache_is_zero_lamport);
-            }
-
-            // Slot is being flushed; a newer version may already exist in storage.
-            if let Some((index_slot, index_is_zero_lamport)) = self
-                .accounts_index
-                .get_with_and_then(pubkey, ancestors, true, |(slot, account)| {
-                    (slot, account.is_zero_lamport())
-                })
-            {
-                // Return the zero lamport status of the newest version between the cache and index
-                // If slots are the same it doesn't matter which is returned (They are identical)
-                if index_slot > cache_slot {
-                    return Some(index_is_zero_lamport);
-                }
-            }
-            Some(cache_is_zero_lamport)
+            // Check the write cache first; a hit is the freshest version visible on this fork,
+            // so return it
+            Some(cached_account.account.lamports() == 0)
         } else {
             self.accounts_index
                 .get_with_and_then(pubkey, ancestors, true, |(_, account)| {
