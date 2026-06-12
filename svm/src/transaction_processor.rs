@@ -1041,15 +1041,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts_resize_delta,
         } = execution_record;
 
-        // changed_account_count reflects the accounts the VM actually modified,
-        // counted before the fee payer is force-marked below.
-        let touched_account_count = touched_flags.iter().filter(|touched| **touched).count();
-
         // The fee payer (account index 0) is debited during loading, outside the
         // VM, so it carries no VM touch flag but must still be written back.
         if let Some(fee_payer_touched) = touched_flags.first_mut() {
             *fee_payer_touched = true;
         }
+
+        // changed_account_count reflects every account that will be written back,
+        // including the fee payer marked above.
+        let touched_account_count = touched_flags.iter().filter(|touched| **touched).count();
 
         if post_account_state_info_result.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
