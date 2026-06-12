@@ -6131,11 +6131,6 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "read_only_accounts_cache_evictor_wakeup_count_all",
-                    read_cache_stats.evictor_wakeup_count_all,
-                    i64
-                ),
-                (
                     "read_only_accounts_cache_evictor_wakeup_count_productive",
                     read_cache_stats.evictor_wakeup_count_productive,
                     i64

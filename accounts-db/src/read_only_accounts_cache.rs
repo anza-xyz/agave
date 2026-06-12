@@ -57,7 +57,6 @@ pub struct ReadOnlyCacheStats {
     pub load_us: u64,
     pub store_us: u64,
     pub evict_us: u64,
-    pub evictor_wakeup_count_all: u64,
     pub evictor_wakeup_count_productive: u64,
 }
 
@@ -69,7 +68,6 @@ struct AtomicReadOnlyCacheStats {
     load_us: AtomicU64,
     store_us: AtomicU64,
     evict_us: AtomicU64,
-    evictor_wakeup_count_all: AtomicU64,
     evictor_wakeup_count_productive: AtomicU64,
 }
 
@@ -274,10 +272,6 @@ impl ReadOnlyAccountsCache {
         let load_us = self.stats.load_us.swap(0, Ordering::Relaxed);
         let store_us = self.stats.store_us.swap(0, Ordering::Relaxed);
         let evict_us = self.stats.evict_us.swap(0, Ordering::Relaxed);
-        let evictor_wakeup_count_all = self
-            .stats
-            .evictor_wakeup_count_all
-            .swap(0, Ordering::Relaxed);
         let evictor_wakeup_count_productive = self
             .stats
             .evictor_wakeup_count_productive
@@ -290,7 +284,6 @@ impl ReadOnlyAccountsCache {
             load_us,
             store_us,
             evict_us,
-            evictor_wakeup_count_all,
             evictor_wakeup_count_productive,
         }
     }
@@ -323,10 +316,6 @@ impl ReadOnlyAccountsCache {
                         break;
                     }
                     drop(exit_flag);
-
-                    stats
-                        .evictor_wakeup_count_all
-                        .fetch_add(1, Ordering::Relaxed);
 
                     if data_size.load(Ordering::Relaxed) <= max_data_size_hi {
                         continue;
