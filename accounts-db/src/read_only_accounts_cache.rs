@@ -312,12 +312,12 @@ impl ReadOnlyAccountsCache {
                 info!("AccountsReadCacheEvictor has started");
                 let mut rng = SmallRng::from_os_rng();
                 loop {
-                    // Wait up to 100 ms, or until the exit flag is set.
-                    // 100 ms is already four times per slot, which should be plenty.
+                    // Wait up to 10 ms, or until the exit flag is set.
+                    // Ensure this timeout stays many times smaller than the slot time.
                     let exit_flag = control.exit.lock().unwrap();
                     let (exit_flag, _) = control
                         .wake
-                        .wait_timeout_while(exit_flag, Duration::from_millis(100), |exit| !*exit)
+                        .wait_timeout_while(exit_flag, Duration::from_millis(10), |exit| !*exit)
                         .unwrap();
                     if *exit_flag {
                         break;
