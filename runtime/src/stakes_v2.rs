@@ -692,6 +692,137 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_rooted_deltas_replaces_existing_key_with_new_key() {
+        let rent = Rent::default();
+        let vote_pubkey_a = new_rand();
+        let vote_pubkey_b = new_rand();
+        let existing_stake_pubkey = new_rand();
+        let new_stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey_a, &existing_stake_pubkey, &rent);
+        let mut cache = StakesCacheV2::new_from_accounts(
+            [(
+                existing_stake_pubkey,
+                StakeAccount::try_from(root_account).unwrap(),
+            )]
+            .into_iter(),
+            0,
+        );
+
+        // Verify initial state
+        let inner = cache.stake_delegation_index.0.read().unwrap();
+        assert_eq!(inner.len, 1);
+        assert_eq!(inner.root_entries.len(), 1);
+        assert!(inner.free_root_indices.is_empty());
+        drop(inner);
+
+        // Apply a delta that replaces the existing key with a new key at the same position
+        let new_account = create_stake_account(20, &vote_pubkey_b, &new_stake_pubkey, &rent);
+        cache
+            .stake_delegation_index
+            .0
+            .write()
+            .unwrap()
+            .apply_rooted_deltas([HashMap::from_iter([(
+                new_stake_pubkey,
+                Some(Arc::new(StakeAccount::try_from(new_account).unwrap())),
+            )])]);
+
+        let inner = cache.stake_delegation_index.0.read().unwrap();
+        // The existing key should be gone
+        assert!(!inner.root_positions.contains_key(&existing_stake_pubkey));
+        // The new key should be present at the same position
+        assert_eq!(
+            inner.root_positions.get(&new_stake_pubkey),
+            Some(&0)
+        );
+        // The old slot should be in the freelist
+        assert_eq!(inner.free_root_indices, vec![0]);
+        // len should still be 1 (one active entry)
+        assert_eq!(inner.len, 1);
+        // root_entries should still be length 1 (reused, not extended)
+        assert_eq!(inner.root_entries.len(), 1);
+        // The entry at position 0 should be the new key
+        assert_eq!(
+            inner.root_entries[0]
+                .as_ref()
+                .map(|e| e.stake_pubkey),
+            Some(new_stake_pubkey)
+        );
+    }
+
+    #[test]
+    fn test_apply_rooted_deltas_adds_new_key_beyond_freelist() {
+        let rent = Rent::default();
+        let vote_pubkey_a = new_rand();
+        let vote_pubkey_b = new_rand();
+        let vote_pubkey_c = new_rand();
+        let stake_pubkey_a = new_rand();
+        let stake_pubkey_b = new_rand();
+        let stake_pubkey_c = new_rand();
+
+        // Create a cache with 2 entries and an empty freelist
+        let root_account_a = create_stake_account(10, &vote_pubkey_a, &stake_pubkey_a, &rent);
+        let root_account_b = create_stake_account(20, &vote_pubkey_b, &stake_pubkey_b, &rent);
+        let mut cache = StakesCacheV2::new_from_accounts(
+            [
+                (
+                    stake_pubkey_a,
+                    StakeAccount::try_from(root_account_a).unwrap(),
+                ),
+                (
+                    stake_pubkey_b,
+                    StakeAccount::try_from(root_account_b).unwrap(),
+                ),
+            ]
+            .into_iter(),
+            0,
+        );
+
+        // Verify initial state
+        let inner = cache.stake_delegation_index.0.read().unwrap();
+        assert_eq!(inner.len, 2);
+        assert_eq!(inner.root_entries.len(), 2);
+        assert!(inner.free_root_indices.is_empty());
+        drop(inner);
+
+        // Apply a delta that adds a new key beyond the current root_entries capacity
+        // This should push a new entry into a new index slot
+        let new_account = create_stake_account(30, &vote_pubkey_c, &stake_pubkey_c, &rent);
+        cache
+            .stake_delegation_index
+            .0
+            .write()
+            .unwrap()
+            .apply_rooted_deltas([HashMap::from_iter([(
+                stake_pubkey_c,
+                Some(Arc::new(StakeAccount::try_from(new_account).unwrap())),
+            )])]);
+
+        let inner = cache.stake_delegation_index.0.read().unwrap();
+        // All three keys should be present
+        assert_eq!(inner.len, 3);
+        assert!(inner.root_positions.contains_key(&stake_pubkey_a));
+        assert!(inner.root_positions.contains_key(&stake_pubkey_b));
+        assert!(inner.root_positions.contains_key(&stake_pubkey_c));
+        // root_entries should have grown to 3
+        assert_eq!(inner.root_entries.len(), 3);
+        // freelist should still be empty (no slots were freed)
+        assert!(inner.free_root_indices.is_empty());
+        // Verify the new entry is at position 2
+        assert_eq!(
+            inner.root_positions.get(&stake_pubkey_c),
+            Some(&2)
+        );
+        assert_eq!(
+            inner.root_entries[2]
+                .as_ref()
+                .map(|e| e.stake_pubkey),
+            Some(stake_pubkey_c)
+        );
+    }
+
+    #[test]
     fn test_apply_rooted_stake_delegation_deltas_applies_updates() {
         let rent = Rent::default();
         let vote_pubkey = new_rand();
