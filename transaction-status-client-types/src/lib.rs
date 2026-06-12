@@ -202,7 +202,10 @@ pub struct EncodedTransactionWithStatusMeta {
     pub version: Option<TransactionVersion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+// `Reward` derives `SchemaRead` only (not `SchemaWrite`): rewards are persisted as protobuf, so
+// the only wincode use is the read-only `get_protobuf_or_wincode::<Rewards>` blockstore fallback
+// for legacy rows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead)]
 #[serde(rename_all = "camelCase")]
 pub struct Reward {
     pub pubkey: String,
@@ -210,7 +213,14 @@ pub struct Reward {
     pub post_balance: u64, // Account balance in lamports after `lamports` was applied
     pub reward_type: Option<RewardType>,
     pub commission: Option<u8>, // Vote account commission when the reward was credited, only present for voting and staking rewards
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Excluded from the wincode wire format entirely (always deserialized as `None`).
+    // The wincode reader is only used as a fallback for legacy blockstore rows, which predate this
+    // field and never contained it. We can't second-guess with tolerant "default on EOF" reader
+    // because `Reward` is read as part of a `Rewards` (`Vec<Reward>`) sequence: every element except
+    // the last is followed by more bytes. New values are written as protobuf, where `commission_bps`
+    // is carried normally; it is likewise preserved over serde/JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[wincode(skip)]
     pub commission_bps: Option<u16>, // Vote account commission in basis points (SIMD-0291)
 }
 
