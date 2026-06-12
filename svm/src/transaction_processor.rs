@@ -1770,6 +1770,26 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(_)
         ));
         assert!(loaded_missing > 0);
+
+        {
+            let mut program_cache = batch_processor.global_program_cache.write().unwrap();
+            program_cache.remove_programs(std::iter::once(key));
+            program_cache.latest_root_slot = 32;
+        }
+        batch_processor.replenish_program_cache(
+            &account_loader,
+            vec![ProgramToLoad {
+                program_id: &key,
+                loader: ProgramCacheEntryOwner::LoaderV2,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                last_modification_slot: 0,
+            }],
+            &program_runtime_environment_for_execution,
+            &mut program_cache_for_tx_batch,
+            &mut ExecuteTimings::default(),
+            true,
+        );
+        assert!(program_cache_for_tx_batch.abandon);
     }
 
     #[test]
