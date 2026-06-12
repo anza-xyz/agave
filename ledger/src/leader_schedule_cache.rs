@@ -243,7 +243,7 @@ mod tests {
             },
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_epoch_schedule::{
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
@@ -337,7 +337,7 @@ mod tests {
             .map(|_| {
                 let cache = cache.clone();
                 let bank = bank.clone();
-                let (sender, receiver) = unbounded();
+                let (sender, receiver) = bounded(1024);
                 (
                     Builder::new()
                         .name("test_thread_race_leader_schedule_cache".to_string())
