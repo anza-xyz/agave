@@ -437,7 +437,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the transaction loop below.
         let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
 
-        if program_cache_for_tx_batch.hit_max_limit {
+        if program_cache_for_tx_batch.abandon {
             return LoadAndExecuteSanitizedTransactionsOutput {
                 error_metrics,
                 execute_timings,
@@ -531,7 +531,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_cache_us,
                     );
 
-                    if program_cache_for_tx_batch.hit_max_limit {
+                    if program_cache_for_tx_batch.abandon {
                         return LoadAndExecuteSanitizedTransactionsOutput {
                             error_metrics,
                             execute_timings,
@@ -868,11 +868,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     last_modification_slot,
                     program,
                 ) {
-                    // This branch is taken when there is an error in assigning a program to a
-                    // cache slot. It is not possible to mock this error for SVM unit
-                    // tests purposes.
+                    // Proceeding with this transaction batch is pointless
                     *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-                    program_cache_for_tx_batch.hit_max_limit = true;
+                    program_cache_for_tx_batch.abandon = true;
                     return;
                 }
             } else if missing_programs.is_empty() {
@@ -1761,7 +1759,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             true,
         );
-        assert!(!program_cache_for_tx_batch.hit_max_limit);
+        assert!(!program_cache_for_tx_batch.abandon);
         if program_cache_for_tx_batch.loaded_missing {
             loaded_missing += 1;
         }
