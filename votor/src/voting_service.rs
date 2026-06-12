@@ -443,8 +443,8 @@ mod tests {
             .deserialize_slice::<VersionedWireConsensusMessage, _>(..)
             .unwrap_or_else(|err| {
                 panic!(
-                    "Failed to deserialize BLSMessage: {:?} {:?}",
-                    size_of::<ConsensusMessage>(),
+                    "Failed to deserialize BLSMessage: size={} err={:?}",
+                    size_of::<VersionedWireConsensusMessage>(),
                     err
                 )
             });
