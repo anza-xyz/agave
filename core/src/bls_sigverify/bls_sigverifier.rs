@@ -220,7 +220,9 @@ impl SigVerifier {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
-            let Ok(msg) = packet.deserialize_slice::<ConsensusMessage, _>(..) else {
+            let Ok(msg) =
+                wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap_or_default())
+            else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };

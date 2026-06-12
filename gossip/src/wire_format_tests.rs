@@ -12,7 +12,7 @@ mod tests {
     };
 
     fn parse_gossip(bytes: &[u8]) -> anyhow::Result<Protocol> {
-        let pkt: Protocol = solana_perf::packet::deserialize_from_with_limit(bytes)?;
+        let pkt: Protocol = wincode::deserialize(bytes)?;
         pkt.sanitize()?;
         Ok(pkt)
     }

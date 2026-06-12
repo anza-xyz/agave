@@ -3,16 +3,14 @@
 use bytes::{BufMut, BytesMut};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
-    bincode::config::Options,
     bytes::Bytes,
     rayon::{
         iter::{IndexedParallelIterator, ParallelIterator},
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     },
-    serde::{Deserialize, Serialize, de::DeserializeOwned},
+    serde::{Deserialize, Serialize},
     std::{
         borrow::Borrow,
-        io::Read,
         net::SocketAddr,
         ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, SliceIndex},
@@ -101,19 +99,6 @@ impl BytesPacket {
     #[inline]
     pub fn meta_mut(&mut self) -> &mut Meta {
         &mut self.meta
-    }
-
-    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-        I: SliceIndex<[u8], Output = [u8]>,
-    {
-        let bytes = self.data(index).ok_or(bincode::ErrorKind::SizeLimit)?;
-        bincode::options()
-            .with_limit(self.meta().size as u64)
-            .with_fixint_encoding()
-            .reject_trailing_bytes()
-            .deserialize(bytes)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -359,17 +344,6 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-        I: SliceIndex<[u8], Output = [u8]>,
-    {
-        match self {
-            Self::Packet(packet) => packet.deserialize_slice(index),
-            Self::Bytes(packet) => packet.deserialize_slice(index),
-        }
-    }
-
     pub fn to_bytes_packet(&self) -> BytesPacket {
         match self {
             // In case of the legacy `Packet` variant, we unfortunately need to
@@ -439,17 +413,6 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => packet.meta_mut(),
             Self::Bytes(packet) => packet.meta_mut(),
-        }
-    }
-
-    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-        I: SliceIndex<[u8], Output = [u8]>,
-    {
-        match self {
-            Self::Packet(packet) => packet.deserialize_slice(index),
-            Self::Bytes(packet) => packet.deserialize_slice(index),
         }
     }
 
@@ -881,20 +844,6 @@ impl<'a> IntoParallelIterator for &'a mut BytesPacketBatch {
     fn into_par_iter(self) -> Self::Iter {
         self.packets.par_iter_mut()
     }
-}
-
-pub fn deserialize_from_with_limit<R, T>(reader: R) -> bincode::Result<T>
-where
-    R: Read,
-    T: DeserializeOwned,
-{
-    // with_limit causes pre-allocation size to be limited
-    // to prevent against memory exhaustion attacks.
-    bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .deserialize_from(reader)
 }
 
 #[cfg(test)]

@@ -40,7 +40,7 @@ use {
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::{
-        packet::{PacketBatch, PacketRef, deserialize_from_with_limit},
+        packet::{PacketBatch, PacketRef},
         recycler::Recycler,
     },
     solana_pubkey::Pubkey,
@@ -543,11 +543,9 @@ impl BlockIdRepairService {
             return;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut cursor)
-            .inspect_err(|e| {
-                debug!("Failed to deserialize response: {e:?}");
-            })
-        else {
+        let Ok(response) = wincode::deserialize_from(&mut cursor).inspect_err(|e| {
+            debug!("Failed to deserialize response: {e:?}");
+        }) else {
             state.response_stats.invalid_packets += 1;
             return;
         };
@@ -565,7 +563,7 @@ impl BlockIdRepairService {
             return;
         }
 
-        let nonce: u32 = match deserialize_from_with_limit(&mut cursor) {
+        let nonce: u32 = match wincode::deserialize_from(&mut cursor) {
             Ok(n) => n,
             Err(e) => {
                 debug!("{my_pubkey}: Failed to deserialize nonce: {e:?}");
@@ -1243,7 +1241,7 @@ mod tests {
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            deserialize_from_with_limit(&mut Cursor::new(packet_data)).unwrap();
+            wincode::deserialize_from(&mut Cursor::new(packet_data)).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -1275,7 +1273,7 @@ mod tests {
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            deserialize_from_with_limit(&mut Cursor::new(packet_data)).unwrap();
+            wincode::deserialize_from(&mut Cursor::new(packet_data)).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::FecSetRoot {
@@ -1295,7 +1293,7 @@ mod tests {
         let packet = make_packet(&[]);
         let packet_data = packet.data(..).unwrap();
         assert!(
-            deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut Cursor::new(packet_data))
+            wincode::deserialize_from::<BlockIdRepairResponse>(&mut Cursor::new(packet_data))
                 .is_err()
         );
 
@@ -1303,7 +1301,7 @@ mod tests {
         let packet = make_packet(&[0xff, 0xff, 0xff, 0xff]);
         let packet_data = packet.data(..).unwrap();
         assert!(
-            deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut Cursor::new(packet_data))
+            wincode::deserialize_from::<BlockIdRepairResponse>(&mut Cursor::new(packet_data))
                 .is_err()
         );
     }

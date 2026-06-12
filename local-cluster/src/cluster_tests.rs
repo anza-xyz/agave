@@ -672,7 +672,8 @@ pub fn check_for_new_notarized_votes(
                     continue;
                 };
                 for packet in packet_batch.iter() {
-                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    let Ok(ConsensusMessage::Vote(vote_message)) =
+                        wincode::deserialize(packet.data(..).unwrap_or_default())
                     else {
                         continue;
                     };
