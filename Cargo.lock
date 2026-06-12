@@ -108,6 +108,7 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
+ "solana-packet 4.1.0",
  "solana-perf",
  "solana-pubkey 4.2.0",
  "solana-runtime",
