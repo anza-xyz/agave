@@ -5227,22 +5227,28 @@ impl AccountsDb {
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
                 debug_assert!(!info.is_cached());
-                accounts.account(i, |account| {
-                    let old_slot = accounts.slot(i);
-                    self.accounts_index.upsert(
-                        target_slot,
-                        old_slot,
-                        account.pubkey(),
-                        info,
-                        &mut reclaims,
-                        reclaim,
-                    );
-                    self.accounts_index.update_secondary_indexes(
-                        account.pubkey(),
-                        &account,
-                        &self.account_indexes,
-                    );
-                });
+                let old_slot = accounts.slot(i);
+                let pubkey = accounts.pubkey(i);
+                self.accounts_index.upsert(
+                    target_slot,
+                    old_slot,
+                    pubkey,
+                    info,
+                    &mut reclaims,
+                    reclaim,
+                );
+
+                if !self.account_indexes.is_empty() {
+                    // Since StorableAccounts::account() may read the account from disk,
+                    // avoid calling it unless secondary indexes are enabled.
+                    accounts.account(i, |account| {
+                        self.accounts_index.update_secondary_indexes(
+                            pubkey,
+                            &account,
+                            &self.account_indexes,
+                        );
+                    });
+                }
             });
             reclaims
         };
