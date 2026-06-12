@@ -11,6 +11,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
+    solana_measure::measure::Measure,
     solana_net_utils::{
         PinnedXdpSender as GossipXdpSender, SocketAddrSpace,
         multihomed_sockets::{
@@ -19,11 +20,10 @@ use {
         },
     },
     solana_pubkey::Pubkey,
-    solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
         collections::HashMap,
-        net::{IpAddr, UdpSocket},
+        net::{IpAddr, SocketAddr, UdpSocket},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -597,22 +597,26 @@ impl GossipResponseSender for GossipXdpSender {
         }
         if dropped_full > 0 || disconnected > 0 {
             info!(
-                "XDP sender dropped {dropped_full} packets due to full send queue, and had {disconnected} disconnected errors"
+                "XDP sender dropped {dropped_full} packets due to full send queue, and had \
+                 {disconnected} disconnected errors"
             );
         }
         Ok(())
     }
 }
 
-fn responder_loop<G: GossipResponseSender>(
+fn responder_loop<G: ResponseSender>(
     name: &'static str,
     r: PacketBatchReceiver,
     sender: G,
     stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
 ) {
+    const SEND_REPORTING_INTERVAL: Duration = Duration::from_secs(1);
     let mut errors = 0;
     let mut last_error = None;
-    let mut last_print = 0;
+    let mut send_elapsed_us: u64 = 0;
+
+    let mut now = Instant::now();
     let mut stats = None;
 
     if stats_reporter_sender.is_some() {
@@ -629,19 +633,29 @@ fn responder_loop<G: GossipResponseSender>(
         if let Some(stats) = stats.as_mut() {
             packet_batch.iter().for_each(|p| stats.record(p));
         }
+        let mut measure_send = Measure::start("send batch");
         if let Err(e) = sender.send_batch(packet_batch) {
             errors += 1;
             last_error = Some(StreamerError::SendPktsError(e));
         }
-        //TODO(klykov) is this error reporting even correct?
-        let now = timestamp();
-        //TODO(klykov) so in gossip we report every 2second and here ever 1, Why?
-        if now - last_print > 1000 && errors != 0 {
-            datapoint_info!(name, ("errors", errors, i64),);
-            info!("{name} last-error: {last_error:?} count: {errors}");
-            last_print = now;
-            errors = 0;
+        measure_send.stop();
+        send_elapsed_us = send_elapsed_us.saturating_add(measure_send.as_us());
+
+        // Metrics reporting
+        if now.elapsed() > SEND_REPORTING_INTERVAL {
+            datapoint_info!(
+                name,
+                // how long it took to send batches of packets during this interval
+                ("streamer-send-egress_time_us", send_elapsed_us as i64, i64),
+            );
+            send_elapsed_us = 0;
+            if errors != 0 {
+                datapoint_info!(name, ("errors", errors, i64),);
+                info!("{name} last-error: {last_error:?} count: {errors}");
+            }
+            now = Instant::now();
         }
+
         if let Some(ref stats_reporter_sender) = stats_reporter_sender {
             if let Some(ref mut stats) = stats {
                 stats.maybe_submit(name, stats_reporter_sender);
