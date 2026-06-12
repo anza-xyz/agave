@@ -381,15 +381,15 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         self.fork_graph = Some(fork_graph);
     }
 
-    /// Insert a single entry. It's typically called during transaction loading,
-    /// when the cache doesn't contain the entry corresponding to program `key`.
-    pub fn assign_program(
-        &mut self,
+    /// Finds the spot a program belongs in for assign_program().
+    ///
+    /// Can also be used to check if an exact match already exists.
+    pub fn get_insertion_point(
+        &self,
         program_runtime_environment: &ProgramRuntimeEnvironment,
         key: Pubkey,
-        _last_modification_slot: Slot,
-        entry: Arc<ProgramCacheEntry>,
-    ) -> bool {
+        entry: &Arc<ProgramCacheEntry>,
+    ) -> Result<usize, usize> {
         debug_assert!(!matches!(
             &entry.program,
             ProgramCacheEntryType::DelayVisibility
@@ -405,10 +405,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 .map(|env| env == program_runtime_environment)
                 .unwrap_or(true)
         }
-        match &mut self.index {
+        match &self.index {
             IndexImplementation::V1 { entries, .. } => {
-                let slot_versions = &mut entries.entry(key).or_default();
-                let insertion_point = slot_versions.binary_search_by(|at| {
+                let slot_versions = entries
+                    .get(&key)
+                    .map(|vec| vec.as_slice())
+                    .unwrap_or_default();
+                slot_versions.binary_search_by(|at| {
                     at.effective_slot
                         .cmp(&entry.effective_slot)
                         .then(at.deployment_slot.cmp(&entry.deployment_slot))
@@ -426,7 +429,24 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 entry.program.get_environment(),
                             )),
                         )
-                });
+                })
+            }
+        }
+    }
+
+    /// Insert a single entry. It's typically called during transaction loading,
+    /// when the cache doesn't contain the entry corresponding to program `key`.
+    pub fn assign_program(
+        &mut self,
+        program_runtime_environment: &ProgramRuntimeEnvironment,
+        key: Pubkey,
+        _last_modification_slot: Slot,
+        entry: Arc<ProgramCacheEntry>,
+    ) -> bool {
+        let insertion_point = self.get_insertion_point(program_runtime_environment, key, &entry);
+        match &mut self.index {
+            IndexImplementation::V1 { entries, .. } => {
+                let slot_versions = &mut entries.entry(key).or_default();
                 match insertion_point {
                     Ok(index) => {
                         let existing = slot_versions.get_mut(index).unwrap();
