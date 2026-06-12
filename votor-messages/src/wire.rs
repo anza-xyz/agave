@@ -287,19 +287,32 @@ impl From<WireGenesisCertMessage> for Certificate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead, Deserialize, Serialize)]
+#[wincode(tag_encoding = "u8")]
 enum WireConsensusMessageKind {
+    #[wincode(tag = 1)]
     NotarVote(WireNotarVoteMessage),
+    #[wincode(tag = 2)]
     FinalizeVote(WireFinalizeVoteMessage),
+    #[wincode(tag = 3)]
     SkipVote(WireSkipVoteMessage),
+    #[wincode(tag = 4)]
     NotarFallbackVote(WireNotarFallbackVoteMessage),
+    #[wincode(tag = 5)]
     SkipFallbackVote(WireSkipFallbackVoteMessage),
+    #[wincode(tag = 6)]
     GenesisVote(WireGenesisVoteMessage),
 
+    #[wincode(tag = 7)]
     FinalizeCert(WireFinalizeCertMessage),
+    #[wincode(tag = 8)]
     FastFinalizeCert(WireFastFinalizeCertMessage),
+    #[wincode(tag = 9)]
     NotarCert(WireNotarCertMessage),
+    #[wincode(tag = 10)]
     NotarFallbackCert(WireNotarFallbackCertMessage),
+    #[wincode(tag = 11)]
     SkipCert(WireSkipCertMessage),
+    #[wincode(tag = 12)]
     GenesisCert(WireGenesisCertMessage),
 }
 
@@ -365,8 +378,10 @@ impl From<WireConsensusMessageV1> for ConsensusMessage {
 
 /// versioned wire format of consensus message
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[wincode(tag_encoding = "u8")]
 pub enum VersionedWireConsensusMessage {
     /// The first version
+    #[wincode(tag = 1)]
     V1(WireConsensusMessageV1),
 }
 
