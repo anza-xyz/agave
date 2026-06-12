@@ -166,7 +166,7 @@ impl<'a> FrontierQuery<'a> {
     }
 
     pub(crate) fn iter_some(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
-        self.iter().filter_map(|maybe_stake| maybe_stake)
+        self.iter().flatten()
     }
 }
 
