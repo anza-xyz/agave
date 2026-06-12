@@ -2,6 +2,7 @@ use {
     crate::{
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
+            PacketConfig,
             duplicate_repair_status::{
                 AncestorRequestDecision, AncestorRequestStatus, AncestorRequestType,
             },
@@ -374,8 +375,12 @@ impl AncestorHashesService {
             stats.invalid_packets += 1;
             return None;
         };
+
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = wincode::deserialize_from(&mut cursor) else {
+        let Ok(response) = wincode::config::deserialize_from(
+            packet.data(..).unwrap_or_default(),
+            PacketConfig::new(),
+        ) else {
             stats.invalid_packets += 1;
             return None;
         };
@@ -383,7 +388,8 @@ impl AncestorHashesService {
         match response {
             AncestorHashesResponse::Hashes(ref hashes) => {
                 // deserialize trailing nonce
-                let Ok(nonce) = wincode::deserialize_from(&mut cursor) else {
+                let Ok(nonce) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
+                else {
                     stats.invalid_packets += 1;
                     return None;
                 };

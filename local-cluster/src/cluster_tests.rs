@@ -66,6 +66,8 @@ use {
     wincode,
 };
 
+type PacketConfig = wincode::config::Configuration<true, { solana_packet::PACKET_DATA_SIZE }>;
+
 /// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing
 /// a synchronous interface for sending transactions in local-cluster tests.
 pub struct TpuSender {
@@ -673,7 +675,10 @@ pub fn check_for_new_notarized_votes(
                 };
                 for packet in packet_batch.iter() {
                     let Ok(ConsensusMessage::Vote(vote_message)) =
-                        wincode::deserialize(packet.data(..).unwrap_or_default())
+                        wincode::config::deserialize_exact(
+                            packet.data(..).unwrap_or_default(),
+                            PacketConfig::new(),
+                        )
                     else {
                         continue;
                     };

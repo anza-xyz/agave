@@ -40,6 +40,8 @@ use {
     },
 };
 
+type PacketConfig = wincode::config::Configuration<true, { solana_packet::PACKET_DATA_SIZE }>;
+
 /// If a cert or vote is so many slots in the future relative to the root slot, it is considered
 /// invalid and discarded.
 ///
@@ -220,9 +222,10 @@ impl SigVerifier {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
-            let Ok(msg) =
-                wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap_or_default())
-            else {
+            let Ok(msg) = wincode::config::deserialize_exact(
+                packet.data(..).unwrap_or_default(),
+                PacketConfig::new(),
+            ) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };

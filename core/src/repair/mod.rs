@@ -16,3 +16,5 @@ pub mod result;
 pub mod serve_repair;
 pub mod serve_repair_service;
 pub(crate) mod standard_repair_handler;
+
+type PacketConfig = wincode::config::Configuration<true, { solana_packet::PACKET_DATA_SIZE }>;

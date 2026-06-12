@@ -2808,7 +2808,7 @@ mod tests {
             assert_eq!(packet.meta().socket_addr(), socket);
             let bytes = wincode::serialize(&pong).unwrap();
             assert_eq!(bytes, bincode::serialize(&pong).unwrap());
-            match wincode::deserialize(packet.data(..).unwrap_or_default()).unwrap() {
+            match deserialize_protocol(packet.data(..).unwrap_or_default()).unwrap() {
                 Protocol::PongMessage(pong) => {
                     let pong_bytes = wincode::serialize(&pong).unwrap();
                     assert_eq!(pong_bytes, bincode::serialize(&pong).unwrap());

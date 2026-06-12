@@ -16,6 +16,7 @@ use {
     },
     crate::{
         repair::{
+            PacketConfig,
             outstanding_requests::OutstandingRequests,
             packet_threshold::DynamicPacketToProcessThreshold,
             repair_service::{REPAIR_MS, RepairInfo, RepairStats},
@@ -543,9 +544,11 @@ impl BlockIdRepairService {
             return;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = wincode::deserialize_from(&mut cursor).inspect_err(|e| {
-            debug!("Failed to deserialize response: {e:?}");
-        }) else {
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
+            .inspect_err(|e| {
+                debug!("Failed to deserialize response: {e:?}");
+            })
+        else {
             state.response_stats.invalid_packets += 1;
             return;
         };
@@ -563,7 +566,7 @@ impl BlockIdRepairService {
             return;
         }
 
-        let nonce: u32 = match wincode::deserialize_from(&mut cursor) {
+        let nonce: u32 = match wincode::config::deserialize_from(&mut cursor, PacketConfig::new()) {
             Ok(n) => n,
             Err(e) => {
                 debug!("{my_pubkey}: Failed to deserialize nonce: {e:?}");

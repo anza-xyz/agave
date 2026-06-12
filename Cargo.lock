@@ -8931,6 +8931,7 @@ dependencies = [
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
+ "solana-packet 4.1.0",
  "solana-poh-config",
  "solana-program-binaries",
  "solana-pubkey 4.2.0",
