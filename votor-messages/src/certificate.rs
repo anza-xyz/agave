@@ -23,6 +23,7 @@ pod_wrapper! {
 /// The actual certificate with the aggregate signature and bitmap for which validators are included in the aggregate.
 /// BLS vote message, we need rank to look up pubkey
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[serde(rename_all = "camelCase")]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
@@ -49,6 +50,7 @@ pub struct Certificate {
     SchemaWrite,
     SchemaRead,
 )]
+#[serde(rename_all = "camelCase")]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
