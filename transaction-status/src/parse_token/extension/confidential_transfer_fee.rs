@@ -48,29 +48,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
             let map = value.as_object_mut().unwrap();
-            let offset = if proof_instruction_offset == 0 {
-                map.insert(
-                    "proofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
-                );
-                3
-            } else {
-                map.insert(
-                    "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
-                );
-                // Assume that the extra account is a proof account and not a multisig
-                // signer. This might be wrong, but it's the best possible option.
-                if account_indexes.len() > 4 {
+            let mut offset = 2;
+            if offset < account_indexes.len().saturating_sub(1) {
+                if proof_instruction_offset == 0 {
                     map.insert(
-                        "recordAccount".to_string(),
-                        json!(account_keys[account_indexes[3] as usize].to_string()),
+                        "proofContextStateAccount".to_string(),
+                        json!(account_keys[account_indexes[offset] as usize].to_string()),
                     );
-                    4
                 } else {
-                    3
+                    map.insert(
+                        "instructionsSysvar".to_string(),
+                        json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    );
                 }
-            };
+                offset += 1;
+            }
+
             parse_signers(
                 map,
                 offset,
@@ -102,29 +95,17 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             let first_source_account_index = account_indexes
                 .len()
                 .saturating_sub(num_token_accounts as usize);
-            let offset = if proof_instruction_offset == 0 {
+            if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-                3
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-                if first_source_account_index > 4 {
-                    // Assume that the extra account is a proof account and not a multisig
-                    // signer. This might be wrong, but it's the best possible option.
-                    map.insert(
-                        "proofAccount".to_string(),
-                        json!(account_keys[account_indexes[3] as usize].to_string()),
-                    );
-                    4
-                } else {
-                    3
-                }
-            };
+            }
             let mut source_accounts: Vec<String> = vec![];
             for i in account_indexes[first_source_account_index..].iter() {
                 source_accounts.push(account_keys[*i as usize].to_string());
@@ -132,7 +113,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             map.insert("sourceAccounts".to_string(), json!(source_accounts));
             parse_signers(
                 map,
-                offset,
+                3,
                 account_keys,
                 &account_indexes[..first_source_account_index],
                 "withdrawWithheldAuthority",
