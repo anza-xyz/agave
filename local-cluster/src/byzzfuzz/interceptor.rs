@@ -61,7 +61,7 @@ pub enum AlpenglowInterceptAction {
     Duplicate,
     DuplicateToAll,
     DelayMessages(usize),
-    Replace(ConsensusMessage),
+    Replace(Box<ConsensusMessage>),
 }
 
 type InterceptPolicy =
@@ -238,6 +238,7 @@ impl AlpenglowInterceptor {
         )))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_processor(
         destination: Pubkey,
         packet_receiver: PacketBatchReceiver,
@@ -333,7 +334,7 @@ impl AlpenglowInterceptor {
                             AlpenglowInterceptAction::Replace(message) => Self::forward(
                                 source,
                                 destination,
-                                message,
+                                *message,
                                 source_clients.clone(),
                                 destinations.clone(),
                                 exit.clone(),

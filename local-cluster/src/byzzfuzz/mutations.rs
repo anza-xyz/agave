@@ -89,7 +89,7 @@ impl Mutations {
             )),
             _ => self
                 .mutate_message(message, rng, source_bls_keypair)
-                .map(AlpenglowInterceptAction::Replace),
+                .map(|message| AlpenglowInterceptAction::Replace(Box::new(message))),
         }
     }
 
