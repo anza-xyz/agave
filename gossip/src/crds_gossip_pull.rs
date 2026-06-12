@@ -64,6 +64,19 @@ pub struct CrdsFilter {
     mask_bits: u32,
 }
 
+#[cfg(debug_assertions)]
+pub(crate) const MIN_NUM_BLOOM_ITEMS: usize = 512;
+#[cfg(not(debug_assertions))]
+pub(crate) const MIN_NUM_BLOOM_ITEMS: usize = 65_536;
+
+// Loosest mask_bits floor accepted for incoming pull requests.
+// `PACKET_DATA_SIZE` avoids rejecting honest smaller bloom filters.
+static MIN_PULL_REQUEST_MASK_BITS: LazyLock<u32> = LazyLock::new(|| {
+    let max_bits = (PACKET_DATA_SIZE * 8) as f64;
+    let max_items = CrdsFilter::max_items(max_bits, FALSE_RATE, KEYS);
+    CrdsFilter::mask_bits(MIN_NUM_BLOOM_ITEMS as f64, max_items)
+});
+
 // Incoming gossip pull request from a remote node.
 pub struct PullRequest {
     pub pubkey: Pubkey,   // remote node's pubkey
@@ -84,7 +97,9 @@ impl Default for CrdsFilter {
 
 impl solana_sanitize::Sanitize for CrdsFilter {
     fn sanitize(&self) -> std::result::Result<(), solana_sanitize::SanitizeError> {
-        self.filter.sanitize()?;
+        if self.mask_bits < *MIN_PULL_REQUEST_MASK_BITS {
+            return Err(solana_sanitize::SanitizeError::InvalidValue);
+        }
         Ok(())
     }
 }
@@ -95,9 +110,12 @@ impl CrdsFilter {
         self.mask
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub(crate) fn get_mask_bits(&self) -> u32 {
+    pub fn get_mask_bits(&self) -> u32 {
         self.mask_bits
+    }
+
+    pub fn bloom_hash_count(&self) -> usize {
+        self.filter.keys.len()
     }
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -325,6 +343,7 @@ impl CrdsGossipPull {
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         Self::filter_crds_values(
@@ -334,6 +353,7 @@ impl CrdsGossipPull {
             output_size_limit,
             now,
             should_retain_crds_value,
+            try_consume_scan_budget,
             stats,
         )
     }
@@ -445,10 +465,6 @@ impl CrdsGossipPull {
         bloom_size: usize,
     ) -> Vec<CrdsFilter> {
         const PAR_MIN_LENGTH: usize = 512;
-        #[cfg(debug_assertions)]
-        const MIN_NUM_BLOOM_ITEMS: usize = 512;
-        #[cfg(not(debug_assertions))]
-        const MIN_NUM_BLOOM_ITEMS: usize = 65_536;
         let failed_inserts = self.failed_inserts.read().unwrap();
         // crds should be locked last after self.failed_inserts.
         let crds = crds.read().unwrap();
@@ -482,6 +498,9 @@ impl CrdsGossipPull {
         now: u64,
         // Predicate returning false if the CRDS value should be discarded.
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        // False drops the request before scanning CRDS.
+        // Implementations may consume caller-owned scan budget.
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
@@ -494,6 +513,7 @@ impl CrdsGossipPull {
         let output_size_limit = output_size_limit.try_into().unwrap_or(i64::MAX);
         let output_size_limit = AtomicI64::new(output_size_limit);
         let crds = crds.read().unwrap();
+        let crds_len = crds.len();
         let apply_filter = |request: &PullRequest| {
             if output_size_limit.load(Ordering::Relaxed) <= 0 {
                 return Vec::default();
@@ -502,6 +522,10 @@ impl CrdsGossipPull {
             let caller_wallclock = request.wallclock;
             if !caller_wallclock_window.contains(&caller_wallclock) {
                 dropped_requests.fetch_add(1, Ordering::Relaxed);
+                return Vec::default();
+            }
+            // Charge only requests that passed cheaper pre-scan checks.
+            if !try_consume_scan_budget(request, crds_len) {
                 return Vec::default();
             }
             let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
@@ -1132,6 +1156,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            |_, _| true, // try_consume_scan_budget
             &GossipStats::default(),
         );
 
@@ -1155,7 +1180,8 @@ pub(crate) mod tests {
             &requests,
             usize::MAX, // output_size_limit
             now,
-            |_| true, // should_retain_crds_value
+            |_| true,    // should_retain_crds_value
+            |_, _| true, // try_consume_scan_budget
             &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
@@ -1181,7 +1207,8 @@ pub(crate) mod tests {
             &requests,
             usize::MAX, // output_size_limit
             now,
-            |_| true, // should_retain_crds_value
+            |_| true,    // should_retain_crds_value
+            |_, _| true, // try_consume_scan_budget
             &GossipStats::default(),
         );
         assert_eq!(rsp.len(), 2 * MIN_NUM_BLOOM_FILTERS);
@@ -1272,9 +1299,10 @@ pub(crate) mod tests {
                 &thread_pool,
                 &dest_crds,
                 &requests,
-                usize::MAX, // output_size_limit
-                0,          // now
-                |_| true,   // should_retain_crds_value
+                usize::MAX,  // output_size_limit
+                0,           // now
+                |_| true,    // should_retain_crds_value
+                |_, _| true, // try_consume_scan_budget
                 &GossipStats::default(),
             );
             // if there is a false positive this is empty
