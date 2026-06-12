@@ -1,6 +1,6 @@
 use {
     crate::{
-        bit_vec::BitVec,
+        bit_vec::{BitVec, BitVecRef},
         blockstore::ParentInfo,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
@@ -295,6 +295,13 @@ pub struct Index {
     coding: ShredIndex,
 }
 
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct IndexRef<'a> {
+    pub slot: Slot,
+    data: ShredIndexRef<'a>,
+    coding: ShredIndexRef<'a>,
+}
+
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
 /// Erasure coding information
 pub struct ErasureMeta {
@@ -466,6 +473,12 @@ impl Index {
     }
 }
 
+impl IndexRef<'_> {
+    pub fn data(&self) -> &ShredIndexRef<'_> {
+        &self.data
+    }
+}
+
 /// A bitvec (`Box<[u8]>`) of shred indices, where each u8 represents 8 shred indices.
 ///
 /// Bit vec implementation provides:
@@ -532,6 +545,31 @@ impl FromIterator<u64> for ShredIndex {
             index.insert(idx);
         }
         index
+    }
+}
+
+/// A reference to a [`ShredIndex`].
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct ShredIndexRef<'a> {
+    index: BitVecRef<'a, MAX_DATA_SHREDS_PER_SLOT>,
+    num_shreds: usize,
+}
+
+impl ShredIndexRef<'_> {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index
+            .range((start, end))
+            .iter_ones()
+            .map(|idx| idx as u64)
     }
 }
 
@@ -1052,6 +1090,24 @@ mod test {
             )
     }
 
+    fn arb_index() -> impl Strategy<Value = Index> {
+        (
+            any::<Slot>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+        )
+            .prop_map(|(slot, data_indexes, coding_indexes)| {
+                let mut index = Index::new(slot);
+                for index_to_insert in data_indexes {
+                    index.data_mut().insert(index_to_insert);
+                }
+                for index_to_insert in coding_indexes {
+                    index.coding_mut().insert(index_to_insert);
+                }
+                index
+            })
+    }
+
     proptest! {
         // Property: `SlotMetaRepair` is always deserializable from serialized `SlotMeta`.
         #[test]
@@ -1071,6 +1127,29 @@ mod test {
             prop_assert_eq!(deserialized.last_index, slot_meta.last_index);
             prop_assert_eq!(deserialized.parent_slot, slot_meta.parent_slot);
             prop_assert_eq!(deserialized.next_slots, slot_meta.next_slots);
+        }
+    }
+
+    proptest! {
+        // Property: `IndexRef` is always deserializable from `Index`.
+        #[test]
+        fn test_index_ref_deserialization(
+            index in arb_index(),
+        ) {
+            let serialized = wincode::serialize(&index).unwrap();
+            let deserialized: IndexRef = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, index.slot);
+            prop_assert_eq!(
+                deserialized.data().range(..).collect::<Vec<_>>(),
+                index.data().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(
+                deserialized.coding.range(..).collect::<Vec<_>>(),
+                index.coding().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(deserialized.data().num_shreds(), index.data().num_shreds());
+            prop_assert_eq!(deserialized.coding.num_shreds(), index.coding().num_shreds());
         }
     }
 
