@@ -6,6 +6,7 @@ use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
     agave_votor_messages::consensus_message::ConsensusMessage,
+    crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
     solana_client::connection_cache::ConnectionCache,
@@ -28,9 +29,13 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
-    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
+    solana_quic_datagram::{
+        allowlist::AllowAll,
+        endpoint::{Datagram, QuicDatagramEndpoint},
+    },
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -57,16 +62,6 @@ use {
         time::{Duration, Instant},
     },
     wincode,
-};
-// Datagram-sniffing test helpers depend on quic-datagram's dev-only `AllowAll`
-// allowlist, so their imports are gated behind dev-context-only-utils too.
-use {
-    crossbeam_channel::bounded,
-    solana_net_utils::banlist::Banlist,
-    solana_quic_datagram::{
-        allowlist::AllowAll,
-        endpoint::{Datagram, QuicDatagramEndpoint},
-    },
 };
 
 /// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing

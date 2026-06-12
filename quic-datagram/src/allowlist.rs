@@ -46,10 +46,8 @@ impl Allowlist for StakedNodesAllowlist {
 }
 
 /// Allow every peer.
-#[cfg(any(test, feature = "dev-context-only-utils"))]
 pub struct AllowAll;
 
-#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl Allowlist for AllowAll {
     fn allow(&self, _: &Pubkey) -> bool {
         true

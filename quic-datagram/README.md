@@ -38,7 +38,7 @@ Two control loops, one per direction, each its own tokio task over a single
 - shutdown (`shutdown.cancelled()`)
 - identity rotation (`identity_rx.changed()`)
 - caller egress (`egress_rx.recv()`)
-- dial outcomes from spawned dial tasks (`events_rx.recv()` -> `OutboundEvent`)
+- dial outcomes from spawned dial tasks (`events_rx.recv()` -> `DialEvent`)
 - metrics-report timer (every 2 s)
 
 `InboundLoop::run` (we-accept, receive-only) selects over:
@@ -50,39 +50,49 @@ Two control loops, one per direction, each its own tokio task over a single
 - banlist-prune timer (hourly)
 - metrics-report timer (every 2 s)
 
-Heavy per-event work (TLS handshakes, dials) is spawned onto its own tasks that
-do the TLS/IO work then report back via channels. Event loops reclaim the relevant
-table slot on a `Closed` event emitted by per-connection tasks. The client side
-detects a dead connection two ways: the close-watcher reaps the slot proactively,
-and a send that returns `SendDatagramError::ConnectionLost` swaps the slot back
-to `Dialing` and re-dials.
+Statful per-connection work (TLS handshakes, dials) is spawned onto its own tasks
+that report back via channels when done. The inbound (server) loop reaps a table
+slot on the `Closed` event its read task emits when a connection ends. The
+outbound loop has no close event: it owns each `Connection` in an LRU and reclaims
+dead ones lazily - a send that returns `SendDatagramError::ConnectionLost` swaps
+the slot back to `Dialing` and re-dials, and a connection idle long enough to fall
+out of the LRU is evicted (and closed) when a newer peer takes its slot.
 
-The task -> loop channels are bounded, and every task sends with `send().await`.
-This can never deadlock: the loop is the only consumer of its channel and never
-sends into it.
+The task -> loop channels are bounded, and every task sends with `send().await`,
+so all events are eventually delivered.
 
 ## Connection table
 
-Two `HashMap`s keyed by peer pubkey, **owned exclusively by the control loop**:
-
-```text
-outgoing: HashMap<Pubkey, OutgoingEntry>
-incoming: HashMap<Pubkey, ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>>
-
-enum OutgoingEntry {
-    Dialing,                  // placeholder; one dial task in flight
-    Established(Connection),  // live send-only connection
-}
-```
-
 Each peer pair runs two independent unidirectional connections (one in
-each direction). The tables serve two purposes:
+each direction). The connection tables serve two purposes:
 * Admission control - one outbound connection per peer ID, and up to
   `MAX_INBOUND_CONNECTIONS_PER_PEER` (= 2) inbound connections per peer ID. Two
   inbounds let a same-identity hot-spare coexist with the original without a
   handover; a third is refused with `TABLE_FULL`.
 * Dispatch of egress packets - egress always picks the peer's `outgoing`
   connection (dialing one if absent).
+
+Two tables keyed by peer pubkey, each **owned exclusively by its control loop**:
+
+```text
+outgoing: LruCache<Pubkey, OutgoingEntry>  // capacity 2 × MAX_PEERS
+incoming: HashMap<Pubkey, ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>>
+
+enum OutgoingEntry {
+    Dialing,                           // placeholder; one dial task in flight
+    Established { conn: Connection },  // live send-only connection
+}
+```
+
+The outbound table is an LRU rather than a HashMap and the sole owner of
+each outbound `Connection`. It is critical that no client task hold any
+references to `Connection` objects, else such tasks may result in quinn
+resource leak (assuming server never closes our connection). As peers leave
+the staked set, we can end up with some stale idle connections (but they
+are of little consequence CPU cost wise), which will be reclaimed if needed
+by new peers. Any idle connection that ages out of the LRU should already be
+gone server-side if the server was not stuck, no explicit close code is provided
+for this path.
 
 ## Split send/receive directions
 
@@ -241,9 +251,7 @@ At the end of an epoch, we may experience churn in the allowlist.
 Some peers will no longer be allowed, while some new ones will be
 admitted. We will eventually break connections to peers which are
 no longer in the allowlist. This keeps the logic simpler than the
-explicit notify during epoch change. Buffers are sized with headroom
-(`MAX_PEERS` is ~2x votor's expected peer count), so transient
-allowlist churn is absorbed without trouble.
+explicit notify during epoch change.
 
 ## What this crate is not
 
