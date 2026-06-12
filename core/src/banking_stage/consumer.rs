@@ -509,14 +509,12 @@ mod tests {
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
-        solana_account::{AccountSharedData, state_traits::StateMut},
+        solana_account::AccountSharedData,
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
         solana_cost_model::cost_model::CostModel,
-        solana_fee_calculator::FeeCalculator,
-        solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
@@ -531,14 +529,11 @@ mod tests {
             MessageHeader, VersionedMessage,
             v0::{self, MessageAddressTableLookup},
         },
-        solana_nonce::{self as nonce, state::DurableNonce},
-        solana_nonce_account::verify_nonce_account,
         solana_poh::record_channels::{RecordReceiver, record_channels},
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
-        solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
         solana_transaction::{
             Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
@@ -619,21 +614,6 @@ mod tests {
             },
             addresses: Cow::Owned(addresses),
         }
-    }
-
-    fn store_nonce_account(
-        bank: &Bank,
-        account_address: Pubkey,
-        nonce_state: nonce::state::State,
-    ) -> AccountSharedData {
-        let mut account =
-            AccountSharedData::new(1, nonce::state::State::size(), &system_program::id());
-        account
-            .set_state(&nonce::versions::Versions::new(nonce_state))
-            .unwrap();
-        bank.store_account(&account_address, &account);
-
-        account
     }
 
     fn store_address_lookup_table(
@@ -734,74 +714,6 @@ mod tests {
         );
 
         assert_eq!(bank.get_balance(&pubkey), 1);
-    }
-
-    #[test]
-    fn test_bank_nonce_update_blockhash_queried_before_transaction_record() {
-        let TestFrame {
-            mint_keypair,
-            bank,
-            bank_forks: _bank_forks,
-            record_receiver: _record_receiver,
-            consumer,
-        } = setup_test(None);
-        let pubkey = Pubkey::new_unique();
-
-        // setup nonce account with a durable nonce different from the current
-        // bank so that it can be advanced in this bank
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_hash = *durable_nonce.as_hash();
-        let nonce_pubkey = Pubkey::new_unique();
-        let nonce_state = nonce::state::State::Initialized(nonce::state::Data {
-            authority: mint_keypair.pubkey(),
-            durable_nonce,
-            fee_calculator: FeeCalculator::new(5000),
-        });
-
-        store_nonce_account(&bank, nonce_pubkey, nonce_state);
-
-        // setup a valid nonce tx which will fail during execution
-        let transactions = sanitize_transactions(vec![system_transaction::nonced_transfer(
-            &mint_keypair,
-            &pubkey,
-            u64::MAX,
-            &nonce_pubkey,
-            &mint_keypair,
-            nonce_hash,
-        )]);
-        // get original backhash before we tick to the end.
-        let bank_hash = bank.last_blockhash();
-
-        while bank.tick_height() != bank.max_tick_height() - 1 {
-            bank.register_default_tick_for_test();
-        }
-
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
-        let ExecuteAndCommitTransactionsOutput {
-            transaction_counts,
-            commit_transactions_result,
-            ..
-        } = process_transactions_batch_output.execute_and_commit_transactions_output;
-
-        assert_eq!(
-            transaction_counts,
-            LeaderProcessedTransactionCounts {
-                attempted_processing_count: 1,
-                processed_count: 1,
-                processed_with_successful_result_count: 0,
-            }
-        );
-        assert!(commit_transactions_result.is_ok());
-        bank.register_default_tick_for_test();
-
-        // check that the nonce was advanced to the current bank's last blockhash
-        // rather than the current bank's blockhash as would occur had the update
-        // blockhash been queried _after_ transaction recording
-        let expected_nonce = DurableNonce::from_blockhash(&bank_hash);
-        let expected_nonce_hash = expected_nonce.as_hash();
-        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        assert!(verify_nonce_account(&nonce_account, expected_nonce_hash).is_some());
     }
 
     #[test]

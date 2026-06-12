@@ -621,13 +621,14 @@ mod tests {
         base64::{Engine, prelude::BASE64_STANDARD},
         jsonrpc_core::{IoHandler, Response},
         serial_test::serial,
-        solana_account::ReadableAccount,
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_account_decoder::{UiAccountEncoding, parse_account_data::parse_account_data_v3},
         solana_clock::Slot,
         solana_commitment_config::CommitmentConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::Message,
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_rpc_client_api::response::{
@@ -1024,14 +1025,23 @@ mod tests {
         .unwrap();
         rpc.block_until_processed(&rpc_subscriptions);
 
-        let ixs = system_instruction::create_nonce_account(
-            &alice.pubkey(),
-            &nonce_account.pubkey(),
-            &alice.pubkey(),
-            100,
-        );
-        let message = Message::new(&ixs, Some(&alice.pubkey()));
-        let tx = Transaction::new(&[&alice, &nonce_account], message, blockhash);
+        // Nonce instructions are disabled, so store an initialized nonce account
+        // directly to exercise jsonParsed account encoding
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
+        let nonce_state = nonce::versions::Versions::new(nonce::state::State::Initialized(
+            nonce::state::Data::new(alice.pubkey(), durable_nonce, 42),
+        ));
+        let mut account =
+            AccountSharedData::new_data(1, &nonce_state, &system_program::id()).unwrap();
+        account.set_rent_epoch(u64::MAX);
+        bank_forks
+            .read()
+            .unwrap()
+            .get(1)
+            .unwrap()
+            .store_account(&nonce_account.pubkey(), &account);
+
+        let tx = system_transaction::transfer(&alice, &nonce_account.pubkey(), 99, blockhash);
         process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
 
         // Test signature confirmation notification #1

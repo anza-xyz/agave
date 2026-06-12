@@ -2730,7 +2730,6 @@ fn _send_transaction(
     blockhash: Hash,
     wire_transaction: Vec<u8>,
     last_valid_block_height: u64,
-    durable_nonce_info: Option<(Pubkey, Hash)>,
     max_retries: Option<usize>,
 ) -> Result<String> {
     let transaction_info = TransactionInfo::new(
@@ -2739,7 +2738,6 @@ fn _send_transaction(
         blockhash,
         wire_transaction,
         last_valid_block_height,
-        durable_nonce_info,
         max_retries,
         None,
     );
@@ -3850,7 +3848,6 @@ pub mod rpc_full {
                 wire_transaction,
                 last_valid_block_height,
                 None,
-                None,
             )
         }
 
@@ -3904,14 +3901,10 @@ pub mod rpc_full {
                 .get_blockhash_last_valid_block_height(&blockhash)
                 .unwrap_or(0);
 
-            let durable_nonce_info = transaction
-                .get_durable_nonce()
-                .map(|&pubkey| (pubkey, blockhash));
-            if durable_nonce_info.is_some() || (skip_preflight && last_valid_block_height == 0) {
+            if skip_preflight && last_valid_block_height == 0 {
                 // While it uses a defined constant, this last_valid_block_height value is chosen arbitrarily.
-                // It provides a fallback timeout for durable-nonce transaction retries in case of
-                // malicious packing of the retry queue. Durable-nonce transactions are otherwise
-                // retried until the nonce is advanced.
+                // It provides a fallback timeout for transaction retries when the blockhash is
+                // unknown to the preflight bank.
                 last_valid_block_height =
                     preflight_bank.block_height() + preflight_bank.max_processing_age() as u64;
             }
@@ -3998,7 +3991,6 @@ pub mod rpc_full {
                 blockhash,
                 wire_transaction,
                 last_valid_block_height,
-                durable_nonce_info,
                 max_retries,
             )
         }

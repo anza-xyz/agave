@@ -34,9 +34,6 @@ pub struct SendTransactionServiceStats {
     /// Send failure count
     pub send_failure_count: AtomicU64,
 
-    /// Count of nonced transactions
-    pub nonced_transactions: AtomicU64,
-
     /// Count of rooted transactions
     pub rooted_transactions: AtomicU64,
 
@@ -108,11 +105,6 @@ impl SendTransactionServiceStatsReport {
                 (
                     "send-failure-count",
                     self.stats.send_failure_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "nonced-tx",
-                    self.stats.nonced_transactions.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
