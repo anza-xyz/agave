@@ -155,5 +155,9 @@ name = "blockstore"
 name = "make_shreds_from_entries"
 harness = false
 
+[[bench]]
+name = "protobuf"
+harness = false
+
 [lints]
 workspace = true
