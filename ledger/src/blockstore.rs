@@ -8,7 +8,9 @@ use {
     crate::{
         ancestor_iterator::AncestorIterator,
         blockstore::column::{Column, TypedColumn, columns as cf},
-        blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
+        blockstore_db::{
+            DBPinnedT, IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch,
+        },
         blockstore_meta::*,
         blockstore_options::{
             BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions, LedgerColumnOptions,
@@ -90,7 +92,7 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
-    wincode::{Deserialize as _, containers::Vec as WincodeVec},
+    wincode::{Deserialize as _, config::DefaultConfig, containers::Vec as WincodeVec},
 };
 
 pub mod blockstore_purge;
@@ -3849,6 +3851,14 @@ impl Blockstore {
         self.index_cf.get(slot)
     }
 
+    /// Get a DB pinned reference to the [`Index`] via [`IndexRef`].
+    pub fn get_index_ref(
+        &self,
+        slot: Slot,
+    ) -> Result<Option<DBPinnedT<'_, DefaultConfig, IndexRef<'_>>>> {
+        self.index_cf.get_pinned_t(slot)
+    }
+
     pub fn get_index_from_location(
         &self,
         slot: Slot,
@@ -3955,6 +3965,47 @@ impl Blockstore {
         missing_indexes
     }
 
+    /// Like [`Blockstore::find_missing_indexes`], but leverages a [`ShredIndexRef`] rather than traversing
+    /// RocksDB.
+    fn find_missing_indexes_from_shred_index(
+        index: &ShredIndexRef,
+        start_index: u64,
+        end_index: u64,
+        max_missing: usize,
+    ) -> Vec<u64> {
+        if start_index >= end_index || max_missing == 0 {
+            return vec![];
+        }
+
+        let max_missing = max_missing.min(end_index.saturating_sub(start_index) as usize);
+        if max_missing == 0 {
+            return vec![];
+        }
+
+        if index.num_shreds() == 0 {
+            return (start_index..end_index).take(max_missing).collect();
+        }
+
+        let mut missing_indexes = Vec::with_capacity(max_missing);
+        let mut prev_index = start_index;
+        for current_index in index.range(start_index..end_index) {
+            let num_to_take = max_missing - missing_indexes.len();
+            missing_indexes.extend((prev_index..current_index).take(num_to_take));
+
+            if missing_indexes.len() == max_missing {
+                break;
+            }
+
+            prev_index = current_index + 1;
+        }
+
+        if missing_indexes.len() < max_missing {
+            let num_to_take = max_missing - missing_indexes.len();
+            missing_indexes.extend((prev_index..end_index).take(num_to_take));
+        }
+
+        missing_indexes
+    }
     /// Find missing data shreds for the given `slot`.
     ///
     /// For more details on the arguments, see [`find_missing_indexes`].
@@ -3965,6 +4016,15 @@ impl Blockstore {
         end_index: u64,
         max_missing: usize,
     ) -> Vec<u64> {
+        if let Ok(Some(index)) = self.get_index_ref(slot) {
+            return Self::find_missing_indexes_from_shred_index(
+                index.data(),
+                start_index,
+                end_index,
+                max_missing,
+            );
+        }
+
         let Ok(mut db_iterator) = self.db.raw_iterator_cf(self.data_shred_cf.handle()) else {
             return vec![];
         };
