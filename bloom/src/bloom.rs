@@ -5,7 +5,6 @@ use {
     fnv::FnvHasher,
     rand::{self, Rng},
     serde::{Deserialize, Serialize},
-    solana_sanitize::{Sanitize, SanitizeError},
     solana_time_utils::AtomicInterval,
     std::{
         cmp, fmt,
@@ -52,17 +51,6 @@ impl<T: BloomHashIndex> fmt::Debug for Bloom<T> {
             write!(f, "..")?;
         }
         write!(f, " }}")
-    }
-}
-
-impl<T: BloomHashIndex> Sanitize for Bloom<T> {
-    fn sanitize(&self) -> Result<(), SanitizeError> {
-        // Avoid division by zero in self.pos(...).
-        if self.bits.is_empty() {
-            Err(SanitizeError::InvalidValue)
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -119,6 +107,9 @@ impl<T: BloomHashIndex> Bloom<T> {
         self.num_bits_set = 0;
     }
     pub fn add(&mut self, key: &T) {
+        if self.bits.is_empty() {
+            return;
+        }
         for k in &self.keys {
             let pos = self.pos(key, *k);
             if !self.bits.get(pos) {
@@ -128,6 +119,9 @@ impl<T: BloomHashIndex> Bloom<T> {
         }
     }
     pub fn contains(&self, key: &T) -> bool {
+        if self.keys.is_empty() || self.bits.is_empty() {
+            return false;
+        }
         for k in &self.keys {
             let pos = self.pos(key, *k);
             if !self.bits.get(pos) {
@@ -194,6 +188,9 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     /// Adds an item to the bloom filter and returns true if the item
     /// was not in the filter before.
     pub fn add(&self, key: &T) -> bool {
+        if self.bits.is_empty() {
+            return false;
+        }
         let mut added = false;
         for k in &self.keys {
             let (index, mask) = self.pos(key, *k);
@@ -204,6 +201,9 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     }
 
     pub fn contains(&self, key: &T) -> bool {
+        if self.keys.is_empty() || self.bits.is_empty() {
+            return false;
+        }
         self.keys.iter().all(|k| {
             let (index, mask) = self.pos(key, *k);
             let bit = self.bits[index].load(Ordering::Relaxed) & mask;
@@ -308,6 +308,7 @@ mod test {
         bloom.add(&key);
         assert!(bloom.contains(&key));
     }
+
     #[test]
     fn test_random() {
         let mut b1: Bloom<Hash> = Bloom::random(10, 0.1, 100);

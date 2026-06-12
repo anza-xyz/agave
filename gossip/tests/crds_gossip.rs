@@ -591,7 +591,8 @@ fn network_run_pull(
                                 &requests,
                                 usize::MAX, // output_size_limit
                                 now,
-                                |_| true, // should_retain_crds_value
+                                |_| true,    // should_retain_crds_value
+                                |_, _| true, // try_consume_scan_budget
                                 &GossipStats::default(),
                             )
                             .into_iter()
