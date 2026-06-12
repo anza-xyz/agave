@@ -818,8 +818,8 @@ pub fn execute(
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         tvu_bls_sigverify_threads,
-        delay_leader_block_for_pending_fork: matches
-            .is_present("delay_leader_block_for_pending_fork"),
+        delay_leader_block_for_pending_fork: !matches
+            .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
