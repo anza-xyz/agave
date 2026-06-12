@@ -9,6 +9,7 @@ pub mod fraction;
 pub mod migration;
 pub mod reward_certificate;
 pub mod vote;
+pub mod wire;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

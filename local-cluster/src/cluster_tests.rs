@@ -5,7 +5,9 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    agave_votor_messages::consensus_message::ConsensusMessage,
+    agave_votor_messages::{
+        consensus_message::ConsensusMessage, wire::VersionedWireConsensusMessage,
+    },
     crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -672,8 +674,15 @@ pub fn check_for_new_notarized_votes(
                     continue;
                 };
                 for packet in packet_batch.iter() {
-                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    let Ok(msg) = packet
+                        .deserialize_slice::<VersionedWireConsensusMessage, std::ops::RangeFull>(
+                            ..,
+                        )
                     else {
+                        continue;
+                    };
+                    let msg = ConsensusMessage::from(msg);
+                    let ConsensusMessage::Vote(vote_message) = msg else {
                         continue;
                     };
                     let vote = vote_message.vote;
