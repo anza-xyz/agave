@@ -117,7 +117,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
+    bls_sigverify_threads: (JoinHandle<()>, JoinHandle<()>),
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -127,7 +127,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
-    pub alpenglow: Option<UdpSocket>,
+    pub alpenglow: UdpSocket,
     pub block_id_repair: UdpSocket,
 }
 
@@ -279,9 +279,7 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
-        // The BLS socket is currently only available on Testnet and Development clusters.
-        // Closer to release we will enable this for all clusters.
-        let bls_sigverify_threads = if let Some(bls_socket) = bls_socket {
+        let bls_sigverify_threads = {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
             let (
@@ -342,9 +340,7 @@ impl Tvu {
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
 
-            Some((bls_streamer_t, bls_sigverifier_t))
-        } else {
-            None
+            (bls_streamer_t, bls_sigverifier_t)
         };
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -671,10 +667,9 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let Some((streamer, sigverifier)) = self.bls_sigverify_threads {
-            streamer.join()?;
-            sigverifier.join()?;
-        }
+        let (streamer, sigverifier) = self.bls_sigverify_threads;
+        streamer.join()?;
+        sigverifier.join()?;
         self.votor.join()?;
         self.commitment_service.join()?;
         Ok(())
