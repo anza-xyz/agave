@@ -24,9 +24,10 @@ pod_wrapper! {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5WqvPnvSnVXQFrAs9o29szFGDiCk45Pgk8K1evTZSrwo")
+    frozen_abi(digest = "V5tn1Fy593oSGoPb8kUhionjTsYmPzZz2yndre14mtE")
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[serde(rename_all = "camelCase")]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
@@ -42,7 +43,7 @@ pub struct Certificate {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "Fi1rPdeeVstWxxnnPiS7bYtXMEyX6sDGV4o3R2aDMnjt")
+    frozen_abi(digest = "Deqhjj9Zuenyr43Yf74w7ABmcBJsc4JAvyAkMTMVsaD")
 )]
 #[derive(
     Debug,
@@ -58,6 +59,7 @@ pub struct Certificate {
     SchemaWrite,
     SchemaRead,
 )]
+#[serde(rename_all = "camelCase")]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),

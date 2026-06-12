@@ -106,6 +106,7 @@ wincode = { workspace = true }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }

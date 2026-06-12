@@ -12,7 +12,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "Fd13KXQMkc1mCJEoHwyXWkcewqBCdRcAiMhS7Aqe4sm1")
+    frozen_abi(digest = "7uPC8WyBQstS99pAmTTsvDxVYZNghFyXFxcmLGyubeTw")
 )]
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead,
@@ -185,7 +185,7 @@ impl From<GenesisVote> for Vote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "F9veHPmSwMyrYNSVuBLcvLGYSLgc7voTD3kUhxUHUTRU")
+    frozen_abi(digest = "ACC3XdY2NWrv2oQY3TeTRJYSeHfKA9nPkzW3gFJYpxaN")
 )]
 #[derive(
     Clone,
@@ -259,7 +259,7 @@ pub struct SkipVote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "6UW4zutbRvyri4z8WAyKx8aUZkJrZX4XoiqC4XMUnUZk")
+    frozen_abi(digest = "GSzQqE5DxY3FZsMo7UKc6yuvtM62d4cwYNMMy2mvqZAP")
 )]
 #[derive(
     Clone,
@@ -307,7 +307,7 @@ pub struct SkipFallbackVote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "8ty2gETfpyVGPNMYrEFS1YXeDRprfZaisSAmJwoAYusb")
+    frozen_abi(digest = "74qvPxEMHafArzZn2FigKw1yZsXhTHdCPdVmT2n59389")
 )]
 #[derive(
     Clone,

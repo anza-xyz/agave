@@ -9690,6 +9690,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-accounts-db",
  "solana-address-lookup-table-interface",
+ "solana-bls-signatures",
  "solana-cli-output",
  "solana-client",
  "solana-clock",

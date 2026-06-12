@@ -24,7 +24,7 @@ pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "xCqtGMfgy9TMmCDZP9o4BidVTPKfMWrLmqxpRDLYwtR")
+    frozen_abi(digest = "6WhMwh89w1XSutggxz1xvwzJujtQaArC2qcWXtHjWeCF")
 )]
 #[derive(
     Clone,
@@ -41,6 +41,7 @@ pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
     SchemaWrite,
     SchemaRead,
 )]
+#[serde(rename_all = "camelCase")]
 pub struct Block {
     /// The slot in the block.
     pub slot: Slot,
@@ -52,7 +53,7 @@ pub struct Block {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "CTiXEk2aQbpf6TS6PNKcaTsGkLruDvAYsTLFhHKW2vsm")
+    frozen_abi(digest = "63d5DiF1EjGdZqrecafxGq1gPCCdvVw5viZFaxE8dRXS")
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
@@ -69,7 +70,7 @@ pub struct VoteMessage {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CbPatwRWz8NyUAj3HeAxAAWAWTxJnHGAfekLspUQpMHN")
+    frozen_abi(digest = "7AHxLiRVQY5mzLNSm4rAX6JhDgG5w6ebJ9QKYGV5paYP")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]
