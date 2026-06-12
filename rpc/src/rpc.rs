@@ -5239,6 +5239,45 @@ pub mod tests {
     }
 
     #[test]
+    fn test_rpc_get_ag_genesis_cert() {
+        use {
+            agave_votor_messages::{
+                certificate::{CertSignature, GenesisCert},
+                consensus_message::Block,
+            },
+            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        };
+
+        let rpc = RpcHandler::start();
+        // Seed the bank with a genesis certificate for the RPC to return.
+        rpc.working_bank()
+            .set_alpenglow_genesis_certificate(&GenesisCert {
+                block: Block {
+                    slot: 0,
+                    block_id: Hash::default(),
+                },
+                signature: CertSignature {
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: vec![1, 2, 3],
+                },
+            });
+
+        let request = create_test_request("getAgGenesisCert", None);
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        let expected = json!({
+            "block": {
+                "slot": 0,
+                "blockId": vec![0u8; 32],
+            },
+            "signature": {
+                "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
+                "bitmap": [1, 2, 3],
+            },
+        });
+        assert_eq!(result, expected);
+    }
+
+    #[test]
     fn test_rpc_get_cluster_nodes() {
         let rpc = RpcHandler::start();
         let version = solana_version::Version::default();
