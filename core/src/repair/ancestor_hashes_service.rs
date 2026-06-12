@@ -375,7 +375,6 @@ impl AncestorHashesService {
             stats.invalid_packets += 1;
             return None;
         };
-
         let mut cursor = Cursor::new(packet_data);
         let Ok(response) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
         else {
