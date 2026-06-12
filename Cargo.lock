@@ -81,6 +81,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls-sigverify"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "agave-bls-cert-verify",
+ "agave-bls-sigverify",
+ "agave-logger",
+ "agave-math-utils",
+ "agave-votor",
+ "agave-votor-messages",
+ "bincode",
+ "bitvec",
+ "criterion",
+ "crossbeam-channel",
+ "log",
+ "parking_lot 0.12.3",
+ "qualifier_attr",
+ "rayon",
+ "solana-bls-signatures",
+ "solana-clock",
+ "solana-epoch-schedule",
+ "solana-gossip",
+ "solana-hash 4.4.0",
+ "solana-keypair",
+ "solana-ledger",
+ "solana-measure",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-perf",
+ "solana-pubkey 4.2.0",
+ "solana-runtime",
+ "solana-signer",
+ "solana-signer-store",
+ "solana-streamer",
+ "thiserror 2.0.18",
+ "wincode",
+]
+
+[[package]]
 name = "agave-cpu-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -438,6 +476,7 @@ dependencies = [
 name = "agave-votor"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-bls-sigverify",
  "agave-logger",
  "agave-math-utils",
  "agave-votor",
@@ -496,6 +535,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor-messages",
+ "crossbeam-channel",
  "log",
  "serde",
  "solana-address 2.6.1",
@@ -1340,7 +1380,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -7757,6 +7797,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
+ "agave-bls-sigverify",
  "agave-feature-set",
  "agave-fs",
  "agave-logger",
@@ -8284,9 +8325,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.5.0"
+version = "3.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6fc5ab0701253517fdc7de93f965988cce05e52ac494f9c11e1f46742b2c346"
+checksum = "f47b47faa2099702dc4c764bd70806ac07166a2c81fd0c5154ed04c6e57e2b93"
 dependencies = [
  "bincode",
  "boxcar",

@@ -11,7 +11,7 @@ use {
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VerifiedVoterSlotsSender, VoteTracker,
+            VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -25,6 +25,7 @@ use {
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_votor::event::VotorEventSender,
+    agave_votor_messages::VerifiedVoterSlotsSender,
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,

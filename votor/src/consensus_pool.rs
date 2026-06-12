@@ -12,8 +12,8 @@ use {
             vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
         },
         event::VotorEvent,
-        generated_cert_types::GeneratedCertTypes,
     },
+    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, ConsensusMessage, VoteMessage},

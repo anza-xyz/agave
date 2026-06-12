@@ -1,22 +1,22 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
     crate::{
-        block_creation_loop::rewards::msg_types::AddVoteMessage,
-        bls_sigverify::{
-            bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
-            utils::{
-                send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair,
-                send_votes_to_rewards,
-            },
+        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
+        errors::SigVerifyVoteError,
+        rewards::rewards_wants_vote,
+        stats::SigVerifyVoteStats,
+        utils::{
+            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
     },
-    agave_votor::consensus_metrics::ConsensusMetricsEvent,
     agave_votor_messages::{
         consensus_message::{SigVerifiedBatch, VoteMessage},
+        metric_types::ConsensusMetricsEvent,
+        reward_certificate::AddVoteMessage,
         vote::Vote,
     },
+    log::info,
     rayon::{
         ThreadPool, current_thread_index,
         iter::{Either, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -139,7 +139,7 @@ fn process_verified_votes(
     let mut votes_for_pool = Vec::with_capacity(verified_votes.len());
     let mut votes_for_metrics = Vec::with_capacity(verified_votes.len());
     for payload in verified_votes {
-        if crate::block_creation_loop::rewards::certs_builder::wants_vote(
+        if rewards_wants_vote(
             cluster_info,
             leader_schedule,
             root_bank.slot(),
@@ -191,8 +191,8 @@ fn verify_votes(
             v.vote_message.vote.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY)
         })
         .collect::<Vec<_>>();
-    let num_discarded = len_before - votes_to_verify.len();
-    stats.too_far_in_future = stats.too_far_in_future.saturating_add(num_discarded as u64);
+    let num_discarded = len_before.saturating_sub(votes_to_verify.len());
+    stats.too_far_in_future += num_discarded as u64;
 
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
     let (optimistic_result, distinct_votes, distinct_payloads) =

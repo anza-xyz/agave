@@ -5,11 +5,9 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
-        block_creation_loop::{ReplayHighestFrozen, rewards::msg_types::AddVoteMessage},
-        bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
+        block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
-            VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
+            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
         cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
         commitment_service::AggregateCommitmentService,
@@ -28,16 +26,21 @@ use {
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
     },
-    agave_votor::{
-        consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+    agave_bls_sigverify::{
+        bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+    },
+    agave_votor::{
+        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::{
+        VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+    },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,

@@ -46,16 +46,13 @@
 use {
     crate::{
         commitment::CommitmentAggregationData,
-        consensus_metrics::{
-            ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
-        },
+        consensus_metrics::ConsensusMetrics,
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
         },
         event_handler::{EventHandler, EventHandlerContext},
-        generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
@@ -63,7 +60,11 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::consensus_message::{Block, SigVerifiedBatch},
+    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
+    agave_votor_messages::{
+        consensus_message::{Block, SigVerifiedBatch},
+        metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
+    },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,

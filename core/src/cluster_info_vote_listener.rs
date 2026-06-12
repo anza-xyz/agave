@@ -8,7 +8,7 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{VerifiedVoterSlotsSender, migration::MigrationStatus},
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
@@ -56,11 +56,6 @@ use {
 pub type ThresholdConfirmedSlots = Vec<(Slot, Hash)>;
 pub type VerifiedVoteTransactionsSender = Sender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = Receiver<Vec<Transaction>>;
-// Send side of verified voter channel.
-// Each message contains the Pubkey of the voter and the slots in last verified vote.
-pub type VerifiedVoterSlotsSender = Sender<(Pubkey, Vec<Slot>)>;
-// Receive side of verified voter channel.
-pub type VerifiedVoterSlotsReceiver = Receiver<(Pubkey, Vec<Slot>)>;
 pub type GossipVerifiedVoteHashSender = Sender<(Pubkey, Slot, Hash)>;
 pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
 pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;

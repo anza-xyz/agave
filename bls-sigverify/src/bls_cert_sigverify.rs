@@ -1,6 +1,6 @@
 use {
     super::{bls_sigverifier::BAN_TIMEOUT, errors::SigVerifyCertError, stats::SigVerifyCertStats},
-    crate::bls_sigverify::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
+    crate::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
@@ -8,6 +8,7 @@ use {
         fraction::Fraction,
     },
     crossbeam_channel::Sender,
+    log::info,
     rayon::{
         ThreadPool,
         iter::{IntoParallelIterator, ParallelIterator},
