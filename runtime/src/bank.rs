@@ -210,6 +210,7 @@ use {
         },
         time::{Duration, Instant},
     },
+    thiserror::Error,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -462,6 +463,16 @@ impl TransactionLogCollector {
             }),
         }
     }
+}
+
+#[derive(Error, Debug, Serialize, Deserialize)]
+pub enum VATHealthError {
+    #[error("vote account not found")]
+    VoteAccountNotFound,
+    #[error("missing BLS pubkey")]
+    NoBLSPubkey,
+    #[error("insufficient lamports in vote account: {0} < {1}")]
+    InsufficientFundsInVoteAccount(u64, u64),
 }
 
 /// Bank's common fields shared by all supported snapshot versions for deserialization.
@@ -2778,6 +2789,36 @@ impl Bank {
     /// Returns the Validator Admission Ticket burn for this bank's slot params.
     pub(crate) fn vat_to_burn_per_epoch(&self) -> u64 {
         self.current_slot_params().vat_to_burn_per_epoch()
+    }
+
+    pub fn get_vat_health_for_next_epoch(
+        &self,
+        vote_account_pubkey: &Pubkey,
+    ) -> std::result::Result<(), VATHealthError> {
+        let vote_accounts = self.vote_accounts();
+
+        let Some((_, vote_account)) = vote_accounts.get(vote_account_pubkey) else {
+            return Err(VATHealthError::VoteAccountNotFound);
+        };
+
+        if vote_account
+            .vote_state_view()
+            .bls_pubkey_compressed()
+            .is_none()
+        {
+            return Err(VATHealthError::NoBLSPubkey);
+        }
+
+        let my_balance = vote_account.lamports();
+        let minimum_vote_account_balance_for_vat = self.minimum_vote_account_balance_for_vat();
+        if vote_account.lamports() < minimum_vote_account_balance_for_vat {
+            return Err(VATHealthError::InsufficientFundsInVoteAccount(
+                my_balance,
+                minimum_vote_account_balance_for_vat,
+            ));
+        }
+
+        Ok(())
     }
 
     /// Returns the effective slot duration for `slot`.
