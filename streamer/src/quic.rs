@@ -7,6 +7,7 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic_socket::QuicSocket,
+        sharded_session_data_storage::ShardedSessionDataStorage,
         streamer::StakedNodes,
     },
     crossbeam_channel::Sender,
@@ -58,6 +59,8 @@ pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 
+const SHARED_DATA_STORAGE_SIZE: usize = 16 * 1024;
+
 /// Allow for 8 MB QUIC connection receive window (MAX_DATA). This is sufficient to
 /// support 200 Mbps upload rate at 320 ms RTT. It is unreasonable to expect a single
 /// connection to require more bandwidth. This prevents MAX_DATA from affecting
@@ -101,6 +104,10 @@ pub(crate) fn configure_server(
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     server_tls_config.key_log = Arc::new(KeyLogFile::new());
+
+    server_tls_config.session_storage = ShardedSessionDataStorage::new(SHARED_DATA_STORAGE_SIZE);
+    server_tls_config.send_tls13_tickets = 1;
+
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
