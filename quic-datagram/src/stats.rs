@@ -29,8 +29,6 @@ pub(crate) struct QuicDatagramStats {
     /// The dialer evicted a cached outbound connection because the caller
     /// supplied a new socket addr for the same pubkey (peer moved).
     pub(crate) connection_evicted_peer_moved: AtomicU64,
-    /// Connection evicted because we no longer use it.
-    pub(crate) connection_evicted_idle: AtomicU64,
 
     // --- Error buckets ---
     /// A connection failed abnormally: dial setup error, protocol-level
@@ -135,11 +133,6 @@ pub(crate) fn report_client(stats: &QuicDatagramStats, live_connections: u64) {
         (
             "connection_evicted_identity_rotated",
             swap!(stats.connection_evicted_identity_rotated),
-            i64
-        ),
-        (
-            "connection_evicted_idle",
-            swap!(stats.connection_evicted_idle),
             i64
         ),
     );

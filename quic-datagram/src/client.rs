@@ -1,7 +1,7 @@
 //! Outbound (client) direction: we-dial, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, EGRESS_IDLE_REAP_THRESHOLD, close_codes,
+        ALPENGLOW_ALPN, close_codes,
         endpoint::{Datagram, METRICS_INTERVAL},
         error::Error,
         stats::{self, QuicDatagramStats, add, record_error},
@@ -9,12 +9,12 @@ use {
     },
     bytes::Bytes,
     log::{error, info, warn},
+    lru::LruCache,
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_net_utils::banlist::Banlist,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::{get_remote_pubkey, socket_addr_to_quic_server_name},
     std::{
-        collections::{HashMap, hash_map::Entry},
         mem,
         net::SocketAddr,
         sync::{Arc, atomic::Ordering},
@@ -22,7 +22,7 @@ use {
     tokio::{
         spawn,
         sync::{mpsc, watch},
-        time::{Instant, MissedTickBehavior, interval},
+        time::{MissedTickBehavior, interval},
     },
     tokio_util::sync::CancellationToken,
 };
@@ -31,28 +31,15 @@ use {
 pub(crate) enum OutgoingEntry {
     /// Dialing attempt in progress.
     Dialing,
-    Established {
-        conn: Connection,
-        /// When we last sent a datagram on the connection
-        last_used: Instant,
-    },
+    /// Live send-only connection.
+    Established { conn: Connection },
 }
 
-/// Event reported by a dial task or close-watcher to the outbound control loop.
-pub(crate) enum OutboundEvent {
-    /// Dial result: `Ok(conn)` on success, `Err(())` if the dial or identity
-    /// check failed.
-    Dialed {
-        peer: Pubkey,
-        generation: u64,
-        outcome: Result<Connection, ()>,
-    },
-    /// An established outbound connection closed; the loop reaps its slot.
-    Closed {
-        peer: Pubkey,
-        generation: u64,
-        stable_id: usize,
-    },
+/// Dial result reported by a dial task to the outbound control loop.
+pub(crate) struct DialEvent {
+    pub(crate) peer: Pubkey,
+    pub(crate) generation: u64,
+    pub(crate) outcome: Result<Connection, ()>,
 }
 
 pub(crate) struct ClientConnection {
@@ -61,7 +48,7 @@ pub(crate) struct ClientConnection {
     pub(crate) addr: SocketAddr,
     pub(crate) generation: u64,
     pub(crate) trigger: Bytes,
-    pub(crate) events: mpsc::Sender<OutboundEvent>,
+    pub(crate) events: mpsc::Sender<DialEvent>,
     pub(crate) stats: Arc<QuicDatagramStats>,
 }
 
@@ -88,7 +75,7 @@ impl ClientConnection {
         // send fails there is nothing left to do.
         let _ = self
             .events
-            .send(OutboundEvent::Dialed {
+            .send(DialEvent {
                 peer: self.peer,
                 generation: self.generation,
                 outcome,
@@ -120,11 +107,14 @@ pub(crate) struct OutboundLoop {
     pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     /// Outbound table (per-peer send-only connection state).
-    pub(crate) outgoing: HashMap<Pubkey, OutgoingEntry, PubkeyHasherBuilder>,
+    /// Idle connections are reclaimed lazily: `outgoing` is the sole owner of each
+    /// `Connection`, so anything evicted/popped from the LRU closes the
+    /// connection via quinn's implicit close.
+    pub(crate) outgoing: LruCache<Pubkey, OutgoingEntry, PubkeyHasherBuilder>,
     /// Channel for spawned tasks to report their lifetime events
-    pub(crate) events_tx: mpsc::Sender<OutboundEvent>,
+    pub(crate) events_tx: mpsc::Sender<DialEvent>,
     /// Channel for spawned tasks to report their lifetime events
-    pub(crate) events_rx: mpsc::Receiver<OutboundEvent>,
+    pub(crate) events_rx: mpsc::Receiver<DialEvent>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) stats: Arc<QuicDatagramStats>,
 }
@@ -141,77 +131,55 @@ impl OutboundLoop {
     ///     * send failed due to dead connection (-> true),
     /// * established to a different addr -> evict (`PEER_MOVED`) (-> true).
     fn send_outbound(&mut self, peer: Pubkey, addr: SocketAddr, bytes: &Bytes) -> bool {
-        match self.outgoing.entry(peer) {
-            Entry::Vacant(slot) => {
-                slot.insert(OutgoingEntry::Dialing);
+        // `get_mut` bumps the peer to most-recently-used in LRU
+        let Some(entry) = self.outgoing.get_mut(&peer) else {
+            // Vacant - register a dialing placeholder and ask the caller to dial.
+            // If this overflows the LRU it evicts the least-recently-used entry;
+            // any displaced `Connection` is closed implicitly when it drops here.
+            // We don't close it explicitly: a connection idle long enough to fall
+            // out of the LRU should already have been axed server-side by the idle
+            // timeout, so there is nothing useful left to signal.
+            self.outgoing.push(peer, OutgoingEntry::Dialing);
+            return true;
+        };
+        match entry {
+            OutgoingEntry::Dialing => {
+                self.stats
+                    .egress_dropped_dial_in_progress
+                    .fetch_add(1, Ordering::Relaxed);
+                false
+            }
+            OutgoingEntry::Established { conn } if conn.remote_address() == addr => {
+                match conn.send_datagram(bytes.clone()) {
+                    Ok(()) => {
+                        add(&self.stats.datagrams_sent);
+                        false
+                    }
+                    Err(SendDatagramError::ConnectionLost(_)) => {
+                        // Connection is dead; swap to Dialing so the caller
+                        // re-dials with this datagram as trigger.
+                        *entry = OutgoingEntry::Dialing;
+                        true
+                    }
+                    Err(e) => {
+                        record_error(&Error::from(e), &self.stats);
+                        false
+                    }
+                }
+            }
+            OutgoingEntry::Established { .. } => {
+                // Peer moved - swap the slot to `Dialing`...
+                let old = mem::replace(entry, OutgoingEntry::Dialing);
+                // ... and close the displaced connection with PEER_MOVED.
+                if let OutgoingEntry::Established { conn: old_conn } = old {
+                    close_codes::PEER_MOVED.close(&old_conn);
+                    self.stats
+                        .connection_evicted_peer_moved
+                        .fetch_add(1, Ordering::Relaxed);
+                    info!("peer {peer} moved; re-dialing at {addr}");
+                }
                 true
             }
-            Entry::Occupied(mut slot) => match slot.get() {
-                OutgoingEntry::Dialing => {
-                    self.stats
-                        .egress_dropped_dial_in_progress
-                        .fetch_add(1, Ordering::Relaxed);
-                    false
-                }
-                OutgoingEntry::Established { conn, .. } if conn.remote_address() == addr => {
-                    match conn.send_datagram(bytes.clone()) {
-                        Ok(()) => {
-                            add(&self.stats.datagrams_sent);
-                            // Mark the connection as freshly used so the idle
-                            // reaper leaves it alone.
-                            if let OutgoingEntry::Established { last_used, .. } = slot.get_mut() {
-                                *last_used = Instant::now();
-                            }
-                            false
-                        }
-                        Err(SendDatagramError::ConnectionLost(_)) => {
-                            // Connection is dead; swap to Dialing so the
-                            // caller re-dials with this datagram as trigger.
-                            *slot.get_mut() = OutgoingEntry::Dialing;
-                            true
-                        }
-                        Err(e) => {
-                            record_error(&Error::from(e), &self.stats);
-                            false
-                        }
-                    }
-                }
-                OutgoingEntry::Established { .. } => {
-                    // Peer moved - swap the slot to `Dialing`...
-                    let old = mem::replace(slot.get_mut(), OutgoingEntry::Dialing);
-                    // ... and close the displaced connection with PEER_MOVED.
-                    if let OutgoingEntry::Established { conn: old_conn, .. } = old {
-                        close_codes::PEER_MOVED.close(&old_conn);
-                        self.stats
-                            .connection_evicted_peer_moved
-                            .fetch_add(1, Ordering::Relaxed);
-                        info!("peer {peer} moved; re-dialing at {addr}");
-                    }
-                    true
-                }
-            },
-        }
-    }
-
-    /// Close established outbound connections that upstream is not using.
-    fn close_idle_connections(&mut self) {
-        let now = Instant::now();
-        let mut reaped = 0u64;
-        self.outgoing.retain(|_peer, entry| {
-            if let OutgoingEntry::Established { conn, last_used } = entry
-                && now.duration_since(*last_used) >= EGRESS_IDLE_REAP_THRESHOLD
-            {
-                close_codes::IDLE.close(conn);
-                reaped = reaped.saturating_add(1);
-                return false;
-            }
-            true
-        });
-        if reaped > 0 {
-            self.stats
-                .connection_evicted_idle
-                .fetch_add(reaped, Ordering::Relaxed);
-            info!("Closed {reaped} idle outbound connection(s)");
         }
     }
 
@@ -239,7 +207,7 @@ impl OutboundLoop {
                 }
                 // Dial outcomes must come ahead of egress to ensure new
                 // connections are registered even when egress is busy.
-                Some(event) = self.events_rx.recv() => self.handle_event(event),
+                Some(event) = self.events_rx.recv() => self.handle_dial_event(event),
                 // Egress
                 maybe_datagram = self.egress_rx.recv() => {
                     let Some(datagram) = maybe_datagram else { break };
@@ -247,7 +215,6 @@ impl OutboundLoop {
                 }
                 // Bookkeeping is best effort
                 _ = bookkeeping_timer.tick() => {
-                    self.close_idle_connections();
                     stats::report_client(&self.stats, self.outgoing.len() as u64);
                 }
                 // Shutdown is never something we do in a hurry
@@ -269,13 +236,17 @@ impl OutboundLoop {
         self.generation = self.generation.wrapping_add(1);
         let evicted = self
             .outgoing
-            .drain()
-            .map(|(_, entry)| {
-                if let OutgoingEntry::Established { conn, .. } = entry {
-                    close_codes::IDENTITY_ROTATED.close(&conn);
+            .iter()
+            .map(|(_peer, entry)| {
+                if let OutgoingEntry::Established { conn } = entry {
+                    close_codes::IDENTITY_ROTATED.close(conn);
+                    1
+                } else {
+                    0
                 }
             })
-            .count() as u64;
+            .sum();
+        self.outgoing.clear();
         self.stats
             .connection_evicted_identity_rotated
             .fetch_add(evicted, Ordering::Relaxed);
@@ -314,21 +285,15 @@ impl OutboundLoop {
         );
     }
 
-    /// Apply a dial result or a connection-close notification.
-    fn handle_event(&mut self, event: OutboundEvent) {
-        let (peer, generation) = match &event {
-            OutboundEvent::Dialed {
-                peer, generation, ..
-            }
-            | OutboundEvent::Closed {
-                peer, generation, ..
-            } => (*peer, *generation),
-        };
+    /// Cleans up Dialing placeholder (if still there), then registers the connection.
+    fn handle_dial_event(&mut self, event: DialEvent) {
+        let DialEvent {
+            peer,
+            generation,
+            outcome,
+        } = event;
         if generation != self.generation {
-            if let OutboundEvent::Dialed {
-                outcome: Ok(conn), ..
-            } = event
-            {
+            if let Ok(conn) = outcome {
                 close_codes::IDENTITY_ROTATED.close(&conn);
                 self.stats
                     .connection_evicted_identity_rotated
@@ -336,62 +301,23 @@ impl OutboundLoop {
             }
             return;
         }
-        match event {
-            OutboundEvent::Dialed {
-                outcome: Ok(conn), ..
-            } => match self.outgoing.get_mut(&peer) {
+        match outcome {
+            Ok(conn) => match self.outgoing.get_mut(&peer) {
                 Some(slot @ OutgoingEntry::Dialing) => {
-                    // The dial task already sent the trigger datagram, so the
-                    // connection is freshly used as of now.
-                    *slot = OutgoingEntry::Established {
-                        conn: conn.clone(),
-                        last_used: Instant::now(),
-                    };
+                    *slot = OutgoingEntry::Established { conn };
                     self.stats
                         .record_connection_count(self.outgoing.len() as u64);
-                    self.spawn_close_watcher(peer, conn);
                 }
                 _ => {
                     close_codes::IDENTITY_ROTATED.close(&conn);
                     record_error(&Error::IdentityRotated(peer), &self.stats);
                 }
             },
-            OutboundEvent::Dialed {
-                outcome: Err(()), ..
-            } => {
-                if let Entry::Occupied(slot) = self.outgoing.entry(peer)
-                    && matches!(slot.get(), OutgoingEntry::Dialing)
-                {
-                    slot.remove();
-                }
-            }
-            // Reap only if the closed connection is still the one we hold; a
-            // re-dial may have already replaced it.
-            OutboundEvent::Closed { stable_id, .. } => {
-                if let Entry::Occupied(slot) = self.outgoing.entry(peer)
-                    && matches!(slot.get(), OutgoingEntry::Established { conn, .. } if conn.stable_id() == stable_id)
-                {
-                    slot.remove();
+            Err(()) => {
+                if matches!(self.outgoing.peek(&peer), Some(OutgoingEntry::Dialing)) {
+                    self.outgoing.pop(&peer);
                 }
             }
         }
-    }
-
-    /// Watch an established connection and report [`OutboundEvent::Closed`] when
-    /// it ends so the loop can reap the slot.
-    fn spawn_close_watcher(&self, peer: Pubkey, conn: Connection) {
-        let events = self.events_tx.clone();
-        let generation = self.generation;
-        spawn(async move {
-            let stable_id = conn.stable_id();
-            conn.closed().await;
-            let _ = events
-                .send(OutboundEvent::Closed {
-                    peer,
-                    generation,
-                    stable_id,
-                })
-                .await;
-        });
     }
 }

@@ -30,8 +30,7 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
-    /// Votor QUIC datagram endpoint key updater (single endpoint multiplexes
-    /// inbound consensus messages and outbound votes/certs).
+    /// Votor QUIC datagram endpoint key updater
     VotorDatagram,
 }
 

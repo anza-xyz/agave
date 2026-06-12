@@ -50,14 +50,11 @@ pub const BAN_DURATION_DOS: Duration = Duration::from_hours(48);
 pub const HANDSHAKE_GLOBAL_BURST: u64 = 200;
 
 /// Sustained inbound TLS handshake rate across all peers (handshakes/second).
-pub const HANDSHAKE_GLOBAL_RATE: f64 = 400.0;
+pub const HANDSHAKE_GLOBAL_RATE: f64 = 800.0;
 
 /// How often each connection's read loop re-checks whether the peer is still
 /// in the allowlist and closes any remaining connections.
 pub const ALLOWLIST_CHECK_INTERVAL: Duration = Duration::from_secs(10);
-
-/// An outbound connection untouched by upstream for this long is closed.
-pub const EGRESS_IDLE_REAP_THRESHOLD: Duration = Duration::from_mins(10);
 
 /// ALPN protocol identifier for the Alpenglow votor datagram transport.
 pub const ALPENGLOW_ALPN: &[u8] = b"alpenglow-v1";

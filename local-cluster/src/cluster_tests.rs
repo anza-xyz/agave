@@ -583,12 +583,11 @@ pub fn check_for_new_processed(
 }
 
 /// Spawn a votor-flavored quic-datagram endpoint to sniff vote / cert
-/// traffic for a local-cluster test. Validators in the cluster dial
-/// this via the `VotingServiceOverride` peer-socket override map;
+/// traffic for a local-cluster test.
 ///
 /// Returns the endpoint, the ingress receiver, and a tokio runtime
 /// handle whose lifetime must outlive the endpoint.
-pub fn start_datagram_listener_for_votes_and_certs(
+pub fn start_datagram_listener_for_alpenglow_votor(
     vote_listener_socket: UdpSocket,
     listener_keypair: Keypair,
 ) -> (
@@ -644,7 +643,7 @@ pub fn check_for_new_notarized_votes(
     let test_name_owned = test_name.to_string();
 
     let (_endpoint, receiver, _rt) =
-        start_datagram_listener_for_votes_and_certs(vote_listener_socket, listener_keypair);
+        start_datagram_listener_for_alpenglow_votor(vote_listener_socket, listener_keypair);
 
     // Now start vote listener and wait for new notarized votes.
     let vote_listener = std::thread::spawn({

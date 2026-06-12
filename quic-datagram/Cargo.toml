@@ -26,6 +26,7 @@ crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
+lru = { workspace = true }
 quinn = { workspace = true }
 quinn-proto = { workspace = true }
 rustls = { workspace = true }

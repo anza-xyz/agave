@@ -53,11 +53,6 @@ pub(crate) mod close_codes {
         code: VarInt::from_u32(12),
         reason: b"PEER_MOVED",
     };
-
-    pub(crate) const IDLE: Spec = Spec {
-        code: VarInt::from_u32(13),
-        reason: b"IDLE",
-    };
 }
 
 /// All errors observed by the endpoint. Returned from public APIs and stamped

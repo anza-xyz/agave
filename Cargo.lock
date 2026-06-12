@@ -9640,6 +9640,7 @@ dependencies = [
  "futures 0.3.32",
  "lazy-lru",
  "log",
+ "lru 0.18.0",
  "quinn",
  "quinn-proto",
  "rustls",
