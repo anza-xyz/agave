@@ -36,7 +36,7 @@ use {
     lru::LruCache,
     rand::Rng,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
-    rocksdb::{DBRawIterator, LiveFile},
+    rocksdb::LiveFile,
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{Slot, UnixTimestamp},
@@ -3905,74 +3905,27 @@ impl Blockstore {
     /// [`start_index`, `end_index`].
     ///
     /// Arguments:
-    ///  - `db_iterator`: Iterator to run search over.
     ///  - `slot`: The slot to search for missing shreds for.
     ///  - `start_index`: Begin search (inclusively) at this shred index.
     ///  - `end_index`: Finish search (exclusively) at this shred index.
     ///  - `max_missing`: Limit result to this many indices.
-    fn find_missing_indexes<C>(
-        db_iterator: &mut DBRawIterator,
+    pub fn find_missing_data_indexes(
+        &self,
         slot: Slot,
         start_index: u64,
         end_index: u64,
         max_missing: usize,
-    ) -> Vec<u64>
-    where
-        C: Column<Index = (u64, u64)>,
-    {
-        if start_index >= end_index || max_missing == 0 {
-            return vec![];
-        }
-
-        let mut missing_indexes = vec![];
-
-        // Seek to the first shred with index >= start_index
-        db_iterator.seek(C::key(&(slot, start_index)));
-
-        // The index of the first missing shred in the slot
-        let mut prev_index = start_index;
-        loop {
-            if !db_iterator.valid() {
-                let num_to_take = max_missing - missing_indexes.len();
-                missing_indexes.extend((prev_index..end_index).take(num_to_take));
-                break;
-            }
-            let (current_slot, index) = C::index(db_iterator.key().expect("Expect a valid key"));
-
-            let current_index = {
-                if current_slot > slot {
-                    end_index
-                } else {
-                    index
-                }
-            };
-
-            let upper_index = cmp::min(current_index, end_index);
-            let num_to_take = max_missing - missing_indexes.len();
-            missing_indexes.extend((prev_index..upper_index).take(num_to_take));
-
-            if missing_indexes.len() == max_missing
-                || current_slot > slot
-                || current_index >= end_index
-            {
-                break;
-            }
-
-            prev_index = current_index + 1;
-            db_iterator.next();
-        }
-
-        missing_indexes
-    }
-
-    /// Like [`Blockstore::find_missing_indexes`], but leverages a [`ShredIndexRef`] rather than traversing
-    /// RocksDB.
-    fn find_missing_indexes_from_shred_index(
-        index: &ShredIndexRef,
-        start_index: u64,
-        end_index: u64,
-        max_missing: usize,
     ) -> Vec<u64> {
+        let index = match self.get_index_ref(slot) {
+            Ok(Some(index)) => index,
+            Ok(None) => return (start_index..end_index).take(max_missing).collect(),
+            Err(err) => {
+                warn!("failed to read index for slot {slot}: {err}");
+                return vec![];
+            }
+        };
+        let index = index.data();
+
         if start_index >= end_index || max_missing == 0 {
             return vec![];
         }
@@ -4005,37 +3958,6 @@ impl Blockstore {
         }
 
         missing_indexes
-    }
-    /// Find missing data shreds for the given `slot`.
-    ///
-    /// For more details on the arguments, see [`find_missing_indexes`].
-    pub fn find_missing_data_indexes(
-        &self,
-        slot: Slot,
-        start_index: u64,
-        end_index: u64,
-        max_missing: usize,
-    ) -> Vec<u64> {
-        if let Ok(Some(index)) = self.get_index_ref(slot) {
-            return Self::find_missing_indexes_from_shred_index(
-                index.data(),
-                start_index,
-                end_index,
-                max_missing,
-            );
-        }
-
-        let Ok(mut db_iterator) = self.db.raw_iterator_cf(self.data_shred_cf.handle()) else {
-            return vec![];
-        };
-
-        Self::find_missing_indexes::<cf::ShredData>(
-            &mut db_iterator,
-            slot,
-            start_index,
-            end_index,
-            max_missing,
-        )
     }
 
     fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {

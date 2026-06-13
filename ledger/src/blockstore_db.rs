@@ -20,8 +20,8 @@ use {
     prost::Message,
     rocksdb::{
         self, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DB, DBCompressionType,
-        DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode as RocksIteratorMode, LiveFile,
-        Options, WriteBatch as RWriteBatch,
+        DBIterator, DBPinnableSlice, IteratorMode as RocksIteratorMode, LiveFile, Options,
+        WriteBatch as RWriteBatch,
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties,
@@ -400,7 +400,8 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator<'_>> {
+    #[cfg(test)]
+    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<rocksdb::DBRawIterator<'_>> {
         Ok(self.db.raw_iterator_cf(cf))
     }
 
