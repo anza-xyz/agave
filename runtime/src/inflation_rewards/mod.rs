@@ -6,17 +6,13 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::{
-        alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes,
-        stake_delegation::effective_stake,
-    },
+    crate::{alpenglow_epoch_type::AlpenglowEpochType, stake_delegation::effective_stake},
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
         state::{Delegation, Stake},
     },
-    std::collections::HashMap,
 };
 
 pub mod points;
@@ -41,7 +37,6 @@ pub(crate) fn redeem_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     current_lamports: u64,
     minimum_lamports: u64,
 ) -> Result<(u64, u64, Stake), InstructionError> {
@@ -88,7 +83,6 @@ pub(crate) fn redeem_rewards<'a>(
         calculation_environment,
         inflation_point_calc_tracer,
         ag_epoch_type,
-        epoch_stakes,
         current_lamports,
         minimum_lamports,
     ) {
@@ -105,7 +99,6 @@ fn redeem_stake_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     current_lamports: u64,
     minimum_lamports: u64,
 ) -> Option<(u64, u64)> {
@@ -125,7 +118,6 @@ fn redeem_stake_rewards<'a>(
         calculation_environment,
         inflation_point_calc_tracer.as_ref(),
         ag_epoch_type,
-        epoch_stakes,
     )
     .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
@@ -210,7 +202,6 @@ fn calculate_stake_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
 ) -> Option<CalculatedStakeRewards> {
     let CalculationEnvironment {
         stake_history,
@@ -234,7 +225,6 @@ fn calculate_stake_rewards<'a>(
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
         ag_epoch_type,
-        epoch_stakes,
         use_fixed_point_stake_math,
     );
 
@@ -253,23 +243,38 @@ fn calculate_stake_rewards<'a>(
         force_credits_update_with_skipped_reward = true;
     }
 
-    if force_credits_update_with_skipped_reward {
-        return Some(CalculatedStakeRewards {
+    // Once alpenglow is active we no longer allow for epochs where rewards are not redeemed.
+    let advance_credits_for_skipped_reward = !matches!(ag_epoch_type, AlpenglowEpochType::Tower)
+        && new_credits_observed != stake.credits_observed;
+    let skipped_reward = || {
+        Some(CalculatedStakeRewards {
             staker_rewards: 0,
             voter_rewards: 0,
             new_credits_observed,
-        });
+        })
+    };
+
+    let skip_reward = |reason: SkippedReason| {
+        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
+            inflation_point_calc_tracer(&reason.into());
+        }
+        if advance_credits_for_skipped_reward {
+            skipped_reward()
+        } else {
+            None
+        }
+    };
+
+    if force_credits_update_with_skipped_reward {
+        return skipped_reward();
     }
 
     let rewards = match ag_epoch_type {
         AlpenglowEpochType::Alpenglow { .. } => {
             if ag_points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPoints.into());
-                }
-                return None;
+                return skip_reward(SkippedReason::ZeroPoints);
             }
-            // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
+            // In alpenglow, `points` represents the actual reward that this `stake` earned.
             ag_points
         }
         AlpenglowEpochType::Tower => {
@@ -300,16 +305,10 @@ fn calculate_stake_rewards<'a>(
             ..
         } => {
             if tower_points == 0 && ag_points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPoints.into());
-                }
-                return None;
+                return skip_reward(SkippedReason::ZeroPoints);
             }
             if ag_points == 0 && point_value.points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPointValue.into());
-                }
-                return None;
+                return skip_reward(SkippedReason::ZeroPointValue);
             }
             let total_slots = (num_tower_slots + num_ag_slots) as u128;
             let tower_points = tower_points
@@ -329,10 +328,7 @@ fn calculate_stake_rewards<'a>(
 
     // don't bother trying to split if fractional lamports got truncated
     if rewards == 0 {
-        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-            inflation_point_calc_tracer(&SkippedReason::ZeroReward.into());
-        }
-        return None;
+        return skip_reward(SkippedReason::ZeroReward);
     }
     let (voter_rewards, staker_rewards, is_split) = commission_split(voter_commission_bps, rewards);
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -348,10 +344,7 @@ fn calculate_stake_rewards<'a>(
         // don't collect if we lose a whole lamport somewhere
         //  is_split means there should be tokens on both sides,
         //  uncool to move credits_observed if one side didn't get paid
-        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-            inflation_point_calc_tracer(&SkippedReason::TooEarlyUnfairSplit.into());
-        }
-        return None;
+        return skip_reward(SkippedReason::TooEarlyUnfairSplit);
     }
 
     Some(CalculatedStakeRewards {
