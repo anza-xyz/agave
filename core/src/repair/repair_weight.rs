@@ -13,7 +13,8 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_ledger::{
-        ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_meta::SlotMeta,
+        ancestor_iterator::AncestorIterator, blockstore::Blockstore,
+        blockstore_meta::SlotMetaRepair,
     },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
@@ -502,7 +503,7 @@ impl RepairWeight {
     fn get_best_shreds(
         &mut self,
         blockstore: &Blockstore,
-        slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+        slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
         repair_eligibility: &mut RepairEligibility,
@@ -600,7 +601,7 @@ impl RepairWeight {
     fn get_best_unknown_last_index(
         &mut self,
         blockstore: &Blockstore,
-        slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+        slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -630,7 +631,7 @@ impl RepairWeight {
     fn get_best_closest_completion(
         &mut self,
         blockstore: &Blockstore,
-        slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+        slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
         repair_eligibility: &mut RepairEligibility,

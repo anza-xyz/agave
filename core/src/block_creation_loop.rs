@@ -8,8 +8,7 @@ use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor,
-            msg_types::{AddVoteMessage, RewardRespSucc},
+            certs_requestor::CertsRequestor, msg_types::RewardRespSucc,
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -17,7 +16,7 @@ use {
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -517,7 +516,7 @@ fn produce_block_footer(
 
     if let Some(parent_bank) = bank.parent() {
         // Get parent time from alpenglow clock (nanoseconds) or fall back to clock sysvar (seconds -> nanoseconds)
-        let parent_time_nanos = bank
+        let parent_time_nanos = parent_bank
             .get_nanosecond_clock()
             .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
         let parent_slot = parent_bank.slot();
