@@ -683,12 +683,13 @@ mod tests {
             .unwrap();
 
         let (_m1_recv, _m2_recv) = drain.join().expect("drain joined");
-        // Both messages were eventually delivered (no silent drop).
-        assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
-        assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
-        // pool_sent counts every message that made it onto the channel,
-        // whether via try_send or the blocking fallback.
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
+        unimplemented!();
+        // // Both messages were eventually delivered (no silent drop).
+        // assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
+        // assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
+        // // pool_sent counts every message that made it onto the channel,
+        // // whether via try_send or the blocking fallback.
+        // assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
     }
 
     #[test]

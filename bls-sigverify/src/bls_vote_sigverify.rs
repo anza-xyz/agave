@@ -173,7 +173,7 @@ fn process_verified_votes(
     let votes_for_pool = votes_for_pool
         .into_iter()
         .map(|vote| {
-            let stake = get_stake(root_bank, vote.vote.slot(), vote.rank).unwrap();
+            let stake = root_bank.get_stake(vote.vote.slot(), vote.rank).unwrap();
             SigVerifiedVoteBatch::new(vote, stake)
         })
         .collect();

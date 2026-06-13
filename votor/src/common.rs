@@ -4,9 +4,7 @@ use {
         fraction::Fraction,
         vote::{Vote, VoteType},
     },
-    solana_clock::Slot,
-    solana_runtime::bank::Bank,
-    std::{num::NonZero, time::Duration},
+    std::time::Duration,
 };
 
 // Core consensus types and constants

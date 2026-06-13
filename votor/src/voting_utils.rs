@@ -6,7 +6,9 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+        consensus_message::{
+            BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, SigVerifiedVoteBatch, VoteMessage,
+        },
         metric_types::ConsensusMetricsEventSender,
         vote::Vote,
     },
@@ -313,7 +315,7 @@ pub(crate) fn create_and_send_own_vote_message(
     };
 
     let root_bank = context.sharable_banks.root();
-    let stake = get_stake(&root_bank, vote.slot(), vote_msg.rank).unwrap();
+    let stake = root_bank.get_stake(vote.slot(), vote_msg.rank).unwrap();
     let vote_batch = SigVerifiedVoteBatch::new(vote_msg.clone(), stake);
 
     context
