@@ -297,7 +297,7 @@ fn calculate_stake_rewards<'a>(
         AlpenglowEpochType::MigrationEpoch {
             num_tower_slots,
             num_ag_slots,
-            migration_epoch: _,
+            ..
         } => {
             if tower_points == 0 && ag_points == 0 {
                 if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -404,7 +404,9 @@ mod tests {
     use {
         self::points::{PointValue, null_tracer},
         super::*,
-        crate::epoch_stakes::VersionedEpochStakes,
+        crate::{
+            alpenglow_epoch_type::RewardEpochDelegatedStakes, epoch_stakes::VersionedEpochStakes,
+        },
         proptest::prelude::*,
         solana_clock::Epoch,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -451,7 +453,13 @@ mod tests {
         let migration_epoch = 0;
         let first_ag_epoch = migration_epoch + 1;
         (
-            AlpenglowEpochType::Alpenglow { migration_epoch },
+            AlpenglowEpochType::Alpenglow {
+                migration_epoch,
+                reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                    epoch: first_ag_epoch,
+                    delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+                },
+            },
             epoch_stakes,
             total_stake,
             first_ag_epoch,

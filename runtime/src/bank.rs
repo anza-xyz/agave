@@ -193,7 +193,6 @@ use {
     },
     solana_vote_interface::state::VoteStateV4,
     std::{
-        cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt,
         num::NonZero,
@@ -1717,7 +1716,7 @@ impl Bank {
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = stakes.stake_delegations_vec();
         let (
-            (stake_history, unfiltered_distribution_vote_accounts),
+            (stake_history, unfiltered_distribution_vote_accounts, reward_epoch_delegated_stakes),
             calculate_activated_stake_time_us,
         ) = measure_us!(stakes.calculate_activated_stake(
             self.epoch(),
@@ -1726,6 +1725,7 @@ impl Bank {
             &stake_delegations,
             self.use_fixed_point_stake_math(),
         ));
+        debug_assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
 
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.
@@ -1738,6 +1738,13 @@ impl Bank {
             } else {
                 unfiltered_distribution_vote_accounts.clone()
             };
+        if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
+            assert!(
+                self.feature_set.snapshot().validator_admission_ticket,
+                "Alpenglow should not be activated before the VAT"
+            );
+            reward_epoch_delegated_stakes.set(self, &filtered_distribution_vote_accounts);
+        }
         let cached_vote_accounts =
             self.get_cached_vote_accounts(rewarded_epoch, &filtered_distribution_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
@@ -1746,6 +1753,7 @@ impl Bank {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
+                reward_epoch_delegated_stakes,
                 reward_calc_tracer,
                 thread_pool,
                 rewards_metrics,
@@ -6561,36 +6569,6 @@ impl Bank {
             genesis_cert.cert_type
         );
         Some(genesis_cert.cert_type.slot())
-    }
-
-    /// Returns `AlpenglowEpochType` for the given `epoch`.
-    ///
-    /// Calling this function with an epoch >= `Bank::epoch` can return false information as it is
-    /// possible that we have not observed the genesis cert yet but will in the upcoming slots.
-    pub(crate) fn get_alpenglow_epoch_type(&self, epoch: Epoch) -> AlpenglowEpochType {
-        debug_assert!(epoch < self.epoch);
-        let Some(migration_slot) = self.get_alpenglow_migration_slot() else {
-            return AlpenglowEpochType::Tower;
-        };
-        let migration_epoch = self.epoch_schedule.get_epoch(migration_slot);
-        match migration_epoch.cmp(&epoch) {
-            Ordering::Less => AlpenglowEpochType::Alpenglow { migration_epoch },
-            Ordering::Greater => AlpenglowEpochType::Tower,
-            Ordering::Equal => {
-                let first_slot_in_epoch =
-                    self.epoch_schedule.get_first_slot_in_epoch(migration_epoch);
-                // + 1 because the migration_slot is still tower.
-                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
-                let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(migration_epoch);
-                let num_ag_slots = slots_in_epoch - num_tower_slots;
-                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
-                AlpenglowEpochType::MigrationEpoch {
-                    num_tower_slots,
-                    num_ag_slots,
-                    migration_epoch,
-                }
-            }
-        }
     }
 }
 
