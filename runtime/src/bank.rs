@@ -1596,12 +1596,17 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(
-                        &upcoming_environment,
-                        key,
-                        last_modification_slot,
-                        recompiled,
-                    );
+                    if program_cache
+                        .get_insertion_point(&upcoming_environment, key, &recompiled)
+                        .is_err()
+                    {
+                        program_cache.assign_program(
+                            &upcoming_environment,
+                            key,
+                            last_modification_slot,
+                            recompiled,
+                        );
+                    }
                 }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
