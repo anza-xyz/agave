@@ -472,8 +472,8 @@ mod tests {
     use {
         super::*,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
+        std::cell::Cell,
     };
 
     impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {
@@ -526,7 +526,6 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &HashMap::new(),
                 true,
             )
         );
@@ -603,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ag_epoch_credits_iter() {
+    fn test_calculate_alpenglow_points() {
         let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
         let total_stake = stake_lamports * 2;
         let credits = 1235;
@@ -615,60 +614,27 @@ mod tests {
             u64::MAX,
         );
 
-        let vote_account = VoteAccount::new_random();
-        let vote_account_hash_map = [(Pubkey::default(), (total_stake, vote_account))]
-            .into_iter()
-            .collect();
-        let versioned_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_account_hash_map, 0);
-        let epoch_stakes = (0..10)
-            .map(|epoch| (epoch, versioned_epoch_stakes.clone()))
-            .collect();
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: 1,
+            delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+        };
 
-        for saw_marker in [true, false] {
-            let epoch_credits = vec![(0, credits, 0), (1, credits * 2, credits)];
-            let (points, new_credits) = ag_epoch_credits_iter(
-                2,
-                saw_marker,
-                &stake,
-                epoch_credits.into_iter(),
-                &StakeHistory::default(),
-                null_tracer(),
-                None,
-                &epoch_stakes,
-                true,
-            )
-            .unwrap();
-            assert_eq!(points, 0);
-            assert_eq!(new_credits, 0);
-        }
-
-        for saw_marker in [true, false] {
-            let epoch_credits = vec![(0, credits, 0), (1, credits * 2, credits)];
-            let (points, new_credits) = ag_epoch_credits_iter(
-                0,
-                saw_marker,
-                &stake,
-                epoch_credits.into_iter(),
-                &StakeHistory::default(),
-                null_tracer(),
-                None,
-                &epoch_stakes,
-                true,
-            )
-            .unwrap();
-            if saw_marker {
-                assert_eq!(
-                    points,
-                    (credits as u128 * stake_lamports as u128 / total_stake as u128) * 2
-                );
-            } else {
-                assert_eq!(
-                    points,
-                    credits as u128 * stake_lamports as u128 / total_stake as u128
-                );
-            }
-            assert_eq!(new_credits, credits * 2);
-        }
+        let epoch_credits = vec![(0, credits, 0), (1, credits * 2, credits)];
+        let (points, new_credits) = calculate_alpenglow_points(
+            &stake,
+            epoch_credits.into_iter().last(),
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
+            true,
+            &reward_epoch_delegated_stakes,
+        )
+        .unwrap();
+        assert_eq!(
+            points,
+            credits as u128 * stake_lamports as u128 / total_stake as u128
+        );
+        assert_eq!(new_credits, credits * 2);
 
         let epoch_credits = vec![
             (0, credits, 0),
@@ -676,48 +642,203 @@ mod tests {
             (0, credits * 2, credits),
             (1, credits * 3, credits * 2),
         ];
-        let (points, new_credits) = ag_epoch_credits_iter(
-            0,
-            false,
+        let (points, new_credits) = calculate_alpenglow_points(
             &stake,
-            epoch_credits.into_iter(),
+            epoch_credits.into_iter().last(),
             &StakeHistory::default(),
             null_tracer(),
             None,
-            &epoch_stakes,
             true,
+            &reward_epoch_delegated_stakes,
         )
         .unwrap();
         assert_eq!(
             points,
-            (credits as u128 * stake_lamports as u128 / total_stake as u128) * 2
+            credits as u128 * stake_lamports as u128 / total_stake as u128
         );
         assert_eq!(new_credits, credits * 3);
 
-        for saw_marker in [true, false] {
-            let epoch_credits = vec![(1, credits, 0), (2, credits * 2, credits)];
-            let (points, new_credits) = ag_epoch_credits_iter(
-                0,
-                saw_marker,
-                &stake,
-                epoch_credits.into_iter(),
-                &StakeHistory::default(),
-                null_tracer(),
-                None,
-                &epoch_stakes,
-                true,
-            )
-            .unwrap();
-            assert_eq!(
-                points,
-                (credits as u128 * stake_lamports as u128 / total_stake as u128) * 2
-            );
-            assert_eq!(new_credits, credits * 2);
-        }
+        let missing_reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: 2,
+            delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+        };
+        let epoch_credits = vec![(0, credits, 0), (1, credits * 2, credits)];
+        let (points, new_credits) = calculate_alpenglow_points(
+            &stake,
+            epoch_credits.into_iter().last(),
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
+            true,
+            &missing_reward_epoch_delegated_stakes,
+        )
+        .unwrap();
+        assert_eq!(points, 0);
+        assert_eq!(new_credits, 0);
     }
 
     #[test]
-    fn test_migrating_epoch_credits_iter() {
+    fn test_calculate_alpenglow_points_uses_current_delegated_stake_denominator() {
+        let stake_lamports = 200;
+        let current_delegated_total = 200;
+        let credits = 10;
+
+        let stake = Stake {
+            delegation: Delegation {
+                voter_pubkey: Pubkey::default(),
+                stake: stake_lamports,
+                activation_epoch: u64::MAX,
+                deactivation_epoch: u64::MAX,
+                ..Default::default()
+            },
+            credits_observed: 0,
+        };
+
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: 1,
+            delegated_stakes: [(Pubkey::default(), current_delegated_total)]
+                .into_iter()
+                .collect(),
+        };
+        let epoch_credits = vec![
+            (0, credits, 0),
+            AG_MIGRATION_EPOCH_CREDIT,
+            (0, credits * 2, credits),
+            (1, credits * 3, credits * 2),
+        ];
+
+        let (points, new_credits) = calculate_alpenglow_points(
+            &stake,
+            epoch_credits.into_iter().last(),
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
+            true,
+            &reward_epoch_delegated_stakes,
+        )
+        .unwrap();
+
+        assert_eq!(points, credits as u128);
+        assert_eq!(new_credits, credits * 3);
+    }
+
+    #[test]
+    fn test_alpenglow_uses_rewarded_epoch_credits_only() {
+        let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
+        let total_stake = stake_lamports * 2;
+        let credits = 1235;
+
+        let stake = Stake {
+            delegation: Delegation {
+                voter_pubkey: Pubkey::default(),
+                stake: stake_lamports,
+                activation_epoch: u64::MAX,
+                deactivation_epoch: u64::MAX,
+                ..Default::default()
+            },
+            credits_observed: 0,
+        };
+        let vote_state = VoteStateV4 {
+            epoch_credits: (1..=64)
+                .map(|epoch| {
+                    let initial_credits = (epoch - 1) * credits;
+                    (epoch, initial_credits + credits, initial_credits)
+                })
+                .collect(),
+            ..VoteStateV4::default()
+        };
+
+        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
+            migration_epoch: 0,
+            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                epoch: 64,
+                delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+            },
+        };
+
+        let calculated_points_events = Cell::new(0);
+        let tracer = |event: &InflationPointCalculationEvent| {
+            if matches!(event, InflationPointCalculationEvent::CalculatedPoints(..)) {
+                calculated_points_events.set(calculated_points_events.get() + 1);
+            }
+        };
+
+        let calculated_stake_points = calculate_stake_points_and_credits(
+            &stake,
+            DelegatedVoteState::from(&vote_state),
+            &StakeHistory::default(),
+            Some(tracer),
+            None,
+            &ag_epoch_type,
+            true,
+        );
+
+        assert_eq!(calculated_points_events.get(), 1);
+        assert_eq!(
+            calculated_stake_points,
+            CalculatedStakePoints {
+                tower_points: 0,
+                ag_points: credits as u128 * stake_lamports as u128 / total_stake as u128,
+                new_credits_observed: credits * 64,
+                force_credits_update_with_skipped_reward: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_alpenglow_rewarded_epoch_uses_delegated_stake_denominator() {
+        let stake_lamports = 200;
+        let current_delegated_total = 200;
+        let credits = 10;
+
+        let stake = Stake {
+            delegation: Delegation {
+                voter_pubkey: Pubkey::default(),
+                stake: stake_lamports,
+                activation_epoch: u64::MAX,
+                deactivation_epoch: u64::MAX,
+                ..Default::default()
+            },
+            credits_observed: 0,
+        };
+        let vote_state = VoteStateV4 {
+            epoch_credits: vec![(1, credits, 0)],
+            ..VoteStateV4::default()
+        };
+
+        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
+            migration_epoch: 0,
+            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                epoch: 1,
+                delegated_stakes: [(Pubkey::default(), current_delegated_total)]
+                    .into_iter()
+                    .collect(),
+            },
+        };
+
+        let calculated_stake_points = calculate_stake_points_and_credits(
+            &stake,
+            DelegatedVoteState::from(&vote_state),
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
+            &ag_epoch_type,
+            true,
+        );
+
+        assert_eq!(
+            calculated_stake_points,
+            CalculatedStakePoints {
+                tower_points: 0,
+                ag_points: credits as u128,
+                new_credits_observed: credits,
+                force_credits_update_with_skipped_reward: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_calculate_migration_points() {
         let stake_lamports = 10_000_000 * LAMPORTS_PER_SOL;
         let total_stake = stake_lamports * 2;
         let credits = 1235;
@@ -729,45 +850,42 @@ mod tests {
             u64::MAX,
         );
 
-        let vote_account = VoteAccount::new_random();
-        let vote_account_hash_map = [(Pubkey::default(), (total_stake, vote_account))]
-            .into_iter()
-            .collect();
-        let versioned_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_account_hash_map, 0);
-        let epoch_stakes = (0..10)
-            .map(|epoch| (epoch, versioned_epoch_stakes.clone()))
-            .collect();
-
         let epoch_credits = vec![(0, credits, 0), (1, credits * 2, credits)];
-        let (tower_points, ag_points, new_credits) = migrating_epoch_credits_iter(
-            2,
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: 2,
+            delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+        };
+        let (tower_points, ag_points, new_credits) = calculate_migration_points(
             &stake,
             epoch_credits.into_iter(),
             &StakeHistory::default(),
             null_tracer(),
             None,
-            &epoch_stakes,
             true,
+            &reward_epoch_delegated_stakes,
         )
         .unwrap();
         assert_eq!(tower_points, credits as u128 * stake_lamports as u128 * 2);
         assert_eq!(ag_points, 0);
         assert_eq!(new_credits, credits * 2);
 
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: 0,
+            delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+        };
         let epoch_credits = vec![
             (0, credits, 0),
             AG_MIGRATION_EPOCH_CREDIT,
             (0, credits * 2, credits),
         ];
-        let (tower_points, ag_points, new_credits) = migrating_epoch_credits_iter(
-            0,
+        let (tower_points, ag_points, new_credits) = calculate_migration_points(
             &stake,
             epoch_credits.into_iter(),
             &StakeHistory::default(),
             null_tracer(),
             None,
-            &epoch_stakes,
             true,
+            &reward_epoch_delegated_stakes,
         )
         .unwrap();
         assert_eq!(tower_points, credits as u128 * stake_lamports as u128);
@@ -778,15 +896,14 @@ mod tests {
         assert_eq!(new_credits, credits * 2);
 
         let epoch_credits = vec![AG_MIGRATION_EPOCH_CREDIT, (0, credits * 2, credits)];
-        let (tower_points, ag_points, new_credits) = migrating_epoch_credits_iter(
-            0,
+        let (tower_points, ag_points, new_credits) = calculate_migration_points(
             &stake,
             epoch_credits.into_iter(),
             &StakeHistory::default(),
             null_tracer(),
             None,
-            &epoch_stakes,
             true,
+            &reward_epoch_delegated_stakes,
         )
         .unwrap();
         assert_eq!(tower_points, 0);
@@ -800,34 +917,8 @@ mod tests {
     #[test]
     fn test_changing_total_stake() {
         let pubkey = Pubkey::new_unique();
-        let vote_account = VoteAccount::new_random();
         let staker_delegation = LAMPORTS_PER_SOL;
-        let epoch0_validator_stake = staker_delegation * 5;
-        let epoch1_validator_stake = epoch0_validator_stake * 3;
-        let epoch2_validator_stake = epoch0_validator_stake / 3;
-
-        let epoch0_vote_accounts = [(pubkey, (epoch0_validator_stake, vote_account.clone()))]
-            .into_iter()
-            .collect();
-        let versioned_epoch_stakes0 = VersionedEpochStakes::new_for_tests(epoch0_vote_accounts, 0);
-
-        let epoch1_vote_accounts = [(pubkey, (epoch1_validator_stake, vote_account.clone()))]
-            .into_iter()
-            .collect();
-        let versioned_epoch_stakes1 = VersionedEpochStakes::new_for_tests(epoch1_vote_accounts, 0);
-
-        let epoch2_vote_accounts = [(pubkey, (epoch2_validator_stake, vote_account.clone()))]
-            .into_iter()
-            .collect();
-        let versioned_epoch_stakes2 = VersionedEpochStakes::new_for_tests(epoch2_vote_accounts, 0);
-
-        let epoch_stakes = [
-            (0, versioned_epoch_stakes0),
-            (1, versioned_epoch_stakes1),
-            (2, versioned_epoch_stakes2),
-        ]
-        .into_iter()
-        .collect();
+        let reward_epoch_validator_stake = staker_delegation * 5;
         let stake = Stake {
             delegation: Delegation {
                 voter_pubkey: pubkey,
@@ -847,23 +938,24 @@ mod tests {
             (1, credits * 3, credits * 2),
             (2, credits * 4, credits * 3),
         ];
-        let (points, new_credits) = ag_epoch_credits_iter(
-            0,
-            false,
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: 2,
+            delegated_stakes: [(pubkey, reward_epoch_validator_stake)]
+                .into_iter()
+                .collect(),
+        };
+        let (points, new_credits) = calculate_alpenglow_points(
             &stake,
-            epoch_credits.into_iter(),
+            epoch_credits.into_iter().last(),
             &StakeHistory::default(),
             null_tracer(),
             None,
-            &epoch_stakes,
             true,
+            &reward_epoch_delegated_stakes,
         )
         .unwrap();
         assert_eq!(new_credits, credits * 4);
-        let epoch0_expected = credits * staker_delegation / epoch0_validator_stake;
-        let epoch1_expected = credits * staker_delegation / epoch1_validator_stake;
-        let epoch2_expected = credits * staker_delegation / epoch2_validator_stake;
-        let expected_points = epoch0_expected + epoch1_expected + epoch2_expected;
+        let expected_points = credits * staker_delegation / reward_epoch_validator_stake;
         assert_eq!(points, expected_points as u128);
     }
 
@@ -912,38 +1004,32 @@ mod tests {
             };
 
             let total_stake = stake_lamports * 2;
-            let vote_account = VoteAccount::new_random();
-            let vote_account_hash_map = [(Pubkey::default(), (total_stake, vote_account))]
-                .into_iter()
-                .collect();
-            let versioned_epoch_stakes =
-                VersionedEpochStakes::new_for_tests(vote_account_hash_map, 0);
-            let epoch_stakes = (0..10)
-                .map(|epoch| (epoch, versioned_epoch_stakes.clone()))
-                .collect();
-
             let epoch_credits = vec![
                 (0, credits, 0),
                 AG_MIGRATION_EPOCH_CREDIT,
                 (0, credits * 2, credits),
                 (1, credits * 3, credits * 2),
             ];
-            let (points, new_credits) = ag_epoch_credits_iter(
-                0,
-                false,
+            let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+                epoch: 1,
+                delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+            };
+            let (points, new_credits) = calculate_alpenglow_points(
                 &stake,
-                epoch_credits.into_iter(),
+                epoch_credits.into_iter().last(),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &epoch_stakes,
                 true,
+                &reward_epoch_delegated_stakes,
             )
             .unwrap();
-            assert_eq!(
-                points,
+            let expected_points = if activation_epoch == 0 {
                 credits as u128 * stake_lamports as u128 / total_stake as u128
-            );
+            } else {
+                0
+            };
+            assert_eq!(points, expected_points);
             assert_eq!(new_credits, credits * 3);
         }
 
@@ -960,31 +1046,24 @@ mod tests {
             };
 
             let total_stake = stake_lamports * 2;
-            let vote_account = VoteAccount::new_random();
-            let vote_account_hash_map = [(Pubkey::default(), (total_stake, vote_account))]
-                .into_iter()
-                .collect();
-            let versioned_epoch_stakes =
-                VersionedEpochStakes::new_for_tests(vote_account_hash_map, 0);
-            let epoch_stakes = (0..10)
-                .map(|epoch| (epoch, versioned_epoch_stakes.clone()))
-                .collect();
-
             let epoch_credits = vec![
                 (0, credits, 0),
                 AG_MIGRATION_EPOCH_CREDIT,
                 (0, credits * 2, credits),
                 (1, credits * 3, credits * 2),
             ];
-            let (tower_points, ag_points, new_credits) = migrating_epoch_credits_iter(
-                0,
+            let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+                epoch: 0,
+                delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+            };
+            let (tower_points, ag_points, new_credits) = calculate_migration_points(
                 &stake,
                 epoch_credits.into_iter(),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &epoch_stakes,
                 true,
+                &reward_epoch_delegated_stakes,
             )
             .unwrap();
             if activation_epoch == 0 {
@@ -992,11 +1071,13 @@ mod tests {
             } else {
                 assert_eq!(tower_points, credits as u128 * stake_lamports as u128);
             }
-            assert_eq!(
-                ag_points,
+            let expected_ag_points = if activation_epoch == 0 {
+                0
+            } else {
                 credits as u128 * stake_lamports as u128 / total_stake as u128
-            );
-            assert_eq!(new_credits, credits * 3);
+            };
+            assert_eq!(ag_points, expected_ag_points);
+            assert_eq!(new_credits, credits * 2);
         }
     }
 }
