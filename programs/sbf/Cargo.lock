@@ -95,6 +95,8 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
+ "solana-packet 4.1.0",
+ "solana-perf",
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-signer-store",
@@ -7595,6 +7597,7 @@ dependencies = [
  "solana-signature",
  "solana-time-utils",
  "solana-transaction-context",
+ "wincode",
 ]
 
 [[package]]

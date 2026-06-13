@@ -423,8 +423,7 @@ mod tests {
 
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
-        let received_message = packet
-            .deserialize_slice::<ConsensusMessage, _>(..)
+        let received_message = wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap())
             .unwrap_or_else(|err| {
                 panic!(
                     "Failed to deserialize BLSMessage: {:?} {:?}",

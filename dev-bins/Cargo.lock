@@ -95,6 +95,8 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
+ "solana-packet 4.1.0",
+ "solana-perf",
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-signer-store",
@@ -7591,6 +7593,8 @@ dependencies = [
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
+ "solana-packet 4.1.0",
+ "solana-perf",
  "solana-poh-config",
  "solana-program-binaries",
  "solana-pubkey 4.2.0",
@@ -7827,6 +7831,7 @@ dependencies = [
  "solana-transaction-context",
  "solana-vote",
  "solana-vote-program",
+ "wincode",
 ]
 
 [[package]]
