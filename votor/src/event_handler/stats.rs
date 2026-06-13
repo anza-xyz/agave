@@ -197,6 +197,9 @@ impl EventHandlerStats {
                 entry.vote_skip = Some(Instant::now());
             }
         } else {
+            if cfg!(test) {
+                panic!("invariant: unexpected BLS operation: {bls_op:?}");
+            }
             warn!("Unexpected BLS operation: {bls_op:?}");
         }
     }

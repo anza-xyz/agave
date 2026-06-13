@@ -37,7 +37,12 @@ pub fn update_commitment_cache(
             info!("commitment_sender has disconnected");
             return Err(CommitmentError::ChannelDisconnected);
         }
-        Err(TrySendError::Full(_)) => error!("commitment_sender is backed up, something is wrong"),
+        Err(TrySendError::Full(_)) => {
+            if cfg!(test) {
+                panic!("invariant: commitment_sender is backed up, something is wrong");
+            }
+            error!("commitment_sender is backed up, something is wrong");
+        }
         Ok(_) => (),
     }
     Ok(())
