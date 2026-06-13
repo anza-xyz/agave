@@ -2,7 +2,6 @@ use {
     crate::{
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
-            PacketConfig,
             duplicate_repair_status::{
                 AncestorRequestDecision, AncestorRequestStatus, AncestorRequestType,
             },
@@ -24,7 +23,7 @@ use {
     solana_keypair::{Keypair, Signer, signable::Signable},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
-        packet::{PacketBatch, PacketRef},
+        packet::{PacketBatch, PacketRef, packet_config},
         recycler::Recycler,
     },
     solana_pubkey::Pubkey,
@@ -376,8 +375,7 @@ impl AncestorHashesService {
             return None;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
-        else {
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, packet_config()) else {
             stats.invalid_packets += 1;
             return None;
         };
@@ -385,7 +383,7 @@ impl AncestorHashesService {
         match response {
             AncestorHashesResponse::Hashes(ref hashes) => {
                 // deserialize trailing nonce
-                let Ok(nonce) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
+                let Ok(nonce) = wincode::config::deserialize_from(&mut cursor, packet_config())
                 else {
                     stats.invalid_packets += 1;
                     return None;

@@ -15,6 +15,7 @@ use {
         ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, SliceIndex},
     },
+    wincode::config::{Config, Configuration},
 };
 pub use {
     bytes,
@@ -25,6 +26,14 @@ pub const NUM_PACKETS: usize = 1024 * 8;
 
 pub const PACKETS_PER_BATCH: usize = 64;
 pub const NUM_RCVMMSGS: usize = 64;
+
+/// wincode configuration setup to use for deserializing a Packet.
+/// - Zero-copy alignment check is enabled.
+/// - Preallocation size limit is PACKET_DATA_SIZE.
+#[inline]
+pub const fn packet_config() -> impl Config {
+    Configuration::default().with_preallocation_size_limit::<{ solana_packet::PACKET_DATA_SIZE }>()
+}
 
 /// Representation of a packet used in TPU.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

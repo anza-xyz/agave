@@ -25,6 +25,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
+    solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
@@ -38,8 +39,6 @@ use {
         time::Duration,
     },
 };
-
-type PacketConfig = wincode::config::Configuration<true, { solana_packet::PACKET_DATA_SIZE }>;
 
 /// If a cert or vote is so many slots in the future relative to the root slot, it is considered
 /// invalid and discarded.
@@ -223,7 +222,7 @@ impl SigVerifier {
             }
             let Ok(msg) = wincode::config::deserialize_exact(
                 packet.data(..).unwrap_or_default(),
-                PacketConfig::new(),
+                packet_config(),
             ) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;

@@ -30,6 +30,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_perf::packet::packet_config,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -65,8 +66,6 @@ use {
     tokio_util::sync::CancellationToken,
     wincode,
 };
-
-type PacketConfig = wincode::config::Configuration<true, { solana_packet::PACKET_DATA_SIZE }>;
 
 /// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing
 /// a synchronous interface for sending transactions in local-cluster tests.
@@ -677,7 +676,7 @@ pub fn check_for_new_notarized_votes(
                     let Ok(ConsensusMessage::Vote(vote_message)) =
                         wincode::config::deserialize_exact(
                             packet.data(..).unwrap_or_default(),
-                            PacketConfig::new(),
+                            packet_config(),
                         )
                     else {
                         continue;

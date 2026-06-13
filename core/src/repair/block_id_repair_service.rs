@@ -16,7 +16,6 @@ use {
     },
     crate::{
         repair::{
-            PacketConfig,
             outstanding_requests::OutstandingRequests,
             packet_threshold::DynamicPacketToProcessThreshold,
             repair_service::{REPAIR_MS, RepairInfo, RepairStats},
@@ -41,7 +40,7 @@ use {
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::{
-        packet::{PacketBatch, PacketRef},
+        packet::{PacketBatch, PacketRef, packet_config},
         recycler::Recycler,
     },
     solana_pubkey::Pubkey,
@@ -544,7 +543,7 @@ impl BlockIdRepairService {
             return;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = wincode::config::deserialize_from(&mut cursor, PacketConfig::new())
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, packet_config())
             .inspect_err(|e| {
                 debug!("Failed to deserialize response: {e:?}");
             })
@@ -566,7 +565,7 @@ impl BlockIdRepairService {
             return;
         }
 
-        let nonce: u32 = match wincode::config::deserialize_from(&mut cursor, PacketConfig::new()) {
+        let nonce: u32 = match wincode::config::deserialize_from(&mut cursor, packet_config()) {
             Ok(n) => n,
             Err(e) => {
                 debug!("{my_pubkey}: Failed to deserialize nonce: {e:?}");
@@ -1244,7 +1243,7 @@ mod tests {
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            wincode::config::deserialize(packet_data, PacketConfig::new()).unwrap();
+            wincode::config::deserialize(packet_data, packet_config()).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -1294,20 +1293,14 @@ mod tests {
         // Empty packet
         let packet = make_packet(&[]);
         let packet_data = packet.data(..).unwrap();
-        wincode::config::deserialize::<BlockIdRepairResponse, PacketConfig>(
-            packet_data,
-            PacketConfig::new(),
-        )
-        .unwrap_err();
+        wincode::config::deserialize::<BlockIdRepairResponse, _>(packet_data, packet_config())
+            .unwrap_err();
 
         // Garbage data
         let packet = make_packet(&[0xff, 0xff, 0xff, 0xff]);
         let packet_data = packet.data(..).unwrap();
-        wincode::config::deserialize::<BlockIdRepairResponse, PacketConfig>(
-            packet_data,
-            PacketConfig::new(),
-        )
-        .unwrap_err();
+        wincode::config::deserialize::<BlockIdRepairResponse, _>(packet_data, packet_config())
+            .unwrap_err();
     }
 
     #[test]
