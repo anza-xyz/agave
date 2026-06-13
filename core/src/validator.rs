@@ -1325,7 +1325,7 @@ impl Validator {
             };
 
             let (completed_data_sets_sender, completed_data_sets_service) =
-                if !config.rpc_config.full_api {
+                if !config.rpc_config.full_api && deshred_transaction_notifier.is_none() {
                     (None, None)
                 } else {
                     let (completed_data_sets_sender, completed_data_sets_receiver) =
