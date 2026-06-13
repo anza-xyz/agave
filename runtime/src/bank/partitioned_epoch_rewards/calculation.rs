@@ -643,7 +643,6 @@ impl Bank {
             },
             reward_calc_tracer,
             ag_epoch_type,
-            &self.epoch_stakes,
             current_lamports,
             minimum_lamports,
         ) {
@@ -861,7 +860,6 @@ impl Bank {
                         DelegatedVoteState::from(vote_account.vote_state_view()),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
-                        &self.epoch_stakes,
                         use_fixed_point_stake_math,
                     )
                     .unwrap_or(0)

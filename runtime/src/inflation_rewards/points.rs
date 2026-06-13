@@ -2,11 +2,11 @@
 
 use {
     crate::{
-        alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes,
+        alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
         stake_delegation::delegation_effective_stake,
     },
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
-    log::{error, trace},
+    log::error,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -15,7 +15,7 @@ use {
         state::{Delegation, Stake, StakeStateV2},
     },
     solana_vote::vote_state_view::VoteStateView,
-    std::{cmp::Ordering, collections::HashMap},
+    std::cmp::Ordering,
 };
 
 /// captures a rewards round as lamports to be awarded
@@ -107,7 +107,6 @@ pub(crate) fn calculate_points_for_tower(
     vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     use_fixed_point_stake_math: bool,
 ) -> Result<u128, InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
@@ -117,7 +116,6 @@ pub(crate) fn calculate_points_for_tower(
             stake_history,
             null_tracer(),
             new_rate_activation_epoch,
-            epoch_stakes,
             use_fixed_point_stake_math,
         ))
     } else {
@@ -133,7 +131,6 @@ fn calculate_stake_points_for_tower(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     use_fixed_point_stake_math: bool,
 ) -> u128 {
     calculate_stake_points_and_credits(
@@ -143,40 +140,9 @@ fn calculate_stake_points_for_tower(
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
         &AlpenglowEpochType::Tower,
-        epoch_stakes,
         use_fixed_point_stake_math,
     )
     .tower_points
-}
-
-/// Returns the total stake delegated to `vote_pubkey` in the given `epoch`.
-fn get_total_stake(
-    vote_pubkey: Pubkey,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
-    epoch: Epoch,
-) -> Result<u64, ()> {
-    let Some(rank_map) = epoch_stakes.get(&epoch).map(|e| e.bls_pubkey_to_rank_map()) else {
-        record_error(format!(
-            "epoch_stakes.get(epoch={epoch}) for vote_pubkey={vote_pubkey} failed"
-        ));
-        return Err(());
-    };
-    let Some(rank) = rank_map.get_rank_for_vote_pubkey(&vote_pubkey) else {
-        // this is benign and can happen if a staker stakes with a validator not
-        // in the validator set.
-        record_trace(format!(
-            "get_rank_for_vote_pubkey(vote_pubkey={vote_pubkey}) in epoch={epoch} failed"
-        ));
-        return Err(());
-    };
-    let Some(entry) = rank_map.get_pubkey_stake_entry(*rank as usize) else {
-        record_error(format!(
-            "get_pubkey_stake_entry(rank={rank}) for vote_pubkey={vote_pubkey} in epoch={epoch} \
-             failed",
-        ));
-        return Err(());
-    };
-    Ok(entry.stake)
 }
 
 fn record_error(msg: String) {
@@ -184,14 +150,6 @@ fn record_error(msg: String) {
     datapoint_error!(
         "PER-total-stake-calculation-failure",
         ("error", msg, String)
-    );
-}
-
-fn record_trace(msg: String) {
-    trace!("{msg}");
-    datapoint_trace!(
-        "PER-total-stake-calculation-failure",
-        ("trace", msg, String)
     );
 }
 
@@ -277,88 +235,92 @@ fn tower_epoch_credits_iter(
     (points, new_credits_observed, saw_marker)
 }
 
-fn ag_epoch_credits_iter(
-    migration_epoch: Epoch,
-    mut saw_marker: bool,
+/// Calculate alpenglow points for `stake` based on the vote account's `reward_epoch_credits`
+///
+/// This value is the lamports paid to the vote account * `stake_amount` / `vote_account_stake`
+/// `vote_account_stake` is fetched from the precomputed `reward_epoch_delegated_stakes` for the
+/// reward epoch
+///
+/// Returns (alpenglow points, new_credits_observed)
+fn calculate_alpenglow_points(
     stake: &Stake,
-    epoch_credits_iter: impl Iterator<Item = (Epoch, u64, u64)>,
+    reward_epoch_credits: Option<(Epoch, u64, u64)>,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     use_fixed_point_stake_math: bool,
+    reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
 ) -> Result<(u128, u64), CalculatedStakePoints> {
-    let mut points = 0;
     let credits_in_stake = stake.credits_observed;
     let mut new_credits_observed = credits_in_stake;
-
-    for entry in epoch_credits_iter {
-        let (epoch, final_epoch_credits, initial_epoch_credits) = entry;
-        if epoch < migration_epoch {
-            continue;
-        }
-        if entry == AG_MIGRATION_EPOCH_CREDIT {
-            debug_assert!(!saw_marker);
-            saw_marker = true;
-            continue;
-        }
-        if epoch == migration_epoch && !saw_marker {
-            continue;
-        }
-
-        let earned_credits = calc_earned_credits(
-            stake,
-            final_epoch_credits,
-            initial_epoch_credits,
-            &mut new_credits_observed,
-        );
-        let stake_amount = u128::from(delegation_effective_stake(
-            &stake.delegation,
-            epoch,
-            stake_history,
-            new_rate_activation_epoch,
-            use_fixed_point_stake_math,
-        ));
-
-        let earned_points = {
-            if earned_credits == 0 {
-                earned_credits
-            } else {
-                let Ok(total_stake) =
-                    get_total_stake(stake.delegation.voter_pubkey, epoch_stakes, epoch)
-                else {
-                    return Err(CalculatedStakePoints {
-                        tower_points: 0,
-                        ag_points: 0,
-                        new_credits_observed,
-                        force_credits_update_with_skipped_reward: true,
-                    });
-                };
-                earned_credits * stake_amount / total_stake as u128
-            }
-        };
-        points += earned_points;
-        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-            inflation_point_calc_tracer(&InflationPointCalculationEvent::CalculatedPoints(
-                epoch,
-                stake_amount,
-                earned_credits,
-                earned_points,
-            ));
-        }
+    let Some((epoch, final_epoch_credits, initial_epoch_credits)) = reward_epoch_credits else {
+        return Ok((0, new_credits_observed));
+    };
+    if epoch != reward_epoch_delegated_stakes.epoch {
+        return Ok((0, new_credits_observed));
     }
-    Ok((points, new_credits_observed))
+
+    let earned_credits = calc_earned_credits(
+        stake,
+        final_epoch_credits,
+        initial_epoch_credits,
+        &mut new_credits_observed,
+    );
+    let stake_amount = u128::from(delegation_effective_stake(
+        &stake.delegation,
+        epoch,
+        stake_history,
+        new_rate_activation_epoch,
+        use_fixed_point_stake_math,
+    ));
+
+    let earned_points = if earned_credits == 0 || stake_amount == 0 {
+        0
+    } else {
+        let Some(total_stake) = reward_epoch_delegated_stakes
+            .delegated_stakes
+            .get(&stake.delegation.voter_pubkey)
+            .copied()
+            .filter(|stake| *stake != 0)
+        else {
+            record_error(format!(
+                "AG delegated stake denominator for vote_pubkey={} in epoch={} failed",
+                stake.delegation.voter_pubkey, reward_epoch_delegated_stakes.epoch
+            ));
+            return Err(CalculatedStakePoints {
+                tower_points: 0,
+                ag_points: 0,
+                new_credits_observed,
+                force_credits_update_with_skipped_reward: true,
+            });
+        };
+        earned_credits * stake_amount / total_stake as u128
+    };
+
+    if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
+        inflation_point_calc_tracer(&InflationPointCalculationEvent::CalculatedPoints(
+            epoch,
+            stake_amount,
+            earned_credits,
+            earned_points,
+        ));
+    }
+    Ok((earned_points, new_credits_observed))
 }
 
-fn migrating_epoch_credits_iter(
-    migration_epoch: Epoch,
+/// Calculates the tower and  alpenglow points for `stake` based on the vote account's `reward_epoch_credits`
+/// for the alpenglow migration epoch
+///
+/// Expects the epoch_credits_iter is sorted in ascending epoch order
+/// Returns (tower_points, alpenglow points, new_credits_observed)
+fn calculate_migration_points(
     stake: &Stake,
     mut epoch_credits_iter: impl Iterator<Item = (Epoch, u64, u64)>,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     use_fixed_point_stake_math: bool,
+    reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
 ) -> Result<(u128, u128, u64), CalculatedStakePoints> {
     let (tower_points, tower_new_credits_observed, saw_marker) = tower_epoch_credits_iter(
         stake,
@@ -368,17 +330,19 @@ fn migrating_epoch_credits_iter(
         new_rate_activation_epoch,
         use_fixed_point_stake_math,
     );
-    let (ag_points, ag_new_credits_observed) = ag_epoch_credits_iter(
-        migration_epoch,
-        saw_marker,
-        stake,
-        epoch_credits_iter,
-        stake_history,
-        inflation_point_calc_tracer,
-        new_rate_activation_epoch,
-        epoch_stakes,
-        use_fixed_point_stake_math,
-    )?;
+    let (ag_points, ag_new_credits_observed) = if saw_marker {
+        calculate_alpenglow_points(
+            stake,
+            epoch_credits_iter.next(),
+            stake_history,
+            inflation_point_calc_tracer,
+            new_rate_activation_epoch,
+            use_fixed_point_stake_math,
+            reward_epoch_delegated_stakes,
+        )?
+    } else {
+        (0, stake.credits_observed)
+    };
 
     let new_credits_observed = tower_new_credits_observed.max(ag_new_credits_observed);
     Ok((tower_points, ag_points, new_credits_observed))
@@ -394,7 +358,6 @@ pub(crate) fn calculate_stake_points_and_credits(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     use_fixed_point_stake_math: bool,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
@@ -458,37 +421,39 @@ pub(crate) fn calculate_stake_points_and_credits(
             (points, 0, credits)
         }
         AlpenglowEpochType::MigrationEpoch {
-            migration_epoch, ..
+            migration_epoch,
+            reward_epoch_delegated_stakes,
+            ..
         } => {
-            match migrating_epoch_credits_iter(
-                *migration_epoch,
+            debug_assert_eq!(reward_epoch_delegated_stakes.epoch, *migration_epoch);
+            match calculate_migration_points(
                 stake,
                 vote_state.epoch_credits_iter,
                 stake_history,
                 inflation_point_calc_tracer,
                 new_rate_activation_epoch,
-                epoch_stakes,
                 use_fixed_point_stake_math,
+                reward_epoch_delegated_stakes,
             ) {
                 Ok(r) => r,
                 Err(e) => return e,
             }
         }
         AlpenglowEpochType::Alpenglow {
-            migration_epoch, ..
+            migration_epoch,
+            reward_epoch_delegated_stakes,
         } => {
-            let (ag_points, credits) = match ag_epoch_credits_iter(
-                *migration_epoch,
-                false,
+            debug_assert!(reward_epoch_delegated_stakes.epoch > *migration_epoch);
+            let (ag_points, credits) = match calculate_alpenglow_points(
                 stake,
-                vote_state.epoch_credits_iter,
+                vote_state.epoch_credits_iter.last(),
                 stake_history,
                 inflation_point_calc_tracer,
                 new_rate_activation_epoch,
-                epoch_stakes,
                 use_fixed_point_stake_math,
+                reward_epoch_delegated_stakes,
             ) {
-                Ok(r) => r,
+                Ok(result) => result,
                 Err(e) => return e,
             };
             (0, ag_points, credits)
