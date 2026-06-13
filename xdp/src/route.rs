@@ -40,6 +40,22 @@ pub struct GreRouteInfo {
     pub mac_addr: MacAddress,
 }
 
+/// VLAN encapsulation directive carried on a resolved NextHop.
+///
+/// When present, the tx loop prepends an 802.1Q tag to the Ethernet header before the inner IP
+/// header. The MAC and IP fields on the NextHop are still the real packet destinations: VLAN
+/// encapsulation changes the L2 framing only. XDP cannot transmit on a VLAN sub-interface
+/// directly (it is bound to the physical parent), so the tag has to be written in userspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VlanRouteInfo {
+    /// if_index of the VLAN sub-interface the route resolved to.
+    pub if_index: u32,
+    pub vid: u16,
+    /// Priority Code Point. Always 0 for now, matching the kernel's default egress QoS mapping;
+    /// a configurable mapping can be added later if needed.
+    pub pcp: u8,
+}
+
 #[derive(Debug, Clone)]
 pub struct NextHop {
     pub mac_addr: Option<MacAddress>,
@@ -48,6 +64,7 @@ pub struct NextHop {
     pub mtu: u32,
     pub preferred_src_ip: Option<Ipv4Addr>,
     pub gre: Option<GreRouteInfo>,
+    pub vlan: Option<VlanRouteInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +423,8 @@ pub struct Router {
     cached_default_route: Option<NextHop>,
     // cache for gre route info keyed by interface index. This stays tiny in practice.
     cached_gre_info: Vec<GreRouteInfo>,
+    // cache for vlan encap info keyed by interface index. One entry per VLAN sub-interface.
+    cached_vlan_info: Vec<VlanRouteInfo>,
 }
 
 struct RoutingTableDisplay<'a>(&'a [Route<Ipv4Addr>]);
@@ -441,6 +460,7 @@ impl Router {
             interfaces: tables.interfaces,
             cached_default_route: None,
             cached_gre_info: Vec::new(),
+            cached_vlan_info: Vec::new(),
         };
 
         let mut has_gre_interface = false;
@@ -450,6 +470,14 @@ impl Router {
                 if let Some(gre) = router.interface_gre_route_info(interface) {
                     router.cached_gre_info.push(gre);
                 }
+            }
+            if let Some(vlan) = interface.vlan_link {
+                router.cached_vlan_info.push(VlanRouteInfo {
+                    if_index: interface.if_index,
+                    vid: vlan.vid,
+                    // Kernel default egress QoS mapping; a configurable mapping can come later.
+                    pcp: 0,
+                });
             }
         }
         if router.cached_gre_info.is_empty() && has_gre_interface {
@@ -487,6 +515,13 @@ impl Router {
         self.interface_gre_route_info(interface)
     }
 
+    fn cached_vlan_route_info(&self, if_index: u32) -> Option<VlanRouteInfo> {
+        self.cached_vlan_info
+            .iter()
+            .find(|vlan| vlan.if_index == if_index)
+            .copied()
+    }
+
     fn resolve_next_hop(
         &self,
         route_ip: Ipv4Addr,
@@ -507,6 +542,7 @@ impl Router {
                     mac_addr: default_route.mac_addr,
                     preferred_src_ip,
                     gre: default_route.gre.clone(),
+                    vlan: default_route.vlan,
                 });
             }
         }
@@ -519,6 +555,7 @@ impl Router {
                 mac_addr: Some(gre.mac_addr),
                 preferred_src_ip,
                 gre: Some(gre),
+                vlan: None,
             });
         }
 
@@ -528,6 +565,7 @@ impl Router {
             .find(|interface| interface.if_index == if_index)
             .map(|interface| interface.mtu)
             .ok_or(RouteError::UnknownInterfaceIndex(if_index))?;
+        let vlan = self.cached_vlan_route_info(if_index);
 
         let mac_addr = self.neighbors.lookup(next_hop_ip, if_index).cloned();
         Ok(NextHop {
@@ -537,6 +575,7 @@ impl Router {
             mtu,
             preferred_src_ip,
             gre: None,
+            vlan,
         })
     }
 
@@ -642,7 +681,7 @@ fn format_route(f: &mut fmt::Formatter<'_>, route: &Route<Ipv4Addr>) -> fmt::Res
 mod tests {
     use {
         super::*,
-        crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
+        crate::netlink::{MacAddress, NeighborEntry, RouteEntry, VlanLinkInfo},
         libc::{AF_INET, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
@@ -723,11 +762,13 @@ mod tests {
             if_index: 1,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         }));
         assert!(tables.upsert_interface(InterfaceInfo {
             if_index: 2,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         }));
         assert!(tables.upsert_neighbor(NeighborEntry {
             destination: Some(IpAddr::V4(primary_gateway)),
@@ -769,6 +810,7 @@ mod tests {
             if_index: 1,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         }));
 
         let gateway = Ipv4Addr::new(10, 255, 255, 1);
@@ -852,11 +894,13 @@ mod tests {
                     if_index: 2,
                     mtu: DEFAULT_MTU_FOR_TESTS,
                     gre_tunnel: None,
+                    vlan_link: None,
                 },
                 InterfaceInfo {
                     if_index: 3,
                     mtu: DEFAULT_MTU_FOR_TESTS,
                     gre_tunnel: None,
+                    vlan_link: None,
                 },
             ],
         );
@@ -904,6 +948,7 @@ mod tests {
             if_index: test_if_index,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         };
 
         // Upsert new interface and check that it was inserted
@@ -950,6 +995,7 @@ mod tests {
             if_index: 1,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         }));
         assert!(tables.upsert_neighbor(NeighborEntry {
             destination: Some(IpAddr::V4(main_gateway)),
@@ -990,6 +1036,7 @@ mod tests {
             if_index: 1,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         }));
         assert!(tables.upsert_neighbor(NeighborEntry {
             destination: Some(IpAddr::V4(main_gateway)),
@@ -1058,6 +1105,7 @@ mod tests {
                 if_index: if_index_underlay as u32,
                 mtu: DEFAULT_MTU_FOR_TESTS,
                 gre_tunnel: None,
+                vlan_link: None,
             },
             InterfaceInfo {
                 if_index: if_index_gre1 as u32,
@@ -1069,6 +1117,7 @@ mod tests {
                     tos: 0,
                     pmtudisc: 0,
                 }),
+                vlan_link: None,
             },
             InterfaceInfo {
                 if_index: if_index_gre2 as u32,
@@ -1080,6 +1129,7 @@ mod tests {
                     tos: 0,
                     pmtudisc: 0,
                 }),
+                vlan_link: None,
             },
         ];
 
@@ -1140,6 +1190,7 @@ mod tests {
                 if_index: if_index_underlay as u32,
                 mtu: DEFAULT_MTU_FOR_TESTS,
                 gre_tunnel: None,
+                vlan_link: None,
             },
             InterfaceInfo {
                 if_index: if_index_gre as u32,
@@ -1151,6 +1202,7 @@ mod tests {
                     tos: 0,
                     pmtudisc: 0,
                 }),
+                vlan_link: None,
             },
         ];
 
@@ -1189,6 +1241,7 @@ mod tests {
             if_index: 1,
             mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         }));
         assert!(tables.upsert_neighbor(NeighborEntry {
             destination: Some(IpAddr::V4(default_gateway)),
@@ -1270,5 +1323,147 @@ mod tests {
         let next_hop = router.default().unwrap();
         assert_eq!(next_hop.if_index, 2);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(backup));
+    }
+
+    #[test]
+    fn test_vlan_route_resolves_with_vlan_info() {
+        // A route through a configured VLAN sub-interface attaches VlanRouteInfo to the NextHop;
+        // the MAC still comes from the neighbor cache and no GRE encap is set.
+        let peer = Ipv4Addr::new(10, 228, 0, 99);
+        let vlan_if = 100u32;
+        let vlan_src = Ipv4Addr::new(10, 228, 0, 5);
+        let peer_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x09]);
+
+        let neighbors = vec![NeighborEntry {
+            destination: Some(IpAddr::V4(peer)),
+            lladdr: Some(peer_mac),
+            ifindex: vlan_if as i32,
+            state: NUD_REACHABLE,
+        }];
+        let interfaces = vec![InterfaceInfo {
+            if_index: vlan_if,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: Some(VlanLinkInfo { vid: 900 }),
+        }];
+        let routes = vec![Route {
+            destination: Some(Ipv4Addr::new(10, 228, 0, 0)),
+            gateway: None,
+            preferred_src: Some(vlan_src),
+            out_if_index: Some(vlan_if),
+            priority: None,
+            type_: 0,
+            dst_len: 22,
+        }];
+
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let next_hop = router.route_v4(peer).unwrap();
+        assert_eq!(next_hop.if_index, vlan_if);
+        assert_eq!(next_hop.preferred_src_ip, Some(vlan_src));
+        assert_eq!(next_hop.mac_addr, Some(peer_mac));
+        assert!(next_hop.gre.is_none());
+        let vlan = next_hop.vlan.expect("vlan info must be populated");
+        assert_eq!(vlan.if_index, vlan_if);
+        assert_eq!(vlan.vid, 900);
+        assert_eq!(vlan.pcp, 0);
+    }
+
+    #[test]
+    fn test_multiple_vlan_interfaces_resolve_their_own_vid() {
+        // With more than one VLAN sub-interface, each route is tagged with the vid of the
+        // interface it egresses through.
+        let peer_a = Ipv4Addr::new(10, 1, 0, 9);
+        let peer_b = Ipv4Addr::new(10, 2, 0, 9);
+        let vlan_if_a = 100u32;
+        let vlan_if_b = 101u32;
+        let mac_a = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x0a]);
+        let mac_b = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x0b]);
+
+        let neighbors = vec![
+            NeighborEntry {
+                destination: Some(IpAddr::V4(peer_a)),
+                lladdr: Some(mac_a),
+                ifindex: vlan_if_a as i32,
+                state: NUD_REACHABLE,
+            },
+            NeighborEntry {
+                destination: Some(IpAddr::V4(peer_b)),
+                lladdr: Some(mac_b),
+                ifindex: vlan_if_b as i32,
+                state: NUD_REACHABLE,
+            },
+        ];
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: vlan_if_a,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: Some(VlanLinkInfo { vid: 900 }),
+            },
+            InterfaceInfo {
+                if_index: vlan_if_b,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: Some(VlanLinkInfo { vid: 901 }),
+            },
+        ];
+        let routes = vec![
+            test_route(Some(peer_a), vlan_if_a),
+            test_route(Some(peer_b), vlan_if_b),
+        ];
+
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let hop_a = router.route_v4(peer_a).unwrap();
+        assert_eq!(hop_a.vlan.map(|v| v.vid), Some(900));
+        assert_eq!(hop_a.mac_addr, Some(mac_a));
+        let hop_b = router.route_v4(peer_b).unwrap();
+        assert_eq!(hop_b.vlan.map(|v| v.vid), Some(901));
+        assert_eq!(hop_b.mac_addr, Some(mac_b));
+    }
+
+    #[test]
+    fn test_gre_wins_when_both_gre_and_vlan_configured() {
+        // Defensive: if a configured VLAN if_index also happens to be a GRE interface, the resolve
+        // path picks GRE first (single-encap-per-interface contract).
+        let remote = Ipv4Addr::new(10, 0, 0, 1);
+        let gre_dest = Ipv4Addr::new(192, 168, 0, 1);
+        let if_index_underlay = 1u32;
+        let if_index_iface = 100u32;
+        let underlay_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let neighbors = vec![NeighborEntry {
+            destination: Some(IpAddr::V4(remote)),
+            lladdr: Some(underlay_mac),
+            ifindex: if_index_underlay as i32,
+            state: NUD_REACHABLE,
+        }];
+        let routes = vec![
+            test_route(Some(remote), if_index_underlay),
+            test_route(Some(gre_dest), if_index_iface),
+        ];
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: if_index_underlay,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            },
+            InterfaceInfo {
+                if_index: if_index_iface,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: Some(GreTunnelInfo {
+                    local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+                    remote: IpAddr::V4(remote),
+                    ttl: 0,
+                    tos: 0,
+                    pmtudisc: 0,
+                }),
+                vlan_link: Some(VlanLinkInfo { vid: 5 }),
+            },
+        ];
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let next_hop = router.route_v4(gre_dest).unwrap();
+        assert!(next_hop.gre.is_some());
+        assert!(next_hop.vlan.is_none());
     }
 }
