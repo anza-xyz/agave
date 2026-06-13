@@ -11395,12 +11395,26 @@ fn test_failed_simulation_load_error() {
     let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
+
+    // The transaction is fees-only (its program account is missing), so the
+    // rolled-back fee payer is now surfaced in post_simulation_accounts (#9231).
+    // The fee is zero here, so the fee payer's balance is unchanged.
+    assert_eq!(simulation.post_simulation_accounts.len(), 1);
+    assert_eq!(
+        simulation.post_simulation_accounts[0].0,
+        mint_keypair.pubkey()
+    );
+    assert_eq!(
+        simulation.post_simulation_accounts[0].1.lamports(),
+        mint_balance
+    );
+
     assert_eq!(
         simulation,
         TransactionSimulationResult {
             result: Err(TransactionError::ProgramAccountNotFound),
             logs: vec![],
-            post_simulation_accounts: vec![],
+            post_simulation_accounts: simulation.post_simulation_accounts.clone(),
             units_consumed: 0,
             loaded_accounts_data_size: 0,
             return_data: None,
