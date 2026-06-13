@@ -47,12 +47,14 @@ use {
     solana_feature_gate_interface::{self as feature, Feature},
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_keypair::keypair_from_seed,
     solana_ledger::{
-        blockstore::{Blockstore, banking_trace_path, create_new_ledger},
-        blockstore_options::{AccessType, LedgerColumnOptions},
+        blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
+        blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::{
             ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
         },
+        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
@@ -84,6 +86,7 @@ use {
         vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     },
     std::{
+        borrow::Cow,
         collections::{HashMap, HashSet},
         ffi::{OsStr, OsString},
         fs::{File, read_dir},
@@ -2433,6 +2436,8 @@ fn main() {
                         }
                     }
 
+                    let new_shred_verison =
+                        compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
                     if child_bank_required {
                         let num_ticks_per_slot = bank.ticks_per_slot();
                         let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
@@ -2444,6 +2449,83 @@ fn main() {
                         tick_entries.iter().for_each(|tick_entry| {
                             bank.register_tick(&tick_entry.hash, &scheduler);
                         });
+
+                        // Calculate and set the block ID so we can read it to
+                        // properly chain shreds for the child bank
+                        Bank::calculate_and_set_block_id_for_dcou(&bank);
+
+                        // Next steps will need write access to the Blockstore
+                        let rw_blockstore = open_blockstore(
+                            &ledger_path,
+                            arg_matches,
+                            AccessType::PrimaryForMaintenance,
+                        );
+
+                        // If slot exists, back it up in another Blockstore
+                        // just in case and purge from the Blockstore
+                        let slot = bank.slot();
+                        if blockstore.has_existing_shreds_for_slot(slot) {
+                            let backup_directory = format!(
+                                "{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{new_shred_verison}_{slot}"
+                            );
+                            let backup_ledger_path = ledger_path.join(backup_directory);
+                            info!(
+                                "Purging slot {slot} from Blockstore and backing up at {}",
+                                backup_ledger_path.display(),
+                            );
+                            let backup_blockstore = Arc::new(open_blockstore(
+                                &backup_ledger_path,
+                                arg_matches,
+                                AccessType::PrimaryForMaintenance,
+                            ));
+
+                            let shreds = blockstore
+                                .get_data_shreds_for_slot(slot, 0)
+                                .expect("todo: update me since can't use ?")
+                                .into_iter()
+                                .map(Cow::Owned);
+                            let _ = backup_blockstore
+                                .insert_cow_shreds(shreds, None, true)
+                                .expect("todo: update me since can't use ?");
+
+                            // Purge modifies state so use rw_blockstore
+                            rw_blockstore.purge_from_next_slots(slot, slot);
+                            rw_blockstore
+                                .purge_slots(slot, slot, PurgeType::Exact)
+                                .expect("todo: update me since can't use ?");
+                        }
+
+                        // Use a "dummy" but deterministic keyapir to sign
+                        let keypair =
+                            keypair_from_seed(&[0; 64]).expect("todo: update me since can't use ?");
+                        let chained_merkle_root = bank
+                            .block_id()
+                            .expect("Block ID should have been set already");
+
+                        let shredder = Shredder::new(
+                            slot,
+                            bank.parent_slot(),
+                            /*reference_tick:*/ 0,
+                            new_shred_verison,
+                        )
+                        .expect("todo: update me since can't use ?");
+                        let shreds: Vec<_> = shredder
+                            .make_merkle_shreds_from_entries(
+                                &keypair,
+                                &tick_entries,
+                                /*is_last_in_slot:*/ true,
+                                chained_merkle_root,
+                                /*next_shred_index:*/ 0,
+                                /*next_code_index:*/ 0,
+                                &ReedSolomonCache::default(),
+                                &mut ProcessShredsStats::default(),
+                            )
+                            .filter(Shred::is_data)
+                            .map(Cow::Owned)
+                            .collect();
+                        rw_blockstore
+                            .insert_cow_shreds(shreds, None, true)
+                            .expect("todo: update me since can't use ?");
                     }
 
                     let pre_capitalization = bank.capitalization();
@@ -2602,10 +2684,7 @@ fn main() {
                     if let Some(msg) = capitalization_message {
                         println!("{msg}");
                     }
-                    println!(
-                        "Shred version: {}",
-                        compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()))
-                    );
+                    println!("Shred version: {new_shred_verison}",);
 
                     if let Some(system_monitor_service) = system_monitor_service {
                         exit_signal.store(true, Ordering::Relaxed);
