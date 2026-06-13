@@ -5,16 +5,15 @@ use {
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
         errors::SigVerifyVoteError,
         rewards::rewards_wants_vote,
+        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifyVoteStats,
         utils::{
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
     },
     agave_votor_messages::{
-        consensus_message::{SigVerifiedBatch, VoteMessage},
-        metric_types::ConsensusMetricsEvent,
-        reward_certificate::AddVoteMessage,
-        vote::Vote,
+        consensus_message::VoteMessage, metric_types::ConsensusMetricsEvent,
+        reward_certificate::AddVoteMessage, vote::Vote,
     },
     log::info,
     rayon::{

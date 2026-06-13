@@ -1,11 +1,11 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
+        sig_verified_messages::SigVerifiedBatch,
         stats::{SigVerifyCertStats, SigVerifyVoteStats},
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
-        consensus_message::SigVerifiedBatch,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         reward_certificate::AddVoteMessage,
     },

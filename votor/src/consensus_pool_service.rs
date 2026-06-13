@@ -17,10 +17,12 @@ use {
         event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
     },
-    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
+    agave_bls_sigverify::{
+        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
+    },
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{Block, ConsensusMessage, SigVerifiedBatch},
+        consensus_message::{Block, ConsensusMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -59,6 +61,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) vote_history_highest_parent_ready: Option<(Slot, Block)>,
 
     pub(crate) consensus_message_receiver: Receiver<SigVerifiedBatch>,
+    pub(crate) own_message_receiver: Receiver<ConsensusMessage>,
 
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
@@ -386,40 +389,26 @@ impl ConsensusPoolService {
                 Duration::from_millis(20)
             };
 
-            let batches: Vec<SigVerifiedBatch> = select! {
+            let ret = select! {
                 recv(ctx.consensus_message_receiver) -> msg => {
                     let Ok(first) = msg else {
                         return Self::handle_channel_disconnected(&mut ctx, "consensus_message_receiver channel");
                     };
-                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).collect()
+                    Self::handle_sig_verified_batch(&mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
                 },
+                recv(ctx.own_message_receiver) -> msg => {
+                    let Ok(first) = msg else {
+                        return Self::handle_channel_disconnected(&mut ctx, "own_message_receiver channel");
+                    };
+                    Self::handle_own_message(&mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
+                }
                 default(wait_timeout) => continue
             };
 
-            for batch in batches {
-                let ret = match batch {
-                    SigVerifiedBatch::Votes(votes) => Self::process_batch(
-                        &mut ctx,
-                        votes.into_iter().map(ConsensusMessage::Vote),
-                        &mut consensus_pool,
-                        &mut events,
-                        &mut standstill_timer,
-                        &mut stats,
-                    ),
-                    SigVerifiedBatch::Certificates(certs) => Self::process_batch(
-                        &mut ctx,
-                        certs.into_iter().map(ConsensusMessage::Certificate),
-                        &mut consensus_pool,
-                        &mut events,
-                        &mut standstill_timer,
-                        &mut stats,
-                    ),
-                };
-                match ret {
-                    Ok(()) => {}
-                    Err(()) => {
-                        return Self::handle_channel_disconnected(&mut ctx, "bls_sender channel");
-                    }
+            match ret {
+                Ok(()) => {}
+                Err(()) => {
+                    return Self::handle_channel_disconnected(&mut ctx, "bls_sender channel");
                 }
             }
             stats.maybe_report();
@@ -615,6 +604,49 @@ impl ConsensusPoolService {
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_consensus_pool_service.join()
     }
+
+    fn handle_sig_verified_batch(
+        ctx: &mut ConsensusPoolContext,
+        consensus_pool: &mut ConsensusPool,
+        events: &mut Vec<VotorEvent>,
+        standstill_timer: &mut Instant,
+        first: SigVerifiedBatch,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), ()> {
+        for batch in std::iter::once(first).chain(ctx.consensus_message_receiver.try_recv()) {
+            match batch {
+                SigVerifiedBatch::Votes(votes) => Self::process_batch(
+                    ctx,
+                    votes.into_iter().map(ConsensusMessage::Vote),
+                    consensus_pool,
+                    events,
+                    standstill_timer,
+                    stats,
+                ),
+                SigVerifiedBatch::Certificates(certs) => Self::process_batch(
+                    ctx,
+                    certs.into_iter().map(ConsensusMessage::Certificate),
+                    consensus_pool,
+                    events,
+                    standstill_timer,
+                    stats,
+                ),
+            }?
+        }
+        Ok(())
+    }
+
+    fn handle_own_message(
+        ctx: &mut ConsensusPoolContext,
+        consensus_pool: &mut ConsensusPool,
+        events: &mut Vec<VotorEvent>,
+        standstill_timer: &mut Instant,
+        first: ConsensusMessage,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), ()> {
+        let msgs = std::iter::once(first).chain(ctx.own_message_receiver.try_recv());
+        Self::process_batch(ctx, msgs, consensus_pool, events, standstill_timer, stats)
+    }
 }
 
 #[cfg(test)]
@@ -699,6 +731,7 @@ mod tests {
             );
             let my_vote_pubkey = Pubkey::new_unique();
             let (consensus_message_sender, consensus_message_receiver) = unbounded();
+            let (_own_message_sender, own_message_receiver) = unbounded();
             let (event_sender, event_receiver) = unbounded();
             let (repair_event_sender, repair_event_receiver) = unbounded();
 
@@ -713,6 +746,7 @@ mod tests {
                 leader_schedule_cache,
                 vote_history_highest_parent_ready: None,
                 consensus_message_receiver,
+                own_message_receiver,
                 bls_sender,
                 event_sender,
                 repair_event_sender,

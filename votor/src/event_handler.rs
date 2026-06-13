@@ -961,7 +961,7 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
         },
@@ -999,7 +999,7 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<SigVerifiedBatch>,
+        own_vote_receiver: Receiver<ConsensusMessage>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1425,23 +1425,23 @@ mod tests {
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
             let mut received_messages = Vec::with_capacity(expected_votes.len());
             for _ in expected_votes {
-                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
+                let ConsensusMessage::Vote(vote) = self.own_vote_receiver.try_recv().unwrap()
                 else {
                     panic!("expected own vote batch");
                 };
-                received_messages.extend(votes);
+                received_messages.push(vote);
             }
 
             for expected_vote in expected_votes {
