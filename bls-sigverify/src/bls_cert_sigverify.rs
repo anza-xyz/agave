@@ -1,10 +1,14 @@
 use {
-    super::{bls_sigverifier::BAN_TIMEOUT, errors::SigVerifyCertError, stats::SigVerifyCertStats},
-    crate::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
+    crate::{
+        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY},
+        errors::SigVerifyCertError,
+        sig_verified_messages::SigVerifiedBatch,
+        stats::SigVerifyCertStats,
+        utils::send_certs_to_pool,
+    },
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::SigVerifiedBatch,
         fraction::Fraction,
     },
     crossbeam_channel::Sender,
