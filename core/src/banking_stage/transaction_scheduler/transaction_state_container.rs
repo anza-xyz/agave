@@ -435,6 +435,17 @@ mod tests {
         }
     }
 
+    fn insert_map_only(
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        priority: u64,
+    ) -> TransactionPriorityId {
+        let (transaction, max_age, priority, cost) = test_transaction(priority);
+        let entry = container.get_vacant_map_entry();
+        let transaction_id = entry.key();
+        entry.insert(TransactionState::new(transaction, max_age, priority, cost));
+        TransactionPriorityId::new(priority, transaction_id)
+    }
+
     #[test]
     fn test_is_empty() {
         let mut container = TransactionStateContainer::with_capacity(1);
@@ -460,6 +471,72 @@ mod tests {
                 .unwrap(),
             4
         );
+    }
+
+    #[test]
+    fn test_push_ids_into_queue_at_capacity_drops_lowest_priority_transactions() {
+        fn assert_drops_lowest_priority_transactions(
+            push_order: &str,
+            incoming_priorities: impl IntoIterator<Item = u64>,
+        ) {
+            let mut container = TransactionStateContainer::with_capacity(3);
+
+            for priority in [60, 50, 40] {
+                let (transaction, max_age, priority, cost) = test_transaction(priority);
+                assert!(!container.insert_new_transaction(transaction, max_age, priority, cost));
+            }
+
+            let priority_ids: Vec<_> = incoming_priorities
+                .into_iter()
+                .map(|priority| insert_map_only(&mut container, priority))
+                .collect();
+            assert_eq!(
+                container.push_ids_into_queue(priority_ids.into_iter()),
+                4,
+                "{push_order}"
+            );
+
+            let queued_priorities: Vec<_> =
+                container.recheck_iter(None).map(|id| id.priority).collect();
+            assert_eq!(queued_priorities, vec![80, 70, 60], "{push_order}");
+
+            let mut buffered_priorities: Vec<_> = container
+                .id_to_transaction_state
+                .iter()
+                .map(|(_, state)| state.priority())
+                .collect();
+            buffered_priorities.sort_unstable();
+            assert_eq!(buffered_priorities, vec![60, 70, 80], "{push_order}");
+        }
+
+        assert_drops_lowest_priority_transactions("priority order", [80, 70, 20, 10]);
+        assert_drops_lowest_priority_transactions("reverse priority order", [10, 20, 70, 80]);
+    }
+
+    #[test]
+    fn test_push_ids_into_queue_below_capacity_drops_lowest_priority_transactions() {
+        let mut container = TransactionStateContainer::with_capacity(3);
+
+        let (transaction, max_age, priority, cost) = test_transaction(60);
+        assert!(!container.insert_new_transaction(transaction, max_age, priority, cost));
+
+        let priority_ids: Vec<_> = [100, 90, 50, 40]
+            .into_iter()
+            .map(|priority| insert_map_only(&mut container, priority))
+            .collect();
+        assert_eq!(container.push_ids_into_queue(priority_ids.into_iter()), 2);
+
+        let queued_priorities: Vec<_> =
+            container.recheck_iter(None).map(|id| id.priority).collect();
+        assert_eq!(queued_priorities, vec![100, 90, 60]);
+
+        let mut buffered_priorities: Vec<_> = container
+            .id_to_transaction_state
+            .iter()
+            .map(|(_, state)| state.priority())
+            .collect();
+        buffered_priorities.sort_unstable();
+        assert_eq!(buffered_priorities, vec![60, 90, 100]);
     }
 
     #[test]
