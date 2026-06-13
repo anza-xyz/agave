@@ -2283,17 +2283,21 @@ impl Bank {
     }
 
     pub fn status_cache_ancestors(&self) -> Vec<u64> {
-        let mut roots = self.status_cache.read().unwrap().roots().clone();
-        let min = roots.iter().min().cloned().unwrap_or(0);
-        for ancestor in self.ancestors.keys() {
-            if ancestor >= min {
-                roots.insert(ancestor);
+        let (min, mut ancestors) = {
+            let status_cache = self.status_cache.read().unwrap();
+            let roots = status_cache.roots();
+            let mut ancestors = Vec::with_capacity(roots.len() + self.ancestors.len());
+            let mut min = Slot::MAX;
+            for root in roots {
+                ancestors.push(*root);
+                min = min.min(*root);
             }
-        }
+            (if roots.is_empty() { 0 } else { min }, ancestors)
+        };
 
-        let mut ancestors: Vec<_> = roots.into_iter().collect();
-        #[expect(clippy::stable_sort_primitive)]
-        ancestors.sort();
+        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
+        ancestors.sort_unstable();
+        ancestors.dedup();
         ancestors
     }
 
@@ -3034,7 +3038,11 @@ impl Bank {
 
         //this bank and all its parents are now on the rooted path
         let mut roots = vec![self.slot()];
-        roots.append(&mut self.parents().iter().map(|p| p.slot()).collect());
+        let mut parent = self.parent();
+        while let Some(bank) = parent {
+            roots.push(bank.slot());
+            parent = bank.parent();
+        }
 
         let mut total_index_us = 0;
         let mut total_cache_us = 0;
@@ -3051,9 +3059,10 @@ impl Bank {
         *self.rc.parent.write().unwrap() = None;
 
         let mut squash_cache_time = Measure::start("squash_cache_time");
-        roots
-            .iter()
-            .for_each(|slot| self.status_cache.write().unwrap().add_root(*slot));
+        self.status_cache
+            .write()
+            .unwrap()
+            .add_roots(roots.iter().copied());
         squash_cache_time.stop();
 
         SquashTiming {
