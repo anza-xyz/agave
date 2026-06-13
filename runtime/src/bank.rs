@@ -196,6 +196,7 @@ use {
         cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt,
+        num::NonZero,
         ops::AddAssign,
         path::PathBuf,
         slice,
@@ -5692,6 +5693,14 @@ impl Bank {
     /// Get the EpochStakes for a given epoch
     pub fn epoch_stakes(&self, epoch: Epoch) -> Option<&VersionedEpochStakes> {
         self.epoch_stakes.get(&epoch)
+    }
+
+    /// Returns the stake for given rank in the given slot.
+    pub fn get_stake(&self, slot: Slot, rank: u16) -> Option<NonZero<u64>> {
+        let epoch_stakes = self.epoch_stakes_from_slot(slot)?;
+        let rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+        let entry = rank_map.get_pubkey_stake_entry(rank as usize)?;
+        Some(NonZero::new(entry.stake).unwrap())
     }
 
     /// Verify a BLS certificate's signature using this bank's epoch stakes.
