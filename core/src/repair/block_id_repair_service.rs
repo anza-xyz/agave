@@ -689,7 +689,7 @@ impl BlockIdRepairService {
             return;
         }
         let pong = RepairProtocol::Pong(Pong::new(ping, keypair));
-        let pong_bytes = bincode::serialize(&pong).expect("Pong serialization should not fail");
+        let pong_bytes = wincode::serialize(&pong).expect("Pong serialization should not fail");
 
         match block_id_repair_socket.send_to(&pong_bytes, addr) {
             Ok(bytes_sent) if bytes_sent == pong_bytes.len() => {
@@ -1066,9 +1066,8 @@ impl BlockIdRepairService {
 mod tests {
     use {
         super::*,
-        bincode::Options,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, ping_pong::Ping},
-        solana_hash::Hash,
+        solana_hash::{HASH_BYTES, Hash},
         solana_keypair::{Keypair, Signer},
         solana_ledger::{
             blockstore::Blockstore,
@@ -1103,11 +1102,41 @@ mod tests {
 
     /// Serialize a response and nonce into packet format
     fn serialize_response(response: &BlockIdRepairResponse, nonce: u32) -> Vec<u8> {
+        wincode::serialize(&(response, nonce)).unwrap()
+    }
+
+    fn bincode_fixint_serialize<T: serde::Serialize + ?Sized>(value: &T) -> Vec<u8> {
+        use bincode::Options as _;
         bincode::options()
             .with_fixint_encoding()
             .allow_trailing_bytes()
-            .serialize(&(response, nonce))
+            .serialize(value)
             .unwrap()
+    }
+
+    #[test]
+    fn test_serialize_response_wincode_matches_bincode_options() {
+        let nonce = 1234;
+        let parent_response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count: 3,
+            parent_info: (4, Hash::new_from_array([3; HASH_BYTES])),
+            parent_proof: vec![5; 64],
+        };
+        let parent_packet = (&parent_response, nonce);
+        assert_eq!(
+            serialize_response(&parent_response, nonce),
+            bincode_fixint_serialize(&parent_packet)
+        );
+
+        let fec_set_response = BlockIdRepairResponse::FecSetRoot {
+            fec_set_root: Hash::new_from_array([6; HASH_BYTES]),
+            fec_set_proof: vec![7; 96],
+        };
+        let fec_set_packet = (&fec_set_response, nonce);
+        assert_eq!(
+            serialize_response(&fec_set_response, nonce),
+            bincode_fixint_serialize(&fec_set_packet)
+        );
     }
 
     /// Create a packet from serialized data
@@ -1238,7 +1267,7 @@ mod tests {
             parent_proof: parent_proof.clone(),
         };
 
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
@@ -1270,7 +1299,7 @@ mod tests {
             fec_set_proof: fec_set_proof.clone(),
         };
 
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
@@ -1617,7 +1646,7 @@ mod tests {
         let ping = Ping::new([7u8; 32], &ping_keypair);
         state.expect_ping_response(ping_keypair.pubkey(), from_addr, timestamp());
         let response = BlockIdRepairResponse::Ping { ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
 
@@ -1639,7 +1668,7 @@ mod tests {
             .unwrap();
         let mut buffer = vec![0; 2048];
         let (size, _) = pong_receiver.recv_from(&mut buffer).unwrap();
-        match bincode::deserialize(&buffer[..size]).unwrap() {
+        match wincode::deserialize(&buffer[..size]).unwrap() {
             RepairProtocol::Pong(pong) => assert!(pong.verify()),
             request => panic!("Expected Pong response, got {request:?}"),
         }
@@ -1657,7 +1686,7 @@ mod tests {
 
         let first_ping = Ping::new([1u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping: first_ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
@@ -1670,7 +1699,7 @@ mod tests {
 
         let second_ping = Ping::new([2u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping: second_ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
@@ -1695,7 +1724,7 @@ mod tests {
         let from_addr = SocketAddr::from(([127, 0, 0, 1], 1234));
         let ping = Ping::new([7u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
 
