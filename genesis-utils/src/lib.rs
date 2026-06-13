@@ -6,7 +6,6 @@ use {
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, GenesisConfig},
     solana_hash::Hash,
     solana_rpc_client::rpc_client::RpcClient,
-    std::net::SocketAddr,
 };
 
 mod open;
@@ -41,7 +40,7 @@ fn load_local_genesis(
 }
 
 fn get_genesis_config(
-    rpc_addr: &SocketAddr,
+    genesis_source_url: &str,
     ledger_path: &std::path::Path,
     expected_genesis_hash: Option<Hash>,
     max_genesis_archive_unpacked_size: u64,
@@ -54,7 +53,7 @@ fn get_genesis_config(
 
     let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
     if let Ok(tmp_genesis_package) =
-        download_genesis_if_missing(rpc_addr, &genesis_package, use_progress_bar)
+        download_genesis_if_missing(genesis_source_url, &genesis_package, use_progress_bar)
     {
         unpack_genesis_archive(
             &tmp_genesis_package,
@@ -76,45 +75,17 @@ fn get_genesis_config(
     }
 }
 
-fn set_and_verify_expected_genesis_hash(
-    genesis_config: GenesisConfig,
-    expected_genesis_hash: &mut Option<Hash>,
-    rpc_client: &RpcClient,
-) -> Result<(), String> {
-    let genesis_hash = genesis_config.hash();
-    if expected_genesis_hash.is_none() {
-        info!("Expected genesis hash set to {genesis_hash}");
-        *expected_genesis_hash = Some(genesis_hash);
-    }
-    let expected_genesis_hash = expected_genesis_hash.unwrap();
-
-    // Sanity check that the RPC node is using the expected genesis hash before
-    // downloading a snapshot from it
-    let rpc_genesis_hash = rpc_client
-        .get_genesis_hash()
-        .map_err(|err| format!("Failed to get genesis hash: {err}"))?;
-
-    if expected_genesis_hash != rpc_genesis_hash {
-        return Err(format!(
-            "Genesis hash mismatch: expected {expected_genesis_hash} but RPC node genesis hash is \
-             {rpc_genesis_hash}"
-        ));
-    }
-
-    Ok(())
-}
-
 pub fn download_then_check_genesis_hash(
-    rpc_addr: &SocketAddr,
+    genesis_source_url: &str,
     ledger_path: &std::path::Path,
     expected_genesis_hash: &mut Option<Hash>,
     max_genesis_archive_unpacked_size: u64,
     no_genesis_fetch: bool,
     use_progress_bar: bool,
-    rpc_client: &RpcClient,
+    rpc_client: Option<&RpcClient>,
 ) -> Result<(), String> {
     let genesis_config = get_genesis_config(
-        rpc_addr,
+        genesis_source_url,
         ledger_path,
         *expected_genesis_hash,
         max_genesis_archive_unpacked_size,
@@ -122,7 +93,29 @@ pub fn download_then_check_genesis_hash(
         use_progress_bar,
     )?;
 
-    set_and_verify_expected_genesis_hash(genesis_config, expected_genesis_hash, rpc_client)
+    if expected_genesis_hash.is_none() {
+        let genesis_hash = genesis_config.hash();
+        info!("Expected genesis hash set to {genesis_hash}");
+        *expected_genesis_hash = Some(genesis_hash);
+    }
+    let expected_genesis_hash = expected_genesis_hash.unwrap();
+
+    if let Some(rpc_client) = rpc_client {
+        // Sanity check that the RPC node is using the expected genesis hash before
+        // downloading a snapshot from it
+        let rpc_genesis_hash = rpc_client
+            .get_genesis_hash()
+            .map_err(|err| format!("Failed to get genesis hash: {err}"))?;
+
+        if expected_genesis_hash != rpc_genesis_hash {
+            return Err(format!(
+                "Genesis hash mismatch: expected {expected_genesis_hash} but RPC node genesis hash \
+                 is {rpc_genesis_hash}"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 pub use open::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, OpenGenesisConfigError, open_genesis_config};

@@ -17,6 +17,7 @@ impl Default for RpcBootstrapConfig {
         Self {
             no_genesis_fetch: false,
             no_snapshot_fetch: false,
+            snapshot_servers: vec![],
             check_vote_account: None,
             only_known_rpc: false,
             max_genesis_archive_unpacked_size: 10485760,
@@ -30,6 +31,17 @@ impl FromClapArgMatches for RpcBootstrapConfig {
         let no_genesis_fetch = matches.is_present("no_genesis_fetch");
 
         let no_snapshot_fetch = matches.is_present("no_snapshot_fetch");
+
+        let snapshot_servers = matches
+            .values_of("snapshot_servers")
+            .map(|values| {
+                values
+                    .map(str::trim)
+                    .filter(|server| !server.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let check_vote_account = matches
             .value_of("check_vote_account")
@@ -49,6 +61,7 @@ impl FromClapArgMatches for RpcBootstrapConfig {
         Ok(Self {
             no_genesis_fetch,
             no_snapshot_fetch,
+            snapshot_servers,
             check_vote_account,
             only_known_rpc,
             max_genesis_archive_unpacked_size,
@@ -69,6 +82,19 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .help(
                 "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
                  if present",
+            ),
+        Arg::with_name("snapshot_servers")
+            .long("snapshots-server")
+            .aliases(&["snapshot-server", "snapshots-servers", "snapshot-servers"])
+            .takes_value(true)
+            .number_of_values(1)
+            .multiple(true)
+            .use_delimiter(true)
+            .value_name("URL")
+            .help(
+                "Try this trusted snapshot server URL for genesis and latest snapshot downloads \
+                 before using gossip. May be specified multiple times or as a comma-separated \
+                 list. No snapshot path is required; fixed snapshot paths are probed",
             ),
         Arg::with_name("check_vote_account")
             .long("check-vote-account")
@@ -181,6 +207,32 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_snapshot_servers() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            rpc_bootstrap_config: RpcBootstrapConfig {
+                snapshot_servers: vec![
+                    "https://snapshots-1.example.com".to_string(),
+                    "https://snapshots-2.example.com".to_string(),
+                    "https://snapshots-3.example.com".to_string(),
+                ],
+                ..RpcBootstrapConfig::default()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--snapshots-server",
+                "https://snapshots-1.example.com,https://snapshots-2.example.com",
+                "--snapshot-server",
+                "https://snapshots-3.example.com",
+            ],
+            expected_args,
+        );
     }
 
     #[test]
