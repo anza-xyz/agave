@@ -187,8 +187,6 @@ the transaction processor.
   deployment slot when replenishing a program cache instance.
 - `log_messages_bytes_limit`: The maximum number of bytes that log messages can
   consume.
-- `limit_to_load_programs`: Whether to limit the number of programs loaded for
-  the transaction batch.
 - `recording_config`: Recording capabilities for transaction execution.
 
 ### `LoadAndExecuteSanitizedTransactionsOutput`

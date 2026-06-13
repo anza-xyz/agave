@@ -123,9 +123,6 @@ pub struct TransactionProcessingConfig<'a> {
     pub check_program_deployment_slot: bool,
     /// The maximum number of bytes that log messages can consume.
     pub log_messages_bytes_limit: Option<usize>,
-    /// Whether to limit the number of programs loaded for the transaction
-    /// batch.
-    pub limit_to_load_programs: bool,
     /// Recording capabilities for transaction execution.
     pub recording_config: ExecutionRecordingConfig,
     /// Should failing transactions within the batch be dropped (no fee charged
@@ -440,7 +437,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the transaction loop below.
         let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
 
-        if program_cache_for_tx_batch.hit_max_limit {
+        if program_cache_for_tx_batch.abandon {
             return LoadAndExecuteSanitizedTransactionsOutput {
                 error_metrics,
                 execute_timings,
@@ -526,7 +523,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 .get_env_for_execution(),
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
-                            config.limit_to_load_programs,
                             true, // increment_usage_counter
                         );
                     });
@@ -535,7 +531,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_cache_us,
                     );
 
-                    if program_cache_for_tx_batch.hit_max_limit {
+                    if program_cache_for_tx_batch.abandon {
                         return LoadAndExecuteSanitizedTransactionsOutput {
                             error_metrics,
                             execute_timings,
@@ -828,7 +824,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
-        limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
         let mut count_hits_and_misses = true;
@@ -872,13 +867,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     key,
                     last_modification_slot,
                     program,
-                ) && limit_to_load_programs
-                {
-                    // This branch is taken when there is an error in assigning a program to a
-                    // cache slot. It is not possible to mock this error for SVM unit
-                    // tests purposes.
+                ) {
+                    // Proceeding with this transaction batch is pointless
                     *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-                    program_cache_for_tx_batch.hit_max_limit = true;
+                    program_cache_for_tx_batch.abandon = true;
                     return;
                 }
             } else if missing_programs.is_empty() {
@@ -1730,7 +1722,6 @@ mod tests {
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
             true,
-            true,
         );
     }
 
@@ -1754,35 +1745,51 @@ mod tests {
         let account_loader = (&mock_bank).into();
 
         let mut loaded_missing = 0;
-        for limit_to_load_programs in [false, true] {
-            let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
-
-            batch_processor.replenish_program_cache(
-                &account_loader,
-                vec![ProgramToLoad {
-                    program_id: &key,
-                    loader: ProgramCacheEntryOwner::LoaderV2,
-                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
-                    last_modification_slot: 0,
-                }],
-                &program_runtime_environment_for_execution,
-                &mut program_cache_for_tx_batch,
-                &mut ExecuteTimings::default(),
-                limit_to_load_programs,
-                true,
-            );
-            assert!(!program_cache_for_tx_batch.hit_max_limit);
-            if program_cache_for_tx_batch.loaded_missing {
-                loaded_missing += 1;
-            }
-
-            let program = program_cache_for_tx_batch.find(&key).unwrap();
-            assert!(matches!(
-                program.program,
-                ProgramCacheEntryType::FailedVerification(_)
-            ));
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
+        batch_processor.replenish_program_cache(
+            &account_loader,
+            vec![ProgramToLoad {
+                program_id: &key,
+                loader: ProgramCacheEntryOwner::LoaderV2,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                last_modification_slot: 0,
+            }],
+            &program_runtime_environment_for_execution,
+            &mut program_cache_for_tx_batch,
+            &mut ExecuteTimings::default(),
+            true,
+        );
+        assert!(!program_cache_for_tx_batch.abandon);
+        if program_cache_for_tx_batch.loaded_missing {
+            loaded_missing += 1;
         }
+
+        let program = program_cache_for_tx_batch.find(&key).unwrap();
+        assert!(matches!(
+            program.program,
+            ProgramCacheEntryType::FailedVerification(_)
+        ));
         assert!(loaded_missing > 0);
+
+        {
+            let mut program_cache = batch_processor.global_program_cache.write().unwrap();
+            program_cache.remove_programs(std::iter::once(key));
+            program_cache.latest_root_slot = 32;
+        }
+        batch_processor.replenish_program_cache(
+            &account_loader,
+            vec![ProgramToLoad {
+                program_id: &key,
+                loader: ProgramCacheEntryOwner::LoaderV2,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                last_modification_slot: 0,
+            }],
+            &program_runtime_environment_for_execution,
+            &mut program_cache_for_tx_batch,
+            &mut ExecuteTimings::default(),
+            true,
+        );
+        assert!(program_cache_for_tx_batch.abandon);
     }
 
     #[test]
