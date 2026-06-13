@@ -3,7 +3,7 @@ mod tests {
 
     use {
         crate::{
-            bank::{Bank, VAT_TO_BURN_PER_EPOCH},
+            bank::Bank,
             block_component_processor::vote_reward::{
                 VoteState, increment_credits,
                 tests::{new_bank_from_parent, set_commission},
@@ -388,10 +388,12 @@ mod tests {
 
             let (initial_lamports, final_lamports) =
                 self.get_initial_and_final_lamports(reward_bank, payout_bank, &vote_pubkey);
-            let diff = final_lamports
-                + VAT_TO_BURN_PER_EPOCH * (payout_bank.epoch() - reward_bank.epoch())
-                - initial_lamports;
-            assert_eq!(expected_validator_reward, diff);
+            let vat_burn =
+                payout_bank.vat_to_burn_per_epoch() * (payout_bank.epoch() - reward_bank.epoch());
+            assert_eq!(
+                expected_validator_reward,
+                final_lamports + vat_burn - initial_lamports
+            );
         }
 
         fn validate_rewards(&self, reward_bank: &Bank, payout_bank: &Bank) {

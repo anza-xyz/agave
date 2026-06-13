@@ -401,7 +401,7 @@ impl Node {
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
-            alpenglow: Some(alpenglow),
+            alpenglow,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tpu_vote: tpu_vote_sockets,

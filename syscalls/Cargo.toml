@@ -35,7 +35,7 @@ solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["wincode"] }
 solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
@@ -57,6 +57,7 @@ solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

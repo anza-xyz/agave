@@ -75,7 +75,7 @@ static CORE_BPF_PROGRAMS: &[(Pubkey, Option<Pubkey>, &[u8])] = &[
     (
         solana_sdk_ids::stake::ID,
         None,
-        include_bytes!("programs/core_bpf_stake-4.0.0.so"),
+        include_bytes!("programs/core_bpf_stake-5.1.0.so"),
     ),
     // Add more programs here post-migration...
 ];

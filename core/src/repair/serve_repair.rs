@@ -1940,6 +1940,7 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
+        crossbeam_channel::bounded,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -2545,8 +2546,7 @@ mod tests {
             .root_bank()
             .epoch_schedule()
             .clone();
-        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) =
-            crossbeam_channel::unbounded();
+        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = bounded(1024);
         RepairInfo {
             bank_forks,
             cluster_info,

@@ -21,10 +21,16 @@ check-cfg = [
 
 # Clippy lint configuration that can not be applied in clippy.toml
 [workspace.lints.clippy]
+# Denied lints
 arithmetic_side_effects = "deny"
 default_trait_access = "deny"
 manual_let_else = "deny"
 used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"
+## Due to recent switch to Rust 2024, should be removed after repo auto-fix before release cut
+collapsible_if = "allow"
 
 [workspace.dependencies]
 agave-feature-set = { path = "../feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -83,12 +89,12 @@ solana-cost-model = { path = "../cost-model", version = "=4.2.0-alpha.0", featur
 solana-entry = { path = "../entry", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-faucet = { path = "../faucet", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
-solana-fee-calculator = "3.2.0"
+solana-fee-calculator = "3.2.1"
 solana-genesis = { path = "../genesis", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hash = "4.3.0"
+solana-hash = "4.4.0"
 solana-inflation = "3.1.0"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.3.0"
@@ -116,8 +122,8 @@ solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.2.
 solana-sbpf = { version = "=0.21.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
-solana-signature = { version = "3.4.0", default-features = false }
-solana-signer = "3.0.0"
+solana-signature = { version = "3.4.1", default-features = false }
+solana-signer = "3.0.1"
 solana-stake-interface = "4.2.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -126,7 +132,7 @@ solana-svm-callback = { path = "../svm-callback", version = "=4.2.0-alpha.0", fe
 solana-svm-feature-set = { path = "../svm-feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-log-collector = { path = "../svm-log-collector", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-timings = { path = "../svm-timings", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-svm-transaction = { path = "../svm-transaction", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
+solana-svm-transaction = "4.2.0"
 solana-syscalls = { path = "../syscalls", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

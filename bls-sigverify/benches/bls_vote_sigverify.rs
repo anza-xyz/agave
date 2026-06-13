@@ -4,6 +4,13 @@
 */
 
 use {
+    agave_bls_sigverify::{
+        bls_vote_sigverify::{
+            VotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
+            verify_individual_votes, verify_votes_optimistic,
+        },
+        stats::SigVerifyVoteStats,
+    },
     agave_votor_messages::{
         consensus_message::{Block, VoteMessage},
         vote::Vote,
@@ -11,13 +18,6 @@ use {
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
-    solana_core::bls_sigverify::{
-        bls_vote_sigverify::{
-            VotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
-            verify_individual_votes, verify_votes_optimistic,
-        },
-        stats::SigVerifyVoteStats,
-    },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_signer::Signer,

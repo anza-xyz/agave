@@ -5,11 +5,9 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
-        block_creation_loop::{ReplayHighestFrozen, rewards::msg_types::AddVoteMessage},
-        bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
+        block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
-            VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
+            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
         cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
         commitment_service::AggregateCommitmentService,
@@ -28,16 +26,21 @@ use {
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
     },
-    agave_votor::{
-        consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+    agave_bls_sigverify::{
+        bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+    },
+    agave_votor::{
+        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::{
+        VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+    },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -780,11 +783,11 @@ pub mod tests {
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
-        let (retransmit_slots_sender, _retransmit_slots_receiver) = unbounded();
-        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let (_, gossip_confirmed_slots_receiver) = unbounded();
+        let (retransmit_slots_sender, _retransmit_slots_receiver) = bounded(1024);
+        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let (_, gossip_confirmed_slots_receiver) = bounded(1024);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
@@ -804,8 +807,8 @@ pub mod tests {
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         );
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
-        let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
-        let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
+        let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
+        let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
         let highest_parent_ready = Arc::new(RwLock::new((
             0,
             Block {
@@ -814,7 +817,7 @@ pub mod tests {
             },
         )));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
-            unbounded();
+            bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
         let cancel = CancellationToken::new();
@@ -832,7 +835,7 @@ pub mod tests {
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
-        let (reward_votes_sender, _reward_votes_receiver) = unbounded();
+        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -844,7 +847,7 @@ pub mod tests {
                 retransmit: target1.sockets.retransmit_sockets,
                 fetch: target1.sockets.tvu,
                 ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
-                alpenglow: target1.sockets.alpenglow,
+                alpenglow: Some(target1.sockets.alpenglow),
                 block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,

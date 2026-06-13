@@ -87,6 +87,7 @@ pub struct FeatureSnapshot {
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub validate_chained_block_id_2: bool,
+    pub upgrade_bpf_stake_program_to_v5_1: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -200,6 +201,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             validate_chained_block_id_2: is_active(&validate_chained_block_id_2::ID),
+            upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
         }
     }
 }
@@ -1280,10 +1282,6 @@ pub mod relax_intrabatch_account_locks {
     solana_pubkey::declare_id!("4WeHX6QoXCCwqbSFgi6dxnB6QsPo6YApaNTH7P4MLQ99");
 }
 
-pub mod create_slashing_program {
-    solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
-}
-
 pub mod disable_partitioned_rent_collection {
     solana_pubkey::declare_id!("2B2SBNbUcr438LtGXNcJNBP2GBSxjx81F945SdSkUSfC");
 }
@@ -1302,10 +1300,6 @@ pub mod raise_block_limits_to_60m {
 
 pub mod mask_out_rent_epoch_in_vm_serialization {
     solana_pubkey::declare_id!("RENtePQcDLrAbxAsP3k8dwVcnNYQ466hi2uKvALjnXx");
-}
-
-pub mod enshrine_slashing_program {
-    solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
 }
 
 pub mod enable_extend_program_checked {
@@ -1530,19 +1524,27 @@ pub mod set_lamports_per_byte_to_6960 {
 }
 
 pub mod reduce_slot_time_to_350ms {
-    solana_pubkey::declare_id!("iBRL2iJvhLssJveF1utbmmQGmjonmNYZALcJFEHTbUF");
+    solana_pubkey::declare_id!("iBRL5RuWhw4yqaAZu96RUULHckHTZAoe2b77qaV38JZ");
 }
 
 pub mod reduce_slot_time_to_300ms {
-    solana_pubkey::declare_id!("iBRLA3zvd6x9445cK1vS7xt8n6Y7DS3otfRcDdW8JRW");
+    solana_pubkey::declare_id!("iBRLL3k18HST852F1Mf3Lv83waTNQmmqvKDxvYGwQFL");
 }
 
 pub mod reduce_slot_time_to_250ms {
-    solana_pubkey::declare_id!("iBRLR6nG3fDi8YD4mpPTUVTgo5NaiYfZgrzokCfADP2");
+    solana_pubkey::declare_id!("iBRLMc81UjRa8fn8A6eE8bJTnRbgQoPTynM51akENCV");
 }
 
 pub mod reduce_slot_time_to_200ms {
-    solana_pubkey::declare_id!("iBRLypKvvj9VEvwoTeRpbLhbW55NFR4T3GE9BUR8A16");
+    solana_pubkey::declare_id!("iBRLjhJnkmDZgNoZRDMW11d8ZV7HvsL3vAyRjZB5npW");
+}
+
+pub mod upgrade_bpf_stake_program_to_v5_1 {
+    solana_pubkey::declare_id!("s51VGwCAgebo2745DSUris72RavoLkXGUmVJosESCXr");
+
+    pub mod buffer {
+        solana_pubkey::declare_id!("p51x11QCYMHwuVS1MBcLHKb3MezWyqGS5BEB41CA1dk");
+    }
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2396,10 +2398,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0083: Allow batched transactions to read/write and write/write the same accounts",
         ),
         (
-            create_slashing_program::id(),
-            "SIMD-0204: creates an enshrined slashing program",
-        ),
-        (
             disable_partitioned_rent_collection::id(),
             "SIMD-0175: Disable partitioned rent collection #4562",
         ),
@@ -2418,10 +2416,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             mask_out_rent_epoch_in_vm_serialization::id(),
             "SIMD-0267: Sets rent_epoch to a constant in the VM",
-        ),
-        (
-            enshrine_slashing_program::id(),
-            "SIMD-0204: Slashable event verification",
         ),
         (
             enable_extend_program_checked::id(),
@@ -2622,6 +2616,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validate_chained_block_id_2::id(),
             "SIMD-340: Encompassing check for validate chained block ID",
+        ),
+        (
+            upgrade_bpf_stake_program_to_v5_1::id(),
+            "SIMD-0391: Upgrade BPF Stake Program to v5.1.0 (fixed-point warmup/cooldown)",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

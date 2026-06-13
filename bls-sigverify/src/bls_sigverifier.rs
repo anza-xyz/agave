@@ -1,25 +1,24 @@
 //! The BLS signature verifier.
 
 use {
-    super::{
+    crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
         bls_vote_sigverify::{VotePayload, verify_and_send_votes},
         errors::SigVerifyError,
+        generated_cert_types::GeneratedCertTypes,
+        rewards::rewards_wants_vote,
         stats::SigVerifierStats,
     },
-    crate::{
-        block_creation_loop::rewards::{certs_builder::wants_vote, msg_types::AddVoteMessage},
-        cluster_info_vote_listener::VerifiedVoterSlotsSender,
-    },
-    agave_votor::{
-        consensus_metrics::ConsensusMetricsEventSender, generated_cert_types::GeneratedCertTypes,
-    },
     agave_votor_messages::{
+        VerifiedVoterSlotsSender,
         certificate::CertificateType,
         consensus_message::{ConsensusMessage, SigVerifiedBatch, VoteMessage},
+        metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
+        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
+    log::error,
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     solana_clock::Slot,
@@ -50,26 +49,26 @@ pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 /// We ban the sender for 2 days which roughly corresponds to an epoch
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
-pub(crate) struct SigVerifierContext {
-    pub(crate) migration_status: Arc<MigrationStatus>,
-    pub(crate) banlist: Arc<SimpleQosBanlist>,
-    pub(crate) sharable_banks: SharableBanks,
-    pub(crate) cluster_info: Arc<ClusterInfo>,
-    pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
-    pub(crate) num_threads: usize,
-    pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
+pub struct SigVerifierContext {
+    pub migration_status: Arc<MigrationStatus>,
+    pub banlist: Arc<SimpleQosBanlist>,
+    pub sharable_banks: SharableBanks,
+    pub cluster_info: Arc<ClusterInfo>,
+    pub leader_schedule: Arc<LeaderScheduleCache>,
+    pub num_threads: usize,
+    pub generated_cert_types: Arc<GeneratedCertTypes>,
 }
 
-pub(crate) struct SigVerifierChannels {
-    pub(crate) packet_receiver: Receiver<PacketBatch>,
-    pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
-    pub(crate) channel_to_reward: Sender<AddVoteMessage>,
-    pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
-    pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
+pub struct SigVerifierChannels {
+    pub packet_receiver: Receiver<PacketBatch>,
+    pub channel_to_repair: VerifiedVoterSlotsSender,
+    pub channel_to_reward: Sender<AddVoteMessage>,
+    pub channel_to_pool: Sender<SigVerifiedBatch>,
+    pub channel_to_metrics: ConsensusMetricsEventSender,
 }
 
 /// Starts the BLS sigverifier service in its own dedicated thread.
-pub(crate) fn spawn_service(
+pub fn spawn_service(
     exit: Arc<AtomicBool>,
     context: SigVerifierContext,
     channels: SigVerifierChannels,
@@ -286,7 +285,7 @@ impl SigVerifier {
         if vote.vote.slot() > root_slot {
             return ret;
         }
-        if wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
+        if rewards_wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
             return ret;
         }
         self.stats.num_old_votes_received += 1;
@@ -332,18 +331,16 @@ fn recv_batches(
 mod tests {
     use {
         super::*,
-        crate::cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
-        agave_votor::{
-            consensus_metrics::ConsensusMetricsEventReceiver,
-            consensus_pool::certificate_builder::CertificateBuilder,
-        },
+        agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
         agave_votor_messages::{
+            VerifiedVoterSlotsReceiver,
             certificate::{Certificate, CertificateType},
             consensus_message::{Block, ConsensusMessage, VoteMessage},
+            metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
         },
         bitvec::prelude::{BitVec, Lsb0},
-        crossbeam_channel::{Receiver, TryRecvError},
+        crossbeam_channel::{Receiver, TryRecvError, bounded},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
@@ -383,7 +380,7 @@ mod tests {
 
     impl TestContext {
         fn new() -> Self {
-            let (channel_to_pool, pool_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_pool, pool_receiver) = bounded(1024);
             Self::new_with_pool_channel(channel_to_pool, pool_receiver)
         }
 
@@ -396,7 +393,7 @@ mod tests {
                 .map(|_| ValidatorVoteKeypairs::new_rand())
                 .collect::<Vec<_>>();
             let stakes_vec = (0..validator_keypairs.len())
-                .map(|i| 1_000 - i as u64)
+                .map(|i| 1_000u64.saturating_sub(i as u64))
                 .collect::<Vec<_>>();
             let mut genesis = create_genesis_config_with_alpenglow_vote_accounts(
                 1_000_000_000,
@@ -417,10 +414,10 @@ mod tests {
             let leader_schedule =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-            let (channel_to_repair, repair_receiver) = crossbeam_channel::unbounded();
-            let (channel_to_reward, reward_receiver) = crossbeam_channel::unbounded();
-            let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
-            let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_repair, repair_receiver) = bounded(1024);
+            let (channel_to_reward, reward_receiver) = bounded(1024);
+            let (packet_sender, packet_receiver) = bounded(1024);
+            let (channel_to_metrics, metrics_receiver) = bounded(1024);
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let banlist = new_test_banlist();
@@ -529,8 +526,8 @@ mod tests {
             .verify_and_send_batches(messages_to_batches(&messages1))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
         let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes1,
@@ -556,8 +553,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
         let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes2,
@@ -582,8 +579,8 @@ mod tests {
             .verify_and_send_batches(messages_to_batches(&messages3))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
         let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes3,
@@ -603,9 +600,9 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
-        assert_eq!(ctx.verifier.stats.num_malformed_pkts, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.num_malformed_pkts.0, 1);
 
         // Expect no messages since the packet was malformed
         expect_no_receive(&ctx.pool_receiver);
@@ -622,7 +619,7 @@ mod tests {
             .verify_and_send_batches(messages_to_batches(&messages_no_stakes))
             .unwrap();
 
-        assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes.0, 1);
 
         // Expect no messages since the packet was malformed
         expect_no_receive(&ctx.pool_receiver);
@@ -636,7 +633,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages_invalid_rank))
             .unwrap();
-        assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank.0, 1);
 
         // Expect no messages since the packet was malformed
         expect_no_receive(&ctx.pool_receiver);
@@ -691,7 +688,7 @@ mod tests {
         assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
         // pool_sent counts every message that made it onto the channel,
         // whether via try_send or the blocking fallback.
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 2);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
     }
 
     #[test]
@@ -732,8 +729,8 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(ctx.verifier.stats.num_discarded_pkts, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.num_discarded_pkts.0, 1);
     }
 
     #[test]
@@ -1062,7 +1059,7 @@ mod tests {
             0,
             "This certificate should be invalid"
         );
-        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed.0, 1);
     }
 
     #[test]
@@ -1201,7 +1198,7 @@ mod tests {
             0,
             "This certificate should be invalid"
         );
-        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed.0, 1);
     }
 
     #[test]
@@ -1236,7 +1233,11 @@ mod tests {
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(
-            ctx.verifier.stats.cert_stats.signature_verification_failed,
+            ctx.verifier
+                .stats
+                .cert_stats
+                .signature_verification_failed
+                .0,
             1
         );
     }
@@ -1320,8 +1321,8 @@ mod tests {
                 assert_eq!(certs.len(), 1);
             }
         }
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, num_votes as u64);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, num_votes as u64);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
     }
 
     #[test]
@@ -1345,15 +1346,15 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
-        assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank.0, 1);
     }
 
     #[test]
     fn test_verify_old_vote_and_cert() {
-        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
-        let (votes_for_repair_sender, _) = crossbeam_channel::unbounded();
-        let (consensus_metrics_sender, _) = crossbeam_channel::unbounded();
-        let (reward_votes_sender, _reward_votes_receiver) = crossbeam_channel::unbounded();
+        let (message_sender, message_receiver) = bounded(1024);
+        let (votes_for_repair_sender, _) = bounded(1024);
+        let (consensus_metrics_sender, _) = bounded(1024);
+        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -1381,7 +1382,7 @@ mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let (_packet_sender, packet_receiver) = crossbeam_channel::unbounded();
+        let (_packet_sender, packet_receiver) = bounded(1024);
         let mut sig_verifier = SigVerifier::new(
             SigVerifierContext {
                 migration_status: Arc::new(MigrationStatus::default()),
@@ -1416,7 +1417,7 @@ mod tests {
             .verify_and_send_batches(packet_batches_vote)
             .unwrap();
         expect_no_receive(&message_receiver);
-        assert_eq!(sig_verifier.stats.num_old_votes_received, 1);
+        assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
 
         let cert = create_signed_certificate_message(
             &validator_keypairs,
@@ -1430,8 +1431,8 @@ mod tests {
             .verify_and_send_batches(packet_batches_cert)
             .unwrap();
         expect_no_receive(&message_receiver);
-        assert_eq!(sig_verifier.stats.num_old_certs_received, 1);
-        assert_eq!(sig_verifier.stats.num_old_votes_received, 1);
+        assert_eq!(sig_verifier.stats.num_old_certs_received.0, 1);
+        assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
     }
 
     #[test]
@@ -1473,8 +1474,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
-        assert_eq!(ctx.verifier.stats.num_verified_certs_received, 0);
-        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 1);
+        assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 1);
 
         vote_messages.pop(); // Remove one signature
         let mut builder2 = CertificateBuilder::new(cert_type);
@@ -1490,8 +1491,8 @@ mod tests {
             .verify_and_send_batches(packet_batches2)
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
-        assert_eq!(ctx.verifier.stats.num_verified_certs_received, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 0);
+        assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 0);
     }
 
     #[test]
@@ -1648,7 +1649,7 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(ctx.verifier.stats.num_generated_certs_received, 1);
+        assert_eq!(ctx.verifier.stats.num_generated_certs_received.0, 1);
     }
 
     #[test]
@@ -1671,8 +1672,8 @@ mod tests {
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
-        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future, 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.too_far_in_future, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.too_far_in_future.0, 1);
     }
 
     fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {

@@ -13,7 +13,6 @@ pub mod banking_simulation;
 pub mod banking_stage;
 pub mod banking_trace;
 pub(crate) mod block_creation_loop;
-pub mod bls_sigverify;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;

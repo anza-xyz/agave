@@ -602,7 +602,6 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::VAT_TO_BURN_PER_EPOCH,
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, activate_all_features_alpenglow,
@@ -1304,11 +1303,11 @@ mod tests {
 
             let (initial_validator_lamports, final_validator_lamports) =
                 self.get_initial_and_final_lamports(reward_bank, payout_bank, voter_pubkey);
+            let vat_burn =
+                payout_bank.vat_to_burn_per_epoch() * (payout_bank.epoch() - reward_bank.epoch());
             assert_eq!(
                 expected_validator_reward,
-                final_validator_lamports
-                    + VAT_TO_BURN_PER_EPOCH * (payout_bank.epoch() - reward_bank.epoch())
-                    - initial_validator_lamports
+                final_validator_lamports + vat_burn - initial_validator_lamports
             );
             leader_reward
         }
@@ -1336,11 +1335,11 @@ mod tests {
 
             let (initial_validator_lamports, final_validator_lamports) =
                 self.get_initial_and_final_lamports(reward_bank, payout_bank, &leader);
+            let vat_burn =
+                payout_bank.vat_to_burn_per_epoch() * (payout_bank.epoch() - reward_bank.epoch());
             assert_eq!(
                 expected_validator_reward,
-                final_validator_lamports
-                    + VAT_TO_BURN_PER_EPOCH * (payout_bank.epoch() - reward_bank.epoch())
-                    - initial_validator_lamports
+                final_validator_lamports + vat_burn - initial_validator_lamports
             );
         }
 

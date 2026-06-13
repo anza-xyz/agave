@@ -508,7 +508,7 @@ mod tests {
         super::*,
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_account::{AccountSharedData, state_traits::StateMut},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -577,7 +577,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
@@ -600,7 +600,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
@@ -1255,7 +1255,7 @@ mod tests {
 
     #[test]
     fn test_write_persist_transaction_status() {
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,
@@ -1326,7 +1326,7 @@ mod tests {
 
     #[test]
     fn test_write_persist_loaded_addresses() {
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,

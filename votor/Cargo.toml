@@ -29,6 +29,7 @@ frozen-abi = [
 ]
 
 [dependencies]
+agave-bls-sigverify = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }

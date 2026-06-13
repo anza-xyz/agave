@@ -123,7 +123,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::Bank,
+        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
         bank_forks::BankForks,
         bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
@@ -152,7 +152,7 @@ use {
         borrow::Cow,
         cmp,
         collections::{HashMap, HashSet},
-        net::{SocketAddr, SocketAddrV4},
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::FromStr,
@@ -363,7 +363,7 @@ pub struct ValidatorConfig {
     pub no_os_cpu_stats_reporting: bool,
     pub no_os_disk_stats_reporting: bool,
     pub enforce_ulimit_nofile: bool,
-    pub poh_pinned_cpu_core: usize,
+    pub poh_pinned_cpu_core: Option<usize>,
     pub poh_hashes_per_batch: u64,
     pub process_ledger_before_services: bool,
     pub accounts_db_config: AccountsDbConfig,
@@ -532,6 +532,11 @@ pub enum ValidatorStartProgress {
     Running,
 }
 
+pub struct XdpTransmitSetup {
+    pub transmitter_builder: TransmitterBuilder,
+    pub src_ip: Ipv4Addr,
+}
+
 struct BlockstoreRootScan {
     thread: Option<JoinHandle<Result<usize, BlockstoreError>>>,
 }
@@ -691,7 +696,7 @@ impl Validator {
         socket_addr_space: SocketAddrSpace,
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-        xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
+        xdp_transmit_setup: Option<XdpTransmitSetup>,
     ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
         Self::new_with_exit(
@@ -707,7 +712,7 @@ impl Validator {
             socket_addr_space,
             tpu_config,
             admin_rpc_service_post_init,
-            xdp_builder_with_src_addr,
+            xdp_transmit_setup,
             exit,
         )
     }
@@ -726,7 +731,7 @@ impl Validator {
         socket_addr_space: SocketAddrSpace,
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-        xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
+        xdp_transmit_setup: Option<XdpTransmitSetup>,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         #[cfg(debug_assertions)]
@@ -1187,11 +1192,13 @@ impl Validator {
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
+        let bls_connection_cache = Arc::new(ConnectionCache::new_with_max_connections(
             "connection_cache_bls_quic",
             // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
             // we wouldn't expect more than a 100 PPS. 1 connection is enough.
             1, /* connection_pool_size */
+            // Overprovision to account for epoch boundary validator set rotations
+            MAX_ALPENGLOW_VOTE_ACCOUNTS * 2, /* max_connections */
             Some(node.sockets.quic_alpenglow_client),
             Some((
                 &identity_keypair,
@@ -1556,22 +1563,34 @@ impl Validator {
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
         let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender) =
-            if let Some((xdp_transmit_builder, src_addr)) = xdp_builder_with_src_addr {
-                let (transmitter, sender) = xdp_transmit_builder.build();
+            if let Some(XdpTransmitSetup {
+                transmitter_builder,
+                src_ip,
+            }) = xdp_transmit_setup
+            {
+                let turbine_src_port = node.sockets.retransmit_sockets[0]
+                    .local_addr()
+                    .expect("retransmit socket should have local address")
+                    .port();
+
+                let (transmitter, sender) = transmitter_builder.build();
                 (
                     Some(transmitter),
-                    Some(TurbineXdpSender::new(sender.clone(), src_addr)),
-                    Some((sender, *src_addr.ip())),
+                    Some(TurbineXdpSender::new(
+                        sender.clone(),
+                        SocketAddrV4::new(src_ip, turbine_src_port),
+                    )),
+                    Some((sender, src_ip)),
                 )
             } else {
                 (None, None, None)
             };
 
-        // disable all2all tests if not allowed for a given cluster type
+        // disable Alpenglow votor networking if not allowed for cluster type
         let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
             || genesis_config.cluster_type == ClusterType::Development
         {
-            node.sockets.alpenglow
+            Some(node.sockets.alpenglow)
         } else {
             None
         };
