@@ -797,6 +797,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.account_maps.len()
     }
 
+    /// Write through to disk the in-mem entries for `pubkeys`. Each entry is only persisted if it
+    /// is dirty, `slot_list.len() == 1`, and `ref_count == 1`. Persisting an entry clears its
+    /// dirty flag so it becomes eligible for eviction. No-op when disk index is disabled.
+    pub fn write_through_pubkeys(&self, pubkeys: Vec<Pubkey>) {
+        if !self.storage.storage.should_write_through() {
+            return;
+        }
+        for pubkey in pubkeys {
+            self.get_bin(&pubkey).try_write_through(&pubkey);
+        }
+    }
+
     /// Same functionally to upsert, but:
     /// 1. operates on a batch of items in reusable Vec, draining all elements
     /// 2. holds the write lock for the duration of adding the items
