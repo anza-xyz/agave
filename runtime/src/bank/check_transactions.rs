@@ -5,10 +5,7 @@ use {
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_nonce::state::{Data as NonceData, DurableNonce},
-    solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-    solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -116,8 +113,6 @@ impl Bank {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
         let hash_queue = self.blockhash_queue.read().unwrap();
-        let last_blockhash = hash_queue.last_hash();
-        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
 
         let feature_set: &FeatureSet = &self.feature_set;
         let feature_snapshot = feature_set.snapshot();
@@ -169,7 +164,6 @@ impl Bank {
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
-                        &next_durable_nonce,
                         &hash_queue,
                         error_counters,
                         compute_budget_and_limits,
@@ -184,7 +178,6 @@ impl Bank {
         &self,
         tx: &impl SVMMessage,
         max_age: usize,
-        next_durable_nonce: &DurableNonce,
         hash_queue: &BlockhashQueue,
         error_counters: &mut TransactionErrorMetrics,
         compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
@@ -194,46 +187,11 @@ impl Bank {
             .get_hash_info_if_valid(recent_blockhash, max_age)
             .is_some()
         {
-            Ok(CheckedTransactionDetails::new(None, compute_budget))
-        } else if let Some((nonce_address, _)) =
-            self.check_nonce_transaction_validity(tx, next_durable_nonce)
-        {
-            Ok(CheckedTransactionDetails::new(
-                Some(nonce_address),
-                compute_budget,
-            ))
+            Ok(CheckedTransactionDetails::new(compute_budget))
         } else {
             error_counters.blockhash_not_found += 1;
             Err(TransactionError::BlockhashNotFound)
         }
-    }
-
-    pub(super) fn check_nonce_transaction_validity(
-        &self,
-        message: &impl SVMMessage,
-        next_durable_nonce: &DurableNonce,
-    ) -> Option<(Pubkey, u64)> {
-        let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
-        if !nonce_is_advanceable {
-            return None;
-        }
-
-        let (nonce_address, nonce_data) = self.load_message_nonce_data(message)?;
-        let previous_lamports_per_signature = nonce_data.get_lamports_per_signature();
-
-        Some((nonce_address, previous_lamports_per_signature))
-    }
-
-    pub(super) fn load_message_nonce_data(
-        &self,
-        message: &impl SVMMessage,
-    ) -> Option<(Pubkey, NonceData)> {
-        let nonce_address = message.get_durable_nonce()?;
-        let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
-        let nonce_data =
-            nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
-
-        Some((*nonce_address, nonce_data))
     }
 
     fn check_status_cache<Tx: TransactionWithMeta>(
@@ -292,220 +250,16 @@ impl Bank {
 mod tests {
     use {
         super::*,
-        crate::bank::{
-            ReservedAccountKeys,
-            tests::{
-                get_nonce_blockhash, get_nonce_data_from_account, new_sanitized_message,
-                setup_nonce_with_bank,
-            },
-        },
-        solana_account::state_traits::StateMut,
+        crate::bank::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_message::{
-            Message, MessageHeader, SanitizedMessage, SanitizedVersionedMessage,
-            SimpleAddressLoader, VersionedMessage,
-            compiled_instruction::CompiledInstruction,
-            v0::{self, LoadedAddresses, MessageAddressTableLookup},
-            v1,
-        },
-        solana_nonce::{state::State as NonceState, versions::Versions as NonceVersions},
+        solana_message::{Message, VersionedMessage, v0, v1},
+        solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
-        solana_system_interface::{
-            instruction::{self as system_instruction, SystemInstruction},
-            program as system_program,
-        },
+        solana_system_interface::instruction as system_instruction,
         solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
-        std::collections::HashSet,
     };
-
-    #[test]
-    fn test_check_nonce_transaction_validity_ok() {
-        const STALE_LAMPORTS_PER_SIGNATURE: u64 = 42;
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
-            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
-        let custodian_pubkey = custodian_keypair.pubkey();
-        let nonce_pubkey = nonce_keypair.pubkey();
-
-        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-        let message = new_sanitized_message(Message::new_with_blockhash(
-            &[
-                system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
-                system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
-            ],
-            Some(&custodian_pubkey),
-            &nonce_hash,
-        ));
-
-        // set a spurious lamports_per_signature value
-        let mut nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        let nonce_data = get_nonce_data_from_account(&nonce_account).unwrap();
-        nonce_account
-            .set_state(&NonceVersions::new(NonceState::new_initialized(
-                &nonce_data.authority,
-                nonce_data.durable_nonce,
-                STALE_LAMPORTS_PER_SIGNATURE,
-            )))
-            .unwrap();
-        bank.store_account(&nonce_pubkey, &nonce_account);
-
-        assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
-            Some((nonce_pubkey, STALE_LAMPORTS_PER_SIGNATURE)),
-        );
-    }
-
-    #[test]
-    fn test_check_nonce_transaction_validity_not_nonce_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
-            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
-        let custodian_pubkey = custodian_keypair.pubkey();
-        let nonce_pubkey = nonce_keypair.pubkey();
-
-        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-        let message = new_sanitized_message(Message::new_with_blockhash(
-            &[
-                system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
-                system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
-            ],
-            Some(&custodian_pubkey),
-            &nonce_hash,
-        ));
-        assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn test_check_nonce_transaction_validity_missing_ix_pubkey_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
-            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
-        let custodian_pubkey = custodian_keypair.pubkey();
-        let nonce_pubkey = nonce_keypair.pubkey();
-
-        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-        let mut message = Message::new_with_blockhash(
-            &[
-                system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
-                system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
-            ],
-            Some(&custodian_pubkey),
-            &nonce_hash,
-        );
-        message.instructions[0].accounts.clear();
-        assert!(
-            bank.check_nonce_transaction_validity(
-                &new_sanitized_message(message),
-                &bank.next_durable_nonce(),
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn test_check_nonce_transaction_validity_nonce_acc_does_not_exist_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
-            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
-        let custodian_pubkey = custodian_keypair.pubkey();
-        let nonce_pubkey = nonce_keypair.pubkey();
-        let missing_keypair = Keypair::new();
-        let missing_pubkey = missing_keypair.pubkey();
-
-        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-        let message = new_sanitized_message(Message::new_with_blockhash(
-            &[
-                system_instruction::advance_nonce_account(&missing_pubkey, &nonce_pubkey),
-                system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
-            ],
-            Some(&custodian_pubkey),
-            &nonce_hash,
-        ));
-        assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn test_check_nonce_transaction_validity_bad_tx_hash_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
-            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
-        let custodian_pubkey = custodian_keypair.pubkey();
-        let nonce_pubkey = nonce_keypair.pubkey();
-
-        let message = new_sanitized_message(Message::new_with_blockhash(
-            &[
-                system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
-                system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
-            ],
-            Some(&custodian_pubkey),
-            &Hash::default(),
-        ));
-        assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn test_check_nonce_transaction_validity_nonce_is_alt() {
-        let nonce_authority = Pubkey::new_unique();
-        let (bank, _mint_keypair, _custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            Some(nonce_authority),
-        )
-        .unwrap();
-
-        let nonce_pubkey = nonce_keypair.pubkey();
-        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-        let loaded_addresses = LoadedAddresses {
-            writable: vec![nonce_pubkey],
-            readonly: vec![],
-        };
-
-        let message = SanitizedMessage::try_new(
-            SanitizedVersionedMessage::try_new(VersionedMessage::V0(v0::Message {
-                header: MessageHeader {
-                    num_required_signatures: 1,
-                    num_readonly_signed_accounts: 0,
-                    num_readonly_unsigned_accounts: 1,
-                },
-                account_keys: vec![nonce_authority, system_program::id()],
-                recent_blockhash: nonce_hash,
-                instructions: vec![CompiledInstruction::new(
-                    1, // index of system program
-                    &SystemInstruction::AdvanceNonceAccount,
-                    vec![
-                        2, // index of alt nonce account
-                        0, // index of nonce_authority
-                    ],
-                )],
-                address_table_lookups: vec![MessageAddressTableLookup {
-                    account_key: Pubkey::new_unique(),
-                    writable_indexes: (0..loaded_addresses.writable.len())
-                        .map(|x| x as u8)
-                        .collect(),
-                    readonly_indexes: (0..loaded_addresses.readonly.len())
-                        .map(|x| (loaded_addresses.writable.len() + x) as u8)
-                        .collect(),
-                }],
-            }))
-            .unwrap(),
-            SimpleAddressLoader::Enabled(loaded_addresses),
-            &HashSet::new(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
-            None,
-        );
-    }
 
     fn make_test_tx(version: TransactionVersion) -> impl TransactionWithMeta {
         let payer = Keypair::new();

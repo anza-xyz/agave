@@ -60,8 +60,7 @@ pub(crate) enum TransactionLoadResult {
     /// All transaction accounts were loaded successfully
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
-    /// but the fee payer and any nonce account needed for fee collection were
-    /// loaded successfully
+    /// but the fee payer needed for fee collection was loaded successfully
     FeesOnly(FeesOnlyTransaction),
     /// Some transaction accounts needed for fee collection were unable to be
     /// loaded
@@ -69,12 +68,7 @@ pub(crate) enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(
-    feature = "svm-internal",
-    qualifier_attr::field_qualifiers(nonce_address(pub))
-)]
 pub struct CheckedTransactionDetails {
-    pub(crate) nonce_address: Option<Pubkey>,
     pub(crate) compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
 }
 
@@ -82,7 +76,6 @@ pub struct CheckedTransactionDetails {
 impl Default for CheckedTransactionDetails {
     fn default() -> Self {
         Self {
-            nonce_address: None,
             compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits {
                 budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size_limit: 32,
@@ -93,12 +86,8 @@ impl Default for CheckedTransactionDetails {
 }
 
 impl CheckedTransactionDetails {
-    pub fn new(
-        nonce_address: Option<Pubkey>,
-        compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
-    ) -> Self {
+    pub fn new(compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits) -> Self {
         Self {
-            nonce_address,
             compute_budget_and_limits,
         }
     }
@@ -2407,10 +2396,9 @@ mod tests {
 
         // drop the account and ensure all deliver the updated state
         fee_payer_account.set_lamports(0);
+        let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
         account_loader.update_accounts_for_failed_tx(
-            &RollbackAccounts::FeePayerOnly {
-                fee_payer: (fee_payer, fee_payer_account),
-            },
+            &RollbackAccounts::new(fee_payer, fee_payer_account, fee_payer_rent_epoch),
             0,
         );
 

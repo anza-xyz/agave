@@ -351,7 +351,6 @@ pub(crate) mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
         dashmap::DashMap,
-        solana_account::state_traits::StateMut,
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
@@ -361,8 +360,6 @@ pub(crate) mod tests {
         solana_keypair::Keypair,
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_message::SimpleAddressLoader,
-        solana_nonce::{self as nonce, state::DurableNonce},
-        solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
         solana_signature::Signature,
@@ -460,15 +457,6 @@ pub(crate) mod tests {
         .unwrap();
 
         let expected_transaction = transaction.clone();
-
-        let mut nonce_account = nonce_account::create_account(1).into_inner();
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
-        let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
-        nonce_account
-            .set_state(&nonce::versions::Versions::new(
-                nonce::state::State::Initialized(data),
-            ))
-            .unwrap();
 
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),

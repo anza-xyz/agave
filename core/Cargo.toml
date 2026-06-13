@@ -125,7 +125,6 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
-solana-nonce = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
@@ -204,7 +203,6 @@ solana-keypair = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-loader-v3-interface = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poh = { path = "../poh", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }

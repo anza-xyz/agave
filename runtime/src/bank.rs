@@ -3249,11 +3249,7 @@ impl Bank {
         {
             let blockhash_queue = self.blockhash_queue.read().unwrap();
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
-        }
-        .or_else(|| {
-            self.load_message_nonce_data(message)
-                .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
-        })?;
+        }?;
 
         let transaction_configuration =
             TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)

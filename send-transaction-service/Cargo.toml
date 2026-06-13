@@ -26,7 +26,6 @@ solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true, optional = true }
-solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
@@ -38,14 +37,11 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-solana-account = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
-solana-nonce = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer = { workspace = true }
-solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 
 [lints]

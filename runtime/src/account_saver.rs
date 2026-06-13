@@ -157,11 +157,6 @@ mod tests {
         solana_instruction::error::InstructionError,
         solana_keypair::{Keypair, keypair_from_seed},
         solana_message::{Message, compiled_instruction::CompiledInstruction},
-        solana_nonce::{
-            state::{Data as NonceData, DurableNonce, State as NonceState},
-            versions::Versions as NonceVersions,
-        },
-        solana_nonce_account as nonce_account,
         solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
         solana_sdk_ids::native_loader,
         solana_signer::{Signer, signers::Signers},
@@ -171,7 +166,7 @@ mod tests {
                 AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
             },
         },
-        solana_system_interface::{instruction as system_instruction, program as system_program},
+        solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::collections::HashMap,
@@ -325,9 +320,11 @@ mod tests {
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
             fee_details: FeeDetails::default(),
-            rollback_accounts: RollbackAccounts::FeePayerOnly {
-                fee_payer: (from_address, from_account_pre.clone()),
-            },
+            rollback_accounts: RollbackAccounts::new_for_tests(
+                from_address,
+                from_account_pre.clone(),
+                from_account_pre.rent_epoch(),
+            ),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
         };
@@ -356,211 +353,6 @@ mod tests {
                     .cloned()
                     .unwrap(),
                 from_account_pre,
-            );
-
-            if collect_transactions {
-                let transactions = transactions.unwrap();
-                assert_eq!(transactions.len(), collected_accounts.len());
-            } else {
-                assert!(transactions.is_none());
-            }
-        }
-    }
-
-    #[test]
-    fn test_collect_accounts_for_failed_tx_rollback_separate_nonce_and_fee_payer() {
-        let nonce_address = Pubkey::new_unique();
-        let nonce_authority = keypair_from_seed(&[0; 32]).unwrap();
-        let from = keypair_from_seed(&[1; 32]).unwrap();
-        let from_address = from.pubkey();
-        let to_address = Pubkey::new_unique();
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
-            nonce_authority.pubkey(),
-            durable_nonce,
-            0,
-        )));
-        let nonce_account_post =
-            AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
-        let from_account_post = AccountSharedData::new(4199, 0, &Pubkey::default());
-        let to_account = AccountSharedData::new(2, 0, &Pubkey::default());
-        let nonce_authority_account = AccountSharedData::new(3, 0, &Pubkey::default());
-        let recent_blockhashes_sysvar_account = AccountSharedData::new(4, 0, &Pubkey::default());
-
-        let instructions = vec![
-            system_instruction::advance_nonce_account(&nonce_address, &nonce_authority.pubkey()),
-            system_instruction::transfer(&from_address, &to_address, 42),
-        ];
-        let message = Message::new(&instructions, Some(&from_address));
-        let blockhash = Hash::new_unique();
-        let transaction_accounts = vec![
-            (message.account_keys[0], from_account_post),
-            (message.account_keys[1], nonce_authority_account),
-            (message.account_keys[2], nonce_account_post),
-            (message.account_keys[3], to_account),
-            (message.account_keys[4], recent_blockhashes_sysvar_account),
-        ];
-        let tx = new_sanitized_tx(&[&nonce_authority, &from], message, blockhash);
-
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
-            nonce_authority.pubkey(),
-            durable_nonce,
-            0,
-        )));
-        let nonce_account_pre =
-            AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
-        let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
-
-        let loaded = LoadedTransaction {
-            accounts: transaction_accounts,
-            fee_details: FeeDetails::default(),
-            rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
-                nonce: (nonce_address, nonce_account_pre.clone()),
-                fee_payer: (from_address, from_account_pre.clone()),
-            },
-            compute_budget: SVMTransactionExecutionBudget::default(),
-            loaded_accounts_data_size: 0,
-        };
-
-        let txs = vec![tx];
-        let processing_results = vec![new_executed_processing_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
-            loaded,
-        )];
-        let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
-        assert_eq!(max_collected_accounts, 2);
-
-        for collect_transactions in [false, true] {
-            let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
-            assert_eq!(collected_accounts.len(), 2);
-            assert_eq!(
-                collected_accounts
-                    .iter()
-                    .find(|(pubkey, _account)| *pubkey == &from_address)
-                    .map(|(_pubkey, account)| *account)
-                    .cloned()
-                    .unwrap(),
-                from_account_pre,
-            );
-            let collected_nonce_account = collected_accounts
-                .iter()
-                .find(|(pubkey, _account)| *pubkey == &nonce_address)
-                .map(|(_pubkey, account)| *account)
-                .cloned()
-                .unwrap();
-            assert_eq!(
-                collected_nonce_account.lamports(),
-                nonce_account_pre.lamports(),
-            );
-            assert!(
-                nonce_account::verify_nonce_account(
-                    &collected_nonce_account,
-                    durable_nonce.as_hash()
-                )
-                .is_some()
-            );
-
-            if collect_transactions {
-                let transactions = transactions.unwrap();
-                assert_eq!(transactions.len(), collected_accounts.len());
-            } else {
-                assert!(transactions.is_none());
-            }
-        }
-    }
-
-    #[test]
-    fn test_collect_accounts_for_failed_tx_rollback_same_nonce_and_fee_payer() {
-        let nonce_authority = keypair_from_seed(&[0; 32]).unwrap();
-        let nonce_address = nonce_authority.pubkey();
-        let from = keypair_from_seed(&[1; 32]).unwrap();
-        let from_address = from.pubkey();
-        let to_address = Pubkey::new_unique();
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
-            nonce_authority.pubkey(),
-            durable_nonce,
-            0,
-        )));
-        let nonce_account_post =
-            AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
-        let from_account_post = AccountSharedData::new(4200, 0, &Pubkey::default());
-        let to_account = AccountSharedData::new(2, 0, &Pubkey::default());
-        let nonce_authority_account = AccountSharedData::new(3, 0, &Pubkey::default());
-        let recent_blockhashes_sysvar_account = AccountSharedData::new(4, 0, &Pubkey::default());
-
-        let instructions = vec![
-            system_instruction::advance_nonce_account(&nonce_address, &nonce_authority.pubkey()),
-            system_instruction::transfer(&from_address, &to_address, 42),
-        ];
-        let message = Message::new(&instructions, Some(&nonce_address));
-        let blockhash = Hash::new_unique();
-        let transaction_accounts = vec![
-            (message.account_keys[0], from_account_post),
-            (message.account_keys[1], nonce_authority_account),
-            (message.account_keys[2], nonce_account_post),
-            (message.account_keys[3], to_account),
-            (message.account_keys[4], recent_blockhashes_sysvar_account),
-        ];
-        let tx = new_sanitized_tx(&[&nonce_authority, &from], message, blockhash);
-
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
-            nonce_authority.pubkey(),
-            durable_nonce,
-            0,
-        )));
-        let nonce_account_pre =
-            AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
-
-        let loaded = LoadedTransaction {
-            accounts: transaction_accounts,
-            fee_details: FeeDetails::default(),
-            rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
-                nonce: (nonce_address, nonce_account_pre.clone()),
-            },
-            compute_budget: SVMTransactionExecutionBudget::default(),
-            loaded_accounts_data_size: 0,
-        };
-
-        let txs = vec![tx];
-        let processing_results = vec![new_executed_processing_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
-            loaded,
-        )];
-        let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
-        assert_eq!(max_collected_accounts, 1);
-
-        for collect_transactions in [false, true] {
-            let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
-            assert_eq!(collected_accounts.len(), 1);
-            let collected_nonce_account = collected_accounts
-                .iter()
-                .find(|(pubkey, _account)| *pubkey == &nonce_address)
-                .map(|(_pubkey, account)| *account)
-                .cloned()
-                .unwrap();
-            assert_eq!(
-                collected_nonce_account.lamports(),
-                nonce_account_pre.lamports()
-            );
-            assert!(
-                nonce_account::verify_nonce_account(
-                    &collected_nonce_account,
-                    durable_nonce.as_hash()
-                )
-                .is_some()
             );
 
             if collect_transactions {
@@ -590,9 +382,11 @@ mod tests {
             FeesOnlyTransaction {
                 load_error: TransactionError::InvalidProgramForExecution,
                 fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts::FeePayerOnly {
-                    fee_payer: (from_address, from_account_pre.clone()),
-                },
+                rollback_accounts: RollbackAccounts::new_for_tests(
+                    from_address,
+                    from_account_pre.clone(),
+                    from_account_pre.rent_epoch(),
+                ),
                 loaded_accounts_data_size: 0,
             },
         )))];
