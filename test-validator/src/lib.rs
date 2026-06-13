@@ -1130,6 +1130,7 @@ impl TestValidator {
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,
+            enable_stakes_cache_v2: false,
         };
 
         let mut validator_config = ValidatorConfig {
