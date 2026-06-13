@@ -41,3 +41,15 @@ debug = "line-tables-only"
 [profile.full-dev]
 inherits = "dev"
 debug = "full"
+
+# Keep in sync with the root [workspace.lints.clippy].
+[lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"

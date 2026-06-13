@@ -88,6 +88,18 @@ check-cfg = [
     'cfg(target_feature, values("dynamic-frames"))',
 ]
 
+# Keep in sync with the root [workspace.lints.clippy].
+[workspace.lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"
+
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=4.2.0-alpha.0" }
 agave-logger = { path = "../../logger", version = "=4.2.0-alpha.0" }
@@ -233,3 +245,6 @@ opt-level = 1
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit
 strip = true
+
+[lints]
+workspace = true
