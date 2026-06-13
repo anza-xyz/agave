@@ -15,9 +15,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "agave-votor/dev-context-only-utils",
     "solana-core/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
+    "solana-quic-datagram/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -26,6 +28,7 @@ agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+arc-swap = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -58,6 +61,7 @@ solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
+solana-quic-datagram = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
