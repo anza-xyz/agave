@@ -495,7 +495,8 @@ impl Router {
         let if_index = route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)?;
-        let next_hop_ip = IpAddr::V4(route.gateway.unwrap_or(route_ip));
+        let next_hop_v4 = route.gateway.unwrap_or(route_ip);
+        let next_hop_ip = IpAddr::V4(next_hop_v4);
         let preferred_src_ip = route.preferred_src;
 
         if let Some(default_route) = &self.cached_default_route {
@@ -529,7 +530,14 @@ impl Router {
             .map(|interface| interface.mtu)
             .ok_or(RouteError::UnknownInterfaceIndex(if_index))?;
 
-        let mac_addr = self.neighbors.lookup(next_hop_ip, if_index).cloned();
+        // IPv4 multicast destinations map deterministically to a multicast MAC (RFC 1112 §6.4)
+        // and never participate in ARP, so there is no neighbor entry to look up. Otherwise
+        // consult the neighbor cache for the unicast MAC.
+        let mac_addr = if next_hop_v4.is_multicast() {
+            Some(ipv4_multicast_mac(next_hop_v4))
+        } else {
+            self.neighbors.lookup(next_hop_ip, if_index).cloned()
+        };
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
@@ -613,6 +621,14 @@ impl Router {
             mac_addr,
         })
     }
+}
+
+/// Map an IPv4 multicast address to its Ethernet destination MAC per RFC 1112 §6.4:
+/// the low 23 bits of the address are placed into the low 23 bits of `01:00:5e:00:00:00`.
+#[inline]
+fn ipv4_multicast_mac(ip: Ipv4Addr) -> MacAddress {
+    let [_, b1, b2, b3] = ip.octets();
+    MacAddress([0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3])
 }
 
 fn format_route(f: &mut fmt::Formatter<'_>, route: &Route<Ipv4Addr>) -> fmt::Result {
@@ -1270,5 +1286,73 @@ mod tests {
         let next_hop = router.default().unwrap();
         assert_eq!(next_hop.if_index, 2);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(backup));
+    }
+
+    #[test]
+    fn test_ipv4_multicast_mac_mapping() {
+        // RFC 1112: 01:00:5e + (octet1 & 0x7f) + octet2 + octet3
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(224, 0, 0, 1)),
+            MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x01]),
+        );
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(239, 0, 0, 3)),
+            MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x03]),
+        );
+        // High bit of the second octet must be cleared (only the low 23 bits map).
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(239, 128, 0, 1)),
+            MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x01]),
+        );
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(239, 255, 255, 250)),
+            MacAddress([0x01, 0x00, 0x5e, 0x7f, 0xff, 0xfa]),
+        );
+    }
+
+    #[test]
+    fn test_multicast_route_resolves_with_computed_mac_without_arp() {
+        // Route 239.0.0.0/8 dev iface (no gateway, no ARP entry): resolution must yield the
+        // RFC-1112 multicast MAC instead of falling through to a missing neighbor.
+        let multicast_dst = Ipv4Addr::new(239, 0, 0, 3);
+        let if_index = 100u32;
+        let routes = vec![Route {
+            destination: Some(Ipv4Addr::new(239, 0, 0, 0)),
+            gateway: None,
+            preferred_src: None,
+            out_if_index: Some(if_index),
+            priority: None,
+            type_: 0,
+            dst_len: 8,
+        }];
+        let interfaces = vec![InterfaceInfo {
+            if_index,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+        }];
+        let router = router_from_tables(vec![], routes, interfaces);
+        let next_hop = router.route_v4(multicast_dst).unwrap();
+        assert_eq!(
+            next_hop.mac_addr,
+            Some(MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x03]))
+        );
+        assert_eq!(next_hop.if_index, if_index);
+    }
+
+    #[test]
+    fn test_unicast_without_neighbor_returns_no_mac() {
+        // Regression guard for the unicast branch: with no neighbor entry the MAC stays None so
+        // the tx loop drops the packet rather than sending it to a bogus address.
+        let dst = Ipv4Addr::new(10, 1, 2, 3);
+        let if_index = 5u32;
+        let routes = vec![test_route(Some(dst), if_index)];
+        let interfaces = vec![InterfaceInfo {
+            if_index,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+        }];
+        let router = router_from_tables(vec![], routes, interfaces);
+        let next_hop = router.route_v4(dst).unwrap();
+        assert!(next_hop.mac_addr.is_none());
     }
 }
