@@ -502,7 +502,7 @@ pub(crate) fn parse_signer_source<S: AsRef<str>>(
                         Ok(pubkey) => Ok(SignerSource::new(SignerSourceKind::Pubkey(pubkey))),
                         Err(_) => std::fs::metadata(source.as_str())
                             .map(|_| SignerSource::new(SignerSourceKind::Filepath(source)))
-                            .map_err(|err| err.into()),
+                            .map_err(|_| SignerSourceError::UnrecognizedSource),
                     },
                 }
             }
@@ -1245,12 +1245,24 @@ mod tests {
                 derivation_path: d,
                 legacy: false,
             } if u == expected_locator && d == expected_derivation_path);
-        // Catchall into SignerSource::Filepath fails
+        // An input that is neither a valid pubkey nor an existing file is
+        // reported as an unrecognized source rather than leaking the
+        // underlying filesystem error. This input parses as a (scheme-less)
+        // URI reference and so exercises the corresponding catchall branch.
         let junk = "sometextthatisnotapubkeyorfile".to_string();
         assert!(Pubkey::from_str(&junk).is_err());
         assert_matches!(
             parse_signer_source(&junk),
-            Err(SignerSourceError::IoError(_))
+            Err(SignerSourceError::UnrecognizedSource)
+        );
+        // An input that does not even parse as a URI reference (e.g. one
+        // containing spaces) is handled by the sibling catchall branch, which
+        // now maps to the same error.
+        let not_a_uri = "not a pubkey or a file".to_string();
+        assert!(Pubkey::from_str(&not_a_uri).is_err());
+        assert_matches!(
+            parse_signer_source(&not_a_uri),
+            Err(SignerSourceError::UnrecognizedSource)
         );
 
         let prompt = "prompt:".to_string();
