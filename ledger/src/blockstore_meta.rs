@@ -353,6 +353,7 @@ mod wincode_compat_cast {
     }
 }
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub(crate) struct ErasureConfig {
     pub(crate) num_data: usize,

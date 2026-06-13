@@ -280,6 +280,7 @@ struct DataShredHeader {
 }
 
 /// The coding shred header has FEC information
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct CodingShredHeader {
     num_data_shreds: u16,

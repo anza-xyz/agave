@@ -216,12 +216,14 @@ pub struct BlockFooterV1 {
     pub notar_reward_cert: Option<NotarRewardCertificate>,
 }
 
+#[repr(C)]
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockHeaderV1 {
     pub parent_slot: Slot,
     pub parent_block_id: Hash,
 }
 
+#[repr(C)]
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct UpdateParentV1 {
     pub new_parent_slot: Slot,
