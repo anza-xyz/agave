@@ -70,32 +70,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
 
             });
             let map = value.as_object_mut().unwrap();
-            let offset = if configure_account_data.proof_instruction_offset == 0 {
+
+            if configure_account_data.proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-                3
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-                // Assume that the extra account is a proof account and not a multisig
-                // signer. This might be wrong, but it's the best possible option.
-                if account_indexes.len() > 4 {
-                    map.insert(
-                        "recordAccount".to_string(),
-                        json!(account_keys[account_indexes[3] as usize].to_string()),
-                    );
-                    4
-                } else {
-                    3
-                }
-            };
+            }
+
             parse_signers(
                 map,
-                offset,
+                3,
                 account_keys,
                 account_indexes,
                 "owner",
@@ -130,32 +120,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
 
             });
             let map = value.as_object_mut().unwrap();
-            let offset = if proof_instruction_offset == 0 {
+
+            if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[1] as usize].to_string()),
                 );
-                2
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[1] as usize].to_string()),
                 );
-                if account_indexes.len() > 3 {
-                    // Assume that the extra account is a proof account and not a multisig
-                    // signer. This might be wrong, but it's the best possible option.
-                    map.insert(
-                        "recordAccount".to_string(),
-                        json!(account_keys[account_indexes[2] as usize].to_string()),
-                    );
-                    3
-                } else {
-                    2
-                }
-            };
+            }
+
             parse_signers(
                 map,
-                offset,
+                2,
                 account_keys,
                 account_indexes,
                 "owner",
@@ -211,12 +191,13 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 "rangeProofInstructionOffset": withdrawal_data.range_proof_instruction_offset,
 
             });
+
             let mut offset = 2;
             let map = value.as_object_mut().unwrap();
-            if offset < account_indexes.len() - 1
-                && (withdrawal_data.equality_proof_instruction_offset != 0
-                    || withdrawal_data.range_proof_instruction_offset != 0)
-            {
+            let has_sysvar = withdrawal_data.equality_proof_instruction_offset != 0
+                || withdrawal_data.range_proof_instruction_offset != 0;
+
+            if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
@@ -224,33 +205,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 offset += 1;
             }
 
-            // Assume that extra accounts are proof accounts and not multisig
-            // signers. This might be wrong, but it's the best possible option.
-            if offset < account_indexes.len() - 1 {
-                let label = if withdrawal_data.equality_proof_instruction_offset == 0 {
-                    "equalityProofContextStateAccount"
-                } else {
-                    "equalityProofRecordAccount"
-                };
+            if withdrawal_data.equality_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "equalityProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if offset < account_indexes.len() - 1 {
-                let label = if withdrawal_data.range_proof_instruction_offset == 0 {
-                    "rangeProofContextStateAccount"
-                } else {
-                    "rangeProofRecordAccount"
-                };
+            if withdrawal_data.range_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "rangeProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
+
             parse_signers(
                 map,
                 offset,
@@ -282,11 +252,11 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             });
             let mut offset = 3;
             let map = value.as_object_mut().unwrap();
-            if offset < account_indexes.len() - 1
-                && (transfer_data.equality_proof_instruction_offset != 0
-                    || transfer_data.ciphertext_validity_proof_instruction_offset != 0
-                    || transfer_data.range_proof_instruction_offset != 0)
-            {
+            let has_sysvar = transfer_data.equality_proof_instruction_offset != 0
+                || transfer_data.ciphertext_validity_proof_instruction_offset != 0
+                || transfer_data.range_proof_instruction_offset != 0;
+
+            if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
@@ -294,42 +264,25 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 offset += 1;
             }
 
-            // Assume that extra accounts are proof accounts and not multisig
-            // signers. This might be wrong, but it's the best possible option.
-            if offset < account_indexes.len() - 1 {
-                let label = if transfer_data.equality_proof_instruction_offset == 0 {
-                    "equalityProofContextStateAccount"
-                } else {
-                    "equalityProofRecordAccount"
-                };
+            if transfer_data.equality_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "equalityProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if offset < account_indexes.len() - 1 {
-                let label = if transfer_data.ciphertext_validity_proof_instruction_offset == 0 {
-                    "ciphertextValidityProofContextStateAccount"
-                } else {
-                    "ciphertextValidityProofRecordAccount"
-                };
+            if transfer_data.ciphertext_validity_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "ciphertextValidityProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if offset < account_indexes.len() - 1 {
-                let label = if transfer_data.range_proof_instruction_offset == 0 {
-                    "rangeProofContextStateAccount"
-                } else {
-                    "rangeProofRecordAccount"
-                };
+            if transfer_data.range_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "rangeProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
@@ -377,13 +330,13 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
 
             let mut offset = 3;
             let map = value.as_object_mut().unwrap();
-            if offset < account_indexes.len() - 1
-                && (equality_proof_instruction_offset != 0
-                    || transfer_amount_ciphertext_validity_proof_instruction_offset != 0
-                    || fee_ciphertext_validity_proof_instruction_offset != 0
-                    || fee_sigma_proof_instruction_offset != 0
-                    || range_proof_instruction_offset != 0)
-            {
+            let has_sysvar = equality_proof_instruction_offset != 0
+                || transfer_amount_ciphertext_validity_proof_instruction_offset != 0
+                || fee_sigma_proof_instruction_offset != 0
+                || fee_ciphertext_validity_proof_instruction_offset != 0
+                || range_proof_instruction_offset != 0;
+
+            if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
@@ -391,68 +344,42 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 offset += 1;
             }
 
-            // Assume that extra accounts are proof accounts and not multisig
-            // signers. This might be wrong, but it's the best possible option.
-            if offset < account_indexes.len() - 1 {
-                let label = if equality_proof_instruction_offset == 0 {
-                    "equalityProofContextStateAccount"
-                } else {
-                    "equalityProofRecordAccount"
-                };
+            if equality_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "equalityProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if offset < account_indexes.len() - 1 {
-                let label = if transfer_amount_ciphertext_validity_proof_instruction_offset == 0 {
-                    "transferAmountCiphertextValidityProofContextStateAccount"
-                } else {
-                    "transferAmountCiphertextValidityProofRecordAccount"
-                };
+            if transfer_amount_ciphertext_validity_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "transferAmountCiphertextValidityProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if offset < account_indexes.len() - 1 {
-                let label = if fee_ciphertext_validity_proof_instruction_offset == 0 {
-                    "feeCiphertextValidityProofContextStateAccount"
-                } else {
-                    "feeCiphertextValidityProofRecordAccount"
-                };
+            if fee_sigma_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "feeSigmaProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if offset < account_indexes.len() - 1 {
-                let label = if fee_sigma_proof_instruction_offset == 0 {
-                    "feeSigmaProofContextStateAccount"
-                } else {
-                    "feeSigmaProofRecordAccount"
-                };
+            if fee_ciphertext_validity_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "feeCiphertextValidityProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if offset < account_indexes.len() - 1 {
-                let label = if range_proof_instruction_offset == 0 {
-                    "rangeProofContextStateAccount"
-                } else {
-                    "rangeProofRecordAccount"
-                };
+            if range_proof_instruction_offset == 0 && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
-                    label.to_string(),
+                    "rangeProofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
+
             parse_signers(
                 map,
                 offset,
