@@ -569,6 +569,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             account_loader.update_accounts_for_successful_tx(
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
+                                &executed_tx.loaded_transaction.touched_flags,
                                 self.slot,
                             );
                             // Also update local program cache with modifications made by the
@@ -1036,9 +1037,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let ExecutionRecord {
             accounts,
             return_data,
-            touched_account_count,
+            mut touched_flags,
             accounts_resize_delta,
         } = execution_record;
+
+        // The fee payer (account index 0) is debited during loading, outside the
+        // VM, so it carries no VM touch flag but must still be written back.
+        if let Some(fee_payer_touched) = touched_flags.first_mut() {
+            *fee_payer_touched = true;
+        }
+
+        // changed_account_count reflects every account that will be written back,
+        // including the fee payer marked above.
+        let touched_account_count = touched_flags.iter().filter(|touched| **touched).count();
 
         if post_account_state_info_result.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
@@ -1065,8 +1076,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap_or_else(|err| (Err(err), None));
 
         loaded_transaction.accounts = accounts;
+        loaded_transaction.touched_flags = touched_flags;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
-        execute_timings.details.changed_account_count += touched_account_count;
+        execute_timings.details.changed_account_count += touched_account_count as u64;
 
         let return_data = if config.recording_config.enable_return_data_recording
             && !return_data.data.is_empty()
@@ -1583,6 +1595,7 @@ mod tests {
 
         let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
+            touched_flags: Box::default(),
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -1677,6 +1690,7 @@ mod tests {
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
             ],
+            touched_flags: Box::default(),
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
