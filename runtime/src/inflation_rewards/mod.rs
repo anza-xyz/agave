@@ -6,17 +6,13 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::{
-        alpenglow_epoch_type::AlpenglowEpochType, epoch_stakes::VersionedEpochStakes,
-        stake_delegation::effective_stake,
-    },
+    crate::{alpenglow_epoch_type::AlpenglowEpochType, stake_delegation::effective_stake},
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
         state::{Delegation, Stake},
     },
-    std::collections::HashMap,
 };
 
 pub mod points;
@@ -41,7 +37,6 @@ pub(crate) fn redeem_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     current_lamports: u64,
     minimum_lamports: u64,
 ) -> Result<(u64, u64, Stake), InstructionError> {
@@ -88,7 +83,6 @@ pub(crate) fn redeem_rewards<'a>(
         calculation_environment,
         inflation_point_calc_tracer,
         ag_epoch_type,
-        epoch_stakes,
         current_lamports,
         minimum_lamports,
     ) {
@@ -105,7 +99,6 @@ fn redeem_stake_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     current_lamports: u64,
     minimum_lamports: u64,
 ) -> Option<(u64, u64)> {
@@ -125,7 +118,6 @@ fn redeem_stake_rewards<'a>(
         calculation_environment,
         inflation_point_calc_tracer.as_ref(),
         ag_epoch_type,
-        epoch_stakes,
     )
     .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
@@ -210,7 +202,6 @@ fn calculate_stake_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     ag_epoch_type: &AlpenglowEpochType,
-    epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
 ) -> Option<CalculatedStakeRewards> {
     let CalculationEnvironment {
         stake_history,
@@ -234,7 +225,6 @@ fn calculate_stake_rewards<'a>(
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
         ag_epoch_type,
-        epoch_stakes,
         use_fixed_point_stake_math,
     );
 
@@ -253,23 +243,38 @@ fn calculate_stake_rewards<'a>(
         force_credits_update_with_skipped_reward = true;
     }
 
-    if force_credits_update_with_skipped_reward {
-        return Some(CalculatedStakeRewards {
+    // Once alpenglow is active we no longer allow for epochs where rewards are not redeemed.
+    let advance_credits_for_skipped_reward = !matches!(ag_epoch_type, AlpenglowEpochType::Tower)
+        && new_credits_observed != stake.credits_observed;
+    let skipped_reward = || {
+        Some(CalculatedStakeRewards {
             staker_rewards: 0,
             voter_rewards: 0,
             new_credits_observed,
-        });
+        })
+    };
+
+    let skip_reward = |reason: SkippedReason| {
+        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
+            inflation_point_calc_tracer(&reason.into());
+        }
+        if advance_credits_for_skipped_reward {
+            skipped_reward()
+        } else {
+            None
+        }
+    };
+
+    if force_credits_update_with_skipped_reward {
+        return skipped_reward();
     }
 
     let rewards = match ag_epoch_type {
         AlpenglowEpochType::Alpenglow { .. } => {
             if ag_points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPoints.into());
-                }
-                return None;
+                return skip_reward(SkippedReason::ZeroPoints);
             }
-            // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
+            // In alpenglow, `points` represents the actual reward that this `stake` earned.
             ag_points
         }
         AlpenglowEpochType::Tower => {
@@ -297,19 +302,13 @@ fn calculate_stake_rewards<'a>(
         AlpenglowEpochType::MigrationEpoch {
             num_tower_slots,
             num_ag_slots,
-            migration_epoch: _,
+            ..
         } => {
             if tower_points == 0 && ag_points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPoints.into());
-                }
-                return None;
+                return skip_reward(SkippedReason::ZeroPoints);
             }
             if ag_points == 0 && point_value.points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPointValue.into());
-                }
-                return None;
+                return skip_reward(SkippedReason::ZeroPointValue);
             }
             let total_slots = (num_tower_slots + num_ag_slots) as u128;
             let tower_points = tower_points
@@ -329,10 +328,7 @@ fn calculate_stake_rewards<'a>(
 
     // don't bother trying to split if fractional lamports got truncated
     if rewards == 0 {
-        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-            inflation_point_calc_tracer(&SkippedReason::ZeroReward.into());
-        }
-        return None;
+        return skip_reward(SkippedReason::ZeroReward);
     }
     let (voter_rewards, staker_rewards, is_split) = commission_split(voter_commission_bps, rewards);
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -348,10 +344,7 @@ fn calculate_stake_rewards<'a>(
         // don't collect if we lose a whole lamport somewhere
         //  is_split means there should be tokens on both sides,
         //  uncool to move credits_observed if one side didn't get paid
-        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-            inflation_point_calc_tracer(&SkippedReason::TooEarlyUnfairSplit.into());
-        }
-        return None;
+        return skip_reward(SkippedReason::TooEarlyUnfairSplit);
     }
 
     Some(CalculatedStakeRewards {
@@ -404,7 +397,8 @@ mod tests {
     use {
         self::points::{PointValue, null_tracer},
         super::*,
-        crate::epoch_stakes::VersionedEpochStakes,
+        crate::alpenglow_epoch_type::RewardEpochDelegatedStakes,
+        agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
         proptest::prelude::*,
         solana_clock::Epoch,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -414,9 +408,7 @@ mod tests {
             stake_history::StakeHistory,
             state::{Delegation, StakeStateV2},
         },
-        solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
-        std::collections::HashMap,
         test_case::{test_case, test_matrix},
     };
 
@@ -432,30 +424,46 @@ mod tests {
         }
     }
 
-    /// Returns an instance of `AlpenglowEpochType`, epoch_stakes, total stake, and first AG epoch.
-    fn get_ag_epoch_type() -> (
-        AlpenglowEpochType,
-        HashMap<Epoch, VersionedEpochStakes>,
-        u64,
-        Epoch,
-    ) {
+    /// Returns an instance of `AlpenglowEpochType`, total stake, and first AG epoch.
+    fn get_ag_epoch_type() -> (AlpenglowEpochType, u64, Epoch) {
         let total_stake = 1_000;
-        let vote_account = VoteAccount::new_random();
-        let vote_account_hash_map = [(Pubkey::default(), (total_stake, vote_account))]
-            .into_iter()
-            .collect();
-        let versioned_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_account_hash_map, 0);
-        let epoch_stakes = (0..10)
-            .map(|epoch| (epoch, versioned_epoch_stakes.clone()))
-            .collect();
         let migration_epoch = 0;
         let first_ag_epoch = migration_epoch + 1;
         (
-            AlpenglowEpochType::Alpenglow { migration_epoch },
-            epoch_stakes,
+            AlpenglowEpochType::Alpenglow {
+                migration_epoch,
+                reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                    epoch: first_ag_epoch,
+                    delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
+                },
+            },
             total_stake,
             first_ag_epoch,
         )
+    }
+
+    fn make_ag_epoch_type_for_test(
+        ag_enabled: bool,
+        vote_state: &VoteStateV4,
+        ag_total_stake_multiplier: u64,
+    ) -> AlpenglowEpochType {
+        if ag_enabled {
+            AlpenglowEpochType::Alpenglow {
+                migration_epoch: 0,
+                reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                    epoch: vote_state
+                        .epoch_credits
+                        .last()
+                        .map(|(epoch, _final_epoch_credits, _initial_epoch_credits)| *epoch)
+                        .unwrap_or(1),
+                    delegated_stakes: [(Pubkey::default(), ag_total_stake_multiplier)]
+                        .into_iter()
+                        .collect(),
+                },
+            }
+        } else {
+            AlpenglowEpochType::Tower
+        }
     }
 
     #[test_matrix([true, false], [true, false])]
@@ -475,23 +483,22 @@ mod tests {
         let commission_rate_in_basis_points = true;
 
         // epoch credits work differently in AG, so we need a multiplier to account for that.
-        let (ag_epoch_type, epoch_stakes, ag_total_stake_multiplier) = if ag_enabled {
-            let (ag_epoch_type, epoch_stakes, ag_total_stake_multiplier, _) = get_ag_epoch_type();
-            (ag_epoch_type, epoch_stakes, ag_total_stake_multiplier)
+        let ag_total_stake_multiplier = if ag_enabled {
+            let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
+            ag_total_stake_multiplier
         } else {
-            (AlpenglowEpochType::Tower, HashMap::new(), 1)
+            1
         };
 
         let inc_credits = |handler: &mut VoteStateHandler, epoch: Epoch, credits: u64| {
             if ag_enabled {
-                let (_, _, _, first_ag_epoch) = get_ag_epoch_type();
+                let (_, _, first_ag_epoch) = get_ag_epoch_type();
                 handler
                     .increment_credits(epoch + first_ag_epoch, credits * ag_total_stake_multiplier);
             } else {
                 handler.increment_credits(epoch, credits);
             }
         };
-
         let mut rent = Rent::default();
         let minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
 
@@ -521,8 +528,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier,
+                ),
                 stake_lamports + minimum_balance,
                 new_minimum_balance,
             )
@@ -551,8 +561,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier,
+                ),
                 stake_lamports + minimum_balance,
                 new_minimum_balance,
             )
@@ -578,23 +591,22 @@ mod tests {
         let adjust_delegations_for_rent = true;
 
         // epoch credits work differently in AG, so we need a multiplier to account for that.
-        let (ag_epoch_type, epoch_stakes, ag_total_stake_multiplier) = if ag_enabled {
-            let (ag_epoch_type, epoch_stakes, ag_total_stake_multiplier, _) = get_ag_epoch_type();
-            (ag_epoch_type, epoch_stakes, ag_total_stake_multiplier)
+        let ag_total_stake_multiplier = if ag_enabled {
+            let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
+            ag_total_stake_multiplier
         } else {
-            (AlpenglowEpochType::Tower, HashMap::new(), 1)
+            1
         };
 
         let inc_credits = |handler: &mut VoteStateHandler, epoch: Epoch, credits: u64| {
             if ag_enabled {
-                let (_, _, _, first_ag_epoch) = get_ag_epoch_type();
+                let (_, _, first_ag_epoch) = get_ag_epoch_type();
                 handler
                     .increment_credits(epoch + first_ag_epoch, credits * ag_total_stake_multiplier);
             } else {
                 handler.increment_credits(epoch, credits);
             }
         };
-
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
             None,
@@ -615,8 +627,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -647,8 +662,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -677,8 +695,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -710,17 +731,26 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
         // put 1 credit in epoch 2
         inc_credits(&mut vote_state, 2, 1);
-        // this one should be able to collect 2 now
+        // Tower redeems all unobserved epoch credits. Full AG only considers
+        // the latest epoch credit entry.
+        let expected_staker_rewards = if ag_enabled {
+            stake.delegation.stake
+        } else {
+            stake.delegation.stake * 2
+        };
         assert_eq!(
             Some(CalculatedStakeRewards {
-                staker_rewards: stake.delegation.stake * 2,
+                staker_rewards: expected_staker_rewards,
                 voter_rewards: 0,
                 new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
@@ -741,19 +771,27 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
         stake.credits_observed = 0;
-        // this one should be able to collect everything from t=0 a warmed up stake of 2
-        // (2 credits at stake of 1) + (1 credit at a stake of 2)
+        // Tower collects everything from t=0. Full AG only considers the
+        // latest epoch credit entry.
+        let expected_staker_rewards = if ag_enabled {
+            stake.delegation.stake
+        } else {
+            stake.delegation.stake * 2 // epoch 0
+                + stake.delegation.stake // epoch 1
+                + stake.delegation.stake // epoch 2
+        };
         assert_eq!(
             Some(CalculatedStakeRewards {
-                staker_rewards: stake.delegation.stake * 2 // epoch 0
-                    + stake.delegation.stake // epoch 1
-                    + stake.delegation.stake, // epoch 2
+                staker_rewards: expected_staker_rewards,
                 voter_rewards: 0,
                 new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
@@ -774,16 +812,27 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
-        // same as above, but is a really small commission out of 32 bits,
-        //  verify that None comes back on small redemptions where no one gets paid
+        let skipped_small_redemption = || {
+            ag_enabled.then_some(CalculatedStakeRewards {
+                staker_rewards: 0,
+                voter_rewards: 0,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
+            })
+        };
+
+        // same as above, but is a really small commission out of 32 bits.
+        // Tower defers; AG advances credits without paying dust rewards.
         vote_state.set_inflation_rewards_commission_bps(100);
         assert_eq!(
-            None, // would be Some((0, 2 * 1 + 1 * 2, 4)),
+            skipped_small_redemption(),
             calculate_stake_rewards(
                 &stake,
                 vote_state.as_ref_v4().inflation_rewards_commission_bps,
@@ -801,13 +850,16 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
         vote_state.set_inflation_rewards_commission_bps(9900);
         assert_eq!(
-            None, // would be Some((0, 2 * 1 + 1 * 2, 4)),
+            skipped_small_redemption(),
             calculate_stake_rewards(
                 &stake,
                 vote_state.as_ref_v4().inflation_rewards_commission_bps,
@@ -825,8 +877,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -856,8 +911,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -887,8 +945,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -905,8 +966,11 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
                 true,
             )
         );
@@ -928,8 +992,11 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
                 true,
             )
         );
@@ -948,8 +1015,11 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &ag_epoch_type,
-                &epoch_stakes,
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
                 true,
             )
         );
@@ -981,8 +1051,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
 
@@ -1013,8 +1086,11 @@ mod tests {
                     use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
-                &ag_epoch_type,
-                &epoch_stakes
+                &make_ag_epoch_type_for_test(
+                    ag_enabled,
+                    vote_state.as_ref_v4(),
+                    ag_total_stake_multiplier
+                ),
             )
         );
     }
@@ -1054,7 +1130,6 @@ mod tests {
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
-            &HashMap::new(),
             pre_lamports,
             new_minimum_balance,
         );
@@ -1315,7 +1390,6 @@ mod tests {
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
-            &HashMap::new(),
         );
     }
 
@@ -1336,11 +1410,11 @@ mod tests {
         let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
-        let (ag_stake_state, epoch_stakes) = if ag_enabled {
-            let (state, epoch_stakes, _stake, _first_ag_epoch) = get_ag_epoch_type();
-            (state, epoch_stakes)
+        let ag_stake_state = if ag_enabled {
+            let (state, _, _) = get_ag_epoch_type();
+            state
         } else {
-            (AlpenglowEpochType::Tower, HashMap::new())
+            AlpenglowEpochType::Tower
         };
 
         // this one can't collect now, credits_observed == vote_state.credits()
@@ -1364,7 +1438,82 @@ mod tests {
                 },
                 null_tracer(),
                 &ag_stake_state,
-                &epoch_stakes
+            )
+        );
+    }
+
+    #[test]
+    fn test_migration_epoch_skipped_dust_advances_credits() {
+        let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
+        let mut vote_state = VoteStateV4 {
+            inflation_rewards_commission_bps: 100,
+            epoch_credits: vec![
+                AG_MIGRATION_EPOCH_CREDIT,
+                (0, 4 * ag_total_stake_multiplier, 0),
+            ],
+            ..VoteStateV4::default()
+        };
+        let stake = Stake {
+            delegation: Delegation::new(&Pubkey::default(), 1, u64::MAX),
+            credits_observed: 0,
+        };
+        let expected = Some(CalculatedStakeRewards {
+            staker_rewards: 0,
+            voter_rewards: 0,
+            new_credits_observed: 4 * ag_total_stake_multiplier,
+        });
+        let point_value = PointValue {
+            rewards: 4,
+            points: 1,
+        };
+        let stake_history = StakeHistory::default();
+        let calculation_environment = || CalculationEnvironment {
+            rewarded_epoch: 0,
+            point_value: &point_value,
+            stake_history: &stake_history,
+            new_rate_activation_epoch: None,
+            commission_rate_in_basis_points: true,
+            adjust_delegations_for_rent: true,
+            use_fixed_point_stake_math: true,
+        };
+        let migration_epoch_type = AlpenglowEpochType::MigrationEpoch {
+            num_tower_slots: 0,
+            num_ag_slots: 1,
+            migration_epoch: 0,
+            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                epoch: 0,
+                delegated_stakes: [(Pubkey::default(), ag_total_stake_multiplier)]
+                    .into_iter()
+                    .collect(),
+            },
+        };
+
+        assert_eq!(
+            expected,
+            calculate_stake_rewards(
+                &stake,
+                vote_state.inflation_rewards_commission_bps,
+                DelegatedVoteState::from(&vote_state),
+                calculation_environment(),
+                null_tracer(),
+                &migration_epoch_type,
+            )
+        );
+
+        vote_state.inflation_rewards_commission_bps = 9_900;
+        assert_eq!(
+            Some(CalculatedStakeRewards {
+                staker_rewards: 0,
+                voter_rewards: 0,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
+            }),
+            calculate_stake_rewards(
+                &stake,
+                vote_state.inflation_rewards_commission_bps,
+                DelegatedVoteState::from(&vote_state),
+                calculation_environment(),
+                null_tracer(),
+                &migration_epoch_type,
             )
         );
     }
