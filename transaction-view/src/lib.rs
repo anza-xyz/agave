@@ -10,7 +10,7 @@ mod instructions_frame;
 mod message_header_frame;
 pub mod resolved_transaction_view;
 pub mod result;
-mod sanitize;
+pub mod sanitize;
 mod signature_frame;
 mod static_account_keys_frame;
 mod transaction_config_frame;
