@@ -474,7 +474,9 @@ pub(crate) fn calculate_stake_points_and_credits(
                 Err(e) => return e,
             }
         }
-        AlpenglowEpochType::Alpenglow { migration_epoch } => {
+        AlpenglowEpochType::Alpenglow {
+            migration_epoch, ..
+        } => {
             let (ag_points, credits) = match ag_epoch_credits_iter(
                 *migration_epoch,
                 false,
