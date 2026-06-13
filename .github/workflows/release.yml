@@ -40,3 +40,11 @@ jobs:
               draft: false,
               prerelease: true
             })
+
+  publish-crates:
+    if: github.repository == 'anza-xyz/agave'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-crates.yml
