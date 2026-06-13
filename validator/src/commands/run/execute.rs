@@ -82,7 +82,10 @@ use {
     },
 };
 #[cfg(target_os = "linux")]
-use {agave_xdp::transmitter::XdpConfig, solana_clap_utils::input_parsers::parse_cpu_ranges};
+use {
+    agave_cpu_utils::cpu_affinity, agave_xdp::transmitter::XdpConfig,
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -163,29 +166,63 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    // XDP is not needed for init — it only initializes the ledger and exits.
+    // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
+    let xdp_transmit_config: Option<XdpConfig> = if matches.is_present("disable_xdp")
+        || operation == Operation::Initialize
     {
+        None
+    } else {
         let xdp_interface = matches
             .value_of("xdp_interface")
             .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
         let xdp_zero_copy = matches.is_present("xdp_zero_copy")
             || matches.is_present("experimental_retransmit_xdp_zero_copy");
-        let config = XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
-            xdp_zero_copy,
-        );
-        if bind_addresses.len() > 1 {
-            Err(String::from(
-                "--xdp-cpu-cores cannot be used in a multihoming context",
-            ))?;
-        }
-        Some(config)
-    } else {
-        None
+        let poh_pinned_cpu_core =
+            value_of(matches, "poh_pinned_cpu_core").or(poh_service::DEFAULT_PINNED_CPU_CORE);
+        let xdp_cpu_cores = matches
+            .value_of("xdp_cpu_cores")
+            .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+        let cpus = if let Some(cpu_str) = xdp_cpu_cores {
+            if bind_addresses.len() > 1 {
+                Err(String::from(
+                    "--xdp-cpu-cores cannot be used in a multihoming context",
+                ))?;
+            }
+            Some(parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list"))
+        } else {
+            // Auto-select a single core for XDP.
+            match cpu_affinity(None) {
+                Ok(allowed) => {
+                    match allowed
+                        .iter()
+                        .rev()
+                        .map(|cpu| **cpu)
+                        .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+                    {
+                        Some(cpu) => Some(vec![cpu]),
+                        None => {
+                            return Err(format!(
+                                "XDP requires a dedicated CPU core separate from PoH (core \
+                                 {poh_pinned_cpu_core:?}), but none is available. Pass \
+                                 --disable-xdp to disable XDP."
+                            ))?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "failed to query CPU affinity: {e}. Pass --disable-xdp to disable XDP, or \
+                         provide --xdp-cpu-cores explicitly."
+                    ))?;
+                }
+            }
+        };
+        cpus.map(|cpus| {
+            info!("XDP enabled on CPU cores: {cpus:?}");
+            XdpConfig::new(xdp_interface, cpus, xdp_zero_copy)
+        })
     };
 
     let dynamic_port_range =
@@ -261,9 +298,7 @@ pub fn execute(
         .transpose()?;
 
     if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
-        Err(String::from(
-            "--public-tvu-address can not be used in a multihoming context",
-        ))?;
+        Err(String::from("XDP can not be used in a multihoming context"))?;
     }
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
@@ -347,7 +382,8 @@ pub fn execute(
         if !missing_caps.is_empty() {
             error!(
                 "the current configuration requires the following capabilities, which have not \
-                 been permitted to the current process: {missing_caps:?}",
+                 been permitted to the current process: {missing_caps:?}. If XDP is not needed, \
+                 pass --disable-xdp to disable it",
             );
             std::process::exit(1);
         }

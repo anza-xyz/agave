@@ -25,6 +25,7 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
         "--log",
         "-",
         "--no-voting",
+        "--disable-xdp",
         "--accounts",
         temp_dir_str,
         "--snapshots",
