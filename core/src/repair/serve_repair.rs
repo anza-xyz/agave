@@ -18,7 +18,8 @@ use {
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
     bincode::{Options, serialize},
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded},
+    itertools::Itertools,
     lazy_lru::LruCache,
     rand::{
         Rng,
@@ -64,6 +65,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -414,6 +416,183 @@ impl RepairRequestHeader {
 
 type Ping = ping_pong::Ping<REPAIR_PING_TOKEN_SIZE>;
 type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
+
+/// Threadpool for batch signing repair requests.
+pub(crate) struct RepairSigningPool {
+    hdls: Vec<JoinHandle<()>>,
+    exit: Arc<AtomicBool>,
+    num_workers: usize,
+
+    worker_tx: Sender<WorkerMsg>,
+    scratch: Vec<Option<WorkerScratch>>,
+
+    result_buf: Vec<(SocketAddr, Vec<u8>)>,
+    result_rx: Receiver<WorkerScratch>,
+}
+
+/// Minimum target number of signatures per worker when parallelizing.
+const MIN_REPAIR_SIGNATURES_PER_WORKER: usize = 2;
+
+struct WorkerMsg {
+    /// The keypair used for signing.
+    keypair: Arc<Keypair>,
+    /// The scratch buffers for the worker.
+    scratch: WorkerScratch,
+}
+
+/// Scratch buffers passed between orchestrating thread and workers.
+struct WorkerScratch {
+    /// The incoming batch of repair requests to process.
+    in_batch: Vec<(SocketAddr, RepairProtocol)>,
+    /// The output buffer of signed requests.
+    out_batch: Vec<(SocketAddr, Vec<u8>)>,
+}
+
+impl RepairSigningPool {
+    pub(crate) fn new(num_workers: NonZeroUsize) -> Self {
+        let num_workers = num_workers.get();
+        let (tx_in, rx_in) = bounded(num_workers);
+        let (tx_out, rx_out) = bounded(num_workers);
+        let exit = Arc::new(AtomicBool::new(false));
+        Self {
+            hdls: (0..num_workers)
+                .map(|idx| {
+                    std::thread::Builder::new()
+                        .name(format!("solRepairSign{idx:02}"))
+                        .spawn({
+                            let exit = exit.clone();
+                            let rx_in = rx_in.clone();
+                            let tx_out = tx_out.clone();
+                            move || Self::worker(exit, rx_in, tx_out)
+                        })
+                        .expect("failed to spawn repair signing worker thread")
+                })
+                .collect(),
+            exit,
+            num_workers,
+
+            worker_tx: tx_in,
+
+            // `RepairProtocol` doesn't implement `Clone`, so we can't use `vec!`.
+            scratch: (0..num_workers)
+                .map(|_| {
+                    Some(WorkerScratch {
+                        in_batch: Vec::new(),
+                        out_batch: Vec::new(),
+                    })
+                })
+                .collect(),
+
+            result_buf: Vec::new(),
+            result_rx: rx_out,
+        }
+    }
+
+    /// Sign the given repair protocol batch using the given keypair.
+    ///
+    /// Parallelizes signing across up to `self.num_workers` workers, with
+    /// [`MIN_REPAIR_SIGNATURES_PER_WORKER`] as the target minimum batch size per
+    /// worker:
+    ///
+    /// ```text
+    /// num_signing_workers = min(
+    ///     batch_len / MIN_REPAIR_SIGNATURES_PER_WORKER,
+    ///     self.num_workers,
+    /// )
+    /// ```
+    ///
+    /// If this computes to zero or one worker, signing is performed on the current
+    /// thread.
+    pub(crate) fn sign_batch(
+        &mut self,
+        keypair: Arc<Keypair>,
+        batch: Vec<(SocketAddr, RepairProtocol)>,
+    ) -> &[(SocketAddr, Vec<u8>)] {
+        let batch_len = batch.len();
+        self.result_buf.clear();
+        self.result_buf.reserve(batch_len);
+        let num_signing_workers =
+            (batch_len / MIN_REPAIR_SIGNATURES_PER_WORKER).min(self.num_workers);
+
+        if num_signing_workers <= 1 {
+            for (addr, request) in batch {
+                let Ok(bytes) = ServeRepair::repair_proto_to_bytes(&request, &keypair) else {
+                    continue;
+                };
+                self.result_buf.push((addr, bytes))
+            }
+
+            return &self.result_buf;
+        }
+
+        let chunk_size = batch_len.div_ceil(num_signing_workers);
+        let num_chunks = batch_len.div_ceil(chunk_size);
+
+        for (worker_idx, chunk) in batch.into_iter().chunks(chunk_size).into_iter().enumerate() {
+            let mut scratch = self.scratch[worker_idx]
+                .take()
+                .expect("scratch is returned after use");
+
+            scratch.in_batch.clear();
+            scratch.in_batch.reserve(chunk_size);
+            for item in chunk {
+                scratch.in_batch.push(item);
+            }
+
+            self.worker_tx
+                .send(WorkerMsg {
+                    keypair: keypair.clone(),
+                    scratch,
+                })
+                .expect("channel not closed");
+        }
+
+        for worker_idx in 0..num_chunks {
+            let mut scratch = self
+                .result_rx
+                .recv()
+                .expect("repair signing result channel disconnected");
+            self.result_buf.append(&mut scratch.out_batch);
+            self.scratch[worker_idx] = Some(scratch);
+        }
+
+        &self.result_buf
+    }
+
+    fn worker(exit: Arc<AtomicBool>, rx_in: Receiver<WorkerMsg>, tx_out: Sender<WorkerScratch>) {
+        while !exit.load(Ordering::Relaxed) {
+            let WorkerMsg {
+                keypair,
+                mut scratch,
+            } = match rx_in.recv_timeout(Duration::from_millis(10)) {
+                Ok(msg) => msg,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
+
+            scratch.out_batch.clear();
+            scratch.out_batch.reserve(scratch.in_batch.len());
+
+            for (addr, request) in &scratch.in_batch {
+                if let Ok(bytes) = ServeRepair::repair_proto_to_bytes(request, &keypair) {
+                    scratch.out_batch.push((*addr, bytes));
+                }
+            }
+            tx_out.send(scratch).expect("channel is not closed");
+        }
+    }
+}
+
+impl Drop for RepairSigningPool {
+    fn drop(&mut self) {
+        self.exit.store(true, Ordering::Relaxed);
+        self.hdls.drain(..).for_each(|hdl| {
+            if let Err(err) = hdl.join() {
+                error!("repair signing worker encountered unexpected error: {err:?}");
+            }
+        });
+    }
+}
 
 /// Window protocol messages
 /// Appending new messages here is safe as long as it is feature gated.
@@ -1619,6 +1798,36 @@ impl ServeRepair {
         outstanding_requests: &mut OutstandingShredRepairs,
     ) -> Result<Option<(SocketAddr, Vec<u8>)>> {
         let identity_keypair = repair_info.cluster_info.keypair();
+        let (peer, proto) = self.repair_request_proto(
+            repair_info,
+            repair_request,
+            peers_cache,
+            repair_stats,
+            outstanding_requests,
+            &identity_keypair,
+        )?;
+        let out = Self::repair_proto_to_bytes(&proto, &identity_keypair)?;
+        Ok(Some((peer, out)))
+    }
+
+    /// Finds a peer to send this repair request to and returns their address and the [`RepairProtocol`] to be signed.
+    ///
+    /// Like [`Self::repair_request`], but does not perform signing.
+    ///
+    /// For TowerBFT blocks we do a weighted selection where:
+    /// - `x` is `1` if the peer has indicated they have the block via publishing an EpochSlots gossip message and `0` otherwise
+    /// - weights are `(peer_stake / 2 + peer_stake / 2 * x)`
+    ///
+    /// For Alpenglow blocks we do a weighted selection where the weights are `peer_stake`
+    pub(crate) fn repair_request_proto(
+        &self,
+        repair_info: &RepairInfo,
+        repair_request: ShredRepairType,
+        peers_cache: &mut LruCache<Slot, RepairPeers>,
+        repair_stats: &mut RepairStats,
+        outstanding_requests: &mut OutstandingShredRepairs,
+        identity_keypair: &Keypair,
+    ) -> Result<(SocketAddr, RepairProtocol)> {
         // find a peer that appears to be accepting replication and has the desired slot, as indicated
         // by a valid tvu port location
         let slot = repair_request.slot();
@@ -1628,7 +1837,7 @@ impl ServeRepair {
             &repair_info.cluster_slots,
             &repair_info.repair_validators,
             peers_cache,
-            &identity_keypair,
+            identity_keypair,
             weight_source,
         )?;
         let peer = repair_peers.sample(&mut rand::rng());
@@ -1645,20 +1854,20 @@ impl ServeRepair {
             timestamp(),
             Some(location),
         );
-        let out = self.map_repair_request(
+        let out = self.map_repair_request_to_proto(
             &repair_request,
             &peer.pubkey,
             repair_stats,
             nonce,
-            &identity_keypair,
-        )?;
+            identity_keypair,
+        );
         debug!(
             "Sending repair request from {} to {} for {:#?}",
             identity_keypair.pubkey(),
             peer.pubkey,
             repair_request
         );
-        Ok(Some((peer.serve_repair, out)))
+        Ok((peer.serve_repair, out))
     }
 
     /// [`Self::repair_request`] but for [`BlockIdRepairType`] requests
@@ -1745,6 +1954,7 @@ impl ServeRepair {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn map_repair_request(
         &self,
         repair_request: &ShredRepairType,
@@ -1753,6 +1963,25 @@ impl ServeRepair {
         nonce: Nonce,
         identity_keypair: &Keypair,
     ) -> Result<Vec<u8>> {
+        let proto = self.map_repair_request_to_proto(
+            repair_request,
+            repair_peer_id,
+            repair_stats,
+            nonce,
+            identity_keypair,
+        );
+        Self::repair_proto_to_bytes(&proto, identity_keypair)
+    }
+
+    /// Like `Self::map_repair_request`, but does not perform signing.
+    pub(crate) fn map_repair_request_to_proto(
+        &self,
+        repair_request: &ShredRepairType,
+        repair_peer_id: &Pubkey,
+        repair_stats: &mut RepairStats,
+        nonce: Nonce,
+        identity_keypair: &Keypair,
+    ) -> RepairProtocol {
         let header = RepairRequestHeader {
             signature: Signature::default(),
             sender: identity_keypair.pubkey(),
@@ -1760,7 +1989,7 @@ impl ServeRepair {
             timestamp: timestamp(),
             nonce,
         };
-        let request_proto = match repair_request {
+        match repair_request {
             ShredRepairType::Shred(slot, shred_index) => {
                 repair_stats
                     .shred
@@ -1800,8 +2029,7 @@ impl ServeRepair {
                 shred_index: *index,
                 block_id: *block_id,
             },
-        };
-        Self::repair_proto_to_bytes(&request_proto, identity_keypair)
+        }
     }
 
     /// Transforms a [`BlockIdRepairType`] into a signed repair protocol message.
