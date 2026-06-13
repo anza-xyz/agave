@@ -262,7 +262,10 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .takes_value(false)
                         .conflicts_with("address")
                         .help("Include vote transactions when monitoring all transactions"),
-                ),
+                )
+                .arg(Arg::with_name("tree").long("tree").takes_value(false).help(
+                    "Render each transaction as a nested CPI invocation tree",
+                )),
         )
         .subcommand(
             SubCommand::with_name("block-production")
@@ -1455,6 +1458,7 @@ pub fn parse_logs(
 ) -> Result<CliCommandInfo, CliError> {
     let address = pubkey_of_signer(matches, "address", wallet_manager)?;
     let include_votes = matches.is_present("include_votes");
+    let tree = matches.is_present("tree");
 
     let filter = match address {
         None => {
@@ -1467,10 +1471,69 @@ pub fn parse_logs(
         Some(address) => RpcTransactionLogsFilter::Mentions(vec![address.to_string()]),
     };
 
-    Ok(CliCommandInfo::without_signers(CliCommand::Logs { filter }))
+    Ok(CliCommandInfo::without_signers(CliCommand::Logs {
+        filter,
+        tree,
+    }))
 }
 
-pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> ProcessResult {
+fn is_default_signature(sig: &str) -> bool {
+    sig.parse::<Signature>().ok() == Some(Signature::default())
+}
+
+/// Map an RPC URL to the query string a Solana Explorer link should carry.
+/// Canonical Solana RPCs (mainnet-beta, testnet, devnet) round-trip to
+/// their named clusters; anything else (`localhost`, third-party RPCs, a
+/// raw IP, etc.) uses Explorer's `cluster=custom&customUrl=<encoded>` form
+/// so the link points at the same chain the user is watching.
+fn explorer_query_for_rpc(rpc_url: &str) -> String {
+    let trimmed = rpc_url.trim_end_matches('/');
+    match trimmed {
+        "https://api.mainnet-beta.solana.com" => "cluster=mainnet-beta".to_string(),
+        "https://api.testnet.solana.com" => "cluster=testnet".to_string(),
+        "https://api.devnet.solana.com" => "cluster=devnet".to_string(),
+        custom => format!(
+            "cluster=custom&customUrl={}",
+            percent_encode_component(custom)
+        ),
+    }
+}
+
+/// Percent-encode a string for use as a URL query parameter value, per
+/// RFC 3986 (only unreserved ASCII passes through; everything else gets
+/// `%XX`). Hand-rolled so we don't pull in a crate just for this.
+///
+/// Uses RFC 3986 encoding (space → `%20`) rather than form encoding
+/// (space → `+`). The two diverge only on space; Explorer's `customUrl`
+/// is decoded via `URLSearchParams` which would interpret `+` as space,
+/// so `%20` is unambiguous either way. Realistic inputs (RPC URLs) won't
+/// contain spaces, but we encode strictly to keep the behavior right
+/// under any input.
+fn percent_encode_component(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    // Worst case is 3x expansion: one byte -> `%XX`. Most realistic input
+    // stays close to 1x; sizing for the worst case avoids any reallocation.
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(HEX[(byte >> 4) as usize] as char);
+                out.push(HEX[(byte & 0x0F) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
+pub fn process_logs(
+    config: &CliConfig,
+    filter: &RpcTransactionLogsFilter,
+    tree: bool,
+) -> ProcessResult {
     println!(
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
@@ -1493,8 +1556,29 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
     loop {
         match receiver.recv() {
             Ok(logs) => {
+                println!(); // keep em separated
                 println!("Transaction executed in slot {}:", logs.context.slot);
                 println!("  Signature: {}", logs.value.signature);
+                // Every transaction gets an Explorer URL inferred from
+                // --url, in both flat and tree mode. The two extra spaces
+                // after "Explorer:" align the URL with the value column
+                // under "Signature:".
+                //
+                // The validator occasionally ships `Signature::default()`
+                // (all-zero bytes; base58 = sixty-four `1`s) for real
+                // transactions whose signature wasn't available at the
+                // log-emission point. Any Explorer link built from that
+                // sig is dead on arrival, so suppress it; the user still
+                // sees the bogus signature and the logs below. See
+                // `is_default_signature` for the rationale on parse
+                // failures.
+                if !is_default_signature(&logs.value.signature) {
+                    println!(
+                        "  Explorer:  https://explorer.solana.com/tx/{}?{}",
+                        logs.value.signature,
+                        explorer_query_for_rpc(&config.json_rpc_url)
+                    );
+                }
                 println!(
                     "  Status: {}",
                     logs.value
@@ -1502,9 +1586,37 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
                         .map(|err| err.to_string())
                         .unwrap_or_else(|| "Ok".to_string())
                 );
-                println!("  Log Messages:");
-                for log in logs.value.logs {
-                    println!("    {log}");
+                if tree {
+                    let frames = crate::log_tree::cpi_tree(&logs.value.logs);
+                    // Header shows `(N BPF CU / M budget)`. BPF CU because
+                    // `transaction_total_cu` sums only what the SBPF VM
+                    // reports via `Program X consumed N of M` lines; native
+                    // programs (`ComputeBudget`, precompiles, `BpfLoader`)
+                    // never emit those, so their cost is invisible here and
+                    // this number will be lower than the explorer's
+                    // `compute_units_consumed` whenever the tx has any
+                    // non-BPF instructions. When every top-level frame is
+                    // native, `transaction_total_cu` returns `None` and we
+                    // print the explicit fallback rather than "0".
+                    let total = crate::log_tree::transaction_total_cu(&frames);
+                    let budget = crate::log_tree::transaction_compute_budget(&frames);
+                    let header = match (total, budget) {
+                        (Some(t), Some(b)) => format!(
+                            "CPI Tree ({} BPF CU / {} budget):",
+                            crate::log_tree::with_commas(t),
+                            crate::log_tree::with_commas(b)
+                        ),
+                        _ => "CPI Tree (no BPF CU in logs):".to_string(),
+                    };
+                    let rendered = crate::log_tree::format_cpi_tree(&header, &frames);
+                    for line in rendered.lines() {
+                        println!("  {line}");
+                    }
+                } else {
+                    println!("  Log Messages:");
+                    for log in logs.value.logs {
+                        println!("    {log}");
+                    }
                 }
             }
             Err(err) => {
@@ -2185,6 +2297,81 @@ mod tests {
         solana_keypair::{Keypair, write_keypair},
         tempfile::NamedTempFile,
     };
+
+    #[test]
+    fn explorer_query_maps_canonical_rpcs_to_named_clusters() {
+        assert_eq!(
+            explorer_query_for_rpc("https://api.mainnet-beta.solana.com"),
+            "cluster=mainnet-beta"
+        );
+        assert_eq!(
+            explorer_query_for_rpc("https://api.testnet.solana.com"),
+            "cluster=testnet"
+        );
+        assert_eq!(
+            explorer_query_for_rpc("https://api.devnet.solana.com"),
+            "cluster=devnet"
+        );
+        // Trailing slash should be tolerated.
+        assert_eq!(
+            explorer_query_for_rpc("https://api.devnet.solana.com/"),
+            "cluster=devnet"
+        );
+    }
+
+    #[test]
+    fn is_default_signature_recognizes_canonical_encoding() {
+        // The validator forwards whatever signature the transaction
+        // object reports, unconditionally:
+        //
+        //   https://github.com/anza-xyz/agave/blob/b54f7de2d3aeac1a56dbfbb72a17ec36fc1986e9/runtime/src/bank.rs#L4006
+        //
+        // So `Signature::default()` (sixty-four zero bytes) is a
+        // reachable wire value whenever some upstream path leaves the
+        // transaction's signature unset. The literal below is its base58
+        // encoding, hard-coded so the test pins the actual value the
+        // suppression has to recognize instead of asserting that the
+        // encoder and decoder agree with themselves.
+        let canonical_default =
+            "1111111111111111111111111111111111111111111111111111111111111111";
+        assert!(is_default_signature(canonical_default));
+    }
+
+    #[test]
+    fn is_default_signature_rejects_real_signature() {
+        // A real mainnet-beta signature lifted from the PR examples.
+        // Must NOT be suppressed: this is what a normal transaction looks
+        // like and the Explorer link is valid for it.
+        let real = "3AD5AKheyKxzenyABdmyN61TT9EgmYszgdCMkDduAeh6S8NDNJF8Bpj1woWp5qC9sHxPumLW7ZmyJvU2uMiqnzLL";
+        assert!(!is_default_signature(real));
+    }
+
+    #[test]
+    fn is_default_signature_rejects_unparseable_input() {
+        // Garbage in -> `false`, not `true`. The suppression only fires
+        // for the known default-signature case; we don't want to silently
+        // swallow Explorer links for any unrelated parse bug upstream.
+        assert!(!is_default_signature("not-a-signature"));
+        assert!(!is_default_signature(""));
+        // Right length, wrong alphabet (base58 excludes `0`, `O`, `I`, `l`).
+        assert!(!is_default_signature(&"0".repeat(64)));
+    }
+
+    #[test]
+    fn explorer_query_falls_back_to_custom_for_unknown_rpc() {
+        // Localhost (surfpool / solana-test-validator default).
+        assert_eq!(
+            explorer_query_for_rpc("http://localhost:8899"),
+            "cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899"
+        );
+        // A third-party devnet RPC: the substring "devnet" must not trick
+        // us into the named cluster, because Explorer's `cluster=devnet`
+        // points to api.devnet.solana.com, not this URL.
+        assert_eq!(
+            explorer_query_for_rpc("https://devnet.helius-rpc.com"),
+            "cluster=custom&customUrl=https%3A%2F%2Fdevnet.helius-rpc.com"
+        );
+    }
 
     fn make_tmp_file() -> (String, NamedTempFile) {
         let tmp_file = NamedTempFile::new().unwrap();
