@@ -44,7 +44,7 @@ use {
     solana_runtime::{
         bank::DEFAULT_VAT_TO_BURN_PER_EPOCH,
         genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
-        stake_utils,
+        inflation_schedule, stake_utils,
     },
     solana_sdk_ids::system_program,
     solana_signer::Signer,
@@ -797,6 +797,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ticks_per_slot,
         poh_config,
         fee_rate_governor,
+        inflation: inflation_schedule::default_inflation(),
         rent,
         epoch_schedule,
         cluster_type,
@@ -806,7 +807,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     if let Ok(raw_inflation) = value_t!(matches, "inflation", String) {
         let inflation = match raw_inflation.as_str() {
             "pico" => Inflation::pico(),
-            "full" => Inflation::full(),
+            "full" => inflation_schedule::full_inflation(),
             "none" => Inflation::new_disabled(),
             _ => unreachable!(),
         };

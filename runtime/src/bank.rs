@@ -57,6 +57,7 @@ use {
             VersionedEpochStakes,
         },
         inflation_rewards::points::InflationPointCalculationEvent,
+        inflation_schedule,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
@@ -722,7 +723,7 @@ impl BankFieldsToSerialize {
             leader_id: Pubkey::default(),
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
-            inflation: Inflation::default(),
+            inflation: inflation_schedule::default_inflation(),
             stakes: Stakes::<StakeAccount<Delegation>>::default(),
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
@@ -6074,7 +6075,7 @@ impl Bank {
 
         if !new_feature_activations.is_disjoint(&self.feature_set.full_inflation_features_enabled())
         {
-            *self.inflation.write().unwrap() = Inflation::full();
+            *self.inflation.write().unwrap() = inflation_schedule::full_inflation();
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
