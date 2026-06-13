@@ -86,6 +86,18 @@ impl CertificateType {
         }
     }
 
+    /// Returns the threshold needed to complete the cert of this type.
+    pub fn threshold(&self) -> Fraction {
+        match self {
+            Self::Finalize(_) => Fraction::from_percentage(60),
+            Self::Skip(_) => Fraction::from_percentage(60),
+            Self::Notarize(_) => Fraction::from_percentage(60),
+            Self::NotarizeFallback(_) => Fraction::from_percentage(60),
+            Self::FinalizeFast(_) => Fraction::from_percentage(80),
+            Self::Genesis(_) => GENESIS_VOTE_THRESHOLD,
+        }
+    }
+
     /// Is this a fast finalize certificate?
     pub fn is_fast_finalization(&self) -> bool {
         matches!(self, Self::FinalizeFast(_))

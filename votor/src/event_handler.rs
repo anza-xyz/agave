@@ -1405,33 +1405,41 @@ mod tests {
             }
         }
 
-        fn check_for_vote(&mut self, expected_vote: &Vote) {
-            let expected_message = self.expected_vote_message(expected_vote);
-            let mut found = false;
-            self.bls_ops.retain_mut(|bls_op| match bls_op {
-                BLSOp::PushVote { vote, .. } => {
-                    let keep = vote.as_ref() != &expected_message;
-                    found |= !keep;
-                    keep
-                }
-                BLSOp::RefreshVotes { votes } => {
-                    let previous_len = votes.len();
-                    votes.retain(|vote| vote.as_ref() != &expected_message);
-                    found |= votes.len() != previous_len;
-                    !votes.is_empty()
-                }
-                BLSOp::PushCertificates { .. } => true,
-            });
-            assert!(found, "Did not find expected vote: {expected_message:?}");
-            // Also check own_vote_receiver
-            let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+        fn check_for_vote(&mut self, _expected_vote: &Vote) {
+            unimplemented!()
+            // let expected_message = self.expected_vote_message(expected_vote);
+            // let mut found = false;
+            // self.bls_ops.retain_mut(|bls_op| match bls_op {
+            //     BLSOp::PushVote { vote, .. } => {
+            //         let keep = vote.as_ref() != &expected_message;
+            //         found |= !keep;
+            //         keep
+            //     }
+            //     BLSOp::RefreshVotes { votes } => {
+            //         let previous_len = votes.len();
+            //         votes.retain(|vote| vote.as_ref() != &expected_message);
+            //         found |= votes.len() != previous_len;
+            //         !votes.is_empty()
+            //     }
+            //     BLSOp::PushCertificates { .. } => true,
+            // });
+            // assert!(found, "Did not find expected vote: {expected_message:?}");
+            // // Also check own_vote_receiver
+            // let own_vote = self.own_vote_receiver.try_recv().unwrap();
+            // assert_eq!(
+            //     own_vote,
+            //     SigVerifiedBatch::Votes(SigVerifiedVoteBatch::new(vec![expected_message]))
+            // );
         }
 
-        fn check_for_own_vote(&self, expected_vote: &Vote) {
-            let expected_message = self.expected_vote_message(expected_vote);
-            let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+        fn check_for_own_vote(&self, _expected_vote: &Vote) {
+            unimplemented!()
+            // let expected_message = self.expected_vote_message(expected_vote);
+            // let own_vote = self.own_vote_receiver.try_recv().unwrap();
+            // assert_eq!(
+            //     own_vote,
+            //     SigVerifiedBatch::Votes(SigVerifiedVoteBatch::new(vec![expected_message]))
+            // );
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
@@ -1441,14 +1449,14 @@ mod tests {
                 else {
                     panic!("expected own vote batch");
                 };
-                received_messages.extend(votes);
+                received_messages.push(votes);
             }
 
             for expected_vote in expected_votes {
                 let expected_message = self.expected_vote_message(expected_vote);
                 let index = received_messages
                     .iter()
-                    .position(|message| *message == expected_message)
+                    .position(|message| message.vote() == &expected_message.vote)
                     .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
                 received_messages.remove(index);
             }

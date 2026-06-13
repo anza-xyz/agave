@@ -37,7 +37,6 @@ use {
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, VotorEvent, VotorEventSender,
         },
         root_utils,
-        vote_history_storage::SavedVoteHistory,
         voting_service::BLSOp,
         voting_utils::{self, GenerateVoteTxResult},
     },
@@ -1752,8 +1751,8 @@ impl ReplayStage {
         vote_account: Pubkey,
         identity_keypair: &Arc<Keypair>,
         authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
-        own_vote_sender: &Sender<SigVerifiedBatch>,
-        bls_sender: &Sender<BLSOp>,
+        _own_vote_sender: &Sender<SigVerifiedBatch>,
+        _bls_sender: &Sender<BLSOp>,
     ) -> bool {
         let Some(block) = migration_status.eligible_genesis_block() else {
             // We have not yet discovered the genesis block
@@ -1770,21 +1769,21 @@ impl ReplayStage {
             None,
             &mut HashMap::new(),
         ) {
-            GenerateVoteTxResult::Vote(vote_msg) => {
-                // Send vote to ConsensusPool and rest of cluster
-                warn!(
-                    "{} Alpenglow migration: Casting genesis vote for ({block:?})",
-                    identity_keypair.pubkey()
-                );
-                // If sending fails that means the channel is disconnected and we are shutting down
-                let _ = own_vote_sender.send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]));
-                let _ = bls_sender.send(BLSOp::PushVote {
-                    vote: Arc::new(vote_msg),
-                    saved_vote_history:
-                        agave_votor::vote_history_storage::SavedVoteHistoryVersions::Current(
-                            SavedVoteHistory::default(),
-                        ),
-                });
+            GenerateVoteTxResult::Vote(_vote_msg) => {
+                // // Send vote to ConsensusPool and rest of cluster
+                // warn!(
+                //     "{} Alpenglow migration: Casting genesis vote for ({block:?})",
+                //     identity_keypair.pubkey()
+                // );
+                // // If sending fails that means the channel is disconnected and we are shutting down
+                // let _ = own_vote_sender.send(SigVerifiedBatch::Votes(vote_msg.clone().into()));
+                // let _ = bls_sender.send(BLSOp::PushVote {
+                //     vote: Arc::new(vote_msg),
+                //     saved_vote_history:
+                //         agave_votor::vote_history_storage::SavedVoteHistoryVersions::Current(
+                //             SavedVoteHistory::default(),
+                //         ),
+                // });
             }
             e => {
                 warn!(

@@ -428,6 +428,7 @@ name = "agave-votor-messages"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "bitvec",
  "crossbeam-channel",
  "log",
  "serde",
