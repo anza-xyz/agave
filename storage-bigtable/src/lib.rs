@@ -12,7 +12,10 @@ use {
     solana_pubkey::Pubkey,
     solana_serde::default_on_eof,
     solana_signature::Signature,
-    solana_storage_proto::convert::{entries, generated, tx_by_addr},
+    solana_storage_proto::{
+        convert::{entries, generated, tx_by_addr},
+        wincode_compat,
+    },
     solana_time_utils::AtomicInterval,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
@@ -35,6 +38,7 @@ use {
     },
     thiserror::Error,
     tokio::task::JoinError,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[macro_use]
@@ -118,7 +122,7 @@ fn key_to_slot(key: &str) -> Option<Slot> {
 // Note: in order to continue to support old bincode-serialized bigtable entries, if new fields are
 // added to ConfirmedBlock, they must either be excluded or set to `default_on_eof` here
 //
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlock {
     previous_blockhash: String,
     blockhash: String,
@@ -127,6 +131,7 @@ struct StoredConfirmedBlock {
     rewards: StoredConfirmedBlockRewards,
     block_time: Option<UnixTimestamp>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<u64>>")]
     block_height: Option<u64>,
 }
 
@@ -181,7 +186,7 @@ impl From<StoredConfirmedBlock> for ConfirmedBlock {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlockTransaction {
     transaction: VersionedTransaction,
     meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
@@ -223,7 +228,7 @@ impl From<StoredConfirmedBlockTransaction> for TransactionWithStatusMeta {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlockTransactionStatusMeta {
     err: Option<TransactionError>,
     fee: u64,
@@ -281,7 +286,7 @@ impl From<TransactionStatusMeta> for StoredConfirmedBlockTransactionStatusMeta {
 
 type StoredConfirmedBlockRewards = Vec<StoredConfirmedBlockReward>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlockReward {
     pubkey: String,
     lamports: i64,
@@ -311,7 +316,7 @@ impl From<Reward> for StoredConfirmedBlockReward {
 }
 
 // A serialized `TransactionInfo` is stored in the `tx` table
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite, PartialEq, Eq, Debug)]
 struct TransactionInfo {
     slot: Slot, // The slot that contains the block with this transaction in it
     index: u32, // Where the transaction is located in the block
@@ -354,7 +359,7 @@ impl From<TransactionInfo> for TransactionStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct LegacyTransactionByAddrInfo {
     pub signature: Signature,          // The transaction signature
     pub err: Option<TransactionError>, // None if the transaction executed successfully
@@ -553,7 +558,7 @@ impl LedgerStorage {
         let mut bigtable = self.connection.client();
         let row_keys = slots.into_iter().map(slot_to_blocks_key);
         let data = bigtable
-            .get_protobuf_or_bincode_cells("blocks", row_keys)
+            .get_protobuf_or_wincode_cells("blocks", row_keys)
             .await?
             .filter_map(
                 |(row_key, block_cell_data): (
@@ -561,7 +566,7 @@ impl LedgerStorage {
                     bigtable::CellData<StoredConfirmedBlock, generated::ConfirmedBlock>,
                 )| {
                     let block = match block_cell_data {
-                        bigtable::CellData::Bincode(block) => block.into(),
+                        bigtable::CellData::Wincode(block) => block.into(),
                         bigtable::CellData::Protobuf(block) => block.try_into().ok()?,
                     };
                     Some((key_to_slot(&row_key).unwrap(), block))
@@ -576,7 +581,7 @@ impl LedgerStorage {
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let block_cell_data = bigtable
-            .get_protobuf_or_bincode_cell::<StoredConfirmedBlock, generated::ConfirmedBlock>(
+            .get_protobuf_or_wincode_cell::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                 "blocks",
                 slot_to_blocks_key(slot),
             )
@@ -586,7 +591,7 @@ impl LedgerStorage {
                 _ => err.into(),
             })?;
         Ok(match block_cell_data {
-            bigtable::CellData::Bincode(block) => block.into(),
+            bigtable::CellData::Wincode(block) => block.into(),
             bigtable::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
                 bigtable::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot)))
             })?,
@@ -630,7 +635,7 @@ impl LedgerStorage {
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let transaction_info = bigtable
-            .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
+            .get_wincode_cell::<TransactionInfo>("tx", signature.to_string())
             .await
             .map_err(|err| match err {
                 bigtable::Error::RowNotFound => Error::SignatureNotFound(*signature),
@@ -651,7 +656,7 @@ impl LedgerStorage {
         // Fetch transactions info
         let keys = signatures.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let cells = bigtable
-            .get_bincode_cells::<TransactionInfo>("tx", &keys)
+            .get_wincode_cells::<TransactionInfo>("tx", &keys)
             .await?;
 
         // Collect by slot
@@ -710,7 +715,7 @@ impl LedgerStorage {
 
         // Figure out which block the transaction is located in
         let TransactionInfo { slot, index, .. } = bigtable
-            .get_bincode_cell("tx", signature.to_string())
+            .get_wincode_cell("tx", signature.to_string())
             .await
             .map_err(|err| match err {
                 bigtable::Error::RowNotFound => Error::SignatureNotFound(*signature),
@@ -769,7 +774,7 @@ impl LedgerStorage {
             None => (Slot::MAX, 0),
             Some(before_signature) => {
                 let TransactionInfo { slot, index, .. } = bigtable
-                    .get_bincode_cell("tx", before_signature.to_string())
+                    .get_wincode_cell("tx", before_signature.to_string())
                     .await
                     .map_err(|err| match err {
                         bigtable::Error::RowNotFound => Error::SignatureNotFound(*before_signature),
@@ -785,7 +790,7 @@ impl LedgerStorage {
             None => (0, u32::MAX),
             Some(until_signature) => {
                 let TransactionInfo { slot, index, .. } = bigtable
-                    .get_bincode_cell("tx", until_signature.to_string())
+                    .get_wincode_cell("tx", until_signature.to_string())
                     .await
                     .map_err(|err| match err {
                         bigtable::Error::RowNotFound => Error::SignatureNotFound(*until_signature),
@@ -799,14 +804,14 @@ impl LedgerStorage {
         let mut infos = vec![];
 
         let starting_slot_tx_len = bigtable
-            .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
+            .get_protobuf_or_wincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
                 "tx-by-addr",
                 format!("{}{}", address_prefix, slot_to_tx_by_addr_key(first_slot)),
             )
             .await
             .map(|cell_data| {
                 match cell_data {
-                    bigtable::CellData::Bincode(tx_by_addr) => tx_by_addr.len(),
+                    bigtable::CellData::Wincode(tx_by_addr) => tx_by_addr.len(),
                     bigtable::CellData::Protobuf(tx_by_addr) => tx_by_addr.tx_by_addrs.len(),
                 }
             })
@@ -838,13 +843,13 @@ impl LedgerStorage {
                 ))
             })?;
 
-            let deserialized_cell_data = bigtable::deserialize_protobuf_or_bincode_cell_data::<
+            let deserialized_cell_data = bigtable::deserialize_protobuf_or_wincode_cell_data::<
                 Vec<LegacyTransactionByAddrInfo>,
                 tx_by_addr::TransactionByAddr,
             >(&data, "tx-by-addr", row_key.clone())?;
 
             let mut cell_data: Vec<TransactionByAddrInfo> = match deserialized_cell_data {
-                bigtable::CellData::Bincode(tx_by_addr) => {
+                bigtable::CellData::Wincode(tx_by_addr) => {
                     tx_by_addr.into_iter().map(|legacy| legacy.into()).collect()
                 }
                 bigtable::CellData::Protobuf(tx_by_addr) => {
@@ -984,7 +989,7 @@ impl LedgerStorage {
         if !tx_cells.is_empty() {
             let conn = self.connection.clone();
             tasks.push(tokio::spawn(async move {
-                conn.put_bincode_cells_with_retry::<TransactionInfo>("tx", &tx_cells)
+                conn.put_wincode_cells_with_retry::<TransactionInfo>("tx", &tx_cells)
                     .await
             }));
         }
@@ -1114,7 +1119,7 @@ impl LedgerStorage {
             let signatures = expected_tx_infos.keys().cloned().collect::<Vec<_>>();
             let fetched_tx_infos: HashMap<String, std::result::Result<UploadedTransaction, _>> =
                 self.connection
-                    .get_bincode_cells_with_retry::<TransactionInfo>("tx", &signatures)
+                    .get_wincode_cells_with_retry::<TransactionInfo>("tx", &signatures)
                     .await?
                     .into_iter()
                     .map(|(signature, tx_info_res)| (signature, tx_info_res.map(Into::into)))
