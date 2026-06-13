@@ -31,7 +31,7 @@ echo "--- coverage: dev-bins"
   --features dev-context-only-utils \
   --manifest-path "$git_root"/dev-bins/Cargo.toml \
   --workspace \
-  --lib
+  --bins
 
 # Clean up
 cargo clean

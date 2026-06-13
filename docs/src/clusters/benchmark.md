@@ -89,10 +89,10 @@ Now that your singlenode or multinode testnet is up and running let's send it so
 In a separate shell start the client:
 
 ```bash
-./multinode-demo/bench-tps.sh # runs against localhost by default
+./multinode-demo/txs-bench.sh # runs against localhost by default
 ```
 
-What just happened? The client demo spins up several threads to send 500,000 transactions to the testnet as quickly as it can. The client then pings the testnet periodically to see how many transactions it processed in that time. Take note that the demo intentionally floods the network with UDP packets, such that the network will almost certainly drop a bunch of them. This ensures the testnet has an opportunity to reach 710k TPS. The client demo completes after it has convinced itself the testnet won't process any additional transactions. You should see several TPS measurements printed to the screen. In the multinode variation, you'll see TPS measurements for each validator node as well.
+What just happened? The client demo starts `solana-transaction-bench`, creates funded payer accounts from the configured authority, and sends transfer transactions to the testnet. You should see TPS measurements printed to the screen. In the multinode variation, you'll see TPS measurements for each validator node as well.
 
 ### Testnet Debugging
 
@@ -130,7 +130,7 @@ This will dump all the threads stack traces into gdb.txt
 In this example the client connects to our public testnet. To run validators on the testnet you would need to open udp ports `8000-10000`.
 
 ```bash
-./multinode-demo/bench-tps.sh --entrypoint entrypoint.devnet.solana.com:8001 --faucet api.devnet.solana.com:9900 --duration 60 --tx_count 50
+./multinode-demo/txs-bench.sh --url https://api.devnet.solana.com --authority /path/to/funded-keypair.json --duration 60 --target-tps 50 ws-leader-tracker
 ```
 
 You can observe the effects of your client's transactions on our [metrics dashboard](https://metrics.solana.com:3000/d/monitor/cluster-telemetry?var-testnet=devnet)

@@ -666,7 +666,7 @@ dependencies = [
  "ark-poly 0.5.0",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "educe 0.6.0",
+ "educe",
  "fnv",
  "hashbrown 0.15.5",
  "itertools 0.13.0",
@@ -708,7 +708,7 @@ dependencies = [
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
- "educe 0.6.0",
+ "educe",
  "itertools 0.13.0",
  "num-bigint 0.4.6",
  "num-traits",
@@ -785,7 +785,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "educe 0.6.0",
+ "educe",
  "fnv",
  "hashbrown 0.15.5",
 ]
@@ -2265,23 +2265,11 @@ dependencies = [
 
 [[package]]
 name = "educe"
-version = "0.4.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0042ff8246a363dbe77d2ceedb073339e85a804b9a47636c6e016a9a32c05f"
-dependencies = [
- "enum-ordinalize 3.1.15",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "educe"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d7bc049e1bd8cdeb31b68bbd586a9464ecf9f3944af3958a7a9d0f8b9799417"
 dependencies = [
- "enum-ordinalize 4.3.2",
+ "enum-ordinalize",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -2345,19 +2333,6 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "685adfa4d6f3d765a26bc5dbc936577de9abf756c1feeb3089b01dd395034842"
 dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "enum-ordinalize"
-version = "3.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bf1fa3f06bbff1ea5b1a9c7b14aa992a39657db60a2759457328d7e058f49ee"
-dependencies = [
- "num-bigint 0.4.6",
- "num-traits",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -4369,25 +4344,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opentelemetry"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6105e89802af13fdf48c49d7646d3b533a70e536d818aae7e78ba0433d01acb8"
-dependencies = [
- "async-trait",
- "crossbeam-channel",
- "futures-channel",
- "futures-executor",
- "futures-util",
- "js-sys",
- "lazy_static",
- "percent-encoding 2.3.2",
- "pin-project",
- "rand 0.8.6",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "pairing"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5651,31 +5607,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial_test"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
-dependencies = [
- "futures-executor",
- "futures-util",
- "log",
- "once_cell",
- "parking_lot 0.12.5",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5734,15 +5665,6 @@ checksum = "f70af47ac33fc236ff3d3185a60d0821622475415a6f3aa8378d50eed158913b"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "sharded-slab"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
-dependencies = [
- "lazy_static",
 ]
 
 [[package]]
@@ -6100,142 +6022,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "085db4906d89324cef2a30840d59eaecf3d4231c560ec7c9f6614a93c652f501"
 dependencies = [
  "parking_lot 0.12.5",
-]
-
-[[package]]
-name = "solana-banks-client"
-version = "4.2.0-alpha.0"
-dependencies = [
- "borsh",
- "futures 0.3.32",
- "solana-account 4.3.0",
- "solana-banks-interface",
- "solana-clock",
- "solana-commitment-config",
- "solana-hash 4.4.0",
- "solana-message",
- "solana-program-pack",
- "solana-pubkey 4.2.0",
- "solana-rent",
- "solana-signature",
- "solana-sysvar",
- "solana-transaction",
- "solana-transaction-context",
- "solana-transaction-error",
- "tarpc",
- "thiserror 2.0.18",
- "tokio",
- "tokio-serde",
-]
-
-[[package]]
-name = "solana-banks-interface"
-version = "4.2.0-alpha.0"
-dependencies = [
- "serde",
- "solana-account 4.3.0",
- "solana-clock",
- "solana-commitment-config",
- "solana-hash 4.4.0",
- "solana-message",
- "solana-pubkey 4.2.0",
- "solana-signature",
- "solana-transaction",
- "solana-transaction-context",
- "solana-transaction-error",
- "tarpc",
-]
-
-[[package]]
-name = "solana-banks-server"
-version = "4.2.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "crossbeam-channel",
- "futures 0.3.32",
- "solana-account 4.3.0",
- "solana-banks-interface",
- "solana-clock",
- "solana-commitment-config",
- "solana-hash 4.4.0",
- "solana-message",
- "solana-net-utils",
- "solana-pubkey 4.2.0",
- "solana-runtime",
- "solana-runtime-transaction",
- "solana-send-transaction-service",
- "solana-signature",
- "solana-transaction",
- "solana-transaction-error",
- "tarpc",
- "tokio",
- "tokio-serde",
- "tokio-util 0.7.18",
-]
-
-[[package]]
-name = "solana-bench-tps"
-version = "4.2.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "agave-logger",
- "chrono",
- "clap",
- "crossbeam-channel",
- "csv",
- "log",
- "rand 0.9.4",
- "rayon",
- "serde",
- "serde_json",
- "serde_yaml",
- "serial_test",
- "solana-account 4.3.0",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "solana-compute-budget-interface",
- "solana-connection-cache",
- "solana-core",
- "solana-faucet",
- "solana-fee-calculator",
- "solana-genesis",
- "solana-genesis-config",
- "solana-hash 4.4.0",
- "solana-instruction",
- "solana-keypair",
- "solana-local-cluster",
- "solana-measure",
- "solana-message",
- "solana-metrics",
- "solana-native-token",
- "solana-net-utils",
- "solana-nonce",
- "solana-pubkey 4.2.0",
- "solana-quic-client",
- "solana-rent",
- "solana-rpc",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-sdk-ids",
- "solana-signature",
- "solana-signer",
- "solana-streamer",
- "solana-system-interface 3.2.0",
- "solana-test-validator",
- "solana-time-utils",
- "solana-tps-client",
- "solana-tpu-client",
- "solana-transaction",
- "solana-transaction-status",
- "solana-version",
- "spl-instruction-padding-interface",
- "tempfile",
- "tikv-jemallocator",
 ]
 
 [[package]]
@@ -7080,53 +6866,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-genesis"
-version = "4.2.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "agave-logger",
- "agave-snapshots",
- "base64 0.22.1",
- "bincode",
- "clap",
- "itertools 0.14.0",
- "serde",
- "serde_json",
- "serde_yaml",
- "solana-account 4.3.0",
- "solana-bls-signatures",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-clock",
- "solana-cluster-type",
- "solana-commitment-config",
- "solana-entry",
- "solana-epoch-schedule",
- "solana-feature-gate-interface",
- "solana-fee-calculator",
- "solana-genesis-config",
- "solana-genesis-utils",
- "solana-inflation",
- "solana-keypair",
- "solana-ledger",
- "solana-loader-v3-interface",
- "solana-native-token",
- "solana-poh-config",
- "solana-pubkey 4.2.0",
- "solana-rent",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-sdk-ids",
- "solana-signer",
- "solana-stake-interface",
- "solana-time-utils",
- "solana-version",
- "solana-vote-program",
- "tempfile",
-]
-
-[[package]]
 name = "solana-genesis-config"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7315,7 +7054,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37ebb0ffd19263051bc3f683fcc086134b8ff23af894dcb63f7563c7137b42f1"
 dependencies = [
  "bincode",
- "borsh",
  "serde",
  "serde_derive",
  "solana-define-syscall 5.1.0",
@@ -7553,77 +7291,6 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey 3.0.0",
  "solana-sdk-ids",
-]
-
-[[package]]
-name = "solana-local-cluster"
-version = "4.2.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "agave-logger",
- "agave-snapshots",
- "agave-votor",
- "agave-votor-messages",
- "crossbeam-channel",
- "itertools 0.14.0",
- "log",
- "rand 0.9.4",
- "rayon",
- "solana-account 4.3.0",
- "solana-accounts-db",
- "solana-client",
- "solana-client-traits",
- "solana-clock",
- "solana-cluster-type",
- "solana-commitment-config",
- "solana-core",
- "solana-entry",
- "solana-epoch-schedule",
- "solana-feature-gate-interface",
- "solana-fee-structure",
- "solana-genesis-config",
- "solana-gossip",
- "solana-hard-forks",
- "solana-hash 4.4.0",
- "solana-keypair",
- "solana-leader-schedule",
- "solana-ledger",
- "solana-message",
- "solana-native-token",
- "solana-net-utils",
- "solana-poh-config",
- "solana-program-binaries",
- "solana-pubkey 4.2.0",
- "solana-pubsub-client",
- "solana-quic-client",
- "solana-rent",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-sdk-ids",
- "solana-shred-version",
- "solana-signer",
- "solana-slot-hashes",
- "solana-stake-interface",
- "solana-streamer",
- "solana-system-interface 3.2.0",
- "solana-system-transaction",
- "solana-time-utils",
- "solana-tpu-client",
- "solana-tpu-client-next",
- "solana-transaction",
- "solana-transaction-error",
- "solana-turbine",
- "solana-validator-exit",
- "solana-vote",
- "solana-vote-interface",
- "solana-vote-program",
- "static_assertions",
- "strum",
- "tempfile",
- "tokio",
- "tokio-util 0.7.18",
- "wincode",
 ]
 
 [[package]]
@@ -7999,68 +7666,6 @@ dependencies = [
  "solana-transaction-context",
  "thiserror 2.0.18",
  "wincode",
-]
-
-[[package]]
-name = "solana-program-test"
-version = "4.2.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "agave-logger",
- "assert_matches",
- "async-trait",
- "base64 0.22.1",
- "bincode",
- "chrono-humanize",
- "log",
- "serde",
- "solana-account 4.3.0",
- "solana-account-info",
- "solana-accounts-db",
- "solana-address 2.6.1",
- "solana-banks-client",
- "solana-banks-interface",
- "solana-banks-server",
- "solana-clock",
- "solana-cluster-type",
- "solana-commitment-config",
- "solana-compute-budget",
- "solana-epoch-rewards",
- "solana-epoch-schedule",
- "solana-fee-calculator",
- "solana-genesis-config",
- "solana-hash 4.4.0",
- "solana-instruction",
- "solana-keypair",
- "solana-loader-v3-interface",
- "solana-message",
- "solana-msg",
- "solana-native-token",
- "solana-poh-config",
- "solana-program-binaries",
- "solana-program-entrypoint",
- "solana-program-error",
- "solana-program-runtime",
- "solana-pubkey 4.2.0",
- "solana-rent",
- "solana-runtime",
- "solana-sbpf",
- "solana-sdk-ids",
- "solana-signer",
- "solana-stake-interface",
- "solana-svm-log-collector",
- "solana-svm-timings",
- "solana-system-interface 3.2.0",
- "solana-sysvar",
- "solana-sysvar-id",
- "solana-transaction",
- "solana-transaction-context",
- "solana-transaction-error",
- "solana-vote-program",
- "spl-generic-token",
- "spl-memo-interface",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]
@@ -8790,7 +8395,6 @@ version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f34562cda7df74d85fcb1f7063d8cdec3e14f3d402aa3062605c116d8b8115"
 dependencies = [
- "borsh",
  "num-traits",
  "serde",
  "serde_derive",
@@ -9153,59 +8757,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-test-validator"
-version = "4.2.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "agave-snapshots",
- "arc-swap",
- "base64 0.22.1",
- "bincode",
- "crossbeam-channel",
- "log",
- "serde_json",
- "solana-account 4.3.0",
- "solana-accounts-db",
- "solana-cli-output",
- "solana-clock",
- "solana-cluster-type",
- "solana-commitment-config",
- "solana-compute-budget",
- "solana-core",
- "solana-epoch-schedule",
- "solana-feature-gate-interface",
- "solana-fee-calculator",
- "solana-genesis-utils",
- "solana-geyser-plugin-manager",
- "solana-gossip",
- "solana-inflation",
- "solana-instruction",
- "solana-keypair",
- "solana-ledger",
- "solana-loader-v3-interface",
- "solana-message",
- "solana-native-token",
- "solana-net-utils",
- "solana-program-binaries",
- "solana-program-runtime",
- "solana-program-test",
- "solana-pubkey 4.2.0",
- "solana-rent",
- "solana-rpc",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-sbpf",
- "solana-sdk-ids",
- "solana-signer",
- "solana-streamer",
- "solana-syscalls",
- "solana-transaction",
- "solana-validator-exit",
- "tokio",
-]
-
-[[package]]
 name = "solana-time-utils"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9221,36 +8772,6 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-signer",
  "x509-parser",
-]
-
-[[package]]
-name = "solana-tps-client"
-version = "4.2.0-alpha.0"
-dependencies = [
- "log",
- "solana-account 4.3.0",
- "solana-client",
- "solana-client-traits",
- "solana-clock",
- "solana-commitment-config",
- "solana-connection-cache",
- "solana-epoch-info",
- "solana-hash 4.4.0",
- "solana-keypair",
- "solana-message",
- "solana-net-utils",
- "solana-pubkey 4.2.0",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-streamer",
- "solana-tpu-client",
- "solana-transaction",
- "solana-transaction-error",
- "solana-transaction-status",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9809,18 +9330,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spl-instruction-padding-interface"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c3a77c0c9b83b111ee29bc6aa6eaab54b82e1ed5db40ba9786527b80283c3ef"
-dependencies = [
- "num_enum",
- "solana-instruction",
- "solana-program-error",
- "solana-pubkey 3.0.0",
-]
-
-[[package]]
 name = "spl-memo-interface"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10137,41 +9646,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tarpc"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c38a012bed6fb9681d3bf71ffaa4f88f3b4b9ed3198cda6e4c8462d24d4bb80"
-dependencies = [
- "anyhow",
- "fnv",
- "futures 0.3.32",
- "humantime",
- "opentelemetry",
- "pin-project",
- "rand 0.8.6",
- "serde",
- "static_assertions",
- "tarpc-plugins",
- "thiserror 1.0.69",
- "tokio",
- "tokio-serde",
- "tokio-util 0.6.10",
- "tracing",
- "tracing-opentelemetry",
-]
-
-[[package]]
-name = "tarpc-plugins"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ee42b4e559f17bce0385ebf511a7beb67d5cc33c12c96b7f4e9789919d9c10f"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10237,15 +9711,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "thread_local"
-version = "1.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
-dependencies = [
- "cfg-if 1.0.4",
 ]
 
 [[package]]
@@ -10393,22 +9858,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-serde"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911a61637386b789af998ee23f50aa30d5fd7edcec8d6d3dedae5e5815205466"
-dependencies = [
- "bincode",
- "bytes",
- "educe 0.4.23",
- "futures-core",
- "futures-sink",
- "pin-project",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "tokio-stream"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10446,7 +9895,6 @@ dependencies = [
  "futures-sink",
  "log",
  "pin-project-lite",
- "slab",
  "tokio",
 ]
 
@@ -10657,31 +10105,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
- "valuable",
-]
-
-[[package]]
-name = "tracing-opentelemetry"
-version = "0.17.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbbe89715c1dbbb790059e2565353978564924ee85017b5fff365c872ff6721f"
-dependencies = [
- "once_cell",
- "opentelemetry",
- "tracing",
- "tracing-core",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "tracing-subscriber"
-version = "0.3.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f30143827ddab0d256fd843b7a66d164e9f271cfa0dde49142c5ca0ca291f1e"
-dependencies = [
- "sharded-slab",
- "thread_local",
- "tracing-core",
 ]
 
 [[package]]
@@ -10886,12 +10309,6 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
-name = "valuable"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcpkg"
