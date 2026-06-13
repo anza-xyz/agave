@@ -10638,6 +10638,7 @@ dependencies = [
  "solana-native-token",
  "solana-nonce",
  "solana-nonce-account",
+ "solana-poseidon",
  "solana-precompile-error",
  "solana-program-binaries",
  "solana-program-entrypoint",
