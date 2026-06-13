@@ -894,6 +894,11 @@ fn handle_parent_ready(
     mut accumulated_txs: Vec<VersionedTransaction>,
     block_timer: &mut Instant,
 ) -> Result<Option<Arc<Bank>>, PohRecorderError> {
+    // The block timer is infinite until ParentReady; once observed it runs for
+    // DELTA_BLOCK from ParentReady, regardless of whether the optimistic
+    // parent matches the one from the ParentReady event.
+    *block_timer = leader_window_info.block_timer;
+
     if leader_window_info.parent_block == optimistic_parent_block {
         // Happy path: optimistic parent matches the one from ParentReady
         return Ok(None);
@@ -905,10 +910,6 @@ fn handle_parent_ready(
         ctx.my_pubkey, optimistic_parent_block, leader_window_info.parent_block
     );
     ctx.slot_metrics.mark_leader_handover_sad();
-
-    // If the optimistic parent doesn't match the one specified in ParentReady, then
-    // this resets the block timer to the new parent's timer.
-    *block_timer = leader_window_info.block_timer;
 
     // Important: We must shutdown and drain the record receiver BEFORE sending the UpdateParent
     // marker. Otherwise, we could end up sending records for the old bank after the UpdateParent,
