@@ -378,13 +378,13 @@ impl BlockComponentProcessor {
                     // TODO blocking send.
                     let _ = sender
                         .send(cert)
-                        .inspect_err(|_| info!("SigVerifiedBatch sender disconnected"));
+                        .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
                 }
                 let cert = ConsensusMessage::Certificate(finalize_cert);
                 // TODO blocking send.
                 let _ = sender
                     .send(cert)
-                    .inspect_err(|_| info!("SigVerifiedBatch sender disconnected"));
+                    .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
             }
         }
 

@@ -613,7 +613,8 @@ impl ConsensusPoolService {
         first: SigVerifiedBatch,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
-        for batch in std::iter::once(first).chain(ctx.consensus_message_receiver.try_recv()) {
+        let receiver = ctx.consensus_message_receiver.clone();
+        for batch in std::iter::once(first).chain(receiver.try_iter()) {
             match batch {
                 SigVerifiedBatch::Votes(votes) => Self::process_batch(
                     ctx,
@@ -644,7 +645,8 @@ impl ConsensusPoolService {
         first: ConsensusMessage,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
-        let msgs = std::iter::once(first).chain(ctx.own_message_receiver.try_recv());
+        let receiver = ctx.own_message_receiver.clone();
+        let msgs = std::iter::once(first).chain(receiver.try_iter());
         Self::process_batch(ctx, msgs, consensus_pool, events, standstill_timer, stats)
     }
 }

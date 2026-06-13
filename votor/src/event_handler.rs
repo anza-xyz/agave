@@ -1439,7 +1439,7 @@ mod tests {
             for _ in expected_votes {
                 let ConsensusMessage::Vote(vote) = self.own_vote_receiver.try_recv().unwrap()
                 else {
-                    panic!("expected own vote batch");
+                    panic!("expected own vote");
                 };
                 received_messages.push(vote);
             }
