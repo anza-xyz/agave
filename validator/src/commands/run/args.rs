@@ -1209,10 +1209,23 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
+        Arg::with_name("no_xdp")
+            .long("no-xdp")
+            .takes_value(false)
+            .conflicts_with("experimental_retransmit_xdp_cpu_cores")
+            .conflicts_with("experimental_retransmit_xdp_interface")
+            .conflicts_with("experimental_retransmit_xdp_zero_copy")
+            .conflicts_with("xdp_cpu_cores")
+            .conflicts_with("xdp_interface")
+            .conflicts_with("xdp_zero_copy")
+            .help("Do not use XDP transmit"),
+    )
+    .arg(
         Arg::with_name("xdp_interface")
             .long("xdp-interface")
             .takes_value(true)
             .value_name("INTERFACE")
+            .conflicts_with("no_xdp")
             .requires("xdp_cpu_cores")
             .help("Network interface to use for XDP"),
     )
@@ -1221,13 +1234,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
+            .conflicts_with("no_xdp")
             .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
-            .help("Use the specified CPU cores for XDP"),
+            .help("Use the specified CPU cores for XDP; must not include the PoH pinned CPU core"),
     )
     .arg(
         Arg::with_name("xdp_zero_copy")
             .long("xdp-zero-copy")
             .takes_value(false)
+            .conflicts_with("no_xdp")
             .requires("xdp_cpu_cores")
             .help("Enable XDP zero copy. Requires hardware support"),
     )

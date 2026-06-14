@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use agave_cpu_utils::cpu_affinity;
 use {
     crate::{
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
@@ -84,10 +86,69 @@ use {
 #[cfg(target_os = "linux")]
 use {agave_xdp::transmitter::XdpConfig, solana_clap_utils::input_parsers::parse_cpu_ranges};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     Initialize,
     Run,
+}
+
+#[cfg(target_os = "linux")]
+fn parse_xdp_transmit_config(
+    matches: &ArgMatches,
+    bind_addresses: &BindIpAddrs,
+    operation: Operation,
+) -> Result<Option<XdpConfig>, String> {
+    if matches.is_present("no_xdp") || operation == Operation::Initialize {
+        return Ok(None);
+    }
+
+    if bind_addresses.len() > 1 {
+        return Err(String::from("XDP cannot be used in a multihoming context"));
+    }
+
+    let xdp_interface = matches
+        .value_of("xdp_interface")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let xdp_cpu_ranges = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let is_poh_pinned_cpu_core = |cpu| Some(cpu) == poh_pinned_cpu_core;
+    let xdp_cpus = if let Some(cpu_ranges) = xdp_cpu_ranges {
+        let xdp_cpus = parse_cpu_ranges(cpu_ranges).map_err(|err| err.to_string())?;
+        if let Some(poh_cpu) = poh_pinned_cpu_core.filter(|poh_cpu| xdp_cpus.contains(poh_cpu)) {
+            return Err(format!(
+                "XDP CPU cores must not include the PoH pinned CPU core ({poh_cpu})"
+            ));
+        }
+        xdp_cpus
+    } else {
+        let cpu = cpu_affinity(None)
+            .map_err(|err| {
+                format!(
+                    "failed to query CPU affinity for XDP CPU selection: {err}. Provide \
+                     --xdp-cpu-cores explicitly"
+                )
+            })?
+            .into_iter()
+            .rev()
+            .map(|cpu| *cpu)
+            .find(|cpu| !is_poh_pinned_cpu_core(*cpu))
+            .ok_or_else(|| {
+                format!(
+                    "XDP requires an allowed CPU core separate from PoH (core \
+                     {poh_pinned_cpu_core:?})"
+                )
+            })?;
+        vec![cpu]
+    };
+
+    info!("XDP enabled on CPU cores: {xdp_cpus:?}");
+    Ok(Some(XdpConfig::new(xdp_interface, xdp_cpus, xdp_zero_copy)))
 }
 
 pub fn execute(
@@ -164,29 +225,7 @@ pub fn execute(
         }
     }
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-    {
-        let xdp_interface = matches
-            .value_of("xdp_interface")
-            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-        let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-            || matches.is_present("experimental_retransmit_xdp_zero_copy");
-        let config = XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
-            xdp_zero_copy,
-        );
-        if bind_addresses.len() > 1 {
-            Err(String::from(
-                "--xdp-cpu-cores cannot be used in a multihoming context",
-            ))?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let xdp_transmit_config = parse_xdp_transmit_config(matches, &bind_addresses, operation)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -431,6 +470,11 @@ pub fn execute(
 
     #[cfg(not(target_os = "linux"))]
     let poh_pinned_cpu_core = None;
+
+    #[cfg(target_os = "linux")]
+    if let Some(poh_pinned_cpu_core) = poh_pinned_cpu_core {
+        info!("PoH pinned CPU core: {poh_pinned_cpu_core}");
+    }
 
     solana_core::validator::report_target_features();
 

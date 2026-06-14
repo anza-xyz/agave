@@ -15,27 +15,33 @@ Before rolling out XDP on a production validator, you should test it on your set
 * **Performance Gain:** Confirm that performance is improved with the new configuration (e.g. lower CPU usage or higher throughput in Turbine’s retransmit stage).
 * **Metric Visibility:** Verify that you can observe the retransmit-stage metrics, which show time spent sending shreds, to gauge the impact of XDP on network transmission.
 
-To enable XDP in Agave, add the following command-line flags to your validator startup command (using Agave v3.0.9+):
+XDP is enabled by default on Linux in Agave. The default XDP configuration uses copy mode on an auto-selected CPU separate from the PoH pinned CPU core. To use different CPU cores for XDP, pass:
 
 ```bash
---experimental-retransmit-xdp-cpu-cores 1
---experimental-retransmit-xdp-zero-copy # Do NOT pass this flag when using the bnxt_en driver.
---experimental-poh-pinned-cpu-core 10
+--xdp-cpu-cores 1
 ```
 
-Note that --experimental-retransmit-xdp-zero-copy will avoid using socket buffers for data, but this is only possible when talking directly to the Network Interface Card (NIC). As a result, zero copy cannot be used with the bonded interface itself. When using a bonded network interface, specify the underlying member interface to which the XDP program should be attached:
+Zero copy avoids using socket buffers for data, but this is only possible when talking directly to the Network Interface Card (NIC). To opt in to zero copy, pass:
 
 ```bash
---experimental-retransmit-xdp-interface <bond-member-interface>
+--xdp-zero-copy
 ```
 
- Also note that XDP and PoH *must* be assigned to separate (physical) cores. The
---experimental-poh-pinned-cpu-core N flag can be used to move the PoH thread.
-
-Next, your validator binary will need to have access to a few higher level permissions. The validator process requires the CAP_NET_RAW, CAP_NET_ADMIN, CAP_BPF, and CAP_PERFMON capabilities. These can be configured in the systemd service file by setting CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON under the [Service] section or directly on the binary with the command:
+When using zero copy with a bonded network interface, you must pass `--xdp-interface` with the underlying member interface to which the XDP program should be attached:
 
 ```bash
-sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p <path/to/agave-validator>
+--xdp-zero-copy --xdp-interface <bond-member-interface>
+```
+
+Also note that XDP and PoH *must* be assigned to separate (physical) cores. The
+`--poh-pinned-cpu-core N` flag can be used to move the PoH thread.
+
+Next, your validator binary will need to have access to a few higher level permissions. With default copy-mode XDP, the validator process requires the CAP_NET_RAW and CAP_NET_ADMIN capabilities. Zero copy additionally requires CAP_BPF and CAP_PERFMON. These capabilities can be configured in the systemd service file by setting CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN under the [Service] section or directly on the binary with the command:
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin=p <path/to/agave-validator> # for default XDP w/o zero copy
+# OR
+sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p <path/to/agave-validator> # for XDP w/ zero copy
 #this command must be run each time the binary is replaced
 ```
 

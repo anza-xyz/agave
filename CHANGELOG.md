@@ -23,6 +23,13 @@ Release channels have their own copy of this changelog:
   `getLatestBlockhash` response together with its context (notably `context.slot`).
 ### Validator
 #### Breaking
+* XDP transmit is now enabled by default on Linux in copy mode on an auto-selected CPU
+  separate from the PoH pinned CPU core. Use `--xdp-cpu-cores` to override the XDP
+  CPU assignment; configured XDP cores must not include the PoH pinned CPU core.
+  Use `--xdp-zero-copy` with `--xdp-cpu-cores` to opt in to zero copy. When using
+  zero copy with a bonded interface, pass `--xdp-interface` with the underlying member
+  interface. Default validator startup now requires the XDP copy-mode capabilities.
+* The default PoH pinned CPU core is CPU core 0. Use `--poh-pinned-cpu-core` to override it.
 #### Deprecations
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
