@@ -426,8 +426,9 @@ pub fn execute(
     let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
 
     #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core =
-        value_of(matches, "poh_pinned_cpu_core").or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
 
     #[cfg(not(target_os = "linux"))]
     let poh_pinned_cpu_core = None;

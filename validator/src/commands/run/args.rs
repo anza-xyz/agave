@@ -30,7 +30,7 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
+    std::{collections::HashSet, net::SocketAddr, path::PathBuf},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
@@ -864,12 +864,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     )
     .arg(
         Arg::with_name("poh_pinned_cpu_core")
-            .hidden(hidden_unless_forced())
-            .long("experimental-poh-pinned-cpu-core")
+            .long("poh-pinned-cpu-core")
             .takes_value(true)
             .value_name("CPU_ID")
-            .validator(|s| usize::from_str(&s).map(|_| ()).map_err(|e| e.to_string()))
-            .help("Specify which CPU core PoH is pinned to"),
+            .validator(is_parsable::<usize>)
+            .help("Specify which CPU core PoH is pinned to. Defaults to CPU 0 on Linux"),
     )
     .arg(
         Arg::with_name("poh_hashes_per_batch")

@@ -159,6 +159,17 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-index-limit",
     );
     add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("experimental_poh_pinned_cpu_core")
+            .long("experimental-poh-pinned-cpu-core")
+            .takes_value(true)
+            .value_name("CPU_ID")
+            .conflicts_with("poh_pinned_cpu_core")
+            .validator(is_parsable::<usize>)
+            .help("Specify which CPU core PoH is pinned to. Use --poh-pinned-cpu-core instead"),
+        replaced_by: "poh-pinned-cpu-core",
+    );
+    add_arg!(
         // deprecated in v4.1.0
         Arg::with_name("experimental_retransmit_xdp_cpu_cores")
             .long("experimental-retransmit-xdp-cpu-cores")
