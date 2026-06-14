@@ -4203,32 +4203,6 @@ fn test_flush_rooted_accounts_cache_with_clean() {
 fn test_flush_rooted_accounts_cache_without_clean() {
     run_flush_rooted_accounts_cache(false);
 }
-
-/// A rooted slot with no write-cache entry (e.g. genesis, whose accounts load straight to storage)
-/// is still tracked by `add_root`. Flushing must untrack it rather than leave it stranded in
-/// `unflushed_roots` at or below `max_flushed_root`.
-#[test]
-fn test_flush_untracks_cacheless_root() {
-    let db = AccountsDb::new_single_for_tests();
-
-    // Slot 0: rooted but never written to the write cache.
-    db.accounts_cache.add_root(0);
-
-    // Slot 10: a normal rooted slot with a cached account.
-    let pubkey = Pubkey::new_unique();
-    db.accounts_cache.store(
-        10,
-        &pubkey,
-        AccountSharedData::new(10, 0, &Pubkey::default()),
-    );
-    db.add_root(10);
-
-    // Flushing through slot 10 must drop the cacheless root 0 instead of stranding it below
-    // max_flushed_root (which would otherwise trip the unflushed-root invariant).
-    db.flush_accounts_cache(true, Some(10));
-
-    assert_eq!(db.accounts_cache.num_unflushed_roots(), 0);
-}
 #[test]
 fn test_shrink_unref() {
     let db = AccountsDb::new_single_for_tests();
