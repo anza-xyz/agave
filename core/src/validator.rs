@@ -24,7 +24,8 @@ use {
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
-            SystemMonitorService, SystemMonitorStatsReportConfig, verify_net_stats_access,
+            SystemMonitorService, SystemMonitorStatsReportConfig, XdpNetworkConfigReport,
+            verify_net_stats_access,
         },
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
@@ -123,7 +124,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::Bank,
+        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
         bank_forks::BankForks,
         bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
@@ -360,10 +361,11 @@ pub struct ValidatorConfig {
     pub no_poh_speed_test: bool,
     pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
+    pub xdp_network_config_report: Option<XdpNetworkConfigReport>,
     pub no_os_cpu_stats_reporting: bool,
     pub no_os_disk_stats_reporting: bool,
     pub enforce_ulimit_nofile: bool,
-    pub poh_pinned_cpu_core: usize,
+    pub poh_pinned_cpu_core: Option<usize>,
     pub poh_hashes_per_batch: u64,
     pub process_ledger_before_services: bool,
     pub accounts_db_config: AccountsDbConfig,
@@ -441,6 +443,7 @@ impl ValidatorConfig {
             no_poh_speed_test: true,
             no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
+            xdp_network_config_report: None,
             no_os_cpu_stats_reporting: true,
             no_os_disk_stats_reporting: true,
             // No need to enforce nofile limit in tests
@@ -893,6 +896,7 @@ impl Validator {
             SystemMonitorStatsReportConfig {
                 report_os_memory_stats: !config.no_os_memory_stats_reporting,
                 report_os_network_stats: !config.no_os_network_stats_reporting,
+                xdp_network_config_report: config.xdp_network_config_report.clone(),
                 report_os_cpu_stats: !config.no_os_cpu_stats_reporting,
                 report_os_disk_stats: !config.no_os_disk_stats_reporting,
             },
@@ -1192,11 +1196,13 @@ impl Validator {
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
+        let bls_connection_cache = Arc::new(ConnectionCache::new_with_max_connections(
             "connection_cache_bls_quic",
             // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
             // we wouldn't expect more than a 100 PPS. 1 connection is enough.
             1, /* connection_pool_size */
+            // Overprovision to account for epoch boundary validator set rotations
+            MAX_ALPENGLOW_VOTE_ACCOUNTS * 2, /* max_connections */
             Some(node.sockets.quic_alpenglow_client),
             Some((
                 &identity_keypair,
@@ -1584,11 +1590,11 @@ impl Validator {
                 (None, None, None)
             };
 
-        // disable all2all tests if not allowed for a given cluster type
+        // disable Alpenglow votor networking if not allowed for cluster type
         let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
             || genesis_config.cluster_type == ClusterType::Development
         {
-            node.sockets.alpenglow
+            Some(node.sockets.alpenglow)
         } else {
             None
         };

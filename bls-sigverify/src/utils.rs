@@ -1,16 +1,19 @@
 use {
-    super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
     crate::{
-        block_creation_loop::rewards::msg_types::AddVoteMessage,
-        bls_sigverify::{errors::SigVerifyCertError, stats::SigVerifyCertStats},
-        cluster_info_vote_listener::VerifiedVoterSlotsSender,
+        errors::{SigVerifyCertError, SigVerifyVoteError},
+        stats::{SigVerifyCertStats, SigVerifyVoteStats},
     },
-    agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-    agave_votor_messages::consensus_message::SigVerifiedBatch,
+    agave_votor_messages::{
+        VerifiedVoterSlotsSender,
+        consensus_message::SigVerifiedBatch,
+        metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+        reward_certificate::AddVoteMessage,
+    },
     crossbeam_channel::{Sender, TrySendError},
+    log::{error, info},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, time::Instant},
+    std::{collections::HashMap, num::Saturating, time::Instant},
 };
 
 pub(super) fn send_votes_to_metrics(
@@ -66,7 +69,7 @@ pub(super) fn send_votes_to_pool(
     match channel.try_send(batch) {
         Ok(()) => {
             stats.pool_sent += len as u64;
-            stats.pool_outstanding_msgs = channel.len() as u64;
+            stats.pool_outstanding_msgs = Saturating(channel.len() as u64);
             Ok(())
         }
         Err(TrySendError::Full(msgs)) => {
@@ -122,7 +125,7 @@ pub(super) fn send_certs_to_pool(
     match channel_to_pool.try_send(batch) {
         Ok(()) => {
             stats.pool_sent += len as u64;
-            stats.pool_outstanding_msgs = channel_to_pool.len() as u64;
+            stats.pool_outstanding_msgs = Saturating(channel_to_pool.len() as u64);
             Ok(())
         }
         Err(TrySendError::Full(msgs)) => {

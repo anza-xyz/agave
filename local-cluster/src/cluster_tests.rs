@@ -19,7 +19,7 @@ use {
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
         cluster_info::{self, ClusterInfo},
-        contact_info::{ContactInfo, Protocol},
+        contact_info::ContactInfo,
         crds::Cursor,
         crds_data::{self, CrdsData},
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -145,6 +145,58 @@ impl TpuSender {
     }
 }
 
+/// Resolve the current slot leader and its QUIC TPU address via RPC.
+///
+/// Returns `None` when the leader cannot yet be mapped to a QUIC TPU address.
+fn current_leader(rpc_client: &RpcClient) -> Option<(Pubkey, SocketAddr)> {
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("current_leader: get_slot_leader");
+    let tpu = rpc_client
+        .get_cluster_nodes()
+        .expect("current_leader: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)?;
+    Some((leader_pubkey, tpu))
+}
+
+/// Resolve the QUIC TPU address of the current slot leader via RPC.
+///
+/// Returns `None` when the leader cannot yet be mapped to a QUIC TPU address
+fn current_leader_tpu(rpc_client: &RpcClient) -> Option<SocketAddr> {
+    current_leader(rpc_client).map(|(_, tpu)| tpu)
+}
+
+/// Poll until `transaction` is observed as processed by `rpc_client`, or `timeout` elapses.
+///
+/// Returns `true` once the transaction is processed. Returns `false` if timeout expires.
+fn poll_processed_until_timeout(
+    rpc_client: &RpcClient,
+    transaction: &Transaction,
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(Some(status)) = rpc_client.get_signature_status_with_commitment(
+            &transaction.signatures[0],
+            CommitmentConfig::processed(),
+        ) {
+            // Surface a genuine execution error rather than silently retrying it as if the
+            // transaction had never arrived.
+            assert!(
+                status.is_ok(),
+                "poll_processed_within: transaction failed on-chain: {status:?}"
+            );
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(200));
+    }
+}
+
 /// Spend and verify from every node in the network
 pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
     entry_point_info: &ContactInfo,
@@ -181,19 +233,9 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
             .unwrap();
         let mut transaction =
             system_transaction::transfer(funding_keypair, &random_keypair.pubkey(), 1, blockhash);
-        // Like send_many_transactions: use ingress_node for RPC but send to the
-        // current slot leader, matching old TpuClient behaviour.
-        let leader_pubkey = rpc_client
-            .get_slot_leader()
-            .expect("spend_and_verify_all_nodes: get_slot_leader");
-        let tpu_addr = rpc_client
-            .get_cluster_nodes()
-            .expect("spend_and_verify_all_nodes: get_cluster_nodes")
-            .into_iter()
-            .find(|n| n.pubkey == leader_pubkey.to_string())
-            .and_then(|n| n.tpu_quic)
-            .or_else(|| ingress_node.tpu(Protocol::QUIC))
-            .expect("spend_and_verify_all_nodes: leader has no QUIC TPU address");
+        // find target TPU address from RPC
+        let tpu_addr = current_leader_tpu(&rpc_client)
+            .expect("spend_and_verify_all_nodes: no current leader TPU");
         tpu_sender.with_connection(tpu_addr, |sender| {
             tpu_sender
                 .send_and_confirm_transaction(
@@ -237,19 +279,9 @@ pub fn send_many_transactions(
     num_txs: u64,
 ) -> HashMap<Pubkey, u64> {
     let rpc_client = RpcClient::new(format!("http://{}", node.rpc().unwrap()));
-    // Replicate old TpuClient behaviour: send to the current slot leader, not to `node`.
-    // `node` is used only as the RPC endpoint; the leader is discovered via RPC + cluster nodes.
-    let leader_pubkey = rpc_client
-        .get_slot_leader()
-        .expect("send_many_transactions: get_slot_leader");
-    let tpu_addr = rpc_client
-        .get_cluster_nodes()
-        .expect("send_many_transactions: get_cluster_nodes")
-        .into_iter()
-        .find(|n| n.pubkey == leader_pubkey.to_string())
-        .and_then(|n| n.tpu_quic)
-        .or_else(|| node.tpu(Protocol::QUIC))
-        .expect("send_many_transactions: leader has no QUIC TPU address");
+    // Ask RPC who the leader is
+    let tpu_addr =
+        current_leader_tpu(&rpc_client).expect("send_many_transactions: no current leader TPU");
     // One persistent QUIC connection for all transactions to avoid per-tx handshake overhead.
     tpu_sender.with_connection(tpu_addr, |sender| {
         let mut expected_balances = HashMap::new();
@@ -386,59 +418,73 @@ pub fn kill_entry_and_spend_and_verify_rest(
             .expect("balance in source");
         assert_ne!(balance, 0);
 
-        let tpu_addr = ingress_node
-            .tpu(Protocol::QUIC)
-            .expect("ingress_node has no QUIC TPU address");
-
-        // Retry sending a transaction to the current ingress node until it is
-        // observed by the entire cluster or we exhaust all retries.
-        tpu_sender.with_connection(tpu_addr, |sender| {
-            let mut result = Ok(());
-            let mut retries = 0;
-            loop {
-                retries += 1;
-                if retries > 5 {
-                    result.unwrap();
-                }
-
-                // Send a simple transfer transaction to the current ingress node.
-                let random_keypair = Keypair::new();
-                let (blockhash, _) = rpc_client
-                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                    .unwrap();
-                let mut transaction = system_transaction::transfer(
-                    funding_keypair,
-                    &random_keypair.pubkey(),
-                    1,
-                    blockhash,
-                );
-
-                if let Err(err) = tpu_sender.send_and_confirm_transaction(
-                    sender,
-                    &rpc_client,
-                    &[funding_keypair],
-                    &mut transaction,
-                    5,
-                ) {
-                    result = Err(err);
-                    continue;
-                }
-
-                // Ensure all non-entry point nodes are able to confirm the
-                // transaction.
-                info!("poll_all_nodes_for_signature()");
-                match poll_all_nodes_for_signature(entry_point_info, &cluster_nodes, &transaction) {
-                    Err(e) => {
-                        info!("poll_all_nodes_for_signature() failed {e:?}");
-                        result = Err(e);
-                    }
-                    Ok(()) => {
-                        info!("poll_all_nodes_for_signature() succeeded, done.");
-                        break;
-                    }
-                }
+        // After the bootstrap leader is killed it stays in the (fixed) leader schedule for the
+        // rest of the epoch, so `get_slot_leader` points at the dead node for ~1/4 of slots. It
+        // accepts no QUIC connection, so targeting it wastes a whole poll window; skip it and wait
+        // one slot for rotation to a live leader instead. For live leaders, resend with a fresh
+        // blockhash each attempt and give the send a bounded window to land.
+        let killed_leader = *entry_point_info.pubkey();
+        const MAX_SEND_ATTEMPTS: usize = 20;
+        // Generous enough for a live leader to land a transaction on a loaded CI runner, yet far
+        // below the blockhash lifetime so a wrong/stuck target is abandoned in seconds.
+        let poll_window = Duration::from_millis(slot_millis * 20).max(Duration::from_secs(8));
+        let mut confirmed = false;
+        for attempt in 1..=MAX_SEND_ATTEMPTS {
+            let Some((leader_pubkey, tpu_addr)) = current_leader(&rpc_client) else {
+                // Leader not resolvable, back off a slot
+                sleep(Duration::from_millis(slot_millis));
+                continue;
+            };
+            if leader_pubkey == killed_leader {
+                // Scheduled leader is the dead bootstrap node; wait for rotation rather than
+                // burning a poll window on a node that will never accept the transaction.
+                sleep(Duration::from_millis(slot_millis));
+                continue;
             }
-        });
+            let random_keypair = Keypair::new();
+            let (blockhash, _) = rpc_client
+                .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                .unwrap();
+            let transaction = system_transaction::transfer(
+                funding_keypair,
+                &random_keypair.pubkey(),
+                1,
+                blockhash,
+            );
+            let wire_tx = wincode::serialize(&transaction)
+                .expect("kill_entry_and_spend_and_verify_rest: should serialize transaction");
+            // Poll *inside* the connection: tpu-client-next only enqueues the transaction, so the
+            // QUIC client must stay alive long enough to flush it onto the wire (and retransmit)
+            // before we tear it down.
+            let landed = tpu_sender.with_connection(tpu_addr, |sender| {
+                tpu_sender.send_wire_transaction(sender, wire_tx);
+                poll_processed_until_timeout(&rpc_client, &transaction, poll_window)
+            });
+            if !landed {
+                warn!(
+                    "kill_entry_and_spend_and_verify_rest: attempt {attempt} to {tpu_addr} did \
+                     not land within {poll_window:?}, re-resolving leader"
+                );
+                continue;
+            }
+
+            // The transaction landed at the targeted node, ensure every other node
+            // observes it too. If it landed on a fork that loses, resend.
+            info!("poll_all_nodes_for_signature()");
+            match poll_all_nodes_for_signature(entry_point_info, &cluster_nodes, &transaction) {
+                Ok(()) => {
+                    info!("poll_all_nodes_for_signature() succeeded, done.");
+                    confirmed = true;
+                    break;
+                }
+                Err(e) => info!("poll_all_nodes_for_signature() failed {e:?}, resending"),
+            }
+        }
+        assert!(
+            confirmed,
+            "kill_entry_and_spend_and_verify_rest: transaction never confirmed on all surviving \
+             nodes after {MAX_SEND_ATTEMPTS} attempts"
+        );
     }
 }
 

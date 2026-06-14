@@ -3330,6 +3330,44 @@ fn test_load_with_read_only_accounts_cache() {
     assert_eq!(slot, 2);
 }
 
+/// `select_pubkeys_to_flush` keeps only the newest version of each account across the
+/// cleaned roots and flushes roots above `max_clean_root` in full.
+#[test]
+fn test_select_pubkeys_to_flush() {
+    let db = AccountsDb::new_single_for_tests();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // The same account is written in all three roots.
+    let roots = BTreeSet::from([5, 10, 15]);
+    let shared = Pubkey::new_unique();
+    for &slot in &roots {
+        db.accounts_cache.store(slot, &shared, account.clone());
+    }
+
+    let shared_only = PubkeysToFlush::Only([shared].into_iter().collect());
+    let deduped = PubkeysToFlush::Only(HashSet::default());
+
+    // No bound: every flushed root is cleaned, so `shared` is written only at its newest root
+    // (15), deduped from 5 and 10.
+    let plans = db.select_pubkeys_to_flush(&roots, None);
+    assert_eq!(plans[&15], shared_only);
+    assert_eq!(plans[&10], deduped);
+    assert_eq!(plans[&5], deduped);
+
+    // max_clean_root = 15 (== newest root): same result, every root is at or below the bound.
+    let plans = db.select_pubkeys_to_flush(&roots, Some(15));
+    assert_eq!(plans[&15], shared_only);
+    assert_eq!(plans[&10], deduped);
+    assert_eq!(plans[&5], deduped);
+
+    // max_clean_root = 10: root 15 is above the boundary and flushes `All` (no dedup), so
+    // `shared` is not dropped from root 10 — a scan at root 10 may still need that version.
+    let plans = db.select_pubkeys_to_flush(&roots, Some(10));
+    assert_eq!(plans[&15], PubkeysToFlush::All);
+    assert_eq!(plans[&10], shared_only);
+    assert_eq!(plans[&5], deduped);
+}
+
 #[test]
 fn test_flush_cache_clean() {
     let db = Arc::new(AccountsDb::new_single_for_tests());
@@ -6795,42 +6833,27 @@ fn test_is_ancestor_zero_lamport_index_only() {
     assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
 }
 
-/// Verifies that when the cache entry is in a `*BeingFlushed` state, is_ancestor_zero_lamport
-/// also consults the index and returns the zero lamport status of whichever version sits on the
-/// higher slot, regardless of whether that version is in the cache or the index.
-#[test_case(10, 5, true; "newer_cache_wins")]
-#[test_case(5, 10, false; "newer_index_wins")]
-fn test_is_ancestor_zero_lamport_being_flushed_picks_higher_slot(
-    cache_slot: Slot,
-    index_slot: Slot,
-    expected: bool,
-) {
+/// Verifies that when a pubkey is in both storage and the write cache, is_ancestor_zero_lamport
+/// returns the cached version's zero lamport status.
+#[test]
+fn test_is_ancestor_zero_lamport_cache_over_storage() {
     let db = AccountsDb::new_single_for_tests();
     let pubkey = Pubkey::new_unique();
+    let storage_slot = 5;
+    let cache_slot = 10;
 
-    // Non-zero lamport entry in the index. Set up first: flushing goes through the cache,
-    // so doing it after the cache setup would conflict with `begin_flush_roots`.
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
-    db.store_for_tests((index_slot, [(&pubkey, &account)].as_slice()));
-    db.add_root_and_flush_write_cache(index_slot);
+    // Non-zero lamport entry in storage at the older slot.
+    let nonzero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+    db.store_for_tests((storage_slot, [(&pubkey, &nonzero_account)].as_slice()));
+    db.add_root_and_flush_write_cache(storage_slot);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
 
-    // Zero lamport entry in the cache. Note: this entry may be older than the slot that was
-    // flushed above which is normally not allowed to be added to the cache. However,
-    // this state is a valid intermediate state when flushing the cache so needs
-    // test coverage
-    let account = AccountSharedData::new(0, 0, &Pubkey::default());
-    db.accounts_cache.store(cache_slot, &pubkey, account);
-    db.accounts_cache.add_root(cache_slot);
-    db.accounts_cache.begin_flush_roots(Some(cache_slot));
+    // Zero lamport entry in the cache at the newer slot.
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    db.accounts_cache.store(cache_slot, &pubkey, zero_account);
 
-    let ancestors = Ancestors::from(vec![cache_slot, index_slot]);
-    assert_eq!(
-        db.is_ancestor_zero_lamport(&pubkey, &ancestors),
-        Some(expected)
-    );
-
-    db.accounts_cache.end_flush_roots();
+    let ancestors = Ancestors::from(vec![cache_slot, storage_slot]);
+    assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
 }
 
 /// loading an account through an older bank must not return

@@ -12,7 +12,6 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
-    agave_xdp::{set_cpu_affinity, transmitter::XdpConfig},
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
@@ -29,9 +28,7 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{
-        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
-    },
+    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
@@ -84,6 +81,8 @@ use {
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
 };
+#[cfg(target_os = "linux")]
+use {agave_xdp::transmitter::XdpConfig, solana_clap_utils::input_parsers::parse_cpu_ranges};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -164,7 +163,7 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
-
+    #[cfg(target_os = "linux")]
     let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
@@ -290,13 +289,14 @@ pub fn execute(
     let _ = config;
 
     #[cfg(target_os = "linux")]
-    let xdp_transmit_setup = {
+    let (xdp_transmit_setup, xdp_network_config_report) = {
         use {
             agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
+            solana_core::system_monitor_service::XdpNetworkConfigReport,
         };
 
         let super::Config { primordial_caps } = config;
@@ -372,33 +372,46 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let xdp_transmit_setup = xdp_transmit_config.clone().map(|xdp_config| {
-            use {
-                agave_xdp::{default_device_ipv4, interface_ipv4},
-                solana_core::validator::XdpTransmitSetup,
-            };
+        let (xdp_transmit_setup, report) = xdp_transmit_config
+            .clone()
+            .map(|mut xdp_config| {
+                use {
+                    agave_xdp::{device::NetworkDevice, interface_ipv4},
+                    solana_core::validator::XdpTransmitSetup,
+                };
 
-            let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
-                IpAddr::V4(_unspecified) => {
-                    if let Some(interface) = xdp_config.interface.as_ref() {
-                        interface_ipv4(interface).expect(
-                            "configured interface should exist and have an IPv4 address assigned",
-                        )
-                    } else {
-                        default_device_ipv4().expect(
-                            "default route device should exist and have an IPv4 address assigned",
-                        )
-                    }
-                }
-                _ => panic!("IPv6 not supported"),
-            };
-            XdpTransmitSetup {
-                transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
-                    .expect("failed to create xdp transmitter"),
-                src_ip,
-            }
-        });
+                let device = if let Some(interface) = xdp_config.interface.as_ref() {
+                    NetworkDevice::new(interface).expect("configured interface should exist")
+                } else {
+                    NetworkDevice::new_from_default_route()
+                        .expect("default route device should exist")
+                };
+
+                let xdp_interface = device.name().to_string();
+                // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
+                // uses the same interface name, with bond-master fallback.
+                xdp_config.interface = Some(xdp_interface.clone());
+                let zero_copy = xdp_config.zero_copy;
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                    IpAddr::V4(_unspecified) => interface_ipv4(&xdp_interface).expect(
+                        "selected interface should exist and have an IPv4 address assigned",
+                    ),
+                    _ => panic!("IPv6 not supported"),
+                };
+                (
+                    XdpTransmitSetup {
+                        transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
+                            .expect("failed to create xdp transmitter"),
+                        src_ip,
+                    },
+                    XdpNetworkConfigReport {
+                        zero_copy,
+                        interface: xdp_interface,
+                    },
+                )
+            })
+            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
 
         // we're done with caps needed to init xdp now. remove them from our process
         caps::set(None, CapSet::Effective, &retained_caps)
@@ -406,27 +419,18 @@ pub fn execute(
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        xdp_transmit_setup
+        (xdp_transmit_setup, report)
     };
 
     #[cfg(not(target_os = "linux"))]
-    let xdp_transmit_setup = None;
+    let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
 
-    let reserved = xdp_transmit_config
-        .map(|xdp| xdp.cpus.clone())
-        .unwrap_or_default()
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    if !reserved.is_empty() {
-        let available = core_affinity::get_core_ids()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|core_id| core_id.id)
-            .collect::<HashSet<_>>();
-        let available = available.difference(&reserved);
-        set_cpu_affinity(available.into_iter().copied()).unwrap();
-    }
+    #[cfg(target_os = "linux")]
+    let poh_pinned_cpu_core =
+        value_of(matches, "poh_pinned_cpu_core").or(poh_service::DEFAULT_PINNED_CPU_CORE);
+
+    #[cfg(not(target_os = "linux"))]
+    let poh_pinned_cpu_core = None;
 
     solana_core::validator::report_target_features();
 
@@ -799,13 +803,13 @@ pub fn execute(
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
+        xdp_network_config_report,
         no_os_cpu_stats_reporting: matches.is_present("no_os_cpu_stats_reporting"),
         no_os_disk_stats_reporting: matches.is_present("no_os_disk_stats_reporting"),
         // The validator needs to open many files, check that the process has
         // permission to do so in order to fail quickly and give a direct error
         enforce_ulimit_nofile: true,
-        poh_pinned_cpu_core: value_of(matches, "poh_pinned_cpu_core")
-            .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
+        poh_pinned_cpu_core,
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),

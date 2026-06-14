@@ -34,6 +34,7 @@ use {
     ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{TrySendError, bounded},
+    dashmap::DashMap,
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
@@ -63,6 +64,7 @@ use {
     solana_compute_budget::{
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::{
         block_cost_limits::{
