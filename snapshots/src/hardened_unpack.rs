@@ -230,6 +230,27 @@ fn should_fallback_to_tar_unpack<R: io::Read>(entry: &tar::Entry<'_, R>) -> bool
     ) || entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/")
 }
 
+fn open_dir(path: &Path) -> io::Result<File> {
+    open_dir_impl(path)
+}
+
+#[cfg(not(windows))]
+fn open_dir_impl(path: &Path) -> io::Result<File> {
+    File::open(path)
+}
+
+#[cfg(windows)]
+fn open_dir_impl(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
 // return Err on file system error
 // return Some((path, open_dir)) if path is good
 // return None if we should skip this file
@@ -282,7 +303,7 @@ fn sanitize_path_and_open_dir(
             // ignore return value here
             validate_inside_dst(dst, parent)?;
 
-            let opened_dir = Arc::new(File::open(parent)?);
+            let opened_dir = Arc::new(open_dir(parent)?);
             open_dirs.insert(insert_at, (parent.to_path_buf(), opened_dir.clone()));
             opened_dir
         }
@@ -462,6 +483,13 @@ mod tests {
     };
 
     const MAX_GENESIS_SIZE_FOR_TESTS: u64 = 1024;
+
+    #[test]
+    fn test_open_dir_opens_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = open_dir(temp_dir.path()).unwrap();
+        assert!(dir.metadata().unwrap().is_dir());
+    }
 
     #[test]
     fn test_archive_is_valid_entry() {
