@@ -25,7 +25,7 @@ use {
 #[derive(Clone, Debug)]
 pub(super) struct CertPayload {
     pub(super) cert: Certificate,
-    pub(super) remote_pubkey: Pubkey,
+    pub(super) sender_identity_pubkey: Pubkey,
 }
 
 #[derive(Debug, Error)]
@@ -123,12 +123,12 @@ fn verify_certs(
                 match &e {
                     CertVerifyError::NotEnoughStake { .. }
                     | CertVerifyError::CertVerifyFailed(_) => {
-                        if banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT) {
+                        if banlist.ban(cert_payload.sender_identity_pubkey, BAN_TIMEOUT) {
                             stats.already_banned += 1;
                         } else {
                             info!(
                                 "bls_cert_sigverify: banned sender={} due to error {e}",
-                                cert_payload.remote_pubkey
+                                cert_payload.sender_identity_pubkey
                             );
                         }
                     }

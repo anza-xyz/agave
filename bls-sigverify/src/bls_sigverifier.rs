@@ -223,19 +223,21 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            let Some(remote_pubkey) = packet.meta().remote_pubkey() else {
+            let Some(sender_identity_pubkey) = packet.meta().remote_pubkey() else {
                 debug_assert!(false, "BLS packet missing remote pubkey");
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
             match msg {
                 ConsensusMessage::Vote(vote) => {
-                    if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
+                    if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
+                        self.keep_vote(&vote, root_bank)
+                    {
                         votes.push(VotePayload {
                             vote_message: vote,
-                            bls_pubkey,
-                            pubkey,
-                            remote_pubkey,
+                            sender_bls_pubkey,
+                            sender_vote_account_pubkey,
+                            sender_identity_pubkey,
                             prepared_payload: None,
                         });
                     }
@@ -255,7 +257,7 @@ impl SigVerifier {
                     }
                     certs.push(CertPayload {
                         cert,
-                        remote_pubkey,
+                        sender_identity_pubkey,
                     });
                 }
             }

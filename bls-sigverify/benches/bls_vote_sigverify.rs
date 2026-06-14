@@ -83,9 +83,9 @@ fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<Vo
 
         votes_to_verify.push(VotePayload {
             vote_message,
-            bls_pubkey: bls_keypair.public,
-            pubkey: Keypair::new().pubkey(),
-            remote_pubkey: Keypair::new().pubkey(),
+            sender_bls_pubkey: bls_keypair.public,
+            sender_vote_account_pubkey: Keypair::new().pubkey(),
+            sender_identity_pubkey: Keypair::new().pubkey(),
             prepared_payload: None,
         });
     }

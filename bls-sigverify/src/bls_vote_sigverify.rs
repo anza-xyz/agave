@@ -45,21 +45,21 @@ const PREPARED_PAYLOAD_CACHE_DISTINCT_VOTE_THRESHOLD_PERCENT: usize = 90;
 #[derive(Clone, Debug)]
 pub(super) struct VotePayload {
     pub vote_message: VoteMessage,
-    pub bls_pubkey: PopVerified<BlsPubkeyAffine>,
-    pub pubkey: Pubkey,
-    pub remote_pubkey: Pubkey,
+    pub sender_bls_pubkey: PopVerified<BlsPubkeyAffine>,
+    pub sender_vote_account_pubkey: Pubkey,
+    pub sender_identity_pubkey: Pubkey,
     pub prepared_payload: Option<Arc<PreparedHashedMessage>>,
 }
 
 impl VotePayload {
     fn verify(self) -> Option<Self> {
         let is_verified = if let Some(prepared_payload) = self.prepared_payload.as_deref() {
-            self.bls_pubkey
+            self.sender_bls_pubkey
                 .verify_signature_prepared(&self.vote_message.signature, prepared_payload)
                 .is_ok()
         } else {
             let payload = wincode::serialize(&self.vote_message.vote).ok()?;
-            self.bls_pubkey
+            self.sender_bls_pubkey
                 .verify_signature(&self.vote_message.signature, &payload)
                 .is_ok()
         };
@@ -111,7 +111,7 @@ fn inspect_for_repair(vote: &VotePayload, msgs_for_repair: &mut HashMap<Pubkey, 
     match vote.vote_message.vote {
         Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
             msgs_for_repair
-                .entry(vote.pubkey)
+                .entry(vote.sender_vote_account_pubkey)
                 .or_default()
                 .push(vote_slot);
         }
@@ -151,7 +151,7 @@ fn process_verified_votes(
         inspect_for_repair(&payload, &mut msgs_for_repair);
 
         votes_for_metrics.push(ConsensusMetricsEvent::Vote {
-            id: payload.pubkey,
+            id: payload.sender_vote_account_pubkey,
             vote: payload.vote_message.vote,
         });
         votes_for_pool.push(payload.vote_message);
@@ -208,11 +208,14 @@ fn verify_votes(
         distinct_payloads,
         thread_pool,
     ));
-    for remote_pubkey in invalid_remote_pubkeys {
-        if banlist.ban(remote_pubkey, BAN_TIMEOUT) {
+    for sender_identity_pubkey in invalid_remote_pubkeys {
+        if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
             stats.already_banned += 1;
         } else {
-            info!("bls_vote_sigverify: banned sender={remote_pubkey} due to failed verification");
+            info!(
+                "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
+                 verification"
+            );
         }
     }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
@@ -351,7 +354,7 @@ fn aggregate_pubkeys_by_payload(
         grouped_votes
             .entry(&v.vote_message.vote)
             .or_default()
-            .push(&v.bls_pubkey);
+            .push(&v.sender_bls_pubkey);
     }
 
     stats
@@ -389,7 +392,7 @@ fn aggregate_pubkeys_by_payload(
 ///
 /// Returns:
 /// - `Vec<VotePayload>`: votes that passed verification.
-/// - `Vec<Pubkey>`: remote pubkeys for votes that failed verification.
+/// - `Vec<Pubkey>`: senders' identity pubkeys for votes that failed verification.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_individual_votes(
     mut votes_to_verify: Vec<VotePayload>,
@@ -410,10 +413,10 @@ fn verify_individual_votes(
 
     thread_pool.install(|| {
         votes_to_verify.into_par_iter().partition_map(|vote| {
-            let remote_pubkey = vote.remote_pubkey;
+            let sender_identity_pubkey = vote.sender_identity_pubkey;
             match vote.verify() {
                 Some(vote) => Either::Left(vote),
-                None => Either::Right(remote_pubkey),
+                None => Either::Right(sender_identity_pubkey),
             }
         })
     })
