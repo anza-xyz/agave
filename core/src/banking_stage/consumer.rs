@@ -482,9 +482,9 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
         all_or_nothing: bool,
     ) -> (Vec<Option<TransactionCost<'a, Tx>>>, Vec<RetryableIndex>) {
-        let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut transaction_costs = Vec::with_capacity(processing_results.len());
-        let mut retryable_transaction_indexes = Vec::new();
+        let mut retryable_transaction_indexes = Vec::with_capacity(processing_results.len());
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut all_or_nothing_error = None;
 
         for (index, (tx, processing_result)) in transactions
