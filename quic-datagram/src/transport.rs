@@ -132,6 +132,7 @@ pub(crate) fn new_server_config(
         .with_single_cert(vec![cert], key)
         .expect("rustls accepts our self-signed solana cert/key pair");
     tls.alpn_protocols = vec![alpn.to_vec()];
+    tls.max_early_data_size = 0;
     let quic = QuicServerConfig::try_from(tls)
         .expect("TLS 1.3-only config yields an initial cipher suite");
     let mut cfg = ServerConfig::with_crypto(Arc::new(quic));
@@ -153,7 +154,7 @@ pub(crate) fn new_client_config(
     let mut tls = tls_client_config_builder()
         .with_client_auth_cert(vec![cert], key)
         .expect("rustls accepts our solana cert/key pair");
-    tls.enable_early_data = true;
+    tls.enable_early_data = false;
     tls.alpn_protocols = vec![alpn.to_vec()];
     let quic = QuicClientConfig::try_from(tls).expect("TLS config should be valid");
     let mut cfg = ClientConfig::new(Arc::new(quic));
