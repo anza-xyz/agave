@@ -49,7 +49,7 @@ fn test_alpenglow_byzfuzz() {
             .expect("Time went backwards")
             .as_millis() as u64,
     );
-    info!("using seed {:?}", random_seed);
+    info!("using seed {random_seed:?}");
     // create leader schedules & keyts
     let (leader_schedule, validator_keys) =
         create_custom_leader_schedule_with_random_keys(&[4; NUM_NODES]);

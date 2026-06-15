@@ -161,10 +161,10 @@ fn validate_certificate_thresholds(
             certificate_signing_stake(certificate, data.validator_count, &rank_stakes);
         let actual = Fraction::new(signing_stake, total_stake);
         let required = certificate.cert_type.limits_and_vote_types().0;
+        let cert_type = &certificate.cert_type;
         assert!(
             actual >= required,
-            "byzfuzz invariant failed: {:?} has signing stake {actual}, needs {required}",
-            certificate.cert_type,
+            "byzfuzz invariant failed: {cert_type:?} has signing stake {actual}, needs {required}",
         );
     }
 }
@@ -200,8 +200,7 @@ fn validate_no_conflicting_notarization_after_finalization(data: &AlpenglowInter
             for block in notarized_blocks {
                 assert_eq!(
                     *block, finalized_block,
-                    "byzfuzz invariant failed: slot {slot} finalized {:?} but notarized {:?}",
-                    finalized_block, block
+                    "byzfuzz invariant failed: slot {slot} finalized {finalized_block:?} but notarized {block:?}",
                 );
             }
         }
@@ -243,8 +242,7 @@ fn validate_correct_nodes_do_not_double_sign(
         if let Some(existing) = votes_by_source_kind_slot.get(&key) {
             assert_eq!(
                 *existing, payload,
-                "byzfuzz invariant failed: correct node {source} signed multiple {kind:?} payloads in slot {slot}: {:?} and {:?}",
-                existing, payload
+                "byzfuzz invariant failed: correct node {source} signed multiple {kind:?} payloads in slot {slot}: {existing:?} and {payload:?}",
             );
         } else {
             votes_by_source_kind_slot.insert(key, payload);
@@ -323,8 +321,7 @@ fn record_finalized_block(finalized_by_slot: &mut HashMap<Slot, Block>, slot: Sl
     if let Some(existing) = finalized_by_slot.get(&slot) {
         assert_eq!(
             *existing, block,
-            "byzfuzz invariant failed: slot {slot} finalized multiple payloads: {:?} and {:?}",
-            existing, block
+            "byzfuzz invariant failed: slot {slot} finalized multiple payloads: {existing:?} and {block:?}",
         );
     } else {
         finalized_by_slot.insert(slot, block);
@@ -337,9 +334,9 @@ fn certificate_signing_stake(
     rank_stakes: &HashMap<u16, u64>,
 ) -> u64 {
     match decode(&certificate.bitmap, validator_count).unwrap_or_else(|err| {
+        let cert_type = &certificate.cert_type;
         panic!(
-            "byzfuzz invariant failed: failed to decode {:?}: {err:?}",
-            certificate.cert_type
+            "byzfuzz invariant failed: failed to decode {cert_type:?}: {err:?}",
         )
     }) {
         Decoded::Base2(signers) => signer_stake(signers.iter_ones(), rank_stakes),
