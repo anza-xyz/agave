@@ -290,6 +290,7 @@ name = "agave-validator"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-cpu-utils",
+ "agave-feature-set",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
@@ -7587,7 +7588,9 @@ dependencies = [
  "rand 0.9.4",
  "rayon",
  "serde",
+ "solana-clock",
  "solana-hash 4.4.0",
+ "solana-keypair",
  "solana-message",
  "solana-metrics",
  "solana-packet 4.1.0",
@@ -7595,8 +7598,14 @@ dependencies = [
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
+ "solana-signer",
+ "solana-system-interface 3.2.0",
+ "solana-system-transaction",
  "solana-time-utils",
+ "solana-transaction",
  "solana-transaction-context",
+ "solana-vote",
+ "solana-vote-program",
  "wincode",
 ]
 
@@ -9694,6 +9703,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-votor-messages",
  "arc-swap",
  "base64 0.22.1",
  "bincode",
@@ -9702,6 +9712,7 @@ dependencies = [
  "serde_json",
  "solana-account 4.3.0",
  "solana-accounts-db",
+ "solana-bls-signatures",
  "solana-cli-output",
  "solana-clock",
  "solana-cluster-type",
@@ -9738,6 +9749,7 @@ dependencies = [
  "solana-syscalls",
  "solana-transaction",
  "solana-validator-exit",
+ "solana-vote-interface",
  "tokio",
 ]
 
