@@ -776,7 +776,7 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
-        // Stub the votor datagram channels — the test runs without an
+        // Stub the votor datagram channels - the test runs without an
         // actual alpenglow endpoint. The egress sink and ingress source
         // are never connected to each other; ingress simply never fires.
         let (votor_egress, _votor_egress_rx) = tokio::sync::mpsc::channel(1024);

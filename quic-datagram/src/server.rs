@@ -33,7 +33,13 @@ use {
 };
 
 /// Interval of pruning for banlist entries that are no longer valid.
-const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
+
+/// State for one peer
+pub(crate) struct PeerEntry {
+    conns: ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>,
+    rate_limiter: Arc<TokenBucket>,
+}
 
 /// Event reported by an accept or read task to the inbound control loop.
 pub(crate) enum InboundEvent {
@@ -50,6 +56,8 @@ pub(crate) enum InboundEvent {
         generation: u64,
         stable_id: usize,
     },
+    /// The ingress traffic shaping bucket was drained by a sustained flood.
+    FloodDetected { peer: Pubkey },
 }
 
 /// An inbound accept: run the handshake and hand the connection (plus its
@@ -100,22 +108,13 @@ pub(crate) async fn read_datagram_loop(
     ingress: Sender<Datagram>,
     allowlist: Arc<dyn Allowlist>,
     banlist: Arc<Banlist<Pubkey>>,
+    rate_limiter: Arc<TokenBucket>,
     events: mpsc::Sender<InboundEvent>,
     stats: Arc<QuicDatagramStats>,
 ) {
     let stable_id = connection.stable_id();
-    // Per-connection rate limiter. Any datagram arriving with the bucket
-    // below RATE_LIMIT_WATERMARK is dropped, since honest peers
-    // legitimately burst above the refill rate during catch-up, but
-    // votor requires us to keep ingress at < MAX_DATAGRAMS_PER_SECOND_PER_PEER.
-    // Any packet arriving when bucket is empty is *closed* to avoid resource
-    // exhaustion from peers stuck sending unlimited datagrams to us.
+    // Use the same bucket to be reused for both shaping and flood control
     const RATE_LIMIT_WATERMARK: u64 = PEER_RATE_LIMIT_BURST_DOS - PEER_RATE_LIMIT_BURST;
-    let rate_limit = TokenBucket::new(
-        PEER_RATE_LIMIT_BURST_DOS,
-        PEER_RATE_LIMIT_BURST_DOS,
-        MAX_DATAGRAMS_PER_SECOND_PER_PEER,
-    );
     let mut allowlist_check = interval(ALLOWLIST_CHECK_INTERVAL);
     allowlist_check.tick().await; // skip the immediate first fire
     loop {
@@ -130,22 +129,22 @@ pub(crate) async fn read_datagram_loop(
                             close_codes::BANNED.close(&connection);
                             break;
                         }
-                        match rate_limit.consume_tokens(1) {
-                            // green corridor - sender is behaving
+                        match rate_limiter.consume_tokens(1) {
+                            // normal operation
                             Ok(remaining) if remaining > RATE_LIMIT_WATERMARK => {}
-                            // red corridor - sender is bursting above normal
+                            // drop excess packets if peer exceeds normal rate
                             Ok(_) => {
                                 drop(bytes);
                                 stats.datagram_rate_limited.fetch_add(1, Ordering::Relaxed);
                                 continue;
                             }
-                            // bucket exhausted - kick the sender without banning;
-                            // reconnect cost (TLS handshake) is the rate-limiting
-                            // mechanism for sustained floods.
+                            // peer drained bucket dry - kick them
                             Err(_) => {
                                 drop(bytes);
                                 add(&stats.connection_lost);
-                                close_codes::BANNED.close(&connection);
+                                let _ = events
+                                    .send(InboundEvent::FloodDetected { peer })
+                                    .await;
                                 break;
                             }
                         }
@@ -214,11 +213,7 @@ pub(crate) struct InboundLoop {
     pub(crate) identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     /// Inbound table (per-peer accepted receive-only connections), owned solely
     /// by this loop.
-    pub(crate) incoming: HashMap<
-        Pubkey,
-        ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>,
-        PubkeyHasherBuilder,
-    >,
+    pub(crate) incoming: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_tx: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
@@ -232,26 +227,7 @@ pub(crate) struct InboundLoop {
 impl InboundLoop {
     /// Live inbound connections (each pubkey may hold several).
     fn incoming_len(&self) -> u64 {
-        self.incoming.values().map(ArrayVec::len).sum::<usize>() as u64
-    }
-
-    /// Install a `connection` for `peer`. We keep up to
-    /// [`MAX_INBOUND_CONNECTIONS_PER_PEER`] connections per pubkey.
-    ///  Returns:
-    /// - `Ok(())` if the connection took a slot (a fresh pubkey, or an
-    ///   additional connection for a pubkey already present).
-    /// - `Err(())` if this pubkey already holds the per-peer maximum.
-    ///   This should be rare in normal operation.
-    fn insert_inbound(&mut self, peer: Pubkey, connection: Connection) -> Result<(), ()> {
-        match self.incoming.entry(peer) {
-            Entry::Vacant(slot) => {
-                let mut v = ArrayVec::new();
-                v.push(connection);
-                slot.insert(v);
-                Ok(())
-            }
-            Entry::Occupied(mut slot) => slot.get_mut().try_push(connection).map_err(|_| ()),
-        }
+        self.incoming.values().map(|e| e.conns.len()).sum::<usize>() as u64
     }
 
     /// Remove the connection with the given `stable_id` from `peer`'s inbound
@@ -260,7 +236,7 @@ impl InboundLoop {
     /// connection was already removed (e.g. by an identity rotation).
     fn reap_incoming(&mut self, peer: &Pubkey, stable_id: usize) {
         if let Entry::Occupied(mut slot) = self.incoming.entry(*peer) {
-            let conns = slot.get_mut();
+            let conns = &mut slot.get_mut().conns;
             conns.retain(|c| c.stable_id() != stable_id);
             if conns.is_empty() {
                 slot.remove();
@@ -348,7 +324,7 @@ impl InboundLoop {
         let evicted = self
             .incoming
             .drain()
-            .flat_map(|(_, conns)| conns)
+            .flat_map(|(_, entry)| entry.conns)
             .inspect(|conn| close_codes::IDENTITY_ROTATED.close(conn))
             .count() as u64;
         self.stats
@@ -360,29 +336,35 @@ impl InboundLoop {
         );
     }
 
-    /// Apply a connection-lifecycle result.
+    /// Apply a connection-lifecycle event.
     fn handle_event(&mut self, event: InboundEvent) {
-        let generation = match &event {
-            InboundEvent::Accepted { generation, .. } | InboundEvent::Closed { generation, .. } => {
-                *generation
-            }
-        };
-        if generation != self.generation {
-            // Close any live connection carried by a stale-generation event so a
-            // connection authenticated under a now-rotated identity is not leaked.
-            if let InboundEvent::Accepted { conn, .. } = event {
+        match event {
+            // Stale Accepted: close the connection.
+            InboundEvent::Accepted {
+                generation, conn, ..
+            } if generation != self.generation => {
                 close_codes::IDENTITY_ROTATED.close(&conn);
                 self.stats
                     .connection_evicted_identity_rotated
                     .fetch_add(1, Ordering::Relaxed);
             }
-            return;
-        }
-        match event {
+            // Relevant Accepted
             InboundEvent::Accepted { peer, conn, .. } => self.maybe_admit_inbound(peer, conn),
+            // Stale Closed: no-op, table entry already gone.
+            InboundEvent::Closed { generation, .. } if generation != self.generation => {}
+            // Relevant Closed
             InboundEvent::Closed {
                 peer, stable_id, ..
             } => self.reap_incoming(&peer, stable_id),
+            // Flood detected - close connection
+            InboundEvent::FloodDetected { peer } => {
+                if let Some(entry) = self.incoming.remove(&peer) {
+                    for conn in &entry.conns {
+                        close_codes::BANNED.close(conn);
+                    }
+                    add(&self.stats.connection_lost);
+                }
+            }
         }
     }
 
@@ -423,11 +405,33 @@ impl InboundLoop {
             return;
         }
         let remote_addr = conn.remote_address();
-        if self.insert_inbound(peer, conn.clone()).is_err() {
-            close_codes::TABLE_FULL.close(&conn);
-            record_error(&Error::TableFull, &self.stats);
-            return;
-        }
+        let rate_limiter = match self.incoming.entry(peer) {
+            Entry::Vacant(slot) => {
+                let rate_limiter = Arc::new(TokenBucket::new(
+                    PEER_RATE_LIMIT_BURST_DOS,
+                    PEER_RATE_LIMIT_BURST_DOS,
+                    MAX_DATAGRAMS_PER_SECOND_PER_PEER,
+                ));
+                let mut conns = ArrayVec::new();
+                conns.push(conn.clone());
+                slot.insert(PeerEntry {
+                    conns,
+                    rate_limiter: rate_limiter.clone(),
+                });
+                rate_limiter
+            }
+            Entry::Occupied(mut slot) => {
+                let entry = slot.get_mut();
+                match entry.conns.try_push(conn.clone()) {
+                    Ok(()) => Arc::clone(&entry.rate_limiter),
+                    Err(_) => {
+                        close_codes::TABLE_FULL.close(&conn);
+                        record_error(&Error::TableFull, &self.stats);
+                        return;
+                    }
+                }
+            }
+        };
         self.stats.record_connection_count(self.incoming_len());
         // The read loop reports [`InboundEvent::Closed`] when it exits so this
         // loop can reap the table slot.
@@ -439,6 +443,7 @@ impl InboundLoop {
             self.ingress.clone(),
             self.allowlist.clone(),
             self.banlist.clone(),
+            rate_limiter,
             self.events_tx.clone(),
             self.stats.clone(),
         ));
