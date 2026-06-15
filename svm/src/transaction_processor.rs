@@ -47,6 +47,7 @@ use {
             ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+        program_metrics::ProgramStatistics,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
@@ -893,6 +894,62 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // missing programs inside the tx batch again.
                 let _new_cookie = task_waiter.wait(task_cookie);
             }
+        }
+    }
+
+    /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().
+    pub fn prepare_one_program_for_upcoming_feature_set<CB: TransactionProcessingCallback>(
+        &self,
+        account_loader: &CB,
+        check_program_deployment_slot: bool,
+        upcoming_environment: &ProgramRuntimeEnvironment,
+        key: &Pubkey,
+        stats_of_enqueued_program: &ProgramStatistics,
+    ) {
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        let mut missing_programs = filter_executable_program_accounts(
+            account_loader,
+            &program_cache_for_tx_batch,
+            std::iter::once(key),
+            check_program_deployment_slot,
+        );
+        if missing_programs.is_empty() {
+            // Program account was closed
+            return;
+        }
+        let program_to_load = {
+            let program_cache_guard = self.global_program_cache.read().unwrap();
+            program_cache_guard.extract(
+                &mut missing_programs,
+                &mut program_cache_for_tx_batch,
+                upcoming_environment,
+                false, // increment_usage_counter
+                false, // count_hits_and_misses
+            )
+            // Unlock again because load_program_with_pubkey() might take a while.
+        };
+        // Maybe the enqueued program was already loaded and can be skipped.
+        if let Some(key) = program_to_load {
+            // Load, verify and compile one program.
+            let (recompiled, last_modification_slot) = load_program_with_pubkey(
+                account_loader,
+                upcoming_environment,
+                &key,
+                self.slot,
+                &mut ExecuteTimings::default(),
+            )
+            .expect("called load_program_with_pubkey() with nonexistent account");
+            recompiled.stats.merge_from(stats_of_enqueued_program);
+            // Lock the global cache as writable this time.
+            let mut program_cache_guard = self.global_program_cache.write().unwrap();
+            // Submit our last completed loading task.
+            program_cache_guard.finish_cooperative_loading_task(
+                upcoming_environment,
+                self.slot,
+                key,
+                last_modification_slot,
+                recompiled,
+            );
         }
     }
 

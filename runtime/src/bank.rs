@@ -131,9 +131,7 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
+        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
@@ -157,7 +155,6 @@ use {
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
-        program_loader::{filter_executable_program_accounts, load_program_with_pubkey},
         transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -224,6 +221,7 @@ use {
     solana_nonce as nonce,
     solana_nonce_account::{SystemAccountKind, get_system_account_kind},
     solana_program_runtime::sysvar_cache::SysvarCache,
+    solana_svm::program_loader::load_program_with_pubkey,
 };
 
 /// params to `verify_accounts_hash`
@@ -1567,11 +1565,6 @@ impl Bank {
                 .checked_div(2)
                 .unwrap();
 
-        let program_cache_guard = self
-            .transaction_processor
-            .global_program_cache
-            .read()
-            .unwrap();
         let mut epoch_boundary_preparation = self
             .transaction_processor
             .epoch_boundary_preparation
@@ -1585,54 +1578,14 @@ impl Bank {
                 epoch_boundary_preparation.programs_to_recompile.pop()
             {
                 drop(epoch_boundary_preparation);
-                let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-                let mut missing_programs = filter_executable_program_accounts(
-                    self,
-                    &program_cache_for_tx_batch,
-                    std::iter::once(&key),
-                    self.check_program_deployment_slot(),
-                );
-                let program_to_load = if missing_programs.is_empty() {
-                    // Program account was closed
-                    None
-                } else {
-                    // Figure out if the program was already loaded in the meantime an can be skipped.
-                    program_cache_guard.extract(
-                        &mut missing_programs,
-                        &mut program_cache_for_tx_batch,
-                        &upcoming_environment,
-                        false, // increment_usage_counter
-                        false, // count_hits_and_misses
-                    )
-                };
-                // Unlock again because load_program_with_pubkey() might take a while.
-                drop(program_cache_guard);
-                if let Some(key) = program_to_load {
-                    // Load, verify and compile one program.
-                    let (recompiled, last_modification_slot) = load_program_with_pubkey(
+                self.transaction_processor
+                    .prepare_one_program_for_upcoming_feature_set(
                         self,
+                        self.check_program_deployment_slot(),
                         &upcoming_environment,
                         &key,
-                        self.slot,
-                        &mut ExecuteTimings::default(),
-                    )
-                    .expect("called load_program_with_pubkey() with nonexistent account");
-                    recompiled.stats.merge_from(&program_to_recompile.stats);
-                    // Lock the global cache as writable this time.
-                    let mut program_cache_guard = self
-                        .transaction_processor
-                        .global_program_cache
-                        .write()
-                        .unwrap();
-                    // Submit our last completed loading task.
-                    program_cache_guard.finish_cooperative_loading_task(
-                        &upcoming_environment,
-                        self.slot,
-                        key,
-                        last_modification_slot,
-                        recompiled,
+                        &program_to_recompile.stats,
                     );
-                }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
             // Anticipate the upcoming program runtime environment for the next epoch,
@@ -1646,6 +1599,11 @@ impl Bank {
             let changed_program_runtime_environment = *upcoming_environment != *new_environment;
             if changed_program_runtime_environment {
                 upcoming_environment = new_environment;
+                let program_cache_guard = self
+                    .transaction_processor
+                    .global_program_cache
+                    .read()
+                    .unwrap();
                 epoch_boundary_preparation.programs_to_recompile = program_cache_guard
                     .get_flattened_entries()
                     .into_iter()
