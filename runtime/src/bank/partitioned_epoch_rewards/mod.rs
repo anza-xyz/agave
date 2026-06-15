@@ -7,7 +7,7 @@ use {
     super::Bank,
     crate::{
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
-        stake_account::StakeAccount, stake_history::StakeHistory,
+        stake_history::StakeHistory, stakes::StakeDelegationsView,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -16,7 +16,7 @@ use {
     },
     solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
-    solana_stake_interface::state::{Delegation, Stake},
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, mem::MaybeUninit, sync::Arc},
 };
@@ -296,7 +296,7 @@ pub(super) struct CachedVoteAccounts<'a> {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    pub(super) stake_delegations: StakeDelegationsView<'a>,
     pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 
@@ -309,6 +309,7 @@ pub(super) struct PartitionedRewardsCalculation {
     stake_rewards: StakeRewardCalculation,
     capitalization: u64,
     point_value: PointValue,
+    num_stake_accounts: usize,
     /// Number of vote accounts in the distribution-epoch snapshot after
     /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
     /// Surfaced for the `epoch_rewards` datapoint without re-running the

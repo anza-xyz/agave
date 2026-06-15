@@ -69,7 +69,11 @@ use {
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
-        stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache},
+        stakes::{
+            DeserializableStakes, SerdeStakesToStakeFormat, StakeDelegationsView, Stakes,
+            StakesCache,
+        },
+        stakes_v2::StakesCacheV2,
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
@@ -622,6 +626,8 @@ impl PartialEq for Bank {
             epoch_schedule,
             inflation,
             stakes_cache,
+            // We check it by comparing stake delegation frontier queries.
+            stakes_cache_v2: _,
             epoch_stakes,
             is_delta,
             #[cfg(feature = "dev-context-only-utils")]
@@ -659,6 +665,21 @@ impl PartialEq for Bank {
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
+        let stakes_cache_v2_eq = match (&self.stakes_cache_v2, &other.stakes_cache_v2) {
+            (Some(_), Some(_)) => {
+                let self_stake_delegation_frontier = self
+                    .stake_delegation_frontier_query()
+                    .expect("stakes cache v2 must exist");
+                let other_stake_delegation_frontier = other
+                    .stake_delegation_frontier_query()
+                    .expect("stakes cache v2 must exist");
+                self_stake_delegation_frontier
+                    .iter()
+                    .eq(other_stake_delegation_frontier.iter())
+            }
+            (None, None) => true,
+            _ => false,
+        };
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
             && *max_processing_age == other.max_processing_age
             && *partitioned_rewards_stake_account_stores_per_block
@@ -686,6 +707,7 @@ impl PartialEq for Bank {
             && epoch_schedule == &other.epoch_schedule
             && *inflation.read().unwrap() == *other.inflation.read().unwrap()
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
+            && stakes_cache_v2_eq
             && epoch_stakes == &other.epoch_stakes
             && is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
             // No deadlock is possible, when Arc::ptr_eq() returns false, because of being
@@ -912,6 +934,7 @@ pub struct Bank {
 
     /// cache of vote_account and stake_account state for this fork
     stakes_cache: StakesCache,
+    stakes_cache_v2: Option<StakesCacheV2>,
 
     /// staked nodes on epoch boundaries, saved off when a bank.slot() is at
     ///   a leader schedule calculation boundary
@@ -1188,6 +1211,7 @@ impl Bank {
             epoch_schedule: EpochSchedule::default(),
             inflation: Arc::<RwLock<Inflation>>::default(),
             stakes_cache: StakesCache::default(),
+            stakes_cache_v2: None,
             epoch_stakes: HashMap::<Epoch, VersionedEpochStakes>::default(),
             is_delta: AtomicBool::default(),
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
@@ -1277,6 +1301,12 @@ impl Bank {
         bank.process_genesis_config(genesis_config, leader_for_tests, genesis_hash);
 
         bank.compute_and_apply_genesis_features();
+
+        if runtime_config.enable_stakes_cache_v2 {
+            bank.stakes_cache_v2 = Some(StakesCacheV2::new_from_accounts_for_genesis(
+                genesis_config.accounts.iter(),
+            ));
+        }
 
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
@@ -1375,6 +1405,13 @@ impl Bank {
 
         let (stakes_cache, stakes_cache_time_us) =
             measure_us!(StakesCache::new(parent.stakes_cache.stakes().clone()));
+        let (stakes_cache_v2, stakes_cache_v2_time_us) = measure_us!(
+            parent
+                .stakes_cache_v2
+                .as_ref()
+                .map(StakesCacheV2::new_from_parent)
+        );
+        let stakes_cache_time_us = stakes_cache_time_us.saturating_add(stakes_cache_v2_time_us);
 
         let (epoch_stakes, epoch_stakes_time_us) = measure_us!(parent.epoch_stakes.clone());
 
@@ -1433,6 +1470,7 @@ impl Bank {
             entry_bytes_consumed: EntryBytesBudget::new(parent.entry_bytes_budget().slot_limit()),
             // we will .clone_with_epoch() this soon after stake data update; so just .clone() for now
             stakes_cache,
+            stakes_cache_v2,
             epoch_stakes,
             parent_hash: parent.hash(),
             parent_slot: parent.slot(),
@@ -1715,7 +1753,10 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = match self.stake_delegation_frontier_query() {
+            Some(frontier_query) => StakeDelegationsView::FrontierQuery(frontier_query),
+            None => StakeDelegationsView::Legacy(stakes.stake_delegations_vec()),
+        };
         let (
             (stake_history, unfiltered_distribution_vote_accounts),
             calculate_activated_stake_time_us,
@@ -1794,9 +1835,14 @@ impl Bank {
 
         self.stakes_cache.activate_epoch(
             epoch,
-            stake_history,
+            // Cheap clone of `Arc`. Can be removed once we fully switch to
+            // `StakesCacheV2`.
+            stake_history.clone(),
             unfiltered_distribution_vote_accounts,
         );
+        if let Some(stakes_cache_v2) = self.stakes_cache_v2.as_ref() {
+            stakes_cache_v2.activate_epoch(epoch, stake_history);
+        }
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
@@ -2006,6 +2052,18 @@ impl Bank {
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
+        let stakes_cache_v2 = runtime_config.enable_stakes_cache_v2.then(|| {
+            StakesCacheV2::load_from_deserialized_delegations(fields.stakes.clone(), |pubkey| {
+                let (account, _slot) = bank_rc
+                    .accounts
+                    .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
+                Some(account)
+            })
+            .expect(
+                "Stakes cache v2 is inconsistent with accounts-db. This can indicate a corrupted \
+                 snapshot or bugs in cached accounts or accounts-db.",
+            )
+        });
         let (stakes, stakes_time) = measure_time!(
             Stakes::load_from_deserialized_delegations(fields.stakes, |pubkey| {
                 let (account, _slot) = bank_rc
@@ -2104,6 +2162,7 @@ impl Bank {
             ),
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
+            stakes_cache_v2,
             stakes_cache: StakesCache::new(stakes),
             epoch_stakes,
             is_delta: AtomicBool::new(fields.is_delta),
@@ -3033,6 +3092,15 @@ impl Bank {
     pub fn squash(&self) -> SquashTiming {
         self.freeze();
 
+        if let Some(stakes_cache_v2) = &self.stakes_cache_v2 {
+            let parent_banks = self.parents();
+            let rooted_stake_delegation_caches = parent_banks
+                .iter()
+                .rev()
+                .filter_map(|bank| bank.stakes_cache_v2.as_ref());
+            stakes_cache_v2.apply_rooted_stake_delegation_deltas(rooted_stake_delegation_caches);
+        }
+
         //this bank and all its parents are now on the rooted path
         let mut roots = vec![self.slot()];
         roots.append(&mut self.parents().iter().map(|p| p.slot()).collect());
@@ -3063,6 +3131,16 @@ impl Bank {
             squash_accounts_cache_ms: total_cache_us / 1000,
             squash_cache_ms: squash_cache_time.as_ms(),
         }
+    }
+
+    fn stake_delegation_frontier_query(&self) -> Option<crate::stakes_v2::FrontierQuery<'_>> {
+        let stakes_cache_v2 = self.stakes_cache_v2.as_ref()?;
+        let parent_banks = self.parents();
+        let caches = parent_banks
+            .iter()
+            .rev()
+            .filter_map(|bank| bank.stakes_cache_v2.as_ref());
+        Some(stakes_cache_v2.frontier_query(caches))
     }
 
     /// Return the more recent checkpoint of this bank instance.
@@ -4623,7 +4701,10 @@ impl Bank {
                     &account,
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
-                )
+                );
+                if let Some(stakes_cache_v2) = self.stakes_cache_v2.as_ref() {
+                    stakes_cache_v2.check_and_store(account.pubkey(), &account);
+                }
             })
         });
         self.store_accounts_without_stakes_cache(accounts);
@@ -5664,6 +5745,9 @@ impl Bank {
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
                 );
+                if let Some(stakes_cache_v2) = self.stakes_cache_v2.as_ref() {
+                    stakes_cache_v2.check_and_store(pubkey, account);
+                }
             });
     }
 
@@ -7033,13 +7117,21 @@ impl Bank {
 
     /// Get stake and stake node accounts
     pub(crate) fn get_stake_accounts(&self, minimized_account_set: &DashSet<Pubkey>) {
-        self.stakes_cache
-            .stakes()
-            .stake_delegations()
-            .iter()
-            .for_each(|(pubkey, _)| {
-                minimized_account_set.insert(*pubkey);
-            });
+        if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
+            stake_delegation_frontier
+                .iter_some()
+                .for_each(|(pubkey, _)| {
+                    minimized_account_set.insert(*pubkey);
+                });
+        } else {
+            self.stakes_cache
+                .stakes()
+                .stake_delegations()
+                .iter()
+                .for_each(|(pubkey, _)| {
+                    minimized_account_set.insert(*pubkey);
+                });
+        }
 
         self.stakes_cache
             .stakes()
