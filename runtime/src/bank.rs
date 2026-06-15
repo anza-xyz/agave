@@ -131,7 +131,9 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        loaded_programs::{
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        },
         program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
@@ -155,7 +157,7 @@ use {
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
-        program_loader::load_program_with_pubkey,
+        program_loader::{filter_executable_program_accounts, load_program_with_pubkey},
         transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -1583,26 +1585,54 @@ impl Bank {
                 epoch_boundary_preparation.programs_to_recompile.pop()
             {
                 drop(epoch_boundary_preparation);
-                drop(program_cache);
-                if let Some((recompiled, last_modification_slot)) = load_program_with_pubkey(
+                let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+                let mut missing_programs = filter_executable_program_accounts(
                     self,
-                    &upcoming_environment,
-                    &key,
-                    self.slot,
-                    &mut ExecuteTimings::default(),
-                ) {
+                    &program_cache_for_tx_batch,
+                    std::iter::once(&key),
+                    self.check_program_deployment_slot(),
+                );
+                let program_to_load = if missing_programs.is_empty() {
+                    // Program account was closed
+                    None
+                } else {
+                    // Figure out if the program was already loaded in the meantime an can be skipped.
+                    program_cache.extract(
+                        &mut missing_programs,
+                        &mut program_cache_for_tx_batch,
+                        &upcoming_environment,
+                        false, // increment_usage_counter
+                        false, // count_hits_and_misses
+                    )
+                };
+                // Unlock the global cache again.
+                drop(program_cache);
+                if let Some(key) = program_to_load {
+                    // Load, verify and compile one program.
+                    let (recompiled, last_modification_slot) = load_program_with_pubkey(
+                        self,
+                        &upcoming_environment,
+                        &key,
+                        self.slot,
+                        &mut ExecuteTimings::default(),
+                    )
+                    .expect("called load_program_with_pubkey() with nonexistent account");
                     recompiled.stats.merge_from(&program_to_recompile.stats);
+                    // Lock the global cache.
                     let mut program_cache = self
                         .transaction_processor
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(
+                    // Submit our last completed loading task.
+                    program_cache.finish_cooperative_loading_task(
                         &upcoming_environment,
+                        self.slot,
                         key,
                         last_modification_slot,
                         recompiled,
                     );
+                    // Unlock the global cache again.
                 }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
