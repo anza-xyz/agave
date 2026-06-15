@@ -18,14 +18,14 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
-    std::{collections::HashSet, num::NonZeroU64},
+    std::{collections::HashSet, num::NonZero},
     thiserror::Error,
 };
 
 #[derive(Clone, Debug)]
 pub(super) struct CertPayload {
     pub(super) cert: Certificate,
-    pub(super) remote_pubkey: Pubkey,
+    pub(super) sender_identity_pubkey: Pubkey,
 }
 
 #[derive(Debug, Error)]
@@ -123,12 +123,12 @@ fn verify_certs(
                 match &e {
                     CertVerifyError::NotEnoughStake { .. }
                     | CertVerifyError::CertVerifyFailed(_) => {
-                        if banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT) {
+                        if banlist.ban(cert_payload.sender_identity_pubkey, BAN_TIMEOUT) {
                             stats.already_banned += 1;
                         } else {
                             info!(
                                 "bls_cert_sigverify: banned sender={} due to error {e}",
-                                cert_payload.remote_pubkey
+                                cert_payload.sender_identity_pubkey
                             );
                         }
                     }
@@ -163,17 +163,16 @@ fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyErr
         });
     }
     let (aggregate_stake, total_stake) = root_bank.verify_certificate(cert)?;
-    debug_assert!(aggregate_stake <= total_stake);
+    debug_assert!(aggregate_stake <= total_stake.get());
     verify_stake(cert, aggregate_stake, total_stake)
 }
 
 fn verify_stake(
     cert: &Certificate,
     aggregate_stake: u64,
-    total_stake: u64,
+    total_stake: NonZero<u64>,
 ) -> Result<(), CertVerifyError> {
     let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
-    let total_stake = NonZeroU64::new(total_stake).expect("Total stake cannot be zero");
     let cert_fraction = Fraction::new(aggregate_stake, total_stake);
     if cert_fraction >= required_fraction {
         Ok(())

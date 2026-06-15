@@ -24,7 +24,8 @@ use {
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
-            SystemMonitorService, SystemMonitorStatsReportConfig, verify_net_stats_access,
+            SystemMonitorService, SystemMonitorStatsReportConfig, XdpNetworkConfigReport,
+            verify_net_stats_access,
         },
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
@@ -360,6 +361,7 @@ pub struct ValidatorConfig {
     pub no_poh_speed_test: bool,
     pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
+    pub xdp_network_config_report: Option<XdpNetworkConfigReport>,
     pub no_os_cpu_stats_reporting: bool,
     pub no_os_disk_stats_reporting: bool,
     pub enforce_ulimit_nofile: bool,
@@ -441,6 +443,7 @@ impl ValidatorConfig {
             no_poh_speed_test: true,
             no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
+            xdp_network_config_report: None,
             no_os_cpu_stats_reporting: true,
             no_os_disk_stats_reporting: true,
             // No need to enforce nofile limit in tests
@@ -477,7 +480,7 @@ impl ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
-            delay_leader_block_for_pending_fork: false,
+            delay_leader_block_for_pending_fork: true,
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
@@ -893,6 +896,7 @@ impl Validator {
             SystemMonitorStatsReportConfig {
                 report_os_memory_stats: !config.no_os_memory_stats_reporting,
                 report_os_network_stats: !config.no_os_network_stats_reporting,
+                xdp_network_config_report: config.xdp_network_config_report.clone(),
                 report_os_cpu_stats: !config.no_os_cpu_stats_reporting,
                 report_os_disk_stats: !config.no_os_disk_stats_reporting,
             },

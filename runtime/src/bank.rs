@@ -5709,13 +5709,14 @@ impl Bank {
     pub fn verify_certificate(
         &self,
         cert: &Certificate,
-    ) -> std::result::Result<(u64, u64), CertVerifyError> {
+    ) -> std::result::Result<(u64, NonZero<u64>), CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
             .epoch_stakes_from_slot(slot)
             .ok_or(CertVerifyError::MissingRankMap)?;
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        let total_stake = key_to_rank_map.total_stake();
+        let total_stake =
+            NonZero::new(key_to_rank_map.total_stake()).expect("total stake cannot be 0");
 
         let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
             key_to_rank_map
