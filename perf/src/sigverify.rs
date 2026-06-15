@@ -245,7 +245,7 @@ mod tests {
         };
         let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default(); actual_num_sigs];
-        BytesPacket::from_data(None, tx).unwrap()
+        BytesPacket::from_data(tx).unwrap()
     }
 
     #[test]
@@ -287,7 +287,7 @@ mod tests {
         tx.signatures = vec![sig; NUM_SIG];
         tx.message.account_keys = vec![];
         tx.message.header.num_required_signatures = NUM_SIG as u8;
-        let mut packet = BytesPacket::from_data(None, tx).unwrap();
+        let mut packet = BytesPacket::from_data(tx).unwrap();
 
         assert!(!verify_packet(&mut packet.as_mut(), false, false));
 
@@ -318,7 +318,7 @@ mod tests {
         let sig = keypair1.try_sign_message(&tx.message_data()).unwrap();
         tx.signatures = vec![sig; NUM_SIG];
 
-        let mut packet = BytesPacket::from_data(None, tx).unwrap();
+        let mut packet = BytesPacket::from_data(tx).unwrap();
 
         assert!(!verify_packet(&mut packet.as_mut(), false, false));
 
@@ -395,7 +395,7 @@ mod tests {
         };
         let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default()];
-        let mut packet = BytesPacket::from_data(None, tx).unwrap();
+        let mut packet = BytesPacket::from_data(tx).unwrap();
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
@@ -498,7 +498,7 @@ mod tests {
         let mut tx = test_tx();
         // pretend malicious leader dropped a signature...
         tx.signatures.pop();
-        let packet = BytesPacket::from_data(None, tx).unwrap();
+        let packet = BytesPacket::from_data(tx).unwrap();
 
         let mut batches = generate_packet_batches(&packet, 1, 1);
 
@@ -601,7 +601,7 @@ mod tests {
         {
             let mut tx = test_tx();
             tx.message.instructions[0].data = vec![1, 2, 3];
-            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
                 true,
@@ -614,7 +614,7 @@ mod tests {
         {
             let mut tx = new_test_vote_tx(&mut rng);
             tx.message.instructions[0].data = vec![1, 2, 3];
-            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
                 true,
@@ -626,7 +626,7 @@ mod tests {
         // single versioned vote tx is not
         {
             let tx = new_test_vote_tx_v0();
-            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let packet = BytesPacket::from_data(tx).unwrap();
 
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
@@ -652,7 +652,7 @@ mod tests {
                     CompiledInstruction::new(4, &(), vec![0, 2]),
                 ],
             );
-            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
                 true,
@@ -667,7 +667,7 @@ mod tests {
             tx.signatures.push(Signature::default());
             tx.message.header.num_required_signatures = 3;
             tx.message.instructions[0].data = vec![1, 2, 3];
-            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
                 true,
@@ -689,10 +689,10 @@ mod tests {
 
         let mut packet = if is_versioned_tx {
             let tx: VersionedTransaction = new_test_tx_with_number_of_ixs(number_of_ixs);
-            BytesPacket::from_data(None, tx.clone()).unwrap()
+            BytesPacket::from_data(tx.clone()).unwrap()
         } else {
             let tx: Transaction = new_test_tx_with_number_of_ixs(number_of_ixs);
-            BytesPacket::from_data(None, tx.clone()).unwrap()
+            BytesPacket::from_data(tx.clone()).unwrap()
         };
 
         assert_eq!(

@@ -473,7 +473,7 @@ pub(crate) mod tests {
             &keypairs.vote_keypair,
             None,
         );
-        let mut packet = BytesPacket::from_data(None, vote_tx).unwrap();
+        let mut packet = BytesPacket::from_data(vote_tx).unwrap();
         packet
             .meta_mut()
             .flags
@@ -509,7 +509,7 @@ pub(crate) mod tests {
             authorized_voter,
             None,
         );
-        let mut packet = BytesPacket::from_data(None, vote_tx).unwrap();
+        let mut packet = BytesPacket::from_data(vote_tx).unwrap();
         packet
             .meta_mut()
             .flags

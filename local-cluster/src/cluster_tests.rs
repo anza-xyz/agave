@@ -30,6 +30,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_perf::packet::packet_config,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -672,7 +673,11 @@ pub fn check_for_new_notarized_votes(
                     continue;
                 };
                 for packet in packet_batch.iter() {
-                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    let Ok(ConsensusMessage::Vote(vote_message)) =
+                        wincode::config::deserialize_exact(
+                            packet.data(..).unwrap_or_default(),
+                            packet_config(),
+                        )
                     else {
                         continue;
                     };

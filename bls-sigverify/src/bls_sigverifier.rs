@@ -25,6 +25,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
+    solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
@@ -219,7 +220,10 @@ impl SigVerifier {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
-            let Ok(msg) = packet.deserialize_slice::<ConsensusMessage, _>(..) else {
+            let Ok(msg) = wincode::config::deserialize_exact(
+                packet.data(..).unwrap_or_default(),
+                packet_config(),
+            ) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };

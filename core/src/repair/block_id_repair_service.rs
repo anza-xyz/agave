@@ -40,7 +40,7 @@ use {
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::{
-        packet::{PacketBatch, PacketRef, deserialize_from_with_limit},
+        packet::{PacketBatch, PacketRef, packet_config},
         recycler::Recycler,
     },
     solana_pubkey::Pubkey,
@@ -543,7 +543,7 @@ impl BlockIdRepairService {
             return;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut cursor)
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, packet_config())
             .inspect_err(|e| {
                 debug!("Failed to deserialize response: {e:?}");
             })
@@ -565,7 +565,7 @@ impl BlockIdRepairService {
             return;
         }
 
-        let nonce: u32 = match deserialize_from_with_limit(&mut cursor) {
+        let nonce: u32 = match wincode::config::deserialize_from(&mut cursor, packet_config()) {
             Ok(n) => n,
             Err(e) => {
                 debug!("{my_pubkey}: Failed to deserialize nonce: {e:?}");
@@ -1079,7 +1079,7 @@ mod tests {
         solana_perf::packet::Packet,
         solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
         solana_sha256_hasher::hashv,
-        std::{io::Cursor, sync::RwLock},
+        std::sync::RwLock,
     };
 
     /// Helper to build a merkle tree from leaf hashes and return the root and proofs
@@ -1243,7 +1243,7 @@ mod tests {
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            deserialize_from_with_limit(&mut Cursor::new(packet_data)).unwrap();
+            wincode::config::deserialize(packet_data, packet_config()).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -1274,8 +1274,7 @@ mod tests {
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
-        let deser_response: BlockIdRepairResponse =
-            deserialize_from_with_limit(&mut Cursor::new(packet_data)).unwrap();
+        let deser_response: BlockIdRepairResponse = wincode::deserialize(packet_data).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::FecSetRoot {
@@ -1294,18 +1293,14 @@ mod tests {
         // Empty packet
         let packet = make_packet(&[]);
         let packet_data = packet.data(..).unwrap();
-        assert!(
-            deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut Cursor::new(packet_data))
-                .is_err()
-        );
+        wincode::config::deserialize::<BlockIdRepairResponse, _>(packet_data, packet_config())
+            .unwrap_err();
 
         // Garbage data
         let packet = make_packet(&[0xff, 0xff, 0xff, 0xff]);
         let packet_data = packet.data(..).unwrap();
-        assert!(
-            deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut Cursor::new(packet_data))
-                .is_err()
-        );
+        wincode::config::deserialize::<BlockIdRepairResponse, _>(packet_data, packet_config())
+            .unwrap_err();
     }
 
     #[test]
