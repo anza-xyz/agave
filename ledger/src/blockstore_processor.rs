@@ -2726,9 +2726,9 @@ fn supermajority_root_from_vote_accounts(
 /// Validates the chained block ID for a child slot against its parent.
 ///
 /// Returns:
-/// - `Inactive`: feature not active, no validation performed
+/// - `Inactive`: feature not active, or alpenglow is active, no validation performed
 /// - `Pass`: chained block ID matches parent's block ID (or parent has no
-///   block ID yet), or the slot replays from an UpdateParent FEC set
+///   block ID yet)
 /// - `Mismatch`: definitive mismatch between child's chained merkle root
 ///   and parent's block ID
 /// - `Unavailable`: data shred 0 not received yet, cannot validate
@@ -2737,24 +2737,12 @@ pub fn check_chained_block_id(
     bank: &Bank,
     migration_status: &MigrationStatus,
 ) -> ChainedBlockIdCheck {
+    let slot = bank.slot();
     let feature_snapshot = bank.feature_set.snapshot();
     if !(feature_snapshot.validate_chained_block_id || feature_snapshot.validate_chained_block_id_2)
+        || migration_status.should_use_double_merkle_block_id(slot)
     {
         return ChainedBlockIdCheck::Inactive;
-    }
-
-    let slot = bank.slot();
-    if migration_status.should_allow_fast_leader_handover(slot)
-        && leader_slot_index(slot) == 0
-        && blockstore
-            .meta(slot)
-            .expect("Blockstore operations must succeed")
-            .is_some_and(|meta| meta.has_update_parent())
-    {
-        // This block contains an `UpdateParent` and Alpenglow is active, so we
-        // rely on Double Merkle verification of parent chained block ID instead
-        // of CMR.
-        return ChainedBlockIdCheck::Pass;
     }
 
     let parent_slot = bank.parent_slot();
@@ -6465,34 +6453,17 @@ pub mod tests {
             ChainedBlockIdCheck::Mismatch
         ));
 
-        // Case 5: Alpenglow UpdateParent slots skip shred-0 chained block ID
-        // validation because replay starts at the UpdateParent FEC set.
+        // Case 5: When alpenglow is active, SIMD-0340 is skipped
         assert!(matches!(
             check_chained_block_id(
                 &blockstore,
                 &child_bank,
                 &MigrationStatus::post_migration_status()
             ),
-            ChainedBlockIdCheck::Pass
+            ChainedBlockIdCheck::Inactive
         ));
 
-        // Case 6: Non-first-window UpdateParent metadata does not bypass
-        // chained block ID validation.
-        insert_shreds_with_chained_merkle_root(13, 0, Hash::new_unique());
-        let mut meta = blockstore.meta(13).unwrap().unwrap();
-        meta.replay_fec_set_index = 32;
-        blockstore.put_meta(13, &meta).unwrap();
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 13);
-        assert!(matches!(
-            check_chained_block_id(
-                &blockstore,
-                &child_bank,
-                &MigrationStatus::post_migration_status()
-            ),
-            ChainedBlockIdCheck::Mismatch
-        ));
-
-        // Case 7: Parent has no shreds (get_block_merkle_root returns Err) —
+        // Case 6: Parent has no shreds (get_block_merkle_root returns Err) —
         // should return Pass regardless of chained merkle root.
         let no_shreds_parent_bank = Arc::new(Bank::new_from_parent(
             parent_bank,
