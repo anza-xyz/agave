@@ -2,7 +2,6 @@ use {
     super::{
         committer::{CommitTransactionDetails, Committer},
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
-        qos_service::QosService,
         scheduler_messages::MaxAge,
     },
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
@@ -198,25 +197,14 @@ impl Consumer {
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
         flags: ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
-        let (
-            (transaction_qos_cost_results, cost_model_throttled_transactions_count),
-            cost_model_us,
-        ) = measure_us!(QosService::select_transactions_for_remaining_block_cost(
-            bank,
-            txs,
-            pre_results
-        ));
+        let cost_model_throttled_transactions_count = 0;
+        let cost_model_us = 0;
 
-        // Only lock accounts for those transactions are selected for the block;
+        // Only lock accounts for transactions that passed pre-lock checks;
         // Once accounts are locked, other threads cannot encode transactions that will modify the
         // same account state
-        let (batch, lock_us) = measure_us!(bank.prepare_sanitized_batch_with_results(
-            txs,
-            transaction_qos_cost_results.iter().map(|r| match r {
-                Ok(_cost) => Ok(()),
-                Err(err) => Err(err.clone()),
-            })
-        ));
+        let (batch, lock_us) =
+            measure_us!(bank.prepare_sanitized_batch_with_results(txs, pre_results));
 
         // retryable_txs includes AccountInUse, WouldExceedMaxBlockCostLimit
         // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
@@ -484,8 +472,8 @@ impl Consumer {
     ) -> (Vec<Option<TransactionCost<'a, Tx>>>, Vec<RetryableIndex>) {
         let mut transaction_costs = Vec::with_capacity(processing_results.len());
         let mut retryable_transaction_indexes = Vec::with_capacity(processing_results.len());
-        let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut all_or_nothing_error = None;
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
 
         for (index, (tx, processing_result)) in transactions
             .iter()
@@ -665,7 +653,7 @@ mod tests {
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
-        solana_cost_model::cost_model::CostModel,
+        solana_cost_model::{cost_model::CostModel, cost_tracker::CostTrackerLimits},
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
@@ -1175,7 +1163,11 @@ mod tests {
         let block_limit = estimated_cost.saturating_mul(2);
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(block_limit, block_limit, u64::MAX);
+            .set_limits(CostTrackerLimits {
+                account_cost: block_limit,
+                block_cost: block_limit,
+                allocated_data_size: u64::MAX,
+            });
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -1276,7 +1268,11 @@ mod tests {
         let block_limit = estimated_cost.saturating_mul(2);
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(block_limit, block_limit, u64::MAX);
+            .set_limits(CostTrackerLimits {
+                account_cost: block_limit,
+                block_cost: block_limit,
+                allocated_data_size: u64::MAX,
+            });
 
         let process_transactions_batch_output = consumer
             .process_and_record_transactions_with_pre_results(
