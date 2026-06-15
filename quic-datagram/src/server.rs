@@ -2,11 +2,12 @@
 
 use {
     crate::{
-        ALLOWLIST_CHECK_INTERVAL, ALPENGLOW_ALPN, MAX_DATAGRAMS_PER_SECOND_PER_PEER,
-        MAX_INBOUND_CONNECTIONS_PER_PEER, PEER_RATE_LIMIT_BURST, PEER_RATE_LIMIT_BURST_DOS,
+        ALLOWLIST_CHECK_INTERVAL, ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL,
+        MAX_DATAGRAMS_PER_SECOND_PER_PEER, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
+        PEER_RATE_LIMIT_BURST, PEER_RATE_LIMIT_BURST_DOS,
         allowlist::Allowlist,
         close_codes,
-        endpoint::{Datagram, METRICS_INTERVAL},
+        endpoint::Datagram,
         error::Error,
         stats::{self, QuicDatagramStats, add, record_error},
         transport::{IdentitySnapshot, new_server_config},
@@ -31,9 +32,6 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-
-/// Interval of pruning for banlist entries that are no longer valid.
-const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
 
 /// State for one peer
 pub(crate) struct PeerEntry {

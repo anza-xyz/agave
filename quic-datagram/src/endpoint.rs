@@ -2,7 +2,7 @@
 use {
     crate::{
         ALPENGLOW_ALPN, EGRESS_CHANNEL_CAP, HANDSHAKE_GLOBAL_BURST, HANDSHAKE_GLOBAL_RATE,
-        MAX_PEERS,
+        MAX_ALPENGLOW_VOTE_ACCOUNTS,
         allowlist::Allowlist,
         client::{DialEvent, OutboundLoop},
         error::Error,
@@ -23,7 +23,6 @@ use {
         net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
         sync::Arc,
-        time::Duration,
     },
     tokio::{
         runtime::Handle,
@@ -49,10 +48,8 @@ impl NotifyKeyUpdate for KeyUpdater {
     }
 }
 
-pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(2);
-
 /// Capacity of the task -> control-loop connection-event channel.
-const CONN_EVENT_CHANNEL_CAP: usize = MAX_PEERS as usize;
+const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS as usize;
 
 /// Datagram envelope used on both directions of the endpoint.
 #[derive(Debug)]
@@ -122,7 +119,8 @@ impl QuicDatagramEndpoint {
             HANDSHAKE_GLOBAL_BURST,
             HANDSHAKE_GLOBAL_RATE,
         );
-        const LRU_SIZE: NonZeroUsize = NonZeroUsize::new(2 * MAX_PEERS as usize).unwrap();
+        const LRU_SIZE: NonZeroUsize =
+            NonZeroUsize::new(2 * MAX_ALPENGLOW_VOTE_ACCOUNTS as usize).unwrap();
         let outbound = OutboundLoop {
             endpoint: endpoint.clone(),
             local_pubkey,

@@ -19,7 +19,7 @@ use std::time::Duration;
 /// Maximum number of unique peer pubkeys we expect in steady state.
 /// Used to size buffers and channels, actual peer count is controlled
 /// by admission policy.
-pub const MAX_PEERS: u64 = 2000;
+pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: u64 = 2000;
 
 /// Maximum simultaneous inbound (we-accepted, receive-only) connections we keep
 /// from a single peer pubkey. Two is needed to let a hot-spare of the same
@@ -30,7 +30,7 @@ pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 ///
 /// Sized to absorb a full slot's burst with headroom - `MAX_PEERS` peers
 /// × ~4 messages/slot = ~8 K items.
-pub const EGRESS_CHANNEL_CAP: usize = 4 * MAX_PEERS as usize;
+pub const EGRESS_CHANNEL_CAP: usize = 4 * MAX_ALPENGLOW_VOTE_ACCOUNTS as usize;
 
 /// Per-peer receive-side rate limit.
 pub const MAX_DATAGRAMS_PER_SECOND_PER_PEER: f64 = 30.0;
@@ -52,6 +52,12 @@ pub const HANDSHAKE_GLOBAL_RATE: f64 = 800.0;
 /// How often each connection's read loop re-checks whether the peer is still
 /// in the allowlist and closes any remaining connections.
 pub const ALLOWLIST_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+
+/// How often expired banlist entries are pruned.
+pub(crate) const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
+
+/// How often endpoint metrics are reported.
+pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);
 
 /// ALPN protocol identifier for the Alpenglow votor datagram transport.
 pub const ALPENGLOW_ALPN: &[u8] = b"alpenglow-v1";

@@ -1,8 +1,8 @@
 //! Outbound (client) direction: we-dial, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, close_codes,
-        endpoint::{Datagram, METRICS_INTERVAL},
+        ALPENGLOW_ALPN, METRICS_INTERVAL, close_codes,
+        endpoint::Datagram,
         error::Error,
         stats::{self, QuicDatagramStats, add, record_error},
         transport::{IdentitySnapshot, new_client_config},
