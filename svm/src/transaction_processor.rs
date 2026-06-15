@@ -509,7 +509,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         measure_us!(filter_executable_program_accounts(
                             &account_loader,
                             &program_cache_for_tx_batch,
-                            tx,
+                            tx.account_keys().iter(),
                             config.check_program_deployment_slot,
                         ));
                     execute_timings.saturating_add_in_place(
