@@ -315,7 +315,7 @@ proptest = "1.11"
 prost = "0.14.4"
 prost-types = "0.14.4"
 protobuf-src = "1.1.0"
-protosol = "=9.0.1"
+protosol = "=9.1.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.11"
 rand = "0.9.4"
