@@ -688,13 +688,14 @@ mod tests {
             )))
             .unwrap();
 
-        let (m1_recv, m2_recv) = drain.join().expect("drain joined");
-        // Both messages were eventually delivered (no silent drop).
-        assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
-        assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
-        // pool_sent counts every message that made it onto the channel,
-        // whether via try_send or the blocking fallback.
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
+        let (_m1_recv, _m2_recv) = drain.join().expect("drain joined");
+        unimplemented!();
+        // // Both messages were eventually delivered (no silent drop).
+        // assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
+        // assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
+        // // pool_sent counts every message that made it onto the channel,
+        // // whether via try_send or the blocking fallback.
+        // assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
     }
 
     #[test]
@@ -902,19 +903,21 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
-        let mut found_msg = false;
-        match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                for vote in votes {
-                    if vote.vote == vote2 && vote.rank == invalid_rank {
-                        found_msg = true;
-                        break;
-                    }
-                }
-            }
-            rest => panic!("unexpected type: {rest:?}"),
-        }
-        assert!(!found_msg);
+        unimplemented!();
+
+        // let mut found_msg = false;
+        // match &batches[0] {
+        //     SigVerifiedBatch::Votes(votes) => {
+        //         for vote in votes {
+        //             if vote.vote == vote2 && vote.rank == invalid_rank {
+        //                 found_msg = true;
+        //                 break;
+        //             }
+        //         }
+        //     }
+        //     rest => panic!("unexpected type: {rest:?}"),
+        // }
+        // assert!(!found_msg);
     }
 
     #[test]
@@ -965,20 +968,22 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
-        // Ensure the message with the invalid rank is not in the sent messages.
-        let mut found_msg = false;
-        match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                for vote in votes {
-                    if vote.rank == invalid_rank {
-                        found_msg = true;
-                        break;
-                    }
-                }
-            }
-            rest => panic!("unexpected type: {rest:?}"),
-        }
-        assert!(!found_msg);
+        unimplemented!();
+
+        // // Ensure the message with the invalid rank is not in the sent messages.
+        // let mut found_msg = false;
+        // match &batches[0] {
+        //     SigVerifiedBatch::Votes(votes) => {
+        //         for vote in votes {
+        //             if vote.rank == invalid_rank {
+        //                 found_msg = true;
+        //                 break;
+        //             }
+        //         }
+        //     }
+        //     rest => panic!("unexpected type: {rest:?}"),
+        // }
+        // assert!(!found_msg);
     }
 
     #[test]
