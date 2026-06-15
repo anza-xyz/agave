@@ -67,6 +67,8 @@ pub enum Error {
     InvalidQuicSocket(Option<SocketAddr>, Option<SocketAddr>),
     #[error("IP addresses saturated")]
     IpAddrsSaturated,
+    #[error("IPv6 IP address: {0}")]
+    Ipv6IpAddr(IpAddr),
     #[error("Multicast IP address: {0}")]
     MulticastIpAddr(IpAddr),
     #[error("Port offsets overflow")]
@@ -83,7 +85,7 @@ pub enum Error {
     feature = "frozen-abi",
     derive(StableAbi),
     frozen_abi(
-        abi_digest = "Baf4fGA1YWMEjJTc96iNT4JJPkMKSXorR5LrtiCtnF1C",
+        abi_digest = "8uEsgsqpoykiQgP3Majk8kurCVNB3TESe9dejgDowub4",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire",
     )
@@ -441,13 +443,13 @@ impl ContactInfo {
     }
 
     /// port must not be 0
-    /// ip must be specified and not multicast
+    /// ip must be IPv4, specified, and not multicast
     pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
         addr.port() != 0u16 && Self::is_valid_ip(addr.ip()) && socket_addr_space.check(addr)
     }
 
     fn is_valid_ip(addr: IpAddr) -> bool {
-        !(addr.is_unspecified() || addr.is_multicast())
+        addr.is_ipv4() && !addr.is_unspecified() && !addr.is_multicast()
     }
 
     /// New random ContactInfo for tests and simulations.
@@ -646,6 +648,9 @@ pub(crate) fn sanitize_socket(socket: &SocketAddr) -> Result<(), Error> {
         return Err(Error::InvalidPort(socket.port()));
     }
     let addr = socket.ip();
+    if matches!(addr, IpAddr::V6(_)) {
+        return Err(Error::Ipv6IpAddr(addr));
+    }
     if addr.is_unspecified() {
         return Err(Error::UnspecifiedIpAddr(addr));
     }
@@ -661,6 +666,9 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
     {
         let mut seen = HashSet::with_capacity(addrs.len());
         for addr in addrs {
+            if matches!(addr, IpAddr::V6(_)) {
+                return Err(Error::Ipv6IpAddr(*addr));
+            }
             if !seen.insert(addr) {
                 return Err(Error::DuplicateIpAddr(*addr));
             }
@@ -807,14 +815,12 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
-            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)),
-            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 2)),
         ];
         let mut keys: Vec<u8> = (0u8..=u8::MAX).collect();
         keys.shuffle(&mut rng);
         // Duplicate IP addresses.
         {
-            let addrs = [addrs[0], addrs[1], addrs[2], addrs[0], addrs[3]];
+            let addrs = [addrs[0], addrs[1], addrs[2], addrs[0]];
             assert_matches!(
                 sanitize_entries(&addrs, /*sockets:*/ &[]),
                 Err(Error::DuplicateIpAddr(_))
@@ -848,7 +854,7 @@ mod tests {
         }
         // Unused IP address.
         {
-            let sockets: Vec<_> = (0..4u8)
+            let sockets: Vec<_> = (0..2u8)
                 .map(|key| SocketEntry {
                     key,
                     index: key,
@@ -889,6 +895,47 @@ mod tests {
     }
 
     #[test]
+    fn test_reject_ipv6_addresses() {
+        let addr = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1));
+        let socket = SocketAddr::new(addr, 8000);
+
+        assert_matches!(sanitize_socket(&socket), Err(Error::Ipv6IpAddr(a)) if a == addr);
+        assert!(!ContactInfo::is_valid_address(
+            &socket,
+            &SocketAddrSpace::Unspecified
+        ));
+
+        let mut node = ContactInfo::default();
+        assert_matches!(node.set_gossip(socket), Err(Error::Ipv6IpAddr(a)) if a == addr);
+
+        let addrs = [addr];
+        let sockets = [SocketEntry {
+            key: SOCKET_TAG_GOSSIP,
+            index: 0,
+            offset: 8000,
+        }];
+        assert_matches!(
+            sanitize_entries(&addrs, &sockets),
+            Err(Error::Ipv6IpAddr(a)) if a == addr
+        );
+
+        let node = ContactInfo {
+            pubkey: Pubkey::new_unique(),
+            wallclock: 0,
+            outset: 0,
+            shred_version: 0,
+            version: solana_version::Version::default(),
+            addrs: addrs.to_vec(),
+            sockets: sockets.to_vec(),
+            extensions: Vec::default(),
+            cache: EMPTY_SOCKET_ADDR_CACHE,
+        };
+        let bytes = bincode::serialize(&node).unwrap();
+        assert!(bincode::deserialize::<ContactInfo>(&bytes).is_err());
+        assert!(wincode::deserialize::<ContactInfo>(&bytes).is_err());
+    }
+
+    #[test]
     fn test_round_trip() {
         const KEYS: Range<u8> = 0u8..16u8;
         let mut rng = rand::rng();
@@ -897,10 +944,6 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(10, 0, 1, 2)),
             IpAddr::V4(Ipv4Addr::new(10, 0, 1, 3)),
             IpAddr::V4(Ipv4Addr::new(10, 0, 1, 4)),
-            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 1)),
-            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2)),
-            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 3)),
-            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 4)),
         ];
         let mut node = ContactInfo {
             pubkey: Pubkey::new_unique(),

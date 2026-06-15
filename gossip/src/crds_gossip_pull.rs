@@ -693,10 +693,7 @@ pub(crate) mod tests {
         solana_packet::PACKET_DATA_SIZE,
         solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
-        std::{
-            net::{IpAddr, Ipv6Addr},
-            time::Instant,
-        },
+        std::{net::Ipv4Addr, time::Instant},
         test_case::test_case,
     };
 
@@ -1389,15 +1386,14 @@ pub(crate) mod tests {
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = {
-            let addr = Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888);
-            let socket = SocketAddr::new(IpAddr::from(addr), 8053);
+            let socket = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 8053));
             let mut node = ContactInfo::new_with_socketaddr(&keypair.pubkey(), &socket);
             node.set_shred_version(rng.random());
             node
         };
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1165);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1175);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
     }
