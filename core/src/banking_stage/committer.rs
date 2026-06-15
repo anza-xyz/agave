@@ -78,9 +78,8 @@ impl Committer {
         let commit_transaction_statuses = commit_results
             .iter()
             .map(|commit_result| match commit_result {
-                // reports actual execution CUs, and actual loaded accounts size for
-                // transaction committed to block. qos_service uses these information to adjust
-                // reserved block space.
+                // Reports actual execution CUs and loaded accounts size for
+                // actual-cost tracking of transactions committed to the block.
                 Ok(committed_tx) => CommitTransactionDetails::Committed {
                     compute_units: committed_tx.executed_units,
                     loaded_accounts_data_size: committed_tx
