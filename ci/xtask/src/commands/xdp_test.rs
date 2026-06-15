@@ -12,7 +12,12 @@ use {
     },
 };
 
-const DEFAULT_TESTS: &[&str] = &["netlink_snapshot", "route_monitor", "transmitter_smoke"];
+const DEFAULT_TESTS: &[&str] = &[
+    "netlink_snapshot",
+    "route_monitor",
+    "router_snapshot",
+    "transmitter_smoke",
+];
 
 #[derive(Args)]
 pub struct CommandArgs {

@@ -42,6 +42,11 @@ path = "tests/route_monitor.rs"
 required-features = ["agave-unstable-api"]
 
 [[test]]
+name = "router_snapshot"
+path = "tests/router_snapshot.rs"
+required-features = ["agave-unstable-api"]
+
+[[test]]
 name = "transmitter_smoke"
 path = "tests/transmitter_smoke.rs"
 required-features = ["agave-unstable-api"]
