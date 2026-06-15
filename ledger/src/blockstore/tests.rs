@@ -24,7 +24,7 @@ use {
     solana_sha256_hasher::hash,
     solana_shred_version::version_from_hash,
     solana_signature::Signature,
-    solana_storage_proto::convert::generated,
+    solana_storage_proto::{StoredTransactionStatusMeta, convert::generated},
     solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
     solana_transaction_context::transaction::TransactionReturnData,
