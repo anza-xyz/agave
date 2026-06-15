@@ -18,6 +18,7 @@ The default suite currently runs:
 
 - `netlink_snapshot`
 - `route_monitor`
+- `transmitter_smoke`
 
 ## Test Topology
 
@@ -41,6 +42,24 @@ temporary test network namespace
   route example: 203.0.113.0/24 via 10.0.0.2 dev axdp0
 ```
 
+The copy-mode transmitter tests use the same primary veth pair. The transmitter binds AF_XDP TX to `axdp0`; the test binds a raw packet socket to `axdp1` and verifies the emitted Ethernet/IP/UDP frame:
+
+```text
+temporary test network namespace
+
+  XdpSender -> copy-mode AF_XDP TX socket
+        |
+        v
+  axdp0 10.0.0.1/24  02:aa:bb:cc:dd:01
+        |
+        | veth peer
+        |
+  axdp1 10.0.0.2/24  02:aa:bb:cc:dd:02
+        ^
+        |
+  raw packet receiver
+```
+
 ## Individual Tests
 
 Use the single-test command form above with these test binaries and names:
@@ -51,6 +70,7 @@ Use the single-test command form above with these test binaries and names:
 | `route_monitor` | `route_monitor_publishes_live_route_updates` |
 | `route_monitor` | `route_monitor_publishes_live_neighbor_updates` |
 | `route_monitor` | `route_monitor_publishes_link_removals` |
+| `transmitter_smoke` | `transmitter_sends_udp_payload_over_veth_in_copy_mode` |
 
 ## Test Coverage
 
@@ -63,3 +83,7 @@ Use the single-test command form above with these test binaries and names:
 - `route_monitor_publishes_live_route_updates`: verifies the route monitor publishes an added route with the expected next hop and later removes it after the route is deleted.
 - `route_monitor_publishes_live_neighbor_updates`: verifies the route monitor publishes initial, replaced, and removed neighbor state for an existing route.
 - `route_monitor_publishes_link_removals`: verifies deleting a link removes the route that depended on that link from the published router.
+
+`transmitter_smoke`:
+
+- `transmitter_sends_udp_payload_over_veth_in_copy_mode`: builds the copy-mode transmitter, sends a UDP payload through `XdpSender`, and verifies the raw Ethernet/IP/UDP frame received on the peer veth.
