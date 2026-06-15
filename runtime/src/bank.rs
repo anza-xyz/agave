@@ -1567,7 +1567,7 @@ impl Bank {
                 .checked_div(2)
                 .unwrap();
 
-        let program_cache = self
+        let program_cache_guard = self
             .transaction_processor
             .global_program_cache
             .read()
@@ -1597,7 +1597,7 @@ impl Bank {
                     None
                 } else {
                     // Figure out if the program was already loaded in the meantime an can be skipped.
-                    program_cache.extract(
+                    program_cache_guard.extract(
                         &mut missing_programs,
                         &mut program_cache_for_tx_batch,
                         &upcoming_environment,
@@ -1605,8 +1605,8 @@ impl Bank {
                         false, // count_hits_and_misses
                     )
                 };
-                // Unlock the global cache again.
-                drop(program_cache);
+                // Unlock again because load_program_with_pubkey() might take a while.
+                drop(program_cache_guard);
                 if let Some(key) = program_to_load {
                     // Load, verify and compile one program.
                     let (recompiled, last_modification_slot) = load_program_with_pubkey(
@@ -1618,21 +1618,20 @@ impl Bank {
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
                     recompiled.stats.merge_from(&program_to_recompile.stats);
-                    // Lock the global cache.
-                    let mut program_cache = self
+                    // Lock the global cache as writable this time.
+                    let mut program_cache_guard = self
                         .transaction_processor
                         .global_program_cache
                         .write()
                         .unwrap();
                     // Submit our last completed loading task.
-                    program_cache.finish_cooperative_loading_task(
+                    program_cache_guard.finish_cooperative_loading_task(
                         &upcoming_environment,
                         self.slot,
                         key,
                         last_modification_slot,
                         recompiled,
                     );
-                    // Unlock the global cache again.
                 }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
@@ -1647,7 +1646,7 @@ impl Bank {
             let changed_program_runtime_environment = *upcoming_environment != *new_environment;
             if changed_program_runtime_environment {
                 upcoming_environment = new_environment;
-                epoch_boundary_preparation.programs_to_recompile = program_cache
+                epoch_boundary_preparation.programs_to_recompile = program_cache_guard
                     .get_flattened_entries()
                     .into_iter()
                     .map(|(id, _last_modification_slot, entry)| (id, entry))
