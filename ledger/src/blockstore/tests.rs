@@ -30,7 +30,7 @@ use {
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
-        InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
+        InnerInstruction, InnerInstructions, Reward, TransactionTokenBalance,
     },
     std::{cmp::Ordering, num::NonZeroUsize, time::Duration},
     test_case::{test_case, test_matrix},
@@ -5293,46 +5293,6 @@ fn test_update_completed_data_indexes_out_of_order() {
             .eq([0..1, 1..2])
     );
     assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
-}
-
-#[test]
-fn test_rewards_protobuf_backward_compatibility() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-    let rewards: Rewards = (0..100)
-        .map(|i| Reward {
-            pubkey: solana_pubkey::new_rand().to_string(),
-            lamports: 42 + i,
-            post_balance: u64::MAX,
-            reward_type: Some(RewardType::Fee),
-            commission: None,
-            commission_bps: None,
-        })
-        .collect();
-    let protobuf_rewards: generated::Rewards = rewards.into();
-
-    let deprecated_rewards: StoredExtendedRewards = protobuf_rewards.clone().into();
-    for slot in 0..2 {
-        let data = bincode::serialize(&deprecated_rewards).unwrap();
-        blockstore.rewards_cf.put_bytes(slot, &data).unwrap();
-    }
-    for slot in 2..4 {
-        blockstore
-            .rewards_cf
-            .put_protobuf(slot, &protobuf_rewards)
-            .unwrap();
-    }
-    for slot in 0..4 {
-        assert_eq!(
-            blockstore
-                .rewards_cf
-                .get_protobuf_or_wincode::<StoredExtendedRewards>(slot)
-                .unwrap()
-                .unwrap(),
-            protobuf_rewards
-        );
-    }
 }
 
 // This test is probably superfluous, since it is highly unlikely that bincode-format

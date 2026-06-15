@@ -54,14 +54,13 @@ use {
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_storage_proto::StoredExtendedRewards,
     solana_time_utils::timestamp,
     solana_transaction::{
         TransactionVerificationMode,
         versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_status::{
-        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
+        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
         VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
@@ -4170,11 +4169,15 @@ impl Blockstore {
         }
         let previous_blockhash = previous_blockhash.unwrap_or_else(Hash::default);
 
-        let (rewards, num_partitions) = self
-            .rewards_cf
-            .get_protobuf_or_wincode::<StoredExtendedRewards>(slot)?
-            .unwrap_or_default()
-            .into();
+        let RewardsAndNumPartitions {
+            rewards,
+            num_partitions,
+        } = self
+            .read_rewards(slot)?
+            .unwrap_or_else(|| RewardsAndNumPartitions {
+                rewards: Vec::new(),
+                num_partitions: None,
+            });
 
         // The Blocktime and BlockHeight column families are updated asynchronously; they
         // may not be written by the time the complete slot entries are available. In this
@@ -4721,9 +4724,9 @@ impl Blockstore {
         })
     }
 
-    pub fn read_rewards(&self, index: Slot) -> Result<Option<Rewards>> {
+    fn read_rewards(&self, slot: Slot) -> Result<Option<RewardsAndNumPartitions>> {
         self.rewards_cf
-            .get_protobuf_or_wincode::<Rewards>(index)
+            .get_protobuf(slot)
             .map(|result| result.map(|option| option.into()))
     }
 

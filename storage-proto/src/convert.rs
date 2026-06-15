@@ -78,14 +78,14 @@ impl From<generated::Rewards> for Vec<Reward> {
     }
 }
 
-impl From<generated::Rewards> for (Vec<Reward>, Option<u64>) {
+impl From<generated::Rewards> for RewardsAndNumPartitions {
     fn from(rewards: generated::Rewards) -> Self {
-        (
-            rewards.rewards.into_iter().map(|r| r.into()).collect(),
-            rewards
+        Self {
+            rewards: rewards.rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: rewards
                 .num_partitions
                 .map(|generated::NumPartitions { num_partitions }| num_partitions),
-        )
+        }
     }
 }
 
