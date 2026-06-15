@@ -8511,6 +8511,7 @@ name = "solana-svm"
 version = "4.3.0-alpha.1"
 dependencies = [
  "ahash 0.8.12",
+ "bincode",
  "log",
  "percentage",
  "qualifier_attr",

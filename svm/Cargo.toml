@@ -36,6 +36,7 @@ conformance = [
     "solana-pubkey/default",
 ]
 dev-context-only-utils = [
+    "dep:bincode",
     "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",
