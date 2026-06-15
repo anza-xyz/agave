@@ -52,7 +52,7 @@ pub(crate) const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 /// QUIC keep-alive heartbeat. Must be << `MAX_IDLE_TIMEOUT` to avoid
 /// connections dying when no vote traffic is available, and > MAX_ACK_DELAY
 /// to make sure we actually get ACKs for every keepalive we send.
-const KEEP_ALIVE_INTERVAL: Duration = Duration::from_millis(600);
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// `max_ack_delay` we request the peer to use via the QUIC ACK Frequency
 /// extension (RFC 9799). Loosens the peer's ACK cadence to cut
 /// reverse-direction packet rate. Set this ~ 1 slot to avoid ACKs during
