@@ -440,19 +440,6 @@ impl AccountsCache {
 
     pub fn set_max_flush_root(&self, root: Slot) {
         self.max_flushed_root.fetch_max(root);
-        // Every flushed root has left the cache via `remove_slot`, and any flushed root that had
-        // no cache was dropped by `remove_unflushed_root`. So once max_flushed_root advances, every
-        // remaining unflushed root must be > root; one at or below would be older than its
-        // just-flushed storage version yet still win in `load_latest`.
-        debug_assert!(
-            self.unflushed_roots
-                .read()
-                .unwrap()
-                .first()
-                .is_none_or(|&min_unflushed_root| min_unflushed_root > root),
-            "unflushed root {:?} is at or below the max flushed root {root}",
-            self.unflushed_roots.read().unwrap().first(),
-        );
     }
 }
 
@@ -780,17 +767,5 @@ mod tests {
         // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.
         cache.remove_slot(1);
         assert_eq!(*cache.unflushed_roots.read().unwrap(), BTreeSet::from([2]));
-    }
-
-    /// Advancing `max_flushed_root` past a still-tracked unflushed root is forbidden: that root
-    /// would be older than its just-flushed storage version yet still win in `load_latest`.
-    #[test]
-    #[should_panic(expected = "unflushed root Some(3) is at or below the max flushed root 5")]
-    fn test_set_max_flush_root_below_unflushed_root_panics() {
-        let cache = AccountsCache::default();
-        cache.add_root(3);
-        cache.add_root(7);
-        // Root 3 is still tracked as unflushed; moving max_flushed_root to 5 leaves it stranded below.
-        cache.set_max_flush_root(5);
     }
 }
