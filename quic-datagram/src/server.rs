@@ -184,6 +184,10 @@ pub(crate) async fn read_datagram_loop(
                     stats.connection_evicted_allowlist.fetch_add(1, Ordering::Relaxed);
                     break;
                 }
+                if banlist.is_banned(&peer) {
+                    close_codes::BANNED.close(&connection);
+                    break;
+                }
             }
         }
     }
