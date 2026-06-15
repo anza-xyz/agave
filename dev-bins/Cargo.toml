@@ -56,7 +56,7 @@ jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
 log = "0.4.28"
 num_cpus = "1.17.0"
 pretty-hex = "0.4.2"
-prost = "0.14.3"
+prost = "0.14.4"
 prost-build = "0.14.3"
 protosol = "2.0.0"
 rand = "0.9.4"
