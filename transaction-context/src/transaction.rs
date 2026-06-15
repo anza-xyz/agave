@@ -19,6 +19,10 @@ use {
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion, VmExposable},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
+use {
+    crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
+    solana_pubkey::Pubkey,
+};
 
 use {
     crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccount,
@@ -1649,7 +1653,8 @@ mod tests {
             transaction_frame: TransactionFrame {
                 return_data_pubkey: Pubkey::default(),
                 return_data_scratchpad: VmSlice::new(0, 0),
-                cpi_scratchpad: VmSlice::new(0, 0),
+                cpi_data_scratchpad: VmSlice::new(0, 0),
+                cpi_accounts_scratchpad: VmSlice::new(0, 0),
                 current_executing_instruction: 0,
                 total_number_of_instructions_in_trace: 0,
                 number_of_cpis_in_trace: 0,
@@ -1727,7 +1732,8 @@ mod tests {
             transaction_frame: TransactionFrame {
                 return_data_pubkey: Pubkey::default(),
                 return_data_scratchpad: VmSlice::new(0, 0),
-                cpi_scratchpad: VmSlice::new(0, 0),
+                cpi_data_scratchpad: VmSlice::new(0, 0),
+                cpi_accounts_scratchpad: VmSlice::new(0, 0),
                 current_executing_instruction: 0,
                 total_number_of_instructions_in_trace: 0,
                 number_of_cpis_in_trace: 0,

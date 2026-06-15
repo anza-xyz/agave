@@ -10,8 +10,9 @@ use {
         transaction::TransactionFrame,
         transaction_accounts::AccountSharedFields,
         vm_addresses::{
-            ACCOUNT_METADATA_AREA, GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE,
-            INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD, TRANSACTION_FRAME_ADDRESS,
+            ACCOUNT_METADATA_AREA, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, INSTRUCTION_TRACE_AREA,
+            RETURN_DATA_SCRATCHPAD, TRANSACTION_FRAME_ADDRESS,
         },
     },
 };
@@ -140,12 +141,19 @@ unsafe fn test_valid_accesses(
     assert_eq!(tx_frame.number_of_cpis_in_trace, 0);
     assert_eq!(tx_frame.number_of_transaction_accounts, 7);
     assert_eq!(
-        tx_frame.cpi_scratchpad.ptr(),
+        tx_frame.cpi_data_scratchpad.ptr(),
         GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
             GUEST_REGION_SIZE.saturating_mul(tx_frame.total_number_of_instructions_in_trace as u64)
         )
     );
-    assert_eq!(tx_frame.cpi_scratchpad.len(), 0);
+    assert_eq!(tx_frame.cpi_data_scratchpad.len(), 0);
+    assert_eq!(
+        tx_frame.cpi_accounts_scratchpad.ptr(),
+        GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(
+            GUEST_REGION_SIZE.saturating_mul(tx_frame.total_number_of_instructions_in_trace as u64)
+        )
+    );
+    assert_eq!(tx_frame.cpi_accounts_scratchpad.len(), 0);
 
     assert_eq!(current_ix.nesting_level, 0);
     assert_eq!(current_ix.index_of_caller_instruction, u16::MAX);
