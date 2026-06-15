@@ -12,7 +12,6 @@ use {
     assert_matches::assert_matches,
     crossbeam_channel::unbounded,
     rand::{rng, seq::SliceRandom},
-    solana_account_decoder::parse_token::UiTokenAmount,
     solana_entry::entry::next_entry_mut,
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
@@ -20,18 +19,15 @@ use {
     solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::{Bank, RewardType},
+    solana_runtime::bank::Bank,
     solana_sha256_hasher::hash,
     solana_shred_version::version_from_hash,
     solana_signature::Signature,
-    solana_storage_proto::{StoredTransactionStatusMeta, convert::generated},
     solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    solana_transaction_status::{
-        InnerInstruction, InnerInstructions, Reward, TransactionTokenBalance,
-    },
+    solana_transaction_status::{InnerInstruction, InnerInstructions},
     std::{cmp::Ordering, num::NonZeroUsize, time::Duration},
     test_case::{test_case, test_matrix},
 };
@@ -5293,93 +5289,6 @@ fn test_update_completed_data_indexes_out_of_order() {
             .eq([0..1, 1..2])
     );
     assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
-}
-
-// This test is probably superfluous, since it is highly unlikely that bincode-format
-// TransactionStatus entries exist in any current ledger. They certainly exist in historical
-// ledger archives, but typically those require contemporaraneous software for other reasons.
-// However, we are persisting the test since the apis still exist in `blockstore_db`.
-#[test]
-fn test_transaction_status_protobuf_backward_compatibility() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-    let status = TransactionStatusMeta {
-        status: Ok(()),
-        fee: 42,
-        pre_balances: vec![1, 2, 3],
-        post_balances: vec![1, 2, 3],
-        inner_instructions: Some(vec![]),
-        log_messages: Some(vec![]),
-        pre_token_balances: Some(vec![TransactionTokenBalance {
-            account_index: 0,
-            mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: UiTokenAmount {
-                ui_amount: Some(1.1),
-                decimals: 1,
-                amount: "11".to_string(),
-                ui_amount_string: "1.1".to_string(),
-            },
-            owner: Pubkey::new_unique().to_string(),
-            program_id: Pubkey::new_unique().to_string(),
-        }]),
-        post_token_balances: Some(vec![TransactionTokenBalance {
-            account_index: 0,
-            mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: UiTokenAmount {
-                ui_amount: None,
-                decimals: 1,
-                amount: "11".to_string(),
-                ui_amount_string: "1.1".to_string(),
-            },
-            owner: Pubkey::new_unique().to_string(),
-            program_id: Pubkey::new_unique().to_string(),
-        }]),
-        rewards: Some(vec![Reward {
-            pubkey: "My11111111111111111111111111111111111111111".to_string(),
-            lamports: -42,
-            post_balance: 42,
-            reward_type: Some(RewardType::Rent),
-            commission: None,
-            commission_bps: None,
-        }]),
-        loaded_addresses: LoadedAddresses::default(),
-        return_data: Some(TransactionReturnData {
-            program_id: Pubkey::new_unique(),
-            data: vec![1, 2, 3],
-        }),
-        compute_units_consumed: Some(23456),
-        cost_units: Some(5678),
-    };
-    let deprecated_status: StoredTransactionStatusMeta = status.clone().try_into().unwrap();
-    let protobuf_status: generated::TransactionStatusMeta = status.into();
-
-    for slot in 0..2 {
-        let data = bincode::serialize(&deprecated_status).unwrap();
-        blockstore
-            .transaction_status_cf
-            .put_bytes((Signature::default(), slot), &data)
-            .unwrap();
-    }
-    for slot in 2..4 {
-        blockstore
-            .transaction_status_cf
-            .put_protobuf((Signature::default(), slot), &protobuf_status)
-            .unwrap();
-    }
-    for slot in 0..4 {
-        assert_eq!(
-            blockstore
-                .transaction_status_cf
-                .get_protobuf_or_wincode::<StoredTransactionStatusMeta>((
-                    Signature::default(),
-                    slot
-                ))
-                .unwrap()
-                .unwrap(),
-            protobuf_status
-        );
-    }
 }
 
 fn make_large_tx_entry(num_txs: usize) -> Entry {

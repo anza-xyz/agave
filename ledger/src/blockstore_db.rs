@@ -40,9 +40,8 @@ use {
         },
     },
     wincode::{
-        SchemaRead, SchemaReadOwned,
+        SchemaRead,
         config::{ConfigCore, DefaultConfig},
-        deserialize,
     },
 };
 
@@ -953,47 +952,6 @@ impl<C> LedgerColumn<C>
 where
     C: ProtobufColumn + ColumnName,
 {
-    pub fn get_protobuf_or_wincode<
-        T: SchemaReadOwned<wincode::config::DefaultConfig, Dst = T> + Into<C::Type>,
-    >(
-        &self,
-        index: C::Index,
-    ) -> Result<Option<C::Type>> {
-        let key = <C as Column>::key(&index);
-        self.get_raw_protobuf_or_wincode::<T>(key)
-    }
-
-    pub(crate) fn get_raw_protobuf_or_wincode<
-        T: SchemaReadOwned<wincode::config::DefaultConfig, Dst = T> + Into<C::Type>,
-    >(
-        &self,
-        key: impl AsRef<[u8]>,
-    ) -> Result<Option<C::Type>> {
-        let is_perf_enabled = maybe_enable_rocksdb_perf(
-            self.column_options.rocks_perf_sample_interval,
-            &self.read_perf_status,
-        );
-        let result = self.backend.get_pinned_cf(self.handle(), key);
-        if let Some(op_start_instant) = is_perf_enabled {
-            report_rocksdb_read_perf(
-                C::NAME,
-                PERF_METRIC_OP_NAME_GET,
-                &op_start_instant.elapsed(),
-                &self.column_options,
-            );
-        }
-
-        if let Some(pinnable_slice) = result? {
-            let value = match C::Type::decode(pinnable_slice.as_ref()) {
-                Ok(value) => value,
-                Err(_) => deserialize::<T>(pinnable_slice.as_ref())?.into(),
-            };
-            Ok(Some(value))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn get_protobuf(&self, index: C::Index) -> Result<Option<C::Type>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
