@@ -391,6 +391,7 @@ dependencies = [
  "agave-xdp",
  "assert_cmd",
  "assert_matches",
+ "bytesize",
  "caps",
  "chrono",
  "clap 2.33.3",
@@ -1677,6 +1678,12 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "bytesize"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49e78e506b9d7633710dab98996f22f95f3d0f488e8f1aa162830556ed9fc14d"
 
 [[package]]
 name = "bzip2"

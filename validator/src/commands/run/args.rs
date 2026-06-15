@@ -1001,7 +1001,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long_help(
                 "How large the read cache for account data can become, in bytes. The values will \
                  be the low and high watermarks for the cache. When the cache exceeds the high \
-                 watermark, entries will be evicted until the size reaches the low watermark.",
+                 watermark, entries will be evicted until the size reaches the low watermark. \
+                 Accepts SI and IEC prefixes, e.g. 8.1GB,8.3GiB.",
             )
             .hidden(hidden_unless_forced()),
     )

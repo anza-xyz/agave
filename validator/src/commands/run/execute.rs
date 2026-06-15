@@ -12,6 +12,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
+    bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
@@ -660,15 +661,21 @@ pub fn execute(
     const MB: usize = 1_024 * 1_024;
 
     let read_cache_limit_bytes =
-        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
-            match limits.len() {
-                2 => (limits[0], limits[1]),
+        if let Some(limits) = values_of::<ByteSize>(matches, "accounts_db_read_cache_limit") {
+            match limits.as_slice() {
+                [lo, hi] => {
+                    let lo = usize::try_from(lo.0)?;
+                    let hi = usize::try_from(hi.0)?;
+                    Some((lo, hi))
+                }
                 _ => {
                     // clap will enforce two values are given
                     unreachable!("invalid number of values given to accounts-db-read-cache-limit")
                 }
             }
-        });
+        } else {
+            None
+        };
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
