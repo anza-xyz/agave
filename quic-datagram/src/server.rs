@@ -314,13 +314,14 @@ impl InboundLoop {
                     let ip = incoming.remote_address().ip();
                     if !ip.is_loopback() && self.handshake_global_limiter.consume_tokens(1).is_err() {
                         add(&self.stats.handshake_rejected_global_limit);
+                        // us_to_have_tokens always succeeds, but we do not want
+                        // panicking code here. Adding some min sleep to ensure
+                        // we do not spin here.
                         let wait_us = self.handshake_global_limiter
-                            .us_to_have_tokens(1)
-                            .expect("requested amount is < bucket capacity");
-                        let now = Instant::now();
+                            .us_to_have_tokens(1).unwrap_or(0).clamp(100, 100_000);
                         accept_gate
                             .as_mut()
-                            .reset(now.checked_add( Duration::from_micros(wait_us.max(1))).unwrap_or(now));
+                            .reset(Instant::now().checked_add(Duration::from_micros(wait_us)).expect("Inputs should be bounded") );
                         accept_allowed = true;
                         incoming.ignore();
                     } else {
