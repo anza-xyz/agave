@@ -23,6 +23,8 @@ jobs:
   draft-release:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Create Release
         uses: actions/github-script@v8

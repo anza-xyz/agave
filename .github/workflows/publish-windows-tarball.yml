@@ -97,6 +97,8 @@ jobs:
     if: ${{ needs.windows-build.outputs.tag != '' }}
     needs: [windows-build]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - name: Download
         uses: actions/download-artifact@v7
