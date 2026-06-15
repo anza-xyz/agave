@@ -13,8 +13,6 @@ publish = false
 [lib]
 
 [features]
-# Exposes allowlist::AllowAll and other test-only helpers. Production binaries
-# must NOT enable this feature.
 dev-context-only-utils = []
 agave-unstable-api = []
 
