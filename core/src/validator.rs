@@ -1334,8 +1334,12 @@ impl Validator {
                 } else {
                     let (completed_data_sets_sender, completed_data_sets_receiver) =
                         bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
+                    let (completed_data_sets_update_parent_sender, update_parent_receiver) =
+                        bounded(MAX_UPDATE_PARENT_SIGNALS);
+                    blockstore.add_update_parent_signal(completed_data_sets_update_parent_sender);
                     let completed_data_sets_service = CompletedDataSetsService::new(
                         completed_data_sets_receiver,
+                        update_parent_receiver,
                         blockstore.clone(),
                         rpc_subscriptions.clone(),
                         deshred_transaction_notifier.clone(),

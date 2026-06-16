@@ -1,5 +1,6 @@
 use {
-    solana_clock::UnixTimestamp, solana_runtime::bank::KeyedRewardsAndNumPartitions, std::sync::Arc,
+    solana_clock::UnixTimestamp, solana_ledger::blockstore::UpdateParentSignal,
+    solana_runtime::bank::KeyedRewardsAndNumPartitions, std::sync::Arc,
 };
 
 /// Interface for notifying block metadata changes
@@ -19,6 +20,10 @@ pub trait BlockMetadataNotifier {
         entry_count: u64,
         commission_rate_in_basis_points: bool,
     );
+
+    /// Notify plugins that an Alpenglow UpdateParent marker invalidated
+    /// same-slot block metadata emitted before the marker boundary.
+    fn notify_update_parent(&self, _update_parent: &UpdateParentSignal) {}
 }
 
 pub type BlockMetadataNotifierArc = Arc<dyn BlockMetadataNotifier + Sync + Send>;

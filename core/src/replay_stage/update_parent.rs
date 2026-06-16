@@ -15,10 +15,12 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
+    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_ledger::{
         blockstore::{Blockstore, UpdateParentReceiver, UpdateParentSignal},
         blockstore_meta::SlotMeta,
         blockstore_processor::{AsyncVerificationProgress, TransactionStatusSender},
+        entry_notifier_service::{EntryNotification, EntryNotifierSender},
     },
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
@@ -193,6 +195,8 @@ pub(super) struct UpdateParentNotificationSenders<'a> {
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
+    entry_notification_sender: Option<&'a EntryNotifierSender>,
+    block_metadata_notifier: Option<&'a BlockMetadataNotifierArc>,
 }
 
 impl<'a> UpdateParentNotificationSenders<'a> {
@@ -201,12 +205,16 @@ impl<'a> UpdateParentNotificationSenders<'a> {
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         transaction_status_sender: Option<&'a TransactionStatusSender>,
+        entry_notification_sender: Option<&'a EntryNotifierSender>,
+        block_metadata_notifier: Option<&'a BlockMetadataNotifierArc>,
     ) -> Self {
         Self {
             replay_vote_sender,
             rpc_subscriptions,
             slot_status_notifier,
             transaction_status_sender,
+            entry_notification_sender,
+            block_metadata_notifier,
         }
     }
 
@@ -226,6 +234,19 @@ impl<'a> UpdateParentNotificationSenders<'a> {
     fn notify_read_layer_consumers(&self, update_parent: &UpdateParentSignal) {
         if let Some(transaction_status_sender) = self.transaction_status_sender {
             transaction_status_sender.send_update_parent(update_parent.clone());
+        }
+        if let Some(entry_notification_sender) = self.entry_notification_sender {
+            if let Err(err) = entry_notification_sender
+                .send(EntryNotification::UpdateParent(update_parent.clone()))
+            {
+                warn!(
+                    "Slot {} update_parent entry_notification_sender send failed: {err:?}",
+                    update_parent.slot
+                );
+            }
+        }
+        if let Some(block_metadata_notifier) = self.block_metadata_notifier {
+            block_metadata_notifier.notify_update_parent(update_parent);
         }
         datapoint_info!(
             "replay-stage-update-parent-read-layer-invalidation",
@@ -429,6 +450,18 @@ pub(super) fn handle_abandoned_bank(
             &mut dead_slot_context,
         );
         return;
+    }
+
+    if let Some(block_metadata_notifier) = process_active_banks_context
+        .block_metadata_notifier
+        .as_ref()
+    {
+        if let Some(update_parent) = update_parent_signal_from_blockstore(
+            process_active_banks_context.blockstore.as_ref(),
+            bank_slot,
+        ) {
+            block_metadata_notifier.notify_update_parent(&update_parent);
+        }
     }
 
     send_invalid_bank(bank, &process_active_banks_context.replay_vote_sender);

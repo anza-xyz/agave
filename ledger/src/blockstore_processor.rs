@@ -29,7 +29,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::{measure::Measure, measure_us},
-    solana_metrics::datapoint_error,
+    solana_metrics::{datapoint_error, datapoint_info},
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
@@ -1901,9 +1901,10 @@ fn confirm_slot_with_components(
                                 completed_range.start,
                                 update_parent,
                             );
-                            send_update_parent_transaction_status_notification(
+                            send_update_parent_read_layer_notifications(
                                 &update_parent,
                                 transaction_status_sender,
+                                entry_notification_sender,
                             );
                         }
                         return Err(err.into());
@@ -1964,7 +1965,7 @@ fn confirm_slot_entries(
         .map(|(i, entry)| {
             if let Some(entry_notification_sender) = entry_notification_sender {
                 let entry_index = progress.num_entries.saturating_add(i);
-                if let Err(err) = entry_notification_sender.send(EntryNotification {
+                if let Err(err) = entry_notification_sender.send(EntryNotification::Entry {
                     slot,
                     index: entry_index,
                     entry: entry.into(),
@@ -2910,12 +2911,27 @@ fn update_parent_signal_from_marker(
     }
 }
 
-fn send_update_parent_transaction_status_notification(
+fn send_update_parent_read_layer_notifications(
     update_parent: &UpdateParentSignal,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender.send_update_parent(update_parent.clone());
+    }
+    if let Some(entry_notification_sender) = entry_notification_sender {
+        if let Err(err) =
+            entry_notification_sender.send(EntryNotification::UpdateParent(update_parent.clone()))
+        {
+            warn!(
+                "Slot {} update_parent entry_notification_sender send failed: {err:?}",
+                update_parent.slot
+            );
+            datapoint_info!(
+                "blockstore_processor-update-parent-entry-notification-send-failed",
+                ("slot", update_parent.slot, i64),
+            );
+        }
     }
 }
 

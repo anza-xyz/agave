@@ -11,7 +11,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_entry::entry::Entry,
     solana_ledger::{
-        blockstore::{Blockstore, CompletedDataSetInfo},
+        blockstore::{Blockstore, CompletedDataSetInfo, UpdateParentReceiver},
         deshred_transaction_notifier_interface::{
             DeshredTransactionNotifier, DeshredTransactionNotifierArc,
         },
@@ -103,6 +103,7 @@ pub struct CompletedDataSetsService {
 impl CompletedDataSetsService {
     pub fn new(
         completed_sets_receiver: CompletedDataSetsReceiver,
+        update_parent_receiver: UpdateParentReceiver,
         blockstore: Arc<Blockstore>,
         rpc_subscriptions: Arc<RpcSubscriptions>,
         deshred_transaction_notifier: Option<DeshredTransactionNotifierArc>,
@@ -120,6 +121,7 @@ impl CompletedDataSetsService {
                     }
                     if let Err(RecvTimeoutError::Disconnected) = Self::recv_completed_data_sets(
                         &completed_sets_receiver,
+                        &update_parent_receiver,
                         &blockstore,
                         &rpc_subscriptions,
                         &deshred_transaction_notifier,
@@ -137,6 +139,7 @@ impl CompletedDataSetsService {
 
     fn recv_completed_data_sets(
         completed_sets_receiver: &CompletedDataSetsReceiver,
+        update_parent_receiver: &UpdateParentReceiver,
         blockstore: &Blockstore,
         rpc_subscriptions: &RpcSubscriptions,
         deshred_transaction_notifier: &Option<DeshredTransactionNotifierArc>,
@@ -144,6 +147,10 @@ impl CompletedDataSetsService {
         bank_forks: &RwLock<BankForks>,
     ) -> Result<(), RecvTimeoutError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+        Self::notify_update_parent_signals(
+            update_parent_receiver,
+            deshred_transaction_notifier.as_deref(),
+        );
         let first_completed_data_sets = completed_sets_receiver.recv_timeout(RECV_TIMEOUT)?;
         let root_bank = deshred_transaction_notifier
             .as_ref()
@@ -209,7 +216,30 @@ impl CompletedDataSetsService {
             );
         }
 
+        Self::notify_update_parent_signals(
+            update_parent_receiver,
+            deshred_transaction_notifier.as_deref(),
+        );
         Ok(())
+    }
+
+    fn notify_update_parent_signals(
+        update_parent_receiver: &UpdateParentReceiver,
+        deshred_transaction_notifier: Option<&(dyn DeshredTransactionNotifier + Send + Sync)>,
+    ) {
+        let mut update_parent_count = 0;
+        for update_parent in update_parent_receiver.try_iter() {
+            if let Some(notifier) = deshred_transaction_notifier {
+                notifier.notify_update_parent(&update_parent);
+            }
+            update_parent_count += 1;
+        }
+        if update_parent_count > 0 {
+            datapoint_info!(
+                "completed_data_sets-update-parent",
+                ("update_parent_count", update_parent_count, i64),
+            );
+        }
     }
 
     fn notify_deshred_transactions_for_completed_data_set(
@@ -300,7 +330,9 @@ pub mod test {
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore, blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
+            blockstore,
+            blockstore::{Blockstore, UpdateParentSignal},
+            get_tmp_ledger_path_auto_delete,
             shred::max_ticks_per_n_shreds,
         },
         solana_message::{
@@ -337,6 +369,7 @@ pub mod test {
     #[derive(Default)]
     struct TestDeshredTransactionNotifier {
         notifications: Mutex<Vec<DeshredNotification>>,
+        update_parents: Mutex<Vec<UpdateParentSignal>>,
     }
 
     impl DeshredTransactionNotifier for TestDeshredTransactionNotifier {
@@ -366,6 +399,13 @@ pub mod test {
 
         fn alt_resolution_enabled(&self) -> bool {
             false
+        }
+
+        fn notify_update_parent(&self, update_parent: &UpdateParentSignal) {
+            self.update_parents
+                .lock()
+                .unwrap()
+                .push(update_parent.clone());
         }
     }
 
@@ -409,6 +449,27 @@ pub mod test {
         ];
         let signatures = CompletedDataSetsService::get_transaction_signatures(entries);
         assert_eq!(signatures.len(), 3);
+    }
+
+    #[test]
+    fn test_notify_update_parent_signals() {
+        let notifier = TestDeshredTransactionNotifier::default();
+        let (sender, receiver) = bounded(1);
+        let update_parent = UpdateParentSignal {
+            slot: 42,
+            update_parent_fec_set_index: 8,
+            parent_slot: 7,
+            parent_block_id: Some(Hash::new_unique()),
+        };
+        sender.send(update_parent.clone()).unwrap();
+
+        CompletedDataSetsService::notify_update_parent_signals(&receiver, Some(&notifier));
+
+        assert_eq!(
+            *notifier.update_parents.lock().unwrap(),
+            vec![update_parent]
+        );
+        assert!(receiver.try_recv().is_err());
     }
 
     #[test]
@@ -541,6 +602,7 @@ pub mod test {
         let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
         let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
         let (sender, receiver) = bounded(1);
+        let (_update_parent_sender, update_parent_receiver) = bounded(1);
         let entries = vec![next_versioned_entry(
             &Hash::default(),
             1,
@@ -558,6 +620,7 @@ pub mod test {
 
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
+            &update_parent_receiver,
             &blockstore,
             &rpc_subscriptions,
             &notifier,
@@ -597,6 +660,7 @@ pub mod test {
         let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
         let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
         let (sender, receiver) = bounded(1);
+        let (_update_parent_sender, update_parent_receiver) = bounded(1);
 
         let num_entries = max_ticks_per_n_shreds(1, None) as usize + 1;
         let mut previous_hash = Hash::default();
@@ -624,6 +688,7 @@ pub mod test {
 
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
+            &update_parent_receiver,
             &blockstore,
             &rpc_subscriptions,
             &notifier,

@@ -2865,7 +2865,7 @@ fn test_update_parent_restart() {
     let cleared_bank_id = bank_forks.read().unwrap().get(4).unwrap().bank_id();
     let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
     let update_parent_notification_senders =
-        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3004,7 +3004,7 @@ fn test_update_parent_tower_gated() {
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let update_parent_notification_senders =
-        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3056,7 +3056,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let update_parent_notification_senders =
-        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3111,7 +3111,7 @@ fn test_update_parent_keeps_hard() {
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let update_parent_notification_senders =
-        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3332,7 +3332,7 @@ fn test_soft_dead_restarts() {
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let update_parent_notification_senders =
-        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None, None, None);
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3375,7 +3375,7 @@ fn test_full_soft_dead_hardens() {
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let update_parent_notification_senders =
-        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None, None, None);
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),

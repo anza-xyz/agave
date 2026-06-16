@@ -1,6 +1,7 @@
 use {
-    solana_clock::Slot, solana_message::v0::LoadedAddresses, solana_signature::Signature,
-    solana_transaction::versioned::VersionedTransaction, std::sync::Arc,
+    crate::blockstore::UpdateParentSignal, solana_clock::Slot, solana_message::v0::LoadedAddresses,
+    solana_signature::Signature, solana_transaction::versioned::VersionedTransaction,
+    std::sync::Arc,
 };
 
 /// Trait for notifying about transactions when they are deshredded.
@@ -23,6 +24,13 @@ pub trait DeshredTransactionNotifier {
 
     /// Whether any plugin has opted in to ALT resolution for deshred transactions.
     fn alt_resolution_enabled(&self) -> bool;
+
+    /// Called when an Alpenglow UpdateParent marker invalidates same-slot
+    /// deshred transactions emitted before `update_parent_fec_set_index`.
+    ///
+    /// Delivery is best-effort and ordered with completed-data-set processing
+    /// by CompletedDataSetsService.
+    fn notify_update_parent(&self, _update_parent: &UpdateParentSignal) {}
 }
 
 pub type DeshredTransactionNotifierArc = Arc<dyn DeshredTransactionNotifier + Sync + Send>;

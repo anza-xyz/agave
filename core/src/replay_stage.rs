@@ -972,6 +972,8 @@ impl ReplayStage {
                     rpc_subscriptions.clone(),
                     slot_status_notifier.clone(),
                     transaction_status_sender.as_ref(),
+                    entry_notification_sender.as_ref(),
+                    block_metadata_notifier.as_ref(),
                 );
 
                 handle_update_parent_interrupts(
