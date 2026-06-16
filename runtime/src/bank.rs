@@ -62,7 +62,9 @@ use {
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
-        stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache},
+        stakes::{
+            DelegatedStakes, DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
+        },
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
@@ -1079,7 +1081,19 @@ impl AtomicBankHashStats {
 
 struct NewEpochBundle {
     stake_history: CowStakeHistory,
+<<<<<<< HEAD
     vote_accounts: VoteAccounts,
+=======
+    /// Vote accounts computed from the stakes cache for the current
+    /// (distribution) epoch *before* applying any VAT filtering.
+    unfiltered_distribution_vote_accounts: VoteAccounts,
+    /// Current effective stake delegated to each vote account pubkey.
+    delegated_stakes: DelegatedStakes,
+    /// Vote accounts computed from the stakes cache for the current
+    /// (distribution) epoch *after* applying VAT filtering (or an unfiltered
+    /// clone when VAT is disabled).
+    filtered_distribution_vote_accounts: VoteAccounts,
+>>>>>>> 7f8f37733 (perf: cache delegated stake for vote account upsert (#13229))
     rewards_calculation: Arc<PartitionedRewardsCalculation>,
     calculate_activated_stake_time_us: u64,
     update_rewards_with_thread_pool_time_us: u64,
@@ -1690,6 +1704,7 @@ impl Bank {
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = stakes.stake_delegations_vec();
+<<<<<<< HEAD
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
             measure_us!(stakes.calculate_activated_stake(
                 self.epoch(),
@@ -1697,6 +1712,24 @@ impl Bank {
                 self.new_warmup_cooldown_rate_epoch(),
                 &stake_delegations
             ));
+=======
+        let (
+            (
+                stake_history,
+                unfiltered_distribution_vote_accounts,
+                delegated_stakes,
+                reward_epoch_delegated_stakes,
+            ),
+            calculate_activated_stake_time_us,
+        ) = measure_us!(stakes.calculate_activated_stake(
+            self.epoch(),
+            thread_pool,
+            self.new_warmup_cooldown_rate_epoch(),
+            &stake_delegations,
+            self.use_fixed_point_stake_math(),
+        ));
+        debug_assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
+>>>>>>> 7f8f37733 (perf: cache delegated stake for vote account upsert (#13229))
 
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.
@@ -1716,7 +1749,13 @@ impl Bank {
             ));
         NewEpochBundle {
             stake_history,
+<<<<<<< HEAD
             vote_accounts,
+=======
+            unfiltered_distribution_vote_accounts,
+            delegated_stakes,
+            filtered_distribution_vote_accounts,
+>>>>>>> 7f8f37733 (perf: cache delegated stake for vote account upsert (#13229))
             rewards_calculation,
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
@@ -1748,7 +1787,13 @@ impl Bank {
         let mut rewards_metrics = RewardsMetrics::default();
         let NewEpochBundle {
             stake_history,
+<<<<<<< HEAD
             vote_accounts,
+=======
+            unfiltered_distribution_vote_accounts,
+            delegated_stakes,
+            filtered_distribution_vote_accounts,
+>>>>>>> 7f8f37733 (perf: cache delegated stake for vote account upsert (#13229))
             rewards_calculation,
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
@@ -1759,8 +1804,17 @@ impl Bank {
             &mut rewards_metrics,
         );
 
+<<<<<<< HEAD
         self.stakes_cache
             .activate_epoch(epoch, stake_history, vote_accounts);
+=======
+        self.stakes_cache.activate_epoch(
+            epoch,
+            stake_history,
+            unfiltered_distribution_vote_accounts,
+            delegated_stakes,
+        );
+>>>>>>> 7f8f37733 (perf: cache delegated stake for vote account upsert (#13229))
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
@@ -5532,6 +5586,10 @@ impl Bank {
         }
 
         self.compute_and_apply_features_after_snapshot_restore();
+        self.stakes_cache.refresh_delegated_stakes(
+            self.new_warmup_cooldown_rate_epoch(),
+            self.use_fixed_point_stake_math(),
+        );
 
         self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
 
