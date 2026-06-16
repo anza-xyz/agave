@@ -244,8 +244,9 @@ fn calculate_stake_rewards<'a>(
     }
 
     // Once alpenglow is active we no longer allow for epochs where rewards are not redeemed.
-    let advance_credits_for_skipped_reward = !matches!(ag_epoch_type, AlpenglowEpochType::Tower)
-        && new_credits_observed != stake.credits_observed;
+    let is_tower_epoch = matches!(ag_epoch_type, AlpenglowEpochType::Tower);
+    let advance_credits_for_skipped_reward =
+        !is_tower_epoch && new_credits_observed != stake.credits_observed;
     let skipped_reward = || {
         Some(CalculatedStakeRewards {
             staker_rewards: 0,
@@ -340,11 +341,14 @@ fn calculate_stake_rewards<'a>(
         ));
     }
 
-    if (voter_rewards == 0 || staker_rewards == 0) && is_split {
-        // don't collect if we lose a whole lamport somewhere
-        //  is_split means there should be tokens on both sides,
-        //  uncool to move credits_observed if one side didn't get paid
-        return skip_reward(SkippedReason::TooEarlyUnfairSplit);
+    if (voter_rewards == 0 || staker_rewards == 0) && is_split && is_tower_epoch {
+        // In Tower, don't collect if we lose a whole lamport somewhere.
+        // is_split means there should be tokens on both sides; don't move
+        // credits_observed if one side didn't get paid.
+        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
+            inflation_point_calc_tracer(&SkippedReason::TooEarlyUnfairSplit.into());
+        }
+        return None;
     }
 
     Some(CalculatedStakeRewards {
@@ -820,7 +824,7 @@ mod tests {
             )
         );
 
-        let skipped_small_redemption = || {
+        let small_redemption_result = || {
             ag_enabled.then_some(CalculatedStakeRewards {
                 staker_rewards: 0,
                 voter_rewards: 0,
@@ -828,11 +832,12 @@ mod tests {
             })
         };
 
-        // same as above, but is a really small commission out of 32 bits.
-        // Tower defers; AG advances credits without paying dust rewards.
+        // same as above, but is a small enough reward that both sides round to
+        // zero after the commission split. Tower defers; AG records the
+        // zero-lamport payout and advances credits.
         vote_state.set_inflation_rewards_commission_bps(100);
         assert_eq!(
-            skipped_small_redemption(),
+            small_redemption_result(),
             calculate_stake_rewards(
                 &stake,
                 vote_state.as_ref_v4().inflation_rewards_commission_bps,
@@ -859,7 +864,7 @@ mod tests {
         );
         vote_state.set_inflation_rewards_commission_bps(9900);
         assert_eq!(
-            skipped_small_redemption(),
+            small_redemption_result(),
             calculate_stake_rewards(
                 &stake,
                 vote_state.as_ref_v4().inflation_rewards_commission_bps,
@@ -1443,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn test_migration_epoch_skipped_dust_advances_credits() {
+    fn test_migration_epoch_dust_split_advances_credits() {
         let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
         let mut vote_state = VoteStateV4 {
             inflation_rewards_commission_bps: 100,
@@ -1457,11 +1462,6 @@ mod tests {
             delegation: Delegation::new(&Pubkey::default(), 1, u64::MAX),
             credits_observed: 0,
         };
-        let expected = Some(CalculatedStakeRewards {
-            staker_rewards: 0,
-            voter_rewards: 0,
-            new_credits_observed: 4 * ag_total_stake_multiplier,
-        });
         let point_value = PointValue {
             rewards: 4,
             points: 1,
@@ -1489,7 +1489,11 @@ mod tests {
         };
 
         assert_eq!(
-            expected,
+            Some(CalculatedStakeRewards {
+                staker_rewards: 3,
+                voter_rewards: 0,
+                new_credits_observed: 4 * ag_total_stake_multiplier,
+            }),
             calculate_stake_rewards(
                 &stake,
                 vote_state.inflation_rewards_commission_bps,
@@ -1504,7 +1508,7 @@ mod tests {
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
-                voter_rewards: 0,
+                voter_rewards: 3,
                 new_credits_observed: 4 * ag_total_stake_multiplier,
             }),
             calculate_stake_rewards(

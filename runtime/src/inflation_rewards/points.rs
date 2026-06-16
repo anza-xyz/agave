@@ -251,21 +251,26 @@ fn calculate_alpenglow_points(
     use_fixed_point_stake_math: bool,
     reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
 ) -> Result<(u128, u64), CalculatedStakePoints> {
-    let credits_in_stake = stake.credits_observed;
-    let mut new_credits_observed = credits_in_stake;
     let Some((epoch, final_epoch_credits, initial_epoch_credits)) = reward_epoch_credits else {
-        return Ok((0, new_credits_observed));
+        return Ok((0, stake.credits_observed));
     };
     if epoch != reward_epoch_delegated_stakes.epoch {
-        return Ok((0, new_credits_observed));
+        // In this case, the vote account did not record any credits in this epoch
+        // The latest entry is from a prior epoch - thus the delegation gets 0 rewards
+        return Ok((0, stake.credits_observed));
     }
 
-    let earned_credits = calc_earned_credits(
-        stake,
-        final_epoch_credits,
-        initial_epoch_credits,
-        &mut new_credits_observed,
-    );
+    let (earned_credits, new_credits_observed) = {
+        let mut new_credits_observed = stake.credits_observed;
+        let earned_credits = calc_earned_credits(
+            stake,
+            final_epoch_credits,
+            initial_epoch_credits,
+            &mut new_credits_observed,
+        );
+        (earned_credits, new_credits_observed)
+    };
+
     let stake_amount = u128::from(delegation_effective_stake(
         &stake.delegation,
         epoch,
@@ -308,10 +313,10 @@ fn calculate_alpenglow_points(
     Ok((earned_points, new_credits_observed))
 }
 
-/// Calculates the tower and  alpenglow points for `stake` based on the vote account's `reward_epoch_credits`
+/// Calculates the tower and alpenglow points for `stake` based on the vote account's `reward_epoch_credits`
 /// for the alpenglow migration epoch
 ///
-/// Expects the epoch_credits_iter is sorted in ascending epoch order
+/// Expects the epoch_credits_iter is sorted in ascending epoch order (excluding the migration marker)
 /// Returns (tower_points, alpenglow points, new_credits_observed)
 fn calculate_migration_points(
     stake: &Stake,
