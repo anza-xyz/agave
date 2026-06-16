@@ -1089,7 +1089,7 @@ pub fn execute(
                 max_unstaked_connections: global_max_unstaked.try_into().unwrap(),
                 max_streams_per_ms,
             }),
-            _ => SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            "max-streams" => SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
                 max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
                     .try_into()
                     .unwrap(),
@@ -1101,6 +1101,8 @@ pub fn execute(
                 max_streams_per_ms,
                 ..Default::default()
             }),
+            // clap restricts --tpu-swqos-mode to the values above via possible_values().
+            other => unreachable!("unsupported --tpu-swqos-mode: {other}"),
         }
     };
 

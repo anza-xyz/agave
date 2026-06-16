@@ -60,6 +60,11 @@ const PARK_RECHECK_BASE_MS: u64 = 10;
 const PARK_RECHECK_BASE_CAP_MS: u64 = 80;
 const PARK_RECHECK_JITTER_MAX_MS: u64 = 20;
 
+/// How often the cached connection RTT is refreshed while a connection is live.
+/// Reading `Connection::rtt()` grabs the connection lock, so we cache it and only
+/// re-read once per interval.
+const RTT_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 
 const CONNECTION_CLOSE_CODE_DROPPED_ENTRY: u32 = 1;
@@ -633,11 +638,14 @@ async fn handle_connection<Q, C>(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    // cache the RTT to avoid grabbing lock for every stream.
-    // we only use that for some stats here, so if it gets stale during connection lifetime
-    // it is not the end of the world.
-    let rtt = connection.rtt();
+    let mut rtt = connection.rtt();
+    let mut rtt_refreshed_at = Instant::now();
     'conn: loop {
+        let now = Instant::now();
+        if now.duration_since(rtt_refreshed_at) >= RTT_REFRESH_INTERVAL {
+            rtt = connection.rtt();
+            rtt_refreshed_at = now;
+        }
         match qos.compute_max_streams(&context, rtt) {
             MaxStreamsAction::Unmanaged => {}
             MaxStreamsAction::Set(max_streams) => {
@@ -653,11 +661,11 @@ async fn handle_connection<Q, C>(
                 if last_applied_max_streams != Some(0) {
                     connection.set_max_concurrent_uni_streams(VarInt::from_u32(0));
                     last_applied_max_streams = Some(0);
+                    stats
+                        .unstaked_connections_parked
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 // Park: don't accept streams, wait for load to drop.
-                stats
-                    .unstaked_connections_parked
-                    .fetch_add(1, Ordering::Relaxed);
                 let recheck_delay = park_recheck_backoff.next_delay();
                 select! {
                     _ = tokio::time::sleep(recheck_delay) => continue,
