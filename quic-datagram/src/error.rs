@@ -59,12 +59,6 @@ pub(crate) mod close_codes {
 /// into [`crate::stats::QuicDatagramStats`] via `record_error`.
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("egress channel closed")]
-    EgressChannelClosed,
-
-    #[error("ingress channel closed")]
-    IngressChannelClosed,
-
     #[error(transparent)]
     Connect(#[from] ConnectError),
 

@@ -29,11 +29,7 @@ impl StakedNodesAllowlist {
         self.inner.store(peers);
     }
 
-    /// Number of allowed peers in the current generation.
-    pub fn len(&self) -> usize {
-        self.inner.load().len()
-    }
-
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn is_empty(&self) -> bool {
         self.inner.load().is_empty()
     }

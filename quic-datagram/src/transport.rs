@@ -58,10 +58,9 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// reverse-direction packet rate. Set this ~ 1 slot to avoid ACKs during
 /// normal votor operation.
 const MAX_ACK_DELAY: Duration = Duration::from_millis(400);
-/// Initial MTU before path discovery. Floor of 1280 matches QUIC spec.
-const INITIAL_MTU: u16 = 1280;
-/// Minimum MTU after path discovery.
-const MIN_MTU: u16 = 1280;
+/// MTU used for all datagrams. Path-MTU discovery is disabled, so the initial
+/// and minimum MTU are the same; 1280 is the QUIC-spec floor.
+const DATAGRAM_MTU: u16 = 1280;
 
 /// Allow this many bytes to be in flight towards any other peer
 const NOP_CONGESTION_WINDOW: u64 = 8 * 1024 * 1024;
@@ -108,8 +107,8 @@ pub(crate) fn new_transport_config() -> TransportConfig {
     let mut c = TransportConfig::default();
     c.datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER_BYTES))
         .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER_BYTES)
-        .initial_mtu(INITIAL_MTU)
-        .min_mtu(MIN_MTU)
+        .initial_mtu(DATAGRAM_MTU)
+        .min_mtu(DATAGRAM_MTU)
         .mtu_discovery_config(None)
         .keep_alive_interval(Some(KEEP_ALIVE_INTERVAL))
         .max_idle_timeout(Some(max_idle))
@@ -136,8 +135,8 @@ pub(crate) fn new_server_config(
     let quic = QuicServerConfig::try_from(tls)
         .expect("TLS 1.3-only config yields an initial cipher suite");
     let mut cfg = ServerConfig::with_crypto(Arc::new(quic));
-    cfg.incoming_buffer_size((MIN_MTU * 2) as u64);
-    cfg.incoming_buffer_size_total(MAX_INCOMING as u64 * MIN_MTU as u64);
+    cfg.incoming_buffer_size((DATAGRAM_MTU * 2) as u64);
+    cfg.incoming_buffer_size_total(MAX_INCOMING as u64 * DATAGRAM_MTU as u64);
     cfg.max_incoming(MAX_INCOMING);
     cfg.retry_token_lifetime(MAX_IDLE_TIMEOUT);
     cfg.transport_config(Arc::new(new_transport_config()));

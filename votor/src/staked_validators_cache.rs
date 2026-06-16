@@ -128,21 +128,19 @@ impl StakedValidatorsCache {
 
         struct Node {
             pubkey: Pubkey,
-            stake: u64,
             alpenglow_socket: SocketAddr,
         }
 
         let mut nodes: Vec<_> = epoch_staked_nodes
             .iter()
             .filter(|(pubkey, _stake)| self.include_self || pubkey != &&cluster_info.id())
-            .filter_map(|(pubkey, stake)| {
+            .filter_map(|(pubkey, _stake)| {
                 // override sockets
                 #[cfg(feature = "dev-context-only-utils")]
                 {
                     if let Some(socket) = self.test_overrides.load().get(pubkey) {
                         return Some(Node {
                             pubkey: *pubkey,
-                            stake: *stake,
                             alpenglow_socket: *socket,
                         });
                     }
@@ -150,7 +148,6 @@ impl StakedValidatorsCache {
                 cluster_info.lookup_contact_info(pubkey, |node| {
                     node.alpenglow().map(|alpenglow_socket| Node {
                         pubkey: *pubkey,
-                        stake: *stake,
                         alpenglow_socket,
                     })
                 })?
@@ -159,7 +156,6 @@ impl StakedValidatorsCache {
 
         nodes.sort_unstable_by_key(|node| node.alpenglow_socket);
         nodes.dedup_by_key(|node| node.alpenglow_socket);
-        nodes.sort_unstable_by_key(|a| a.stake);
 
         let mut peers = Vec::with_capacity(nodes.len());
         for node in nodes {
@@ -180,15 +176,7 @@ impl StakedValidatorsCache {
         cluster_info: &ClusterInfo,
         access_time: Instant,
     ) -> (&[(Pubkey, SocketAddr)], bool) {
-        self.get_staked_validators_by_epoch(self.cur_epoch(slot), cluster_info, access_time)
-    }
-
-    fn get_staked_validators_by_epoch(
-        &mut self,
-        epoch: Epoch,
-        cluster_info: &ClusterInfo,
-        access_time: Instant,
-    ) -> (&[(Pubkey, SocketAddr)], bool) {
+        let epoch = self.cur_epoch(slot);
         // For a given epoch, if we either:
         //
         // (1) have a cache entry that has expired

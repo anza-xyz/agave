@@ -19,7 +19,11 @@ use std::time::Duration;
 /// Maximum number of unique peer pubkeys we expect in steady state.
 /// Used to size buffers and channels, actual peer count is controlled
 /// by admission policy.
-pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: u64 = 2000;
+///
+/// The authoritative version of this lives in
+/// `solana_runtime::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS`; this is a deliberate
+/// copy to avoid a `solana-runtime` dependency from this transport crate.
+pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
 /// Maximum simultaneous inbound (we-accepted, receive-only) connections we keep
 /// from a single peer pubkey. Two is needed to let a hot-spare of the same
@@ -28,9 +32,9 @@ pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 
 /// Capacity of the egress channel held by [`QuicDatagramEndpoint`].
 ///
-/// Sized to absorb a full slot's burst with headroom - `MAX_PEERS` peers
-/// × ~4 messages/slot = ~8 K items.
-pub const EGRESS_CHANNEL_CAP: usize = 4 * MAX_ALPENGLOW_VOTE_ACCOUNTS as usize;
+/// Sized to absorb a full slot's burst with headroom -
+/// `MAX_ALPENGLOW_VOTE_ACCOUNTS` peers × ~4 messages/slot = ~8 K items.
+pub const EGRESS_CHANNEL_CAP: usize = 4 * MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Per-peer receive-side rate limit.
 pub const MAX_DATAGRAMS_PER_SECOND_PER_PEER: f64 = 30.0;

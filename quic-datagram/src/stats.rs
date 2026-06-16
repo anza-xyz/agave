@@ -68,7 +68,6 @@ impl QuicDatagramStats {
 
 pub(crate) fn record_error(err: &Error, stats: &QuicDatagramStats) {
     match err {
-        Error::EgressChannelClosed | Error::IngressChannelClosed => {}
         Error::Connection(
             ConnectionError::ApplicationClosed(_)
             | ConnectionError::ConnectionClosed(_)

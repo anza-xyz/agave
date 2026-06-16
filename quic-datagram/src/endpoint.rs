@@ -49,7 +49,7 @@ impl NotifyKeyUpdate for KeyUpdater {
 }
 
 /// Capacity of the task -> control-loop connection-event channel.
-const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS as usize;
+const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Datagram envelope used on both directions of the endpoint.
 #[derive(Debug)]
@@ -119,8 +119,7 @@ impl QuicDatagramEndpoint {
             HANDSHAKE_GLOBAL_BURST,
             HANDSHAKE_GLOBAL_RATE,
         );
-        const LRU_SIZE: NonZeroUsize =
-            NonZeroUsize::new(2 * MAX_ALPENGLOW_VOTE_ACCOUNTS as usize).unwrap();
+        const LRU_SIZE: NonZeroUsize = NonZeroUsize::new(2 * MAX_ALPENGLOW_VOTE_ACCOUNTS).unwrap();
         let outbound = OutboundLoop {
             endpoint: endpoint.clone(),
             local_pubkey,
