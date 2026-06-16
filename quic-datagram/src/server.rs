@@ -271,8 +271,11 @@ impl InboundLoop {
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        // Gate for the accept branch: accept is disabled until sleep fires.
-        let mut accept_gate = Box::pin(sleep(Duration::ZERO)); // starts open
+        // We pace how fast we pull connection attempts off the endpoint.
+        // This prevents quinn from burning CPU resources processing initial
+        // keys for handshakes we would not be able to process.
+        let mut accept_gate = Box::pin(sleep(Duration::ZERO));
+        // Gate starts open.
         let mut accept_allowed = true;
 
         // TODO: this flag is a workaround for some local-cluster tests that are a
@@ -303,12 +306,12 @@ impl InboundLoop {
                     accept_allowed = true;
                 }
                 // We admit Initial only when we're done with everything important.
-
                 maybe_incoming = self.endpoint.accept(), if accept_allowed => {
                     let Some(incoming) = maybe_incoming else { break };
                     self.maybe_accept_connection(incoming);
-                    // After each handshake we sleep before processing the next,
-                    // bounding the CPU usage for non-connected peers.
+                    // Shut the gate for one inter-arrival gap so handshake starts
+                    // stay bounded by HANDSHAKE_GLOBAL_RATE; the timer branch
+                    // above re-opens it.
                     const HANDSHAKE_SLEEP:Duration = Duration::from_micros((1e6 / HANDSHAKE_GLOBAL_RATE)as u64);
                     accept_gate
                         .as_mut()
@@ -393,7 +396,7 @@ impl InboundLoop {
 
     /// Performs the admission control checks of incoming connection, if
     /// they pass spawns the task to handle the handshake and serve connection.
-    /// Caller is responsible for rate-limiting via the global handshake token bucket.
+    /// Caller is responsible for rate-limiting via the accept gate in `run`.
     fn maybe_accept_connection(&mut self, incoming: Incoming) {
         let remote_addr = incoming.remote_address();
         if remote_addr.is_ipv6() || remote_addr.ip().is_multicast() {

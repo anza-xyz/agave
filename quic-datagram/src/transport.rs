@@ -1,5 +1,6 @@
 //! Transport tuning constants for a votor-style workload.
 use {
+    crate::MAX_ALPENGLOW_VOTE_ACCOUNTS,
     quinn::{
         AckFrequencyConfig, ClientConfig, IdleTimeout, ServerConfig, TransportConfig, VarInt,
         congestion::{Controller, ControllerFactory},
@@ -65,8 +66,9 @@ const DATAGRAM_MTU: u16 = 1280;
 /// Allow this many bytes to be in flight towards any other peer
 const NOP_CONGESTION_WINDOW: u64 = 8 * 1024 * 1024;
 
-/// Max number of in-flight connection requests we will look at
-const MAX_INCOMING: usize = 400;
+/// Max number of buffered connection requests we will keep.
+/// Sized such that a cluster-wide simultaneous reconnect fits.
+const MAX_INCOMING: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 #[derive(Clone)]
 struct NopCongestion;

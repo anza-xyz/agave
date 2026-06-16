@@ -49,8 +49,9 @@ pub const PEER_RATE_LIMIT_BURST: u64 = 100;
 /// If peer exhausts this burst size they are considered to be attacking and banned.
 pub const PEER_RATE_LIMIT_BURST_DOS: u64 = 100000;
 
-/// Maximum simultaneous TLS handshakes in flight across all peers.
-/// Sustained inbound TLS handshake rate across all peers (handshakes/second).
+/// Sustained rate at which we start inbound TLS handshakes across all peers
+/// (handshakes/second). This acts on `quinn_proto::Endpoint::accept()`, bounding the
+/// rate at wihch we process Initial packets at all, not how many can run at once.
 pub const HANDSHAKE_GLOBAL_RATE: f64 = 800.0;
 
 /// How often each connection's read loop re-checks whether the peer is still
