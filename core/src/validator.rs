@@ -2768,16 +2768,23 @@ fn scan_blockstore_for_incorrect_shred_version(
     // Search for shreds with incompatible version in blockstore
     let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
 
-    info!("Searching blockstore for shred with incorrect version from slot {start_slot}");
+    info!(
+        "Blockstore search for shreds with incorrect version starting from slot {start_slot}; \
+         searching for 60s"
+    );
     for (slot, _meta) in slot_meta_iterator {
         let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
         for shred in &shreds {
             if shred.version() != expected_shred_version {
+                info!(
+                    "Blockstore search found shred with incorrect version {} in slot {slot}",
+                    shred.version()
+                );
                 return Ok(Some(shred.version()));
             }
         }
         if timer.elapsed() > TIMEOUT {
-            info!("Didn't find incorrect shreds after 60 seconds, aborting");
+            info!("Blockstore search did not find any shreds with incorrect version");
             break;
         }
     }
