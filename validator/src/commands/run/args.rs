@@ -979,14 +979,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_cache_limit_mb")
-            .long("accounts-db-cache-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<u64>)
+        Arg::with_name("accounts_db_write_cache_limit")
+            .long("accounts-db-write-cache-limit")
+            .value_name("BYTES")
+            .validator(is_parsable::<ByteSize>)
             .takes_value(true)
-            .help(
-                "How large the write cache for account data can become. If this is exceeded, the \
-                 cache is flushed more aggressively.",
+            .help("How large the write cache for account data can become, in bytes")
+            .long_help(
+                "How large the write cache for account data can become, in bytes. If this is \
+                 exceeded, the write cache is flushed more aggressively. Accepts SI and IEC \
+                 prefixes, e.g. 17.1GB or 18Gi.",
             ),
     )
     .arg(

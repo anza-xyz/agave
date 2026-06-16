@@ -99,7 +99,7 @@ use {
 };
 
 // when the accounts write cache exceeds this many bytes, we will flush it
-// this can be specified on the command line, too (--accounts-db-cache-limit-mb)
+// this can be specified on the command line, too (--accounts-db-write-cache-limit)
 const WRITE_CACHE_LIMIT_BYTES_DEFAULT: u64 = 15_000_000_000;
 const SCAN_SLOT_PAR_ITER_THRESHOLD: usize = 4000;
 

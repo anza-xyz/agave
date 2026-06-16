@@ -31,6 +31,7 @@ Release channels have their own copy of this changelog:
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
   backward compatibility, but account storages are always accessed via file I/O.
+* `--accounts-db-cache-limit-mb` is now deprecated. Use `--accounts-db-write-cache-limit` instead.
 * `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).

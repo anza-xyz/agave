@@ -151,6 +151,20 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("No-op; account storages are always accessed via file I/O"),
     );
     add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("accounts_db_cache_limit_mb")
+            .long("accounts-db-cache-limit-mb")
+            .value_name("MEGABYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help(
+                "How large the write cache for account data can become. If this is exceeded, the \
+                 cache is flushed more aggressively.",
+            )
+            .conflicts_with("accounts_db_write_cache_limit"),
+        replaced_by: "accounts-db-write-cache-limit",
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")

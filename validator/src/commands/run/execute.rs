@@ -683,6 +683,15 @@ pub fn execute(
         None
     };
 
+    let write_cache_limit_bytes =
+        value_of::<ByteSize>(matches, "accounts_db_write_cache_limit").map(|limit| limit.0);
+    // accounts-db-write-cache-limit-mb was deprecated in v4.2.0
+    let write_cache_limit_mb = value_t!(matches, "accounts_db_cache_limit_mb", u64)
+        .ok()
+        .map(|mb| mb * MB as u64);
+    // clap will enforce only one cli arg is provided, so pick whichever is Some
+    let write_cache_limit_bytes = write_cache_limit_bytes.or(write_cache_limit_mb);
+
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
         .map(|filter| match filter {
@@ -704,9 +713,7 @@ pub fn execute(
         read_cache_limit_bytes,
         read_cache_evict_sample_size: None,
         read_cache_num_shards: None,
-        write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
-            .ok()
-            .map(|mb| mb * MB as u64),
+        write_cache_limit_bytes,
         ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
         ancient_storage_ideal_size: value_t!(
             matches,
