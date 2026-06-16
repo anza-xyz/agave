@@ -275,12 +275,8 @@ impl TransactionViewReceiveAndBuffer {
                     working_bank.check_transactions::<RuntimeTransaction<_>>(
                         &transactions,
                         &lock_results[..transactions.len()],
-<<<<<<< HEAD
                         MAX_PROCESSING_AGE,
-=======
-                        working_bank.max_processing_age(),
                         true,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                         &mut error_counters,
                     )
                 };

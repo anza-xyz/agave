@@ -2646,12 +2646,8 @@ mod tests {
             .check_transactions(
                 &sanitized_txs,
                 &vec![Ok(()); sanitized_txs.len()],
-<<<<<<< HEAD
                 MAX_PROCESSING_AGE,
-=======
-                bank.max_processing_age(),
                 true,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut TransactionErrorMetrics::default(),
             )
             .into_iter()

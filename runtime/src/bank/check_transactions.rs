@@ -182,7 +182,6 @@ impl Bank {
         strict_nonce_size_check: bool,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
-<<<<<<< HEAD
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
             Ok(Self::checked_transactions_details_with_test_override(
                 None,
@@ -190,16 +189,7 @@ impl Bank {
                 compute_budget,
             ))
         } else if let Some((nonce_address, previous_lamports_per_signature)) =
-            self.check_nonce_transaction_validity(tx, next_durable_nonce)
-=======
-        if hash_queue
-            .get_hash_info_if_valid(recent_blockhash, max_age)
-            .is_some()
-        {
-            Ok(CheckedTransactionDetails::new(None, compute_budget))
-        } else if let Some((nonce_address, _)) =
             self.check_nonce_transaction_validity(tx, next_durable_nonce, strict_nonce_size_check)
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
         {
             Ok(Self::checked_transactions_details_with_test_override(
                 Some(nonce_address),
@@ -555,14 +545,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-<<<<<<< HEAD
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
                 .is_none(),
             require_static_nonce_account,
-=======
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false),
-            None,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
         );
     }
 }

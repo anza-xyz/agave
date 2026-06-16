@@ -460,11 +460,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &environment.blockhash,
                         environment.blockhash_lamports_per_signature,
                         &environment.rent,
-<<<<<<< HEAD
-=======
-                        environment.feature_set.relax_post_exec_min_balance_check,
                         config.strict_nonce_size_check,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                         &mut error_metrics,
                     )
                 }));
@@ -666,11 +662,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment_blockhash: &Hash,
         next_lamports_per_signature: u64,
         rent: &Rent,
-<<<<<<< HEAD
-=======
-        relax_post_exec_min_balance_check: bool,
         strict_nonce_size_check: bool,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
@@ -2176,11 +2168,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2232,11 +2220,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2277,11 +2261,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2326,11 +2306,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2373,11 +2349,7 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2565,11 +2537,7 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2630,11 +2598,7 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
-<<<<<<< HEAD
-=======
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2683,11 +2647,7 @@ mod tests {
             &Hash::default(),
             lamports_per_signature,
             &Rent::default(),
-<<<<<<< HEAD
-=======
-            mock_bank.feature_set.relax_post_exec_min_balance_check,
             false,
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
             &mut TransactionErrorMetrics::default(),
         )
         .unwrap();

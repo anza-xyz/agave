@@ -146,18 +146,13 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-<<<<<<< HEAD
-        let check_results =
-            bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
-=======
         let check_results = bank.check_transactions(
             txs,
             &pre_results,
-            bank.max_processing_age(),
+            MAX_PROCESSING_AGE,
             true,
             &mut error_counters,
         );
->>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
         let check_results: Vec<_> = check_results
             .into_iter()
             .zip(txs.iter())
