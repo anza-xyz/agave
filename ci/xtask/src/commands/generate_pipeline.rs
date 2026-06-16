@@ -143,6 +143,7 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_local_cluster_step(10));
     pipeline.add_step(default_docs_check_step());
     pipeline.add_step(default_localnet_step());
+    pipeline.add_step(default_xdp_test_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -190,6 +191,7 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_sanity_step());
     pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_checks_step());
+    pipeline.add_step(default_xdp_test_step());
     Ok(pipeline)
 }
 
@@ -388,6 +390,9 @@ async fn generate_pull_request_pipeline(
     if flags.localnet {
         pipeline.add_step(default_localnet_step());
     }
+    // Run XDP tests on every PR so CI continuously verifies the privileged
+    // network-namespace test environment, not only XDP source changes.
+    pipeline.add_step(default_xdp_test_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -424,6 +429,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_local_cluster_step(10));
     pipeline.add_step(default_docs_check_step());
     pipeline.add_step(default_localnet_step());
+    pipeline.add_step(default_xdp_test_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -657,6 +663,29 @@ fn default_localnet_step() -> buildkite::Step {
             String::from("default"),
         )])),
         timeout_in_minutes: Some(30),
+        ..Default::default()
+    })
+}
+
+fn default_xdp_test_step() -> buildkite::Step {
+    buildkite::Step::Command(buildkite::CommandStep {
+        name: String::from("xdp-test"),
+        command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
+        agents: Some(HashMap::from([(
+            String::from("queue"),
+            String::from("default"),
+        )])),
+        timeout_in_minutes: Some(25),
+        env: Some(HashMap::from([
+            (
+                String::from("EXTRA_DOCKER_RUN_ARGS"),
+                String::from("--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN"),
+            ),
+            (
+                String::from("SOLANA_DOCKER_RUN_NOSETUID"),
+                String::from("1"),
+            ),
+        ])),
         ..Default::default()
     })
 }
