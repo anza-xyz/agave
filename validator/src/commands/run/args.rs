@@ -5,6 +5,7 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
+    bytesize::ByteSize,
     clap::{App, Arg, ArgMatches, values_t},
     solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
@@ -997,12 +998,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .max_values(2)
             .multiple(false)
             .require_delimiter(true)
+            .validator(is_parsable::<ByteSize>)
             .help("How large the read cache for account data can become, in bytes")
             .long_help(
                 "How large the read cache for account data can become, in bytes. The values will \
                  be the low and high watermarks for the cache. When the cache exceeds the high \
                  watermark, entries will be evicted until the size reaches the low watermark. \
-                 Accepts SI and IEC prefixes, e.g. 8.1GB,8.3GiB.",
+                 Accepts SI and IEC prefixes, e.g. 8.1GB,8.3GiB. LOW must be <= HIGH.",
             )
             .hidden(hidden_unless_forced()),
     )

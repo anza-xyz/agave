@@ -660,22 +660,28 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let read_cache_limit_bytes =
-        if let Some(limits) = values_of::<ByteSize>(matches, "accounts_db_read_cache_limit") {
-            match limits.as_slice() {
-                [lo, hi] => {
-                    let lo = usize::try_from(lo.0)?;
-                    let hi = usize::try_from(hi.0)?;
-                    Some((lo, hi))
+    let read_cache_limit_bytes = if let Some(limits) =
+        values_of::<ByteSize>(matches, "accounts_db_read_cache_limit")
+    {
+        match limits.as_slice() {
+            [lo, hi] => {
+                let lo = usize::try_from(lo.0)?;
+                let hi = usize::try_from(hi.0)?;
+                if lo > hi {
+                    Err(format!(
+                        "invalid --accounts-db-read-cache-limit: LOW ({lo}) must be <= HIGH ({hi})",
+                    ))?;
                 }
-                _ => {
-                    // clap will enforce two values are given
-                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
-                }
+                Some((lo, hi))
             }
-        } else {
-            None
-        };
+            _ => {
+                // clap will enforce two values are given
+                unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+            }
+        }
+    } else {
+        None
+    };
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
