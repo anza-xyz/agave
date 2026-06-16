@@ -35,7 +35,7 @@ use {
 
 /// State for one peer
 pub(crate) struct PeerEntry {
-    conns: ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>,
+    connections: ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>,
     rate_limiter: Arc<TokenBucket>,
 }
 
@@ -44,7 +44,7 @@ pub(crate) enum InboundEvent {
     /// A TLS handshake completed and yielded an authenticated peer.
     Accepted {
         peer: Pubkey,
-        conn: Connection,
+        connection: Connection,
         generation: u64,
     },
     /// An inbound (we-accepted) connection ended. The read loop reports this
@@ -70,15 +70,15 @@ pub(crate) struct ServerConnection {
 impl ServerConnection {
     async fn run(self) {
         let remote_addr = self.incoming.remote_address();
-        let conn = match async { self.incoming.accept()?.await }.await {
-            Ok(conn) => conn,
+        let connection = match async { self.incoming.accept()?.await }.await {
+            Ok(connection) => connection,
             Err(e) => {
                 record_error(&Error::from(e), &self.stats);
                 return;
             }
         };
-        let Some(peer) = get_remote_pubkey(&conn) else {
-            close_codes::INVALID_IDENTITY.close(&conn);
+        let Some(peer) = get_remote_pubkey(&connection) else {
+            close_codes::INVALID_IDENTITY.close(&connection);
             record_error(&Error::InvalidIdentity(remote_addr), &self.stats);
             return;
         };
@@ -87,7 +87,7 @@ impl ServerConnection {
             .events
             .send(InboundEvent::Accepted {
                 peer,
-                conn,
+                connection,
                 generation: self.generation,
             })
             .await;
@@ -139,7 +139,6 @@ pub(crate) async fn read_datagram_loop(
                             // peer drained bucket dry - kick them
                             Err(_) => {
                                 drop(bytes);
-                                add(&stats.connection_lost);
                                 let _ = events
                                     .send(InboundEvent::FloodDetected { peer })
                                     .await;
@@ -209,9 +208,9 @@ pub(crate) struct InboundLoop {
     /// Policy for which peers may occupy a slot or retain a connection.
     pub(crate) allowlist: Arc<dyn Allowlist>,
     pub(crate) identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    /// Inbound table (per-peer accepted receive-only connections), owned solely
-    /// by this loop.
-    pub(crate) incoming: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
+    /// Per-peer accepted receive-only connection state, owned solely by this
+    /// loop.
+    pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_tx: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
@@ -242,7 +241,7 @@ impl InboundLoop {
             banlist,
             allowlist,
             identity_rx,
-            incoming: HashMap::with_hasher(PubkeyHasherBuilder::default()),
+            peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_tx,
             events_rx,
             handshake_global_limiter,
@@ -252,19 +251,22 @@ impl InboundLoop {
     }
 
     /// Live inbound connections (each pubkey may hold several).
-    fn incoming_len(&self) -> u64 {
-        self.incoming.values().map(|e| e.conns.len()).sum::<usize>() as u64
+    fn connection_count(&self) -> u64 {
+        self.peer_state
+            .values()
+            .map(|e| e.connections.len())
+            .sum::<usize>() as u64
     }
 
     /// Remove the connection with the given `stable_id` from `peer`'s inbound
     /// set; drop the map entry once its last connection is gone.
     /// Called by the read loop on exit. No-op if the
     /// connection was already removed (e.g. by an identity rotation).
-    fn reap_incoming(&mut self, peer: &Pubkey, stable_id: usize) {
-        if let Entry::Occupied(mut slot) = self.incoming.entry(*peer) {
-            let conns = &mut slot.get_mut().conns;
-            conns.retain(|c| c.stable_id() != stable_id);
-            if conns.is_empty() {
+    fn reap_connection(&mut self, peer: &Pubkey, stable_id: usize) {
+        if let Entry::Occupied(mut slot) = self.peer_state.entry(*peer) {
+            let connections = &mut slot.get_mut().connections;
+            connections.retain(|c| c.stable_id() != stable_id);
+            if connections.is_empty() {
                 slot.remove();
             }
         }
@@ -304,7 +306,7 @@ impl InboundLoop {
                 // dead connections.
                 Some(event) = self.events_rx.recv() => self.handle_event(event),
                 // Metrics are quite handy to have even if we are flooded with incoming.
-                _ = metrics.tick() => stats::report_server(&self.stats, self.incoming_len()),
+                _ = metrics.tick() => stats::report_server(&self.stats, self.connection_count()),
                 // Re-open the accept gate when the bucket has refilled.
                 _ = &mut accept_gate, if accept_allowed => {
                     accept_allowed = false;
@@ -348,10 +350,10 @@ impl InboundLoop {
         // dropped at the event boundary (its event carries the old generation).
         self.generation = self.generation.wrapping_add(1);
         let evicted = self
-            .incoming
+            .peer_state
             .drain()
-            .flat_map(|(_, entry)| entry.conns)
-            .inspect(|conn| close_codes::IDENTITY_ROTATED.close(conn))
+            .flat_map(|(_, entry)| entry.connections)
+            .inspect(|connection| close_codes::IDENTITY_ROTATED.close(connection))
             .count() as u64;
         self.stats
             .connection_evicted_identity_rotated
@@ -367,26 +369,30 @@ impl InboundLoop {
         match event {
             // Stale Accepted: close the connection.
             InboundEvent::Accepted {
-                generation, conn, ..
+                generation,
+                connection,
+                ..
             } if generation != self.generation => {
-                close_codes::IDENTITY_ROTATED.close(&conn);
+                close_codes::IDENTITY_ROTATED.close(&connection);
                 self.stats
                     .connection_evicted_identity_rotated
                     .fetch_add(1, Ordering::Relaxed);
             }
             // Relevant Accepted
-            InboundEvent::Accepted { peer, conn, .. } => self.maybe_admit_inbound(peer, conn),
+            InboundEvent::Accepted {
+                peer, connection, ..
+            } => self.maybe_admit_connection(peer, connection),
             // Stale Closed: no-op, table entry already gone.
             InboundEvent::Closed { generation, .. } if generation != self.generation => {}
             // Relevant Closed
             InboundEvent::Closed {
                 peer, stable_id, ..
-            } => self.reap_incoming(&peer, stable_id),
+            } => self.reap_connection(&peer, stable_id),
             // Flood detected - close connection
             InboundEvent::FloodDetected { peer } => {
-                if let Some(entry) = self.incoming.remove(&peer) {
-                    for conn in &entry.conns {
-                        close_codes::BANNED.close(conn);
+                if let Some(entry) = self.peer_state.remove(&peer) {
+                    for connection in &entry.connections {
+                        close_codes::BANNED.close(connection);
                     }
                     add(&self.stats.connection_lost);
                 }
@@ -418,51 +424,51 @@ impl InboundLoop {
     /// Admission checks for a freshly handshaked inbound (we-accepted,
     /// receive-only) connection. The split-direction model has no lex-pubkey
     /// tiebreaker: we accept an inbound from any admitted peer regardless of
-    /// pubkey ordering, and install it into the receive-only `incoming` map.
-    fn maybe_admit_inbound(&mut self, peer: Pubkey, conn: Connection) {
+    /// pubkey ordering, and install it into the receive-only `peer_state` map.
+    fn maybe_admit_connection(&mut self, peer: Pubkey, connection: Connection) {
         if self.banlist.is_banned(&peer) {
-            close_codes::BANNED.close(&conn);
+            close_codes::BANNED.close(&connection);
             record_error(&Error::Banned(peer), &self.stats);
             return;
         }
         if !self.allowlist.allow(&peer) {
-            close_codes::NOT_ADMITTED.close(&conn);
+            close_codes::NOT_ADMITTED.close(&connection);
             record_error(&Error::NotAdmitted(peer), &self.stats);
             return;
         }
-        let remote_addr = conn.remote_address();
-        let rate_limiter = match self.incoming.entry(peer) {
+        let remote_addr = connection.remote_address();
+        let rate_limiter = match self.peer_state.entry(peer) {
             Entry::Vacant(slot) => {
                 let rate_limiter = Arc::new(TokenBucket::new(
                     PEER_RATE_LIMIT_BURST_DOS,
                     PEER_RATE_LIMIT_BURST_DOS,
                     MAX_DATAGRAMS_PER_SECOND_PER_PEER,
                 ));
-                let mut conns = ArrayVec::new();
-                conns.push(conn.clone());
+                let mut connections = ArrayVec::new();
+                connections.push(connection.clone());
                 slot.insert(PeerEntry {
-                    conns,
+                    connections,
                     rate_limiter: rate_limiter.clone(),
                 });
                 rate_limiter
             }
             Entry::Occupied(mut slot) => {
                 let entry = slot.get_mut();
-                match entry.conns.try_push(conn.clone()) {
+                match entry.connections.try_push(connection.clone()) {
                     Ok(()) => Arc::clone(&entry.rate_limiter),
                     Err(_) => {
-                        close_codes::TABLE_FULL.close(&conn);
+                        close_codes::TABLE_FULL.close(&connection);
                         record_error(&Error::TableFull, &self.stats);
                         return;
                     }
                 }
             }
         };
-        self.stats.record_connection_count(self.incoming_len());
+        self.stats.record_connection_count(self.connection_count());
         // The read loop reports [`InboundEvent::Closed`] when it exits so this
         // loop can reap the table slot.
         spawn(read_datagram_loop(
-            conn,
+            connection,
             peer,
             remote_addr,
             self.generation,

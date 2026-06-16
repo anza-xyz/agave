@@ -69,19 +69,24 @@ each direction). The connection tables serve two purposes:
   `MAX_INBOUND_CONNECTIONS_PER_PEER` (= 2) inbound connections per peer ID. Two
   inbounds let a same-identity hot-spare coexist with the original without a
   handover; a third is refused with `TABLE_FULL`.
-* Dispatch of egress packets - egress always picks the peer's `outgoing`
+* Dispatch of egress packets - egress always picks the peer's outbound
   connection (dialing one if absent).
 
-Two tables keyed by peer pubkey, each **owned exclusively by its control loop**:
+Each control loop owns one `peer_state` table keyed by peer pubkey
+(**owned exclusively by that loop**); the inbound and outbound tables are
+separate, one per direction:
 
 ```text
-outgoing: LruCache<Pubkey, OutgoingEntry>  // capacity 2 × MAX_ALPENGLOW_VOTE_ACCOUNTS
-incoming: HashMap<Pubkey, ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>>
+// outbound loop (we-dial, send-only)
+peer_state: LruCache<Pubkey, PeerState>  // capacity 2 × MAX_ALPENGLOW_VOTE_ACCOUNTS
 
-enum OutgoingEntry {
-    Dialing,                           // placeholder; one dial task in flight
-    Established { conn: Connection },  // live send-only connection
+enum PeerState {
+    Dialing,                                 // placeholder; one dial task in flight
+    Established { connection: Connection },  // live send-only connection
 }
+
+// inbound loop (we-accept, receive-only)
+peer_state: HashMap<Pubkey, ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>>
 ```
 
 The outbound table is an LRU rather than a HashMap and the sole owner of
@@ -97,8 +102,8 @@ for this path.
 ## Split send/receive directions
 
 There is no reuse of connections in both directions. To talk to a peer we
-always dial our own `outgoing` (send-only) connection; we only ever read from
-the `incoming` (receive-only) connection a peer dialed to us. Egress never
+always dial our own outbound (send-only) connection; we only ever read from
+the inbound (receive-only) connection a peer dialed to us. Egress never
 sends back over an accepted inbound.
 
 This is somewhat simpler than a single bidirectional connection (no direction

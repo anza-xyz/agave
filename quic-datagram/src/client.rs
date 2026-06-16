@@ -30,12 +30,12 @@ use {
 };
 
 /// State of a peer's entry in the outbound table.
-pub(crate) enum OutgoingEntry {
+pub(crate) enum PeerState {
     /// Dialing attempt in progress; holds the most recent datagram to send once
     /// the connection is up (newer arrivals overwrite older ones).
     Dialing { trigger: Bytes },
     /// Live send-only connection.
-    Established { conn: Connection },
+    Established { connection: Connection },
 }
 
 /// Dial result reported by a dial task to the outbound control loop.
@@ -57,7 +57,7 @@ pub(crate) struct ClientConnection {
 impl ClientConnection {
     async fn run(self) {
         let outcome = match self.dial().await {
-            Ok(conn) => Ok(conn),
+            Ok(connection) => Ok(connection),
             Err(e) => {
                 error!(
                     "Connection attempt to ({}, {}) failed: {e:?}",
@@ -92,8 +92,8 @@ impl ClientConnection {
     }
 }
 
-/// Outbound control loop: client egress (we-dial, send-only). Owns the outgoing
-/// table and the dial-task event channel.
+/// Outbound control loop: client egress (we-dial, send-only). Owns the per-peer
+/// send-only connection state and the dial-task event channel.
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
@@ -102,11 +102,11 @@ pub(crate) struct OutboundLoop {
     pub(crate) egress_rx: mpsc::Receiver<Datagram>,
     pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    /// Outbound table (per-peer send-only connection state).
-    /// Idle connections are reclaimed lazily: `outgoing` is the sole owner of each
-    /// `Connection`, so anything evicted/popped from the LRU closes the
+    /// Per-peer send-only connection state.
+    /// Idle connections are reclaimed lazily: `peer_state` is the sole owner of
+    /// each `Connection`, so anything evicted/popped from the LRU closes the
     /// connection via quinn's implicit close.
-    pub(crate) outgoing: LruCache<Pubkey, OutgoingEntry, PubkeyHasherBuilder>,
+    pub(crate) peer_state: LruCache<Pubkey, PeerState, PubkeyHasherBuilder>,
     /// Channel for spawned tasks to report their lifetime events
     pub(crate) events_tx: mpsc::Sender<DialEvent>,
     /// Channel for spawned tasks to report their lifetime events
@@ -116,7 +116,7 @@ pub(crate) struct OutboundLoop {
 }
 
 impl OutboundLoop {
-    /// Capacity of the outbound table. The LRU owns every send-only
+    /// Capacity of the peer-state table. The LRU owns every send-only
     /// `Connection`; its overflow eviction is the only path that reclaims idle
     /// connections, so it is sized to the full expected peer set (one outbound
     /// per peer) with headroom.
@@ -140,7 +140,7 @@ impl OutboundLoop {
             egress_rx,
             banlist,
             identity_rx,
-            outgoing: LruCache::with_hasher(Self::LRU_SIZE, PubkeyHasherBuilder::default()),
+            peer_state: LruCache::with_hasher(Self::LRU_SIZE, PubkeyHasherBuilder::default()),
             events_tx,
             events_rx,
             shutdown,
@@ -180,7 +180,7 @@ impl OutboundLoop {
                 }
                 // Bookkeeping is best effort
                 _ = bookkeeping_timer.tick() => {
-                    stats::report_client(&self.stats, self.outgoing.len() as u64);
+                    stats::report_client(&self.stats, self.peer_state.len() as u64);
                 }
                 // Shutdown is never something we do in a hurry
                 _ = self.shutdown.cancelled() => break,
@@ -189,7 +189,7 @@ impl OutboundLoop {
     }
 
     /// Rebuild the client TLS config against the new identity, swap it into the
-    /// quinn endpoint, evict the outbound table so peers are re-dialed, and
+    /// quinn endpoint, evict the peer-state table so peers are re-dialed, and
     /// adopt the new pubkey.
     fn apply_identity_change(&mut self, snap: Arc<IdentitySnapshot>) {
         let client_config =
@@ -200,18 +200,18 @@ impl OutboundLoop {
         // dropped at the event boundary (its event carries the old generation).
         self.generation = self.generation.wrapping_add(1);
         let evicted = self
-            .outgoing
+            .peer_state
             .iter()
             .map(|(_peer, entry)| {
-                if let OutgoingEntry::Established { conn } = entry {
-                    close_codes::IDENTITY_ROTATED.close(conn);
+                if let PeerState::Established { connection } = entry {
+                    close_codes::IDENTITY_ROTATED.close(connection);
                     1
                 } else {
                     0
                 }
             })
             .sum();
-        self.outgoing.clear();
+        self.peer_state.clear();
         self.stats
             .connection_evicted_identity_rotated
             .fetch_add(evicted, Ordering::Relaxed);
@@ -232,9 +232,9 @@ impl OutboundLoop {
             return;
         }
 
-        if let Some(entry) = self.outgoing.get_mut(&peer) {
+        if let Some(entry) = self.peer_state.get_mut(&peer) {
             match entry {
-                OutgoingEntry::Dialing { trigger } => {
+                PeerState::Dialing { trigger } => {
                     // Newer datagrams replace older ones.
                     *trigger = bytes;
                     self.stats
@@ -242,15 +242,15 @@ impl OutboundLoop {
                         .fetch_add(1, Ordering::Relaxed);
                     return;
                 }
-                OutgoingEntry::Established { conn } if conn.remote_address() == addr => {
-                    match conn.send_datagram(bytes.clone()) {
+                PeerState::Established { connection } if connection.remote_address() == addr => {
+                    match connection.send_datagram(bytes.clone()) {
                         Ok(()) => {
                             add(&self.stats.datagrams_sent);
                             return;
                         }
                         Err(SendDatagramError::ConnectionLost(_)) => {
                             // Connection is dead; swap to Dialing.
-                            *entry = OutgoingEntry::Dialing { trigger: bytes };
+                            *entry = PeerState::Dialing { trigger: bytes };
                         }
                         Err(e) => {
                             record_error(&Error::from(e), &self.stats);
@@ -258,12 +258,15 @@ impl OutboundLoop {
                         }
                     }
                 }
-                OutgoingEntry::Established { .. } => {
+                PeerState::Established { .. } => {
                     // Peer moved - swap the slot to `Dialing`...
-                    let old = mem::replace(entry, OutgoingEntry::Dialing { trigger: bytes });
+                    let old = mem::replace(entry, PeerState::Dialing { trigger: bytes });
                     // ... and close the displaced connection with PEER_MOVED.
-                    if let OutgoingEntry::Established { conn: old_conn } = old {
-                        close_codes::PEER_MOVED.close(&old_conn);
+                    if let PeerState::Established {
+                        connection: old_connection,
+                    } = old
+                    {
+                        close_codes::PEER_MOVED.close(&old_connection);
                         self.stats
                             .connection_evicted_peer_moved
                             .fetch_add(1, Ordering::Relaxed);
@@ -277,8 +280,8 @@ impl OutboundLoop {
             // any displaced `Connection` is closed when it is dropped.
             // Any connection idle long enough to fall out of the LRU should
             // already have been axed, so there is nothing useful left to signal.
-            self.outgoing
-                .push(peer, OutgoingEntry::Dialing { trigger: bytes });
+            self.peer_state
+                .push(peer, PeerState::Dialing { trigger: bytes });
         };
 
         spawn(
@@ -302,8 +305,8 @@ impl OutboundLoop {
             outcome,
         } = event;
         if generation != self.generation {
-            if let Ok(conn) = outcome {
-                close_codes::IDENTITY_ROTATED.close(&conn);
+            if let Ok(connection) = outcome {
+                close_codes::IDENTITY_ROTATED.close(&connection);
                 self.stats
                     .connection_evicted_identity_rotated
                     .fetch_add(1, Ordering::Relaxed);
@@ -311,32 +314,32 @@ impl OutboundLoop {
             return;
         }
         match outcome {
-            Ok(conn) => match self.outgoing.get_mut(&peer) {
-                Some(slot @ OutgoingEntry::Dialing { .. }) => {
+            Ok(connection) => match self.peer_state.get_mut(&peer) {
+                Some(slot @ PeerState::Dialing { .. }) => {
                     // Extract the latest trigger and install the live connection.
-                    let OutgoingEntry::Dialing { trigger } =
-                        mem::replace(slot, OutgoingEntry::Established { conn: conn.clone() })
-                    else {
+                    let PeerState::Dialing { trigger } = mem::replace(
+                        slot,
+                        PeerState::Established {
+                            connection: connection.clone(),
+                        },
+                    ) else {
                         unreachable!()
                     };
-                    match conn.send_datagram(trigger) {
+                    match connection.send_datagram(trigger) {
                         Ok(()) => add(&self.stats.datagrams_sent),
                         Err(e) => record_error(&Error::from(e), &self.stats),
                     }
                     self.stats
-                        .record_connection_count(self.outgoing.len() as u64);
+                        .record_connection_count(self.peer_state.len() as u64);
                 }
                 _ => {
-                    close_codes::IDENTITY_ROTATED.close(&conn);
+                    close_codes::IDENTITY_ROTATED.close(&connection);
                     record_error(&Error::IdentityRotated(peer), &self.stats);
                 }
             },
             Err(()) => {
-                if matches!(
-                    self.outgoing.peek(&peer),
-                    Some(OutgoingEntry::Dialing { .. })
-                ) {
-                    self.outgoing.pop(&peer);
+                if matches!(self.peer_state.peek(&peer), Some(PeerState::Dialing { .. })) {
+                    self.peer_state.pop(&peer);
                 }
             }
         }
