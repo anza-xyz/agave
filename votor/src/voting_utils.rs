@@ -6,7 +6,7 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
         metric_types::ConsensusMetricsEventSender,
         vote::Vote,
     },
@@ -117,7 +117,7 @@ pub struct VotingContext {
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub own_vote_sender: Sender<SigVerifiedBatch>,
+    pub own_vote_sender: Sender<ConsensusMessage>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -314,7 +314,7 @@ pub(crate) fn create_and_send_own_vote_message(
 
     context
         .own_vote_sender
-        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
+        .send(ConsensusMessage::Vote(vote_msg.clone()))
         .map_err(|_| SendError(()))?;
 
     Ok(Some(vote_msg))
@@ -362,7 +362,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<SigVerifiedBatch>,
+        own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> VotingContext {
@@ -375,7 +375,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks_with_forks(
-        own_vote_sender: Sender<SigVerifiedBatch>,
+        own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (VotingContext, Arc<RwLock<BankForks>>) {
@@ -465,7 +465,7 @@ mod tests {
         let received_message = own_vote_receiver.recv().unwrap();
         assert_eq!(
             received_message,
-            SigVerifiedBatch::Votes(vec![expected_message.clone()])
+            ConsensusMessage::Vote(expected_message.clone())
         );
 
         let refresh_vote = Vote::new_notarization_vote(Block {

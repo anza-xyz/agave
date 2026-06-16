@@ -29,6 +29,7 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        sig_verified_messages::SigVerifiedBatch,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -106,6 +107,13 @@ pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// of votes / certificate need to be refreshed.
 const MAX_BLS_MESSAGES_TO_SEND: usize = 1000;
 
+enum BlsSigVerifyThreadsOrChannel {
+    /// Alpenglow is active so handlers to the threads related to the bls sigverify.
+    Threads(JoinHandle<()>, JoinHandle<()>),
+    /// Alpenglow is not active so hold on to the send side to prevent the channel from disconnecting.
+    Channel { _sender: Sender<SigVerifiedBatch> },
+}
+
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
     shred_sigverify: JoinHandle<()>,
@@ -120,7 +128,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
+    bls_sigverify_threads_or_channel: BlsSigVerifyThreadsOrChannel,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -284,7 +292,7 @@ impl Tvu {
 
         // The BLS socket is currently only available on Testnet and Development clusters.
         // Closer to release we will enable this for all clusters.
-        let bls_sigverify_threads = if let Some(bls_socket) = bls_socket {
+        let bls_sigverify_threads_or_channel = if let Some(bls_socket) = bls_socket {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
             let (
@@ -337,17 +345,18 @@ impl Tvu {
                     packet_receiver: bls_packet_receiver,
                     channel_to_repair: verified_voter_slots_sender,
                     channel_to_reward: reward_votes_sender,
-                    channel_to_pool: consensus_message_sender.clone(),
+                    channel_to_pool: consensus_message_sender,
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
             );
 
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
-
-            Some((bls_streamer_t, bls_sigverifier_t))
+            BlsSigVerifyThreadsOrChannel::Threads(bls_streamer_t, bls_sigverifier_t)
         } else {
-            None
+            BlsSigVerifyThreadsOrChannel::Channel {
+                _sender: consensus_message_sender,
+            }
         };
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -494,6 +503,7 @@ impl Tvu {
                 block_commitment_cache.clone(),
                 rpc_subscriptions.clone(),
             );
+        let (own_message_sender, own_message_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         let votor_config = VotorConfig {
             exit: exit.clone(),
@@ -517,10 +527,11 @@ impl Tvu {
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
-            own_vote_sender: consensus_message_sender.clone(),
+            own_vote_sender: own_message_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
+            own_message_receiver,
             consensus_metrics_receiver,
         };
         let votor = Votor::new(votor_config);
@@ -542,7 +553,7 @@ impl Tvu {
             block_metadata_notifier,
             dumped_slots_sender,
             votor_event_sender,
-            own_vote_sender: consensus_message_sender,
+            own_message_sender,
             optimistic_parent_sender,
             lockouts_sender,
         };
@@ -652,7 +663,7 @@ impl Tvu {
             warm_quic_cache_service,
             drop_bank_service,
             duplicate_shred_listener,
-            bls_sigverify_threads,
+            bls_sigverify_threads_or_channel,
             votor,
             commitment_service,
         })
@@ -674,7 +685,9 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let Some((streamer, sigverifier)) = self.bls_sigverify_threads {
+        if let BlsSigVerifyThreadsOrChannel::Threads(streamer, sigverifier) =
+            self.bls_sigverify_threads_or_channel
+        {
             streamer.join()?;
             sigverifier.join()?;
         }

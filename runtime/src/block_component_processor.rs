@@ -12,7 +12,7 @@ use {
     },
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::SigVerifiedBatch,
+        consensus_message::ConsensusMessage,
         fraction::Fraction,
         migration::{GENESIS_VOTE_THRESHOLD, MigrationStatus},
     },
@@ -181,7 +181,7 @@ impl BlockComponentProcessor {
         parent_bank: Arc<Bank>,
         marker: VersionedBlockMarker,
         allow_initial_update_parent: bool,
-        finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         let slot = bank.slot();
@@ -314,7 +314,7 @@ impl BlockComponentProcessor {
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         footer: VersionedBlockFooter,
-        finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
     ) -> Result<(), BlockComponentProcessorError> {
         if !self.has_header && self.update_parent.is_none() {
             return Err(BlockComponentProcessorError::MissingParentMarker);
@@ -374,17 +374,17 @@ impl BlockComponentProcessor {
         if let Some((finalize_cert, notarize_cert)) = pool_input {
             if let Some(sender) = finalization_cert_sender {
                 if let Some(notarize_cert) = notarize_cert {
-                    let certs = SigVerifiedBatch::Certificates(vec![notarize_cert]);
+                    let cert = ConsensusMessage::Certificate(notarize_cert);
                     // TODO blocking send.
                     let _ = sender
-                        .send(certs)
-                        .inspect_err(|_| info!("SigVerifiedBatch sender disconnected"));
+                        .send(cert)
+                        .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
                 }
-                let certs = SigVerifiedBatch::Certificates(vec![finalize_cert]);
+                let cert = ConsensusMessage::Certificate(finalize_cert);
                 // TODO blocking send.
                 let _ = sender
-                    .send(certs)
-                    .inspect_err(|_| info!("SigVerifiedBatch sender disconnected"));
+                    .send(cert)
+                    .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
             }
         }
 
