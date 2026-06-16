@@ -926,6 +926,7 @@ pub(crate) mod external {
                     &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
                     working_bank.max_processing_age(),
                     true,
+                    true,
                     &mut error_counters,
                 );
             let included_slots = included_slots.expect("requested to collect processed slots");
@@ -3310,6 +3311,7 @@ mod tests {
                 &sanitized_txs,
                 &vec![Ok(()); sanitized_txs.len()],
                 bank.max_processing_age(),
+                true,
                 &mut TransactionErrorMetrics::default(),
             )
             .into_iter()

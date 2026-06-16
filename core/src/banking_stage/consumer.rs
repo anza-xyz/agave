@@ -134,6 +134,7 @@ impl Consumer {
             txs,
             &pre_results,
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
         let check_results: Vec<_> = check_results
@@ -332,6 +333,7 @@ impl Consumer {
                     ),
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
+                    strict_nonce_size_check: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;

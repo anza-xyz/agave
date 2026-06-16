@@ -328,6 +328,7 @@ where
             &txs,
             &lock_results,
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
 
