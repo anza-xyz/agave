@@ -46,7 +46,7 @@ impl LoopMetrics {
 
         if self.last_report.elapsed() > report_interval {
             datapoint_info!(
-                "block-creation-loop-metrics",
+                solana_metrics::names::block_creation::BLOCK_CREATION_LOOP_METRICS,
                 ("loop_count", self.loop_count, i64),
                 (
                     "bank_timeout_completion_count",
@@ -123,7 +123,7 @@ pub(crate) struct SlotMetrics {
 impl SlotMetrics {
     pub(crate) fn report(&mut self) {
         datapoint_info!(
-            "slot-metrics",
+            solana_metrics::names::block_creation::SLOT_METRICS,
             ("slot", self.slot, i64),
             ("attempt_count", self.attempt_start_leader_count, i64),
             ("leader_handover_fast", self.leader_handover_fast, i64),

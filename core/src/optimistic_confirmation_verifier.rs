@@ -77,7 +77,10 @@ impl OptimisticConfirmationVerifier {
                          slot={new_optimistic_slot}: {e:?}"
                     );
                 }
-                datapoint_info!("optimistic_slot", ("slot", new_optimistic_slot, i64),);
+                datapoint_info!(
+                    solana_metrics::names::core::OPTIMISTIC_SLOT,
+                    ("slot", new_optimistic_slot, i64),
+                );
                 self.unchecked_slots.insert((new_optimistic_slot, hash));
             }
         }
@@ -124,7 +127,7 @@ impl OptimisticConfirmationVerifier {
             };
 
             datapoint_warn!(
-                "optimistic_slot_not_rooted",
+                solana_metrics::names::core::OPTIMISTIC_SLOT_NOT_ROOTED,
                 ("slot", *optimistic_slot, i64),
                 ("epoch", epoch, i64),
                 ("root", root, i64),

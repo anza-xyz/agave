@@ -505,7 +505,7 @@ impl LimitByTime for IpAddr {
 
     fn datapoint_info(&self, request_amount: u64, new_total: u64) {
         datapoint_info!(
-            "faucet-airdrop",
+            solana_metrics::names::faucet::FAUCET_AIRDROP,
             ("request_amount", request_amount, i64),
             ("ip", self.to_string(), String),
             ("new_total", new_total, i64)
@@ -524,7 +524,7 @@ impl LimitByTime for Pubkey {
 
     fn datapoint_info(&self, request_amount: u64, new_total: u64) {
         datapoint_info!(
-            "faucet-airdrop",
+            solana_metrics::names::faucet::FAUCET_AIRDROP,
             ("request_amount", request_amount, i64),
             ("address", self.to_string(), String),
             ("new_total", new_total, i64)

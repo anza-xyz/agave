@@ -151,7 +151,7 @@ pub fn get_closest_completion(
                     let shred_count = shred_index.data().num_shreds() as u64;
                     if last_index.saturating_add(1) < shred_count {
                         datapoint_error!(
-                            "repair_generic_traversal_error",
+                            solana_metrics::names::repair::REPAIR_GENERIC_TRAVERSAL_ERROR,
                             (
                                 "error",
                                 format!(
@@ -166,7 +166,7 @@ pub fn get_closest_completion(
                 } else {
                     if last_index < slot_meta.consumed {
                         datapoint_error!(
-                            "repair_generic_traversal_error",
+                            solana_metrics::names::repair::REPAIR_GENERIC_TRAVERSAL_ERROR,
                             (
                                 "error",
                                 format!(

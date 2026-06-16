@@ -235,7 +235,7 @@ impl ConsensusMetrics {
     fn emit_epoch_metrics(epoch: Epoch, epoch_metrics: &EpochMetrics) {
         for (addr, metrics) in &epoch_metrics.node_metrics {
             let addr = addr.to_string();
-            datapoint_info!("consensus_vote_metrics",
+            datapoint_info!(solana_metrics::names::votor::CONSENSUS_VOTE_METRICS,
                 "address" => addr,
                 ("epoch", epoch, i64),
                 ("notar_vote_count", metrics.notar.count(), i64),
@@ -267,7 +267,7 @@ impl ConsensusMetrics {
 
         for (addr, stats) in &epoch_metrics.leader_metrics {
             let addr = addr.to_string();
-            datapoint_info!("consensus_block_hash_seen_metrics",
+            datapoint_info!(solana_metrics::names::votor::CONSENSUS_BLOCK_HASH_SEEN_METRICS,
                 "address" => addr,
                 ("epoch", epoch, i64),
                 ("block_hash_seen_count", stats.count(), i64),
@@ -278,7 +278,7 @@ impl ConsensusMetrics {
         }
 
         datapoint_info!(
-            "consensus_metrics_internals",
+            solana_metrics::names::votor::CONSENSUS_METRICS_INTERNALS,
             ("epoch", epoch, i64),
             (
                 "start_of_slot_count",

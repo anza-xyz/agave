@@ -533,12 +533,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             );
             num_consecutive_failures += 1;
             if num_consecutive_failures > config.unhealthy_threshold {
-                datapoint_info!("watchtower-sanity", ("ok", false, bool));
+                datapoint_info!(
+                    solana_metrics::names::watchtower::WATCHTOWER_SANITY,
+                    ("ok", false, bool)
+                );
                 if last_notification_msg != notification_msg {
                     notifier.send(&notification_msg, &NotificationType::Trigger { incident });
                 }
                 datapoint_error!(
-                    "watchtower-sanity-failure",
+                    solana_metrics::names::watchtower::WATCHTOWER_SANITY_FAILURE,
                     ("test", failure_test_name, String),
                     ("err", failure_error_message, String)
                 );
@@ -550,7 +553,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 );
             }
         } else {
-            datapoint_info!("watchtower-sanity", ("ok", true, bool));
+            datapoint_info!(
+                solana_metrics::names::watchtower::WATCHTOWER_SANITY,
+                ("ok", true, bool)
+            );
             if !last_notification_msg.is_empty() {
                 let alarm_duration = Instant::now().duration_since(last_success);
                 let alarm_duration = alarm_duration - config.interval; // Subtract the period before the first error

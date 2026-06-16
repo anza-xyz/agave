@@ -102,7 +102,7 @@ impl SnapshotPackagerService {
 
                             let handling_time = measure_handling.end_as_us();
                             datapoint_info!(
-                                "snapshot_packager_service",
+                                solana_metrics::names::snapshots::SNAPSHOT_PACKAGER_SERVICE,
                                 ("enqueued_time_us", enqueued_time.as_micros(), i64),
                                 ("handling_time_us", handling_time, i64),
                             );
@@ -196,7 +196,7 @@ impl SnapshotPackagerService {
 
                     let handling_time_us = measure_handling.end_as_us();
                     datapoint_info!(
-                        "snapshot_packager_service",
+                        solana_metrics::names::snapshots::SNAPSHOT_PACKAGER_SERVICE,
                         ("enqueued_time_us", enqueued_time.as_micros(), i64),
                         ("handling_time_us", handling_time_us, i64),
                         ("archive_time_us", archive_time_us, i64),

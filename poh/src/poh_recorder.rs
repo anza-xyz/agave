@@ -171,7 +171,7 @@ impl PohRecorderMetrics {
     fn report(&mut self, bank_slot: Slot) {
         if self.last_metric.elapsed().as_millis() > 1000 {
             datapoint_info!(
-                "poh_recorder",
+                solana_metrics::names::poh::POH_RECORDER,
                 ("slot", bank_slot, i64),
                 ("flush_cache_tick_us", self.flush_cache_tick_us, i64),
                 ("flush_cache_no_tick_us", self.flush_cache_no_tick_us, i64),
@@ -548,7 +548,7 @@ impl PohRecorder {
             }
 
             datapoint_info!(
-                "leader-slot-start-to-cleared-elapsed-ms",
+                solana_metrics::names::poh::LEADER_SLOT_START_TO_CLEARED_ELAPSED_MS,
                 ("slot", bank.slot(), i64),
                 ("elapsed", start.elapsed().as_millis(), i64),
             );
@@ -972,7 +972,7 @@ impl PohRecorder {
         *last_slot = next_leader_slot;
 
         datapoint_info!(
-            "poh_recorder-detected_pending_fork",
+            solana_metrics::names::poh::POH_RECORDER_DETECTED_PENDING_FORK,
             ("next_leader_slot", next_leader_slot, i64),
             (
                 "did_delay_leader_slot",

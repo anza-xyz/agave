@@ -83,7 +83,9 @@ impl TpuClient<QuicPool, QuicConnectionManager, QuicConfig> {
         websocket_url: &str,
         config: TpuClientConfig,
     ) -> Result<Self> {
-        let connection_cache = match ConnectionCache::new("connection_cache_tpu_client") {
+        let connection_cache = match ConnectionCache::new(
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_TPU_CLIENT,
+        ) {
             ConnectionCache::Quic(cache) => cache,
             ConnectionCache::Udp(_) => {
                 return Err(TpuSenderError::Custom(String::from(

@@ -64,7 +64,7 @@ impl ConsensusPoolServiceStats {
             last_request_time: _,
         } = self;
         datapoint_info!(
-            "consensus_pool_service",
+            solana_metrics::names::votor::CONSENSUS_POOL_SERVICE,
             ("add_message_failed", add_message_failed, i64),
             ("certificates_sent", certificates_sent, i64),
             ("certificates_dropped", certificates_dropped, i64),

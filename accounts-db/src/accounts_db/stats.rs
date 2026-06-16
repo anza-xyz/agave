@@ -52,7 +52,7 @@ impl StoreAccountsUnfrozenStats {
         }
 
         datapoint_info!(
-            "accounts_db_store_accounts_unfrozen",
+            solana_metrics::names::accounts_db::ACCOUNTS_DB_STORE_ACCOUNTS_UNFROZEN,
             (
                 "write_to_cache_us",
                 self.write_to_cache_us.swap(0, Ordering::Relaxed),
@@ -123,7 +123,7 @@ impl StoreAccountsForShrinkStats {
         }
 
         datapoint_info!(
-            "accounts_db_store_accounts_for_shrink",
+            solana_metrics::names::accounts_db::ACCOUNTS_DB_STORE_ACCOUNTS_FOR_SHRINK,
             (
                 "flush_read_cache_us",
                 self.flush_read_cache_us.swap(0, Ordering::Relaxed),
@@ -185,7 +185,7 @@ impl StoreAccountsForFlushStats {
         }
 
         datapoint_info!(
-            "accounts_db_store_accounts_for_flush",
+            solana_metrics::names::accounts_db::ACCOUNTS_DB_STORE_ACCOUNTS_FOR_FLUSH,
             (
                 "write_to_storage_us",
                 self.write_to_storage_us.swap(0, Ordering::Relaxed),
@@ -413,7 +413,7 @@ impl LatestAccountsIndexRootsStats {
 
     pub fn report(&self) {
         datapoint_info!(
-            "accounts_index_roots_len",
+            solana_metrics::names::accounts_db::ACCOUNTS_INDEX_ROOTS_LEN,
             ("roots_len", self.roots_len.load(Ordering::Relaxed), i64),
             (
                 "uncleaned_roots_len",
@@ -478,7 +478,10 @@ pub struct CleanAccountsStats {
 
 impl CleanAccountsStats {
     pub fn report(&self) {
-        self.purge_stats.report("clean_purge_slots_stats", None);
+        self.purge_stats.report(
+            solana_metrics::names::accounts_db::CLEAN_PURGE_SLOTS_STATS,
+            None,
+        );
         self.latest_accounts_index_roots_stats.report();
     }
 }
@@ -565,7 +568,7 @@ impl ShrinkStats {
     pub fn report(&self) {
         if self.last_report.should_update(1000) {
             datapoint_info!(
-                "shrink_stats",
+                solana_metrics::names::accounts_db::SHRINK_STATS,
                 (
                     "ancient_slots_added_to_shrink",
                     self.ancient_slots_added_to_shrink
@@ -731,7 +734,7 @@ impl ShrinkStats {
 impl ShrinkAncientStats {
     pub fn report(&self) {
         datapoint_info!(
-            "shrink_ancient_stats",
+            solana_metrics::names::accounts_db::SHRINK_ANCIENT_STATS,
             (
                 "num_slots_shrunk",
                 self.shrink_stats
@@ -994,7 +997,7 @@ pub struct LoadAccountsStats {
 impl LoadAccountsStats {
     pub fn report(&self) {
         datapoint_info!(
-            "accounts_db_load_accounts",
+            solana_metrics::names::accounts_db::ACCOUNTS_DB_LOAD_ACCOUNTS,
             (
                 "num_loaded_from_write_cache",
                 self.num_loaded_from_write_cache.swap(0, Ordering::Relaxed),

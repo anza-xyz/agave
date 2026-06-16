@@ -196,7 +196,7 @@ impl CompletedDataSetsService {
                 .checked_div(stats.total_transactions)
                 .unwrap_or(0);
             datapoint_info!(
-                "deshred_geyser_timing",
+                solana_metrics::names::core::DESHRED_GEYSER_TIMING,
                 ("batch_total_us", batch_measure.as_us() as i64, i64),
                 ("notify_total_us", stats.total_notify_us as i64, i64),
                 ("lut_load_total_us", stats.total_lut_load_us as i64, i64),

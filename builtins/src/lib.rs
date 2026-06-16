@@ -136,7 +136,8 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_system_program",
+            datapoint_name:
+                solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_SYSTEM_PROGRAM,
         };
     }
 
@@ -156,7 +157,8 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_vote_program",
+            datapoint_name:
+                solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_VOTE_PROGRAM,
         };
     }
 
@@ -176,7 +178,7 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_deprecated_program",
+            datapoint_name: solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_BPF_LOADER_DEPRECATED_PROGRAM,
         };
     }
 
@@ -196,7 +198,8 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_program",
+            datapoint_name:
+                solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_BPF_LOADER_PROGRAM,
         };
     }
 
@@ -216,7 +219,7 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_upgradeable_program",
+            datapoint_name: solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_BPF_LOADER_UPGRADEABLE_PROGRAM,
         };
     }
 
@@ -236,7 +239,8 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_compute_budget_program",
+            datapoint_name:
+                solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_COMPUTE_BUDGET_PROGRAM,
         };
     }
 
@@ -256,7 +260,8 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_zk_token_proof_program",
+            datapoint_name:
+                solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_ZK_TOKEN_PROOF_PROGRAM,
         };
     }
 
@@ -276,7 +281,8 @@ pub mod test_only {
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
             verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_zk_elgamal_proof_program",
+            datapoint_name:
+                solana_metrics::names::runtime::MIGRATE_BUILTIN_TO_CORE_BPF_ZK_ELGAMAL_PROOF_PROGRAM,
         };
     }
 }

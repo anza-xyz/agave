@@ -151,7 +151,7 @@ impl TpuClientNextClient {
         );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
-            "send-transaction-service-TPU-client",
+            solana_metrics::names::send_transaction_service::SEND_TRANSACTION_SERVICE_TPU_CLIENT,
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));

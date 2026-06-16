@@ -414,7 +414,7 @@ impl ClusterSlots {
                         )
                     });
             datapoint_info!(
-                "cluster-slots-size",
+                solana_metrics::names::cluster_slots::CLUSTER_SLOTS_SIZE,
                 ("total_entries", size as i64, i64),
                 ("frozen_entries", frozen as i64, i64),
                 ("blank_entries", blank as i64, i64),

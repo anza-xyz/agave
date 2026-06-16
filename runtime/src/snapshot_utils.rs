@@ -609,7 +609,7 @@ pub fn serialize_snapshot(
 
         // Monitor sizes because they're capped to MAX_SNAPSHOT_DATA_FILE_SIZE
         datapoint_info!(
-            "snapshot_bank",
+            solana_metrics::names::runtime::SNAPSHOT_BANK,
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),

@@ -170,7 +170,7 @@ impl Bank {
                      {err}"
                 );
                 datapoint_warn!(
-                    "bank-burned_fee",
+                    solana_metrics::names::runtime::BANK_BURNED_FEE,
                     ("slot", self.slot(), i64),
                     ("num_lamports", deposit, i64),
                     ("error", err.to_string(), String),

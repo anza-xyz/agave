@@ -319,7 +319,7 @@ impl Tvu {
                 };
                 spawn_simple_qos_server(
                     "solQuicBLS",
-                    "quic_streamer_bls",
+                    solana_metrics::names::streamer::QUIC_STREAMER_BLS,
                     vec![bls_socket.into()],
                     &cluster_info.keypair(),
                     bls_packet_sender,
@@ -810,17 +810,17 @@ pub mod tests {
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
             ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
+                solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_QUIC,
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         } else {
             ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
+                solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_UDP,
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
         let bls_connection_cache = ConnectionCache::new_quic_for_tests(
-            "connection_cache_bls_quic",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_BLS_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         );
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());

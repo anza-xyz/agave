@@ -231,7 +231,7 @@ impl MetricsAgent {
         counters.clear();
 
         combined.push(
-            DataPoint::new("metrics")
+            DataPoint::new(crate::names::internal::METRICS)
                 .add_field_i64("points_written", points_written as i64)
                 .add_field_i64("num_points", num_points as i64)
                 .add_field_i64("points_lost", (num_points - points_written) as i64)
@@ -508,7 +508,7 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
                 None => "?".to_string(),
             };
             submit(
-                DataPoint::new("panic")
+                DataPoint::new(crate::names::internal::PANIC)
                     .add_field_str("program", program)
                     .add_field_str("thread", thread::current().name().unwrap_or("?"))
                     // The 'one' field exists to give Kapacitor Alerts a numerical value

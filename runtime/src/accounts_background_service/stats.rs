@@ -41,7 +41,7 @@ impl StatsManager {
         }
 
         datapoint_info!(
-            "accounts_background_service",
+            solana_metrics::names::runtime::ACCOUNTS_BACKGROUND_SERVICE,
             (
                 "duration_since_previous_submit_us",
                 duration_since_previous_submit.as_micros(),

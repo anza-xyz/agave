@@ -55,7 +55,9 @@ impl GossipService {
             gossip_sockets,
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
-        let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
+        let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new(
+            solana_metrics::names::streamer::GOSSIP_RECEIVER,
+        ));
         let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
             gossip_sockets.clone(),

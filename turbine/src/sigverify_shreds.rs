@@ -537,7 +537,7 @@ impl ShredSigVerifyStats {
             return;
         }
         datapoint_info!(
-            "shred_sigverify",
+            solana_metrics::names::turbine::SHRED_SIGVERIFY,
             ("num_iters", self.num_iters, i64),
             ("num_batches", self.num_batches, i64),
             ("num_packets", self.num_packets, i64),

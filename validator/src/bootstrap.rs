@@ -663,7 +663,7 @@ pub fn rpc_bootstrap(
     }
 
     datapoint_info!(
-        "bootstrap-snapshot-download",
+        solana_metrics::names::validator::BOOTSTRAP_SNAPSHOT_DOWNLOAD,
         (
             "total_time_secs",
             total_snapshot_download_time.elapsed().as_secs(),

@@ -1240,7 +1240,7 @@ impl Blockstore {
         // being replayed rather than letting validators derive different
         // parents from different shred arrival orders.
         datapoint_error!(
-            "blockstore_error",
+            solana_metrics::names::ledger::BLOCKSTORE_ERROR,
             (
                 "error",
                 format!(
@@ -3306,7 +3306,7 @@ impl Blockstore {
             }
 
             datapoint_error!(
-                "blockstore_error",
+                solana_metrics::names::ledger::BLOCKSTORE_ERROR,
                 (
                     "error",
                     format!(
@@ -3356,7 +3356,7 @@ impl Blockstore {
             }
 
             datapoint_error!(
-                "blockstore_error",
+                solana_metrics::names::ledger::BLOCKSTORE_ERROR,
                 (
                     "error",
                     format!(
@@ -3398,7 +3398,7 @@ impl Blockstore {
                 .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
 
             datapoint_error!(
-                "blockstore_error",
+                solana_metrics::names::ledger::BLOCKSTORE_ERROR,
                 (
                     "error",
                     format!(
@@ -4668,7 +4668,7 @@ impl Blockstore {
         get_status_info_timer.stop();
 
         datapoint_info!(
-            "blockstore-get-conf-sigs-for-addr-2",
+            solana_metrics::names::ledger::BLOCKSTORE_GET_CONF_SIGS_FOR_ADDR_2,
             (
                 "get_before_slot_us",
                 get_before_slot_timer.as_us() as i64,
@@ -5396,7 +5396,7 @@ impl Blockstore {
         }
         fix_roots.stop();
         datapoint_info!(
-            "blockstore-scan_and_fix_roots",
+            solana_metrics::names::ledger::BLOCKSTORE_SCAN_AND_FIX_ROOTS,
             (
                 "find_missing_roots_us",
                 find_missing_roots.as_us() as i64,
@@ -6063,7 +6063,7 @@ fn send_signals(
             let res = signal.try_send(slots);
             if let Err(TrySendError::Full(_)) = res {
                 datapoint_error!(
-                    "blockstore_error",
+                    solana_metrics::names::ledger::BLOCKSTORE_ERROR,
                     (
                         "error",
                         "Unable to send newly completed slot because channel is full",
@@ -6082,7 +6082,7 @@ fn send_signals(
                     signal.slot
                 );
                 datapoint_error!(
-                    "blockstore_error",
+                    solana_metrics::names::ledger::BLOCKSTORE_ERROR,
                     ("error", "update_parent channel full", String),
                     ("slot", signal.slot, i64),
                 );

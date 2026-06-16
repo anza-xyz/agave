@@ -219,7 +219,7 @@ impl Tpu {
             _banlist,
         ) = spawn_simple_qos_server(
             "solQuicTVo",
-            "quic_streamer_tpu_vote",
+            solana_metrics::names::streamer::QUIC_STREAMER_TPU_VOTE,
             quic_vote_sockets,
             keypair,
             vote_packet_sender,
@@ -243,7 +243,7 @@ impl Tpu {
             key_updater,
         } = spawn_stake_weighted_qos_server(
             "solQuicTpu",
-            "quic_streamer_tpu",
+            solana_metrics::names::streamer::QUIC_STREAMER_TPU,
             transactions_quic_sockets,
             keypair,
             packet_sender,
@@ -263,7 +263,7 @@ impl Tpu {
             key_updater: forwards_key_updater,
         } = spawn_stake_weighted_qos_server(
             "solQuicTpuFwd",
-            "quic_streamer_tpu_forwards",
+            solana_metrics::names::streamer::QUIC_STREAMER_TPU_FORWARDS,
             transactions_forwards_quic_sockets,
             keypair,
             forwarded_packet_sender,

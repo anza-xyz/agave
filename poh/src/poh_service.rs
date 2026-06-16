@@ -76,7 +76,7 @@ impl PohTiming {
             let elapsed_us = self.last_metric.elapsed().as_micros() as u64;
             let us_per_slot = (elapsed_us * ticks_per_slot) / self.num_ticks;
             datapoint_info!(
-                "poh-service",
+                solana_metrics::names::poh::POH_SERVICE,
                 ("ticks", self.num_ticks as i64, i64),
                 ("hashes", self.num_hashes as i64, i64),
                 ("elapsed_us", us_per_slot, i64),

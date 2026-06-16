@@ -207,7 +207,7 @@ impl EventHandlerStats {
             return;
         }
         datapoint_info!(
-            "event_handler_stats",
+            solana_metrics::names::votor::EVENT_HANDLER_STATS,
             ("ignored", self.ignored as i64, i64),
             (
                 "leader_window_replaced",
@@ -220,14 +220,14 @@ impl EventHandlerStats {
         for (event, EventCountAndTime { count, time_us }) in &self.received_events_count_and_timing
         {
             datapoint_info!(
-                "event_handler_received_event_count_and_timing",
+                solana_metrics::names::votor::EVENT_HANDLER_RECEIVED_EVENT_COUNT_AND_TIMING,
                 ("event", format!("{:?}", event), String),
                 ("count", *count as i64, i64),
                 ("elapsed_us", *time_us as i64, i64)
             );
         }
         datapoint_info!(
-            "event_handler_timing",
+            solana_metrics::names::votor::EVENT_HANDLER_TIMING,
             (
                 "receive_event_time_us",
                 self.receive_event_time_us as i64,
@@ -241,7 +241,7 @@ impl EventHandlerStats {
         );
         for (vote_type, count) in &self.sent_votes {
             datapoint_info!(
-                "event_handler_sent_vote_count",
+                solana_metrics::names::votor::EVENT_HANDLER_SENT_VOTE_COUNT,
                 ("vote", format!("{:?}", vote_type), String),
                 ("count", *count as i64, i64)
             );
@@ -251,7 +251,7 @@ impl EventHandlerStats {
         for (slot, tracking) in &self.slot_tracking_map {
             let start = tracking.start;
             datapoint_info!(
-                "event_handler_slot_tracking",
+                solana_metrics::names::votor::EVENT_HANDLER_SLOT_TRACKING,
                 ("slot", *slot as i64, i64),
                 (
                     "first_shred",

@@ -130,7 +130,7 @@ impl BankForksControllerHandle {
         let response_wait_us = response_wait_start.elapsed().as_micros() as i64;
         let total_us = total_start.elapsed().as_micros() as i64;
         datapoint_info!(
-            "bank_forks_controller-command",
+            solana_metrics::names::runtime::BANK_FORKS_CONTROLLER_COMMAND,
             ("command", command_name, String),
             ("slot", slot as i64, i64),
             ("queue_len_before_send", queue_len_before_send as i64, i64),
@@ -185,7 +185,7 @@ impl BankForksController for BankForksControllerHandle {
         let total_us = total_start.elapsed().as_micros() as i64;
 
         datapoint_info!(
-            "bank_forks_controller-command",
+            solana_metrics::names::runtime::BANK_FORKS_CONTROLLER_COMMAND,
             ("command", "set_root", String),
             ("slot", new_root as i64, i64),
             ("total_us", total_us, i64),

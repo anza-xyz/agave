@@ -43,7 +43,7 @@ impl Blockstore {
             self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut purge_stats);
 
         datapoint_info!(
-            "blockstore-purge",
+            solana_metrics::names::ledger::BLOCKSTORE_PURGE,
             ("from_slot", from_slot as i64, i64),
             ("to_slot", to_slot as i64, i64),
             ("delete_range_us", purge_stats.delete_range as i64, i64),

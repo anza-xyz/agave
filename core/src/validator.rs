@@ -1174,7 +1174,7 @@ impl Validator {
 
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
-                "connection_cache_vote_quic",
+                solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_QUIC,
                 tpu_connection_pool_size,
                 Some(node.sockets.quic_vote_client),
                 Some((
@@ -1191,13 +1191,13 @@ impl Validator {
             Arc::new(vote_connection_cache)
         } else {
             Arc::new(ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
+                solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_UDP,
                 tpu_connection_pool_size,
             ))
         };
 
         let bls_connection_cache = Arc::new(ConnectionCache::new_with_max_connections(
-            "connection_cache_bls_quic",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_BLS_QUIC,
             // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
             // we wouldn't expect more than a 100 PPS. 1 connection is enough.
             1, /* connection_pool_size */
@@ -1769,7 +1769,7 @@ impl Validator {
         );
 
         datapoint_info!(
-            "validator-new",
+            solana_metrics::names::validator::VALIDATOR_NEW,
             ("id", id.to_string(), String),
             ("version", solana_version::version!(), String),
             ("cluster_type", genesis_config.cluster_type as u32, i64),
@@ -2163,7 +2163,10 @@ fn post_process_restored_tower(
             // what if --wait-for-supermajority again if the validator restarted?
             let message =
                 format!("Hard fork is detected; discarding tower restoration result: {tower:?}");
-            datapoint_error!("tower_error", ("error", message, String),);
+            datapoint_error!(
+                solana_metrics::names::validator::TOWER_ERROR,
+                ("error", message, String),
+            );
             error!("{message}");
 
             // unconditionally relax tower requirement so that we can always restore tower
@@ -2191,7 +2194,7 @@ fn post_process_restored_tower(
                 active_vote_account_exists_in_bank(&bank_forks.working_bank(), vote_account);
             if !err.is_file_missing() {
                 datapoint_error!(
-                    "tower_error",
+                    solana_metrics::names::validator::TOWER_ERROR,
                     ("error", format!("Unable to restore tower: {err}"), String),
                 );
             }
@@ -2248,7 +2251,10 @@ fn post_process_restored_vote_history(
                 "Hard fork is detected; discarding vote_history restoration result: \
                  {vote_history:?}"
             );
-            datapoint_error!("vote_history_error", ("error", message, String),);
+            datapoint_error!(
+                solana_metrics::names::validator::VOTE_HISTORY_ERROR,
+                ("error", message, String),
+            );
             error!("{message}");
 
             // unconditionally relax vote_history requirement
@@ -2268,7 +2274,7 @@ fn post_process_restored_vote_history(
         Err(err) => {
             if !err.is_file_missing() {
                 datapoint_error!(
-                    "vote_history_error",
+                    solana_metrics::names::validator::VOTE_HISTORY_ERROR,
                     (
                         "error",
                         format!("Unable to restore vote_history: {err}"),
@@ -3086,7 +3092,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
             }
         }
         datapoint_info!(
-            "wfsm_gossip",
+            solana_metrics::names::validator::WFSM_GOSSIP,
             ("online_stake", online_stake, i64),
             ("offline_stake", offline_stake, i64),
             ("total_activated_stake", total_activated_stake, i64),

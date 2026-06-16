@@ -609,7 +609,10 @@ impl<T: 'static> ClusterNodesCache<T> {
                         "ClusterNodesCache::get: unknown Bank::epoch_staked_nodes for epoch: \
                          {epoch}, slot: {shred_slot}"
                     );
-                    inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
+                    inc_new_counter_error!(
+                        solana_metrics::names::turbine::CLUSTER_NODES_UNKNOWN_EPOCH_STAKED_NODES,
+                        1
+                    );
                     Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
                 });
             let nodes = new_cluster_nodes::<T>(

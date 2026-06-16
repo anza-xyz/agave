@@ -57,7 +57,7 @@ impl TimerManagerStats {
             return;
         }
         datapoint_info!(
-            "votor_timer_manager",
+            solana_metrics::names::votor::VOTOR_TIMER_MANAGER,
             ("max_heap_size", self.max_heap_size as i64, i64),
             ("set_timeout_count", self.set_timeout_count as i64, i64),
             (

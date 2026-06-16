@@ -249,7 +249,7 @@ impl RecentItems {
         let last_metrics_ago = now.duration_since(self.last_metrics_submission);
         if last_metrics_ago > RPC_NOTIFICATIONS_METRICS_SUBMISSION_INTERVAL_MS {
             datapoint_info!(
-                "rpc_subscriptions_recent_items",
+                solana_metrics::names::rpc::RPC_SUBSCRIPTIONS_RECENT_ITEMS,
                 ("num", self.queue.len(), i64),
                 ("total_bytes", self.total_bytes, i64),
             );
@@ -497,7 +497,7 @@ impl PubsubNotificationStats {
             return;
         }
         datapoint_info!(
-            "pubsub_notification_entries",
+            solana_metrics::names::rpc::PUBSUB_NOTIFICATION_ENTRIES,
             ("notify_slot_count", self.notify_slot_count, i64),
             (
                 "notify_slot_update_count",
@@ -1137,7 +1137,7 @@ impl RpcSubscriptions {
                 num_signatures_notified.load(Ordering::Relaxed),
             );
             datapoint_info!(
-                "rpc_subscriptions",
+                solana_metrics::names::rpc::RPC_SUBSCRIPTIONS,
                 ("source", source, String),
                 (
                     "num_account_subscriptions",

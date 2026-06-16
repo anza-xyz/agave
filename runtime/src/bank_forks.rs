@@ -554,7 +554,7 @@ impl BankForks {
         let (removed_banks, set_root_metrics) =
             self.do_set_root_return_metrics(root, snapshot_controller, highest_super_majority_root);
         datapoint_info!(
-            "bank-forks_set_root",
+            solana_metrics::names::runtime::BANK_FORKS_SET_ROOT,
             (
                 "elapsed_ms",
                 set_root_start.elapsed().as_millis() as usize,

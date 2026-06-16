@@ -80,7 +80,7 @@ impl PrioritizationFeeMetrics {
             total_update_elapsed_us: Saturating(total_update_elapsed_us),
         } = self;
         datapoint_info!(
-            "block_prioritization_fee",
+            solana_metrics::names::runtime::BLOCK_PRIORITIZATION_FEE,
             ("slot", slot as i64, i64),
             (
                 "total_writable_accounts_count",

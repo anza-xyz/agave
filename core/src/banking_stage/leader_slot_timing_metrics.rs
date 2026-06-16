@@ -28,7 +28,7 @@ impl LeaderExecuteAndCommitTimings {
 
     pub fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_vote_execute_and_commit_timings",
+            solana_metrics::names::banking::BANKING_STAGE_LEADER_SLOT_VOTE_EXECUTE_AND_COMMIT_TIMINGS,
             ("slot", slot as i64, i64),
             ("load_execute_us", self.load_execute_us as i64, i64),
             ("freeze_lock_us", self.freeze_lock_us as i64, i64),
@@ -42,7 +42,7 @@ impl LeaderExecuteAndCommitTimings {
         );
 
         datapoint_info!(
-            "banking_stage-leader_slot_vote_record_timings",
+            solana_metrics::names::banking::BANKING_STAGE_LEADER_SLOT_VOTE_RECORD_TIMINGS,
             ("slot", slot as i64, i64),
             (
                 "processing_results_to_transactions_us",
@@ -137,7 +137,7 @@ impl OuterLoopTimings {
 
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_vote_loop_timings",
+            solana_metrics::names::banking::BANKING_STAGE_LEADER_SLOT_VOTE_LOOP_TIMINGS,
             ("slot", slot as i64, i64),
             (
                 "bank_detected_to_slot_end_detected_us",
@@ -171,7 +171,7 @@ pub(crate) struct ProcessBufferedPacketsTimings {
 impl ProcessBufferedPacketsTimings {
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_vote_process_buffered_packets_timings",
+            solana_metrics::names::banking::BANKING_STAGE_LEADER_SLOT_VOTE_PROCESS_BUFFERED_PACKETS_TIMINGS,
             ("slot", slot as i64, i64),
             ("make_decision_us", self.make_decision_us as i64, i64),
             (
@@ -192,7 +192,7 @@ pub(crate) struct ConsumeBufferedPacketsTimings {
 impl ConsumeBufferedPacketsTimings {
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_vote_consume_buffered_packets_timings",
+            solana_metrics::names::banking::BANKING_STAGE_LEADER_SLOT_VOTE_CONSUME_BUFFERED_PACKETS_TIMINGS,
             ("slot", slot as i64, i64),
             (
                 "process_packets_transactions_us",
@@ -223,7 +223,7 @@ pub(crate) struct ProcessPacketsTimings {
 impl ProcessPacketsTimings {
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_vote_process_packets_timings",
+            solana_metrics::names::banking::BANKING_STAGE_LEADER_SLOT_VOTE_PROCESS_PACKETS_TIMINGS,
             ("slot", slot as i64, i64),
             (
                 "transactions_from_packets_us",

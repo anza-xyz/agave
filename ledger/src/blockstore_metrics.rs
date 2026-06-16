@@ -56,7 +56,7 @@ pub struct BlockstoreSwitchBankMetrics {
 impl BlockstoreSwitchBankMetrics {
     pub fn report_metrics(self, slot: Slot, from_location: BlockLocation) {
         datapoint_info!(
-            "blockstore_switch_bank",
+            solana_metrics::names::ledger::BLOCKSTORE_SWITCH_BANK,
             "from_location" => from_location.to_string(),
             ("slot", slot as i64, i64),
             ("total_elapsed_us", self.total_elapsed_us as i64, i64),
@@ -69,7 +69,7 @@ impl BlockstoreSwitchBankMetrics {
 }
 
 impl BlockstoreInsertionMetrics {
-    const NAME: &str = "blockstore-insert-shreds";
+    const NAME: &str = solana_metrics::names::ledger::BLOCKSTORE_INSERT_SHREDS;
 
     pub fn report_metrics(&self) {
         datapoint_info!(
@@ -273,7 +273,7 @@ impl BlockstoreRocksDbColumnFamilyMetrics {
     /// For example, "blockstore_rocksdb_cfs,cf_name=shred_data".
     pub fn report_metrics(&self, cf_name: &'static str, column_options: &LedgerColumnOptions) {
         datapoint_info!(
-            "blockstore_rocksdb_cfs",
+            solana_metrics::names::ledger::BLOCKSTORE_ROCKSDB_CFS,
             // tags that support group-by operations
             "cf_name" => cf_name,
             "compression" => column_options.get_compression_type_string(),
@@ -383,7 +383,7 @@ pub(crate) fn report_rocksdb_read_perf(
         set_perf_stats(PerfStatsLevel::Disable);
         let perf_context = perf_context_cell.borrow();
         datapoint_info!(
-            "blockstore_rocksdb_read_perf",
+            solana_metrics::names::ledger::BLOCKSTORE_ROCKSDB_READ_PERF,
             // tags that support group-by operations
             "op" => op_name,
             "cf_name" => cf_name,
@@ -558,7 +558,7 @@ pub(crate) fn report_rocksdb_write_perf(
         set_perf_stats(PerfStatsLevel::Disable);
         let perf_context = perf_context_cell.borrow();
         datapoint_info!(
-            "blockstore_rocksdb_write_perf",
+            solana_metrics::names::ledger::BLOCKSTORE_ROCKSDB_WRITE_PERF,
             // tags that support group-by operations
             "op" => op_name,
             "cf_name" => cf_name,

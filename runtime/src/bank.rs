@@ -2174,7 +2174,7 @@ impl Bank {
         bank.initialize_after_snapshot_restore(|| rewards_calculation_thread_pool);
 
         datapoint_info!(
-            "bank-new-from-fields",
+            solana_metrics::names::runtime::BANK_NEW_FROM_FIELDS,
             (
                 "accounts_data_len-from-snapshot",
                 fields.accounts_data_len as i64,
@@ -2405,7 +2405,7 @@ impl Bank {
             }
         }
         datapoint_info!(
-            "bank-timestamp-correction",
+            solana_metrics::names::runtime::BANK_TIMESTAMP_CORRECTION,
             ("slot", self.slot(), i64),
             ("from_genesis", self.unix_timestamp_from_genesis(), i64),
             ("corrected", unix_timestamp, i64),
@@ -2985,7 +2985,7 @@ impl Bank {
         );
         get_timestamp_estimate_time.stop();
         datapoint_info!(
-            "bank-timestamp",
+            solana_metrics::names::runtime::BANK_TIMESTAMP,
             (
                 "get_timestamp_estimate_us",
                 get_timestamp_estimate_time.as_us(),
@@ -5298,7 +5298,7 @@ impl Bank {
         let total_us = measure_total.end_as_us();
 
         datapoint_info!(
-            "bank-hash_internal_state",
+            solana_metrics::names::runtime::BANK_HASH_INTERNAL_STATE,
             ("slot", slot, i64),
             ("total_us", total_us, i64),
         );
@@ -5614,7 +5614,7 @@ impl Bank {
         info!("Verifying bank... Done.");
 
         datapoint_info!(
-            "verify_snapshot_bank",
+            solana_metrics::names::runtime::VERIFY_SNAPSHOT_BANK,
             ("clean_us", clean_time_us, i64),
             ("shrink_us", shrink_time_us, i64),
             ("verify_accounts_us", verify_accounts_time_us, i64),

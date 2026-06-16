@@ -277,7 +277,7 @@ pub fn bank_from_snapshot_archives(
     measure_verify.stop();
 
     datapoint_info!(
-        "bank_from_snapshot_archives",
+        solana_metrics::names::runtime::BANK_FROM_SNAPSHOT_ARCHIVES,
         (
             "untar_full_snapshot_archive_us",
             full_measure_untar.as_us(),
@@ -458,7 +458,7 @@ pub fn bank_from_snapshot_dir(
     }
 
     datapoint_info!(
-        "bank_from_snapshot_dir",
+        solana_metrics::names::runtime::BANK_FROM_SNAPSHOT_DIR,
         ("rebuild_storages_us", measure_rebuild_storages.as_us(), i64),
         ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );

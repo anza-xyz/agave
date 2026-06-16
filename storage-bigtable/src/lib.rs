@@ -431,7 +431,7 @@ impl LedgerStorageStats {
     fn maybe_report(&self) {
         if self.last_report.should_update(METRICS_REPORT_INTERVAL_MS) {
             datapoint_debug!(
-                "storage-bigtable-query",
+                solana_metrics::names::storage_bigtable::STORAGE_BIGTABLE_QUERY,
                 (
                     "num_queries",
                     self.num_queries.swap(0, Ordering::Relaxed) as i64,
@@ -1045,7 +1045,7 @@ impl LedgerStorage {
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)
             .await?;
         datapoint_info!(
-            "storage-bigtable-upload-block",
+            solana_metrics::names::storage_bigtable::STORAGE_BIGTABLE_UPLOAD_BLOCK,
             ("slot", slot, i64),
             ("transactions", num_transactions, i64),
             ("entries", num_entries, i64),

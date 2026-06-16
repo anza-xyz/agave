@@ -174,9 +174,12 @@ impl RetransmitStats {
         }
         cluster_nodes_cache
             .get(root_bank.slot(), root_bank, working_bank, cluster_info)
-            .submit_metrics("cluster_nodes_retransmit", timestamp());
+            .submit_metrics(
+                solana_metrics::names::turbine::CLUSTER_NODES_RETRANSMIT,
+                timestamp(),
+            );
         datapoint_info!(
-            "retransmit-stage",
+            solana_metrics::names::turbine::RETRANSMIT_STAGE,
             "is_xdp" => is_xdp.to_string(),
             ("total_time", self.total_time, i64),
             ("epoch_fetch", self.epoch_fetch, i64),
@@ -873,7 +876,7 @@ impl RetransmitSlotStats {
         let num_nodes: usize = self.num_shreds_sent.iter().sum();
         let elapsed_millis = self.asof.saturating_sub(self.outset);
         datapoint_info!(
-            "retransmit-stage-slot-stats",
+            solana_metrics::names::turbine::RETRANSMIT_STAGE_SLOT_STATS,
             ("slot", slot, i64),
             ("outset_timestamp", self.outset, i64),
             ("elapsed_millis", elapsed_millis, i64),
@@ -913,7 +916,10 @@ fn notify_subscribers(
     if let Some(rpc_subscriptions) = notifiers.rpc_subscriptions.as_ref() {
         let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
         rpc_subscriptions.notify_slot_update(slot_update);
-        datapoint_info!("retransmit-first-shred", ("slot", slot, i64));
+        datapoint_info!(
+            solana_metrics::names::turbine::RETRANSMIT_FIRST_SHRED,
+            ("slot", slot, i64)
+        );
     }
     if let Some(slot_status_notifier) = notifiers.slot_status_notifier.as_ref() {
         slot_status_notifier

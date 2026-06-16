@@ -1234,7 +1234,7 @@ impl ServeRepair {
         }
 
         datapoint_info!(
-            "serve_repair-requests_received",
+            solana_metrics::names::repair::SERVE_REPAIR_REQUESTS_RECEIVED,
             ("total_requests", stats.total_requests, i64),
             (
                 "dropped_requests_outbound_bandwidth",

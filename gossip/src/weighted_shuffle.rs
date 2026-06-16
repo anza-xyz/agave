@@ -88,7 +88,10 @@ impl WeightedShuffle {
             }
         }
         if num_overflow > 0 {
-            datapoint_error!("weighted-shuffle-overflow", (name, num_overflow, i64));
+            datapoint_error!(
+                solana_metrics::names::gossip::WEIGHTED_SHUFFLE_OVERFLOW,
+                (name, num_overflow, i64)
+            );
         }
         Self {
             num_nodes,
