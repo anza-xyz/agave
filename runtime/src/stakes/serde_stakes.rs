@@ -89,6 +89,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToDelegationFormat {
         let Stakes {
             vote_accounts,
             stake_delegations,
+            delegated_stakes: _,
             unused,
             epoch,
             stake_history,
@@ -109,6 +110,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToStakeFormat {
         let Stakes {
             vote_accounts,
             stake_delegations,
+            delegated_stakes: _,
             unused,
             epoch,
             stake_history,
@@ -231,6 +233,7 @@ mod tests {
         let stake_account_stakes = Stakes {
             vote_accounts: VoteAccounts::default(),
             stake_delegations,
+            delegated_stakes: ImblHashMap::default(),
             unused: 0,
             epoch: 0,
             stake_history: StakeHistory::default(),
