@@ -3833,16 +3833,11 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
-<<<<<<< HEAD
-            <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
-                BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(format!(
-                    "could not reconstruct entries: {e:?}"
-                ))))
-            })
-=======
             <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload)
                 .map_err(|e| {
-                    BlockstoreError::InvalidShredData(format!("could not reconstruct entries: {e}"))
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("could not reconstruct entries: {e:?}"),
+                    )))
                 })
                 .and_then(|entries| {
                     if entries.is_empty() {
@@ -3851,7 +3846,6 @@ impl Blockstore {
                         Ok(entries)
                     }
                 })
->>>>>>> 39f64a67b (blockstore: Disallow deshredded empty entry batches (#13232))
         })
     }
 

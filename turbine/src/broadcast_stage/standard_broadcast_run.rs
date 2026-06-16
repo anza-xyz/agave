@@ -717,20 +717,11 @@ mod test {
                 .is_none()
         );
 
-<<<<<<< HEAD
-        // Try to fetch the incomplete ticks from blockstore, should succeed
-        assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
-        assert_eq!(
-            blockstore.get_slot_entries(0, num_shreds_per_slot).unwrap(),
-            vec![],
-        );
-=======
         // Try to fetch the incomplete ticks from blockstore, will fail because
         // broadcast interruption serializes an empty entry batch into shreds
         // which is an invalid block
-        assert!(blockstore.get_slot_entries(1, header_shred_offset).is_err());
-        assert!(blockstore.get_slot_entries(1, 0).is_err());
->>>>>>> 39f64a67b (blockstore: Disallow deshredded empty entry batches (#13232))
+        assert!(blockstore.get_slot_entries(0, 0).is_err());
+        assert!(blockstore.get_slot_entries(0, num_shreds_per_slot).is_err());
     }
 
     #[test]
