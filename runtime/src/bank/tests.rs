@@ -4754,6 +4754,7 @@ fn test_check_ro_durable_nonce_fails() {
         bank.check_nonce_transaction_validity(
             &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
+            false,
         ),
         None
     );

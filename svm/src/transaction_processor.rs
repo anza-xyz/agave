@@ -31,7 +31,7 @@ use {
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
     },
-    solana_nonce_account::verify_nonce_account,
+    solana_nonce_account::{SystemAccountKind, get_system_account_kind, verify_nonce_account},
     solana_program_runtime::{
         execution_budget::{
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
@@ -137,6 +137,10 @@ pub struct TransactionProcessingConfig<'a> {
     /// failing transactions to be committed. If both flags are set then any
     /// failing transaction will cause all transactions to be aborted.
     pub all_or_nothing: bool,
+    /// Strictly require durable nonce accounts to have the canonical nonce account size.
+    ///
+    /// This is a leader-side filtering policy. It must not be enabled for replay.
+    pub strict_nonce_size_check: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -456,6 +460,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &environment.blockhash,
                         environment.blockhash_lamports_per_signature,
                         &environment.rent,
+<<<<<<< HEAD
+=======
+                        environment.feature_set.relax_post_exec_min_balance_check,
+                        config.strict_nonce_size_check,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                         &mut error_metrics,
                     )
                 }));
@@ -657,6 +666,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment_blockhash: &Hash,
         next_lamports_per_signature: u64,
         rent: &Rent,
+<<<<<<< HEAD
+=======
+        relax_post_exec_min_balance_check: bool,
+        strict_nonce_size_check: bool,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
@@ -675,6 +689,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 nonce_address,
                 &next_durable_nonce,
                 next_lamports_per_signature,
+                strict_nonce_size_check,
                 error_counters,
             )?)
         } else {
@@ -752,6 +767,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_address: &Pubkey,
         next_durable_nonce: &DurableNonce,
         next_lamports_per_signature: u64,
+        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<NonceInfo> {
         // When SIMD83 is enabled, if the nonce has been used in this batch already, we must drop
@@ -767,6 +783,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
         };
+
+        if strict_nonce_size_check
+            && get_system_account_kind(&nonce_account) != Some(SystemAccountKind::Nonce)
+        {
+            error_counters.blockhash_not_found += 1;
+            return Err(TransactionError::BlockhashNotFound);
+        }
 
         // This function verifies:
         // * Nonce account owner is SystemProgram
@@ -2153,6 +2176,11 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2204,6 +2232,11 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2244,6 +2277,11 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2288,6 +2326,11 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2330,6 +2373,11 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2424,6 +2472,7 @@ mod tests {
             &nonce_address,
             &next_durable_nonce,
             lamports_per_signature,
+            false,
             &mut error_counters,
         );
 
@@ -2516,6 +2565,11 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2576,6 +2630,11 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
+<<<<<<< HEAD
+=======
+                mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
                 &mut error_counters,
             );
 
@@ -2624,6 +2683,11 @@ mod tests {
             &Hash::default(),
             lamports_per_signature,
             &Rent::default(),
+<<<<<<< HEAD
+=======
+            mock_bank.feature_set.relax_post_exec_min_balance_check,
+            false,
+>>>>>>> df2bf6669 (Drop incorrectly sized nonces on leader (#13233))
             &mut TransactionErrorMetrics::default(),
         )
         .unwrap();
