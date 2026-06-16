@@ -233,7 +233,7 @@ mod tests {
         let stake_account_stakes = Stakes {
             vote_accounts: VoteAccounts::default(),
             stake_delegations,
-            delegated_stakes: ImblHashMap::default(),
+            delegated_stakes: ImHashMap::default(),
             unused: 0,
             epoch: 0,
             stake_history: StakeHistory::default(),
