@@ -120,8 +120,8 @@ use {
         DeadSlotContext, DeadSlotDuplicateContext, DeadSlotNotifications, mark_replay_dead_slot,
     },
     update_parent::{
-        ChildBankReplayStart, child_bank_replay_start, handle_abandoned_bank,
-        handle_update_parent_interrupts, process_soft_dead_slots,
+        ChildBankReplayStart, UpdateParentNotificationSenders, child_bank_replay_start,
+        handle_abandoned_bank, handle_update_parent_interrupts, process_soft_dead_slots,
     },
 };
 
@@ -967,6 +967,13 @@ impl ReplayStage {
                     break;
                 }
 
+                let update_parent_notification_senders = UpdateParentNotificationSenders::new(
+                    &replay_vote_sender,
+                    rpc_subscriptions.clone(),
+                    slot_status_notifier.clone(),
+                    transaction_status_sender.as_ref(),
+                );
+
                 handle_update_parent_interrupts(
                     &my_pubkey,
                     &blockstore,
@@ -974,7 +981,7 @@ impl ReplayStage {
                     &mut progress,
                     &mut async_verification_freelist,
                     &update_parent_receiver,
-                    &replay_vote_sender,
+                    &update_parent_notification_senders,
                     migration_status.as_ref(),
                 );
 
@@ -1060,11 +1067,9 @@ impl ReplayStage {
                         &my_pubkey,
                         &blockstore,
                         &bank_forks,
-                        &rpc_subscriptions,
-                        &slot_status_notifier,
                         &mut progress,
                         &mut async_verification_freelist,
-                        &replay_vote_sender,
+                        &update_parent_notification_senders,
                         migration_status.as_ref(),
                     );
                     Self::alpenglow_handle_newly_frozen_banks(

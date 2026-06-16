@@ -8,6 +8,7 @@ use {
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_ledger::blockstore::UpdateParentSignal,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
@@ -72,6 +73,10 @@ impl TransactionNotifier for TransactionNotifierImpl {
                 }
             }
         }
+    }
+
+    fn notify_update_parent(&self, _update_parent: &UpdateParentSignal) {
+        // Will be addressed in a future commit
     }
 }
 

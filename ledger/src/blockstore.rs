@@ -131,14 +131,33 @@ type UpdateParentShredParentKey = (BlockLocation, Slot, u32);
 type UpdateParentShredParentCache =
     LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateParentSignal {
-    /// Slot whose parent metadata was updated by an UpdateParent marker.
-    ///
-    /// This is only a wakeup for replay. Consumers must re-read SlotMeta/dead
-    /// state from blockstore so stale queued signals cannot override newer
-    /// parent metadata or a durable dead-slot decision.
+    /// Slot whose same-slot prefix was invalidated by an UpdateParent marker.
     pub slot: Slot,
+    /// FEC set index of the UpdateParent marker. Read-layer consumers should
+    /// discard same-slot data observed before this boundary.
+    ///
+    /// Signals emitted by the TPU entry path use the marker's pre-shred stream
+    /// position as this boundary because no shred index has been assigned yet.
+    pub update_parent_fec_set_index: u32,
+    /// Parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+    /// Parent block id selected by the UpdateParent marker, when available.
+    pub parent_block_id: Option<Hash>,
+}
+
+impl UpdateParentSignal {
+    pub fn from_slot_meta(slot: Slot, slot_meta: &SlotMeta) -> Option<Self> {
+        Some(Self {
+            slot,
+            update_parent_fec_set_index: slot_meta
+                .has_update_parent()
+                .then_some(slot_meta.replay_fec_set_index)?,
+            parent_slot: slot_meta.parent_slot?,
+            parent_block_id: Some(slot_meta.parent_block_id),
+        })
+    }
 }
 
 // Contiguous, sorted and non-empty ranges of shred indices:
@@ -4310,6 +4329,61 @@ impl Blockstore {
             .put_in_batch(db_write_batch, (*signature, slot), &memos)
     }
 
+    /// Delete transaction-status data for `slot`.
+    ///
+    /// This is used when an Alpenglow UpdateParent marker invalidates the
+    /// prefix of a same-slot block after read-layer data may already have been
+    /// emitted. Slot-scoped block metadata is deleted with the transaction
+    /// status rows so replacement replay can rewrite a coherent view.
+    pub fn delete_transaction_status_slot(&self, slot: Slot) -> Result<usize> {
+        let (_lowest_cleanup_slot, _) = self.ensure_lowest_cleanup_slot();
+
+        let mut signatures = HashSet::new();
+        let mut transaction_status_keys = Vec::new();
+        for ((signature, status_slot), _) in self.transaction_status_cf.iter(IteratorMode::Start)? {
+            if status_slot == slot {
+                signatures.insert(signature);
+                transaction_status_keys.push((signature, status_slot));
+            }
+        }
+
+        let mut transaction_memo_keys = Vec::new();
+        for ((signature, memo_slot), _) in self.transaction_memos_cf.iter(IteratorMode::Start)? {
+            if memo_slot == slot {
+                transaction_memo_keys.push((signature, memo_slot));
+            }
+        }
+
+        let mut address_signature_keys = Vec::new();
+        for ((address, address_slot, transaction_index, signature), _) in
+            self.address_signatures_cf.iter(IteratorMode::Start)?
+        {
+            if address_slot == slot {
+                address_signature_keys.push((address, address_slot, transaction_index, signature));
+            }
+        }
+
+        let mut write_batch = self.get_write_batch()?;
+        for key in transaction_status_keys {
+            self.transaction_status_cf
+                .delete_in_batch(&mut write_batch, key);
+        }
+        for key in transaction_memo_keys {
+            self.transaction_memos_cf
+                .delete_in_batch(&mut write_batch, key);
+        }
+        for key in address_signature_keys {
+            self.address_signatures_cf
+                .delete_in_batch(&mut write_batch, key);
+        }
+        self.blocktime_cf.delete_in_batch(&mut write_batch, slot);
+        self.block_height_cf.delete_in_batch(&mut write_batch, slot);
+        self.rewards_cf.delete_in_batch(&mut write_batch, slot);
+        self.write_batch(write_batch)?;
+
+        Ok(signatures.len())
+    }
+
     /// Acquires the `lowest_cleanup_slot` lock and returns a tuple of the held lock
     /// and lowest available slot.
     ///
@@ -5803,11 +5877,11 @@ impl Blockstore {
             // This signal is only used for replay, so we don't need to consider `Alternate` columns
             if location == BlockLocation::Original
                 && meta.has_update_parent()
-                && meta_backup
-                    .as_ref()
-                    .is_some_and(|m| m.populated_from_block_header())
+                && !meta_backup.as_ref().is_some_and(|m| m.has_update_parent())
             {
-                update_parent_signals.push(UpdateParentSignal { slot });
+                if let Some(update_parent) = UpdateParentSignal::from_slot_meta(slot, meta) {
+                    update_parent_signals.push(update_parent);
+                }
             }
         }
 
