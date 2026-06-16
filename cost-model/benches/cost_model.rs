@@ -1,7 +1,6 @@
-#![feature(test)]
-extern crate test;
 use {
     agave_feature_set::FeatureSet,
+    criterion::{Criterion, Throughput, criterion_group, criterion_main},
     solana_cost_model::cost_model::CostModel,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -11,7 +10,7 @@ use {
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    test::Bencher,
+    std::hint::black_box,
 };
 
 struct BenchSetup {
@@ -43,16 +42,22 @@ fn setup(num_transactions: usize) -> BenchSetup {
     }
 }
 
-#[bench]
-fn bench_cost_model(bencher: &mut Bencher) {
+fn bench_cost_model(c: &mut Criterion) {
     let BenchSetup {
         transactions,
         feature_set,
     } = setup(NUM_TRANSACTIONS_PER_ITER);
 
-    bencher.iter(|| {
-        for transaction in &transactions {
-            let _ = CostModel::calculate_cost(test::black_box(transaction), &feature_set);
-        }
-    });
+    c.benchmark_group("bench_cost_model")
+        .throughput(Throughput::Elements(NUM_TRANSACTIONS_PER_ITER as u64))
+        .bench_function("calculate_cost", |bencher| {
+            bencher.iter(|| {
+                for transaction in &transactions {
+                    let _ = CostModel::calculate_cost(black_box(transaction), &feature_set);
+                }
+            });
+        });
 }
+
+criterion_group!(benches, bench_cost_model);
+criterion_main!(benches);

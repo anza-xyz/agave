@@ -7964,6 +7964,7 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "ahash 0.8.12",
+ "criterion",
  "itertools 0.14.0",
  "log",
  "rand 0.9.4",

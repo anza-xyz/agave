@@ -64,6 +64,7 @@ solana-vote-program = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+criterion = { workspace = true }
 itertools = { workspace = true }
 rand = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -82,6 +83,10 @@ solana-system-transaction = { workspace = true }
 solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
+
+[[bench]]
+name = "cost_model"
+harness = false
 
 [[bench]]
 name = "cost_tracker"
