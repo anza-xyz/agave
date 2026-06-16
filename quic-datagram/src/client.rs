@@ -1,7 +1,8 @@
 //! Outbound (client) direction: we-dial, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, METRICS_INTERVAL, close_codes,
+        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, MAX_ALPENGLOW_VOTE_ACCOUNTS, METRICS_INTERVAL,
+        close_codes,
         endpoint::Datagram,
         error::Error,
         stats::{self, QuicDatagramStats, add, record_error},
@@ -17,6 +18,7 @@ use {
     std::{
         mem,
         net::SocketAddr,
+        num::NonZeroUsize,
         sync::{Arc, atomic::Ordering},
     },
     tokio::{
@@ -114,6 +116,38 @@ pub(crate) struct OutboundLoop {
 }
 
 impl OutboundLoop {
+    /// Capacity of the outbound table. The LRU owns every send-only
+    /// `Connection`; its overflow eviction is the only path that reclaims idle
+    /// connections, so it is sized to the full expected peer set (one outbound
+    /// per peer) with headroom.
+    const LRU_SIZE: NonZeroUsize =
+        NonZeroUsize::new(2 * MAX_ALPENGLOW_VOTE_ACCOUNTS).expect("LRU size is non-zero");
+
+    pub(crate) fn new(
+        endpoint: Endpoint,
+        local_pubkey: Pubkey,
+        egress_rx: mpsc::Receiver<Datagram>,
+        banlist: Arc<Banlist<Pubkey>>,
+        identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        shutdown: CancellationToken,
+        stats: Arc<QuicDatagramStats>,
+    ) -> Self {
+        let (events_tx, events_rx) = mpsc::channel::<DialEvent>(CONN_EVENT_CHANNEL_CAP);
+        Self {
+            endpoint,
+            local_pubkey,
+            generation: 0,
+            egress_rx,
+            banlist,
+            identity_rx,
+            outgoing: LruCache::with_hasher(Self::LRU_SIZE, PubkeyHasherBuilder::default()),
+            events_tx,
+            events_rx,
+            shutdown,
+            stats,
+        }
+    }
+
     pub(crate) async fn run(mut self) {
         let mut bookkeeping_timer = interval(METRICS_INTERVAL);
         bookkeeping_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);

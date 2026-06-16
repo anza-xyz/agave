@@ -36,6 +36,9 @@ pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 /// `MAX_ALPENGLOW_VOTE_ACCOUNTS` peers × ~4 messages/slot = ~8 K items.
 pub const EGRESS_CHANNEL_CAP: usize = 4 * MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
+/// Capacity of each task -> control-loop connection-event channel.
+pub(crate) const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
+
 /// Per-peer receive-side rate limit.
 pub const MAX_DATAGRAMS_PER_SECOND_PER_PEER: f64 = 30.0;
 

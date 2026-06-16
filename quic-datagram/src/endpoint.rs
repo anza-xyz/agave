@@ -2,26 +2,22 @@
 use {
     crate::{
         ALPENGLOW_ALPN, EGRESS_CHANNEL_CAP, HANDSHAKE_GLOBAL_BURST, HANDSHAKE_GLOBAL_RATE,
-        MAX_ALPENGLOW_VOTE_ACCOUNTS,
         allowlist::Allowlist,
-        client::{DialEvent, OutboundLoop},
+        client::OutboundLoop,
         error::Error,
-        server::{InboundEvent, InboundLoop},
+        server::InboundLoop,
         stats::QuicDatagramStats,
         transport::{IdentitySnapshot, new_client_config, new_server_config},
     },
     bytes::Bytes,
     crossbeam_channel::Sender,
-    lru::LruCache,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate},
     std::{
-        collections::HashMap,
         net::{SocketAddr, UdpSocket},
-        num::NonZeroUsize,
         sync::Arc,
     },
     tokio::{
@@ -47,9 +43,6 @@ impl NotifyKeyUpdate for KeyUpdater {
         Ok(())
     }
 }
-
-/// Capacity of the task -> control-loop connection-event channel.
-const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Datagram envelope used on both directions of the endpoint.
 #[derive(Debug)]
@@ -107,8 +100,6 @@ impl QuicDatagramEndpoint {
         let client_stats = Arc::default();
         let server_stats: Arc<QuicDatagramStats> = Arc::default();
         let (egress_tx, egress_rx) = mpsc::channel(EGRESS_CHANNEL_CAP);
-        let (out_events_tx, out_events_rx) = mpsc::channel::<DialEvent>(CONN_EVENT_CHANNEL_CAP);
-        let (in_events_tx, in_events_rx) = mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
         let shutdown = CancellationToken::new();
         let (id_tx, identity_rx) = watch::channel(None);
         let key_updater = Arc::new(KeyUpdater { tx: id_tx });
@@ -119,35 +110,26 @@ impl QuicDatagramEndpoint {
             HANDSHAKE_GLOBAL_BURST,
             HANDSHAKE_GLOBAL_RATE,
         );
-        const LRU_SIZE: NonZeroUsize = NonZeroUsize::new(2 * MAX_ALPENGLOW_VOTE_ACCOUNTS).unwrap();
-        let outbound = OutboundLoop {
-            endpoint: endpoint.clone(),
+        let outbound = OutboundLoop::new(
+            endpoint.clone(),
             local_pubkey,
-            generation: 0,
             egress_rx,
-            banlist: banlist.clone(),
-            identity_rx: identity_rx.clone(),
-            outgoing: LruCache::with_hasher(LRU_SIZE, PubkeyHasherBuilder::default()),
-            events_tx: out_events_tx,
-            events_rx: out_events_rx,
-            shutdown: shutdown.clone(),
-            stats: client_stats,
-        };
+            banlist.clone(),
+            identity_rx.clone(),
+            shutdown.clone(),
+            client_stats,
+        );
         runtime.spawn(outbound.run());
-        let inbound = InboundLoop {
-            endpoint: endpoint.clone(),
-            generation: 0,
+        let inbound = InboundLoop::new(
+            endpoint.clone(),
             ingress,
             banlist,
             allowlist,
             identity_rx,
-            incoming: HashMap::with_hasher(PubkeyHasherBuilder::default()),
-            events_tx: in_events_tx,
-            events_rx: in_events_rx,
             handshake_global_limiter,
-            stats: server_stats.clone(),
-            shutdown: shutdown.clone(),
-        };
+            server_stats.clone(),
+            shutdown.clone(),
+        );
         runtime.spawn(inbound.run());
 
         Ok(Self {

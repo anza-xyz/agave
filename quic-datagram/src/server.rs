@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        ALLOWLIST_CHECK_INTERVAL, ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL,
+        ALLOWLIST_CHECK_INTERVAL, ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, CONN_EVENT_CHANNEL_CAP,
         MAX_DATAGRAMS_PER_SECOND_PER_PEER, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
         PEER_RATE_LIMIT_BURST, PEER_RATE_LIMIT_BURST_DOS,
         allowlist::Allowlist,
@@ -223,6 +223,34 @@ pub(crate) struct InboundLoop {
 }
 
 impl InboundLoop {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        endpoint: Endpoint,
+        ingress: Sender<Datagram>,
+        banlist: Arc<Banlist<Pubkey>>,
+        allowlist: Arc<dyn Allowlist>,
+        identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        handshake_global_limiter: TokenBucket,
+        stats: Arc<QuicDatagramStats>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        let (events_tx, events_rx) = mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
+        Self {
+            endpoint,
+            generation: 0,
+            ingress,
+            banlist,
+            allowlist,
+            identity_rx,
+            incoming: HashMap::with_hasher(PubkeyHasherBuilder::default()),
+            events_tx,
+            events_rx,
+            handshake_global_limiter,
+            stats,
+            shutdown,
+        }
+    }
+
     /// Live inbound connections (each pubkey may hold several).
     fn incoming_len(&self) -> u64 {
         self.incoming.values().map(|e| e.conns.len()).sum::<usize>() as u64
