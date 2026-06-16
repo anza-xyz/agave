@@ -13,3 +13,6 @@ agave-unstable-api = []
 
 [dependencies]
 libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

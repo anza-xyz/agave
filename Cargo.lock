@@ -124,6 +124,7 @@ name = "agave-cpu-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
  "libc",
+ "tempfile",
 ]
 
 [[package]]
