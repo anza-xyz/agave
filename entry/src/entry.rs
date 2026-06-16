@@ -681,6 +681,9 @@ impl EntrySlice for [Entry] {
         for entry in self {
             *tick_hash_count = tick_hash_count.saturating_add(entry.num_hashes);
             if entry.is_tick() {
+                if entry.num_hashes == 0 {
+                    return false;
+                }
                 if *tick_hash_count != hashes_per_tick {
                     warn!(
                         "invalid tick hash count!: entry: {entry:#?}, tick_hash_count: \
@@ -1163,10 +1166,16 @@ mod tests {
         assert_eq!(tick_hash_count, hashes_per_tick - 1);
         tick_hash_count = 0;
 
-        // full tx entry with tick entry should succeed
-        entries = vec![full_tx_entry.clone(), no_hash_tick_entry];
-        assert!(entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
+        // no hash tick entry should fail
+        entries = vec![no_hash_tick_entry.clone()];
+        assert!(!entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
         assert_eq!(tick_hash_count, 0);
+
+        // full tx entry with no hash tick entry should still fail
+        entries = vec![full_tx_entry.clone(), no_hash_tick_entry];
+        assert!(!entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
 
         // full tx entry with oversized tick entry should fail
         entries = vec![full_tx_entry.clone(), single_hash_tick_entry.clone()];
