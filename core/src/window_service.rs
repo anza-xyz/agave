@@ -59,7 +59,7 @@ struct WindowServiceMetrics {
 }
 
 impl WindowServiceMetrics {
-    const NAME: &str = "recv-window-insert-shreds";
+    const NAME: &str = solana_metrics::names::window_service::RECV_WINDOW_INSERT_SHREDS;
 
     fn report_metrics(&self) {
         datapoint_info!(
@@ -475,7 +475,7 @@ impl WindowService {
             _ => {
                 let version = solana_version::version!();
                 datapoint_error!(
-                    "error",
+                    solana_metrics::names::window_service::ERROR,
                     ("thread", thread::current().name().unwrap_or("?"), String),
                     ("message", format!("{e}"), String),
                     ("version", version, String)

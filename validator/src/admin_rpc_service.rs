@@ -339,7 +339,7 @@ impl AdminRpc for AdminRpcImpl {
                         if start_time.elapsed() > timeout {
                             warn!("Timeout waiting for snapshot to complete");
                             datapoint_warn!(
-                                "admin-rpc-snapshot-timeout",
+                                solana_metrics::names::validator::ADMIN_RPC_SNAPSHOT_TIMEOUT,
                                 ("timeout_us", start_time.elapsed().as_micros(), i64)
                             );
                             break;
@@ -997,7 +997,7 @@ impl AdminRpcImpl {
             solana_metrics::set_host_id(new_identity.to_string());
             // Emit the datapoint after updating metrics to emit the new pubkey
             datapoint_info!(
-                "validator-set_identity",
+                solana_metrics::names::validator::VALIDATOR_SET_IDENTITY,
                 ("old_id", old_identity.to_string(), String),
                 ("new_id", new_identity.to_string(), String),
                 ("version", solana_version::version!(), String),

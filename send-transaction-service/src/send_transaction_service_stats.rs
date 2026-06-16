@@ -67,7 +67,7 @@ impl SendTransactionServiceStatsReport {
             .should_update(SEND_TRANSACTION_METRICS_REPORT_RATE_MS)
         {
             datapoint_info!(
-                "send_transaction_service",
+                solana_metrics::names::send_transaction_service::SEND_TRANSACTION_SERVICE,
                 (
                     "recv-tx",
                     self.stats.received_transactions.swap(0, Ordering::Relaxed),

@@ -4631,12 +4631,12 @@ fn test_replay_stage_refresh_last_vote() {
 
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
         ConnectionCache::new_quic_for_tests(
-            "connection_cache_vote_quic",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     } else {
         ConnectionCache::with_udp(
-            "connection_cache_vote_udp",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_UDP,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     };
@@ -4736,12 +4736,12 @@ fn test_replay_stage_refresh_last_vote() {
 
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
         ConnectionCache::new_quic_for_tests(
-            "connection_cache_vote_quic",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     } else {
         ConnectionCache::with_udp(
-            "connection_cache_vote_udp",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_UDP,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     };
@@ -4865,12 +4865,12 @@ fn test_replay_stage_refresh_last_vote() {
         .unwrap();
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
         ConnectionCache::new_quic_for_tests(
-            "connection_cache_vote_quic",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     } else {
         ConnectionCache::with_udp(
-            "connection_cache_vote_udp",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_UDP,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     };
@@ -5007,12 +5007,12 @@ fn send_vote_in_new_bank(
         .unwrap();
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
         ConnectionCache::new_quic_for_tests(
-            "connection_cache_vote_quic",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     } else {
         ConnectionCache::with_udp(
-            "connection_cache_vote_udp",
+            solana_metrics::names::connection_cache::CONNECTION_CACHE_VOTE_UDP,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
     };

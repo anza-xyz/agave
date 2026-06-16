@@ -744,7 +744,7 @@ impl Serialize for SerializableAccountsDb<'_> {
             .serialize(serializer);
         serialize_account_storage_timer.stop();
         datapoint_info!(
-            "serialize_account_storage_ms",
+            solana_metrics::names::runtime::SERIALIZE_ACCOUNT_STORAGE_MS,
             ("duration", serialize_account_storage_timer.as_ms(), i64),
             ("num_entries", self.account_storage_entries.len(), i64),
         );

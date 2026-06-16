@@ -54,7 +54,7 @@ impl ForwardingStats {
 
         if !self.is_empty() {
             datapoint_info!(
-                "fetch_stage-forwards",
+                solana_metrics::names::tpu::FETCH_STAGE_FORWARDS,
                 ("num_packets_sent", self.num_packets_sent, i64),
                 ("num_packets_discarded", self.num_packets_discarded, i64),
                 ("num_packets_dropped", self.num_packets_dropped, i64)
@@ -179,7 +179,9 @@ impl FetchStage {
     ) -> Self {
         let recycler: PacketBatchRecycler = Recycler::new();
 
-        let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
+        let tpu_vote_stats = Arc::new(StreamerReceiveStats::new(
+            solana_metrics::names::streamer::TPU_VOTE_RECEIVER,
+        ));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets
             .into_iter()
             .enumerate()

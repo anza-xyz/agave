@@ -30,7 +30,7 @@ pub(super) struct BlockIdRepairResponsesStats {
 impl BlockIdRepairResponsesStats {
     pub fn report(&mut self) {
         datapoint_info!(
-            "block_id_repair_responses",
+            solana_metrics::names::repair::BLOCK_ID_REPAIR_RESPONSES,
             ("total_packets", self.total_packets, i64),
             ("processed", self.processed, i64),
             ("dropped_packets", self.dropped_packets, i64),
@@ -67,7 +67,7 @@ pub(super) struct BlockIdRepairRequestsStats {
 impl BlockIdRepairRequestsStats {
     pub fn report(&mut self) {
         datapoint_info!(
-            "block_id_repair_requests",
+            solana_metrics::names::repair::BLOCK_ID_REPAIR_REQUESTS,
             ("total_requests", self.total_requests, i64),
             (
                 "parent_fec_set_count_requests",

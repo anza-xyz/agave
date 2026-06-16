@@ -91,7 +91,7 @@ impl AncestorHashesResponsesStats {
 
     fn report(&mut self) {
         datapoint_info!(
-            "ancestor_hashes_responses",
+            solana_metrics::names::repair::ANCESTOR_HASHES_RESPONSES,
             ("total_packets", self.total_packets, i64),
             ("processed", self.processed, i64),
             ("dropped_packets", self.dropped_packets, i64),
@@ -132,7 +132,7 @@ impl AncestorRepairRequestsStats {
         if self.last_report.elapsed() > Self::REPORT_INTERVAL && repair_total > 0 {
             info!("ancestor_repair_requests_stats: {slot_to_count:?}");
             datapoint_info!(
-                "ancestor-repair",
+                solana_metrics::names::repair::ANCESTOR_REPAIR,
                 ("ancestor-repair-count", self.ancestor_requests.count, i64)
             );
 
@@ -176,7 +176,7 @@ impl AncestorHashesService {
             response_sender.clone(),
             Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
-                "ancestor_hashes_response_receiver",
+                solana_metrics::names::streamer::ANCESTOR_HASHES_RESPONSE_RECEIVER,
             )),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // use_pinned_memory
@@ -672,7 +672,10 @@ impl AncestorHashesService {
     ) {
         let root_bank = repair_info.bank_forks.read().unwrap().root_bank();
         for (slot, request_type) in retryable_slots_receiver.try_iter() {
-            datapoint_info!("ancestor-repair-retry", ("slot", slot, i64));
+            datapoint_info!(
+                solana_metrics::names::repair::ANCESTOR_REPAIR_RETRY,
+                ("slot", slot, i64)
+            );
             if request_type.is_pruned() {
                 popular_pruned_slot_pool.insert(slot);
             } else {
@@ -1288,7 +1291,9 @@ mod test {
                 exit.clone(),
                 requests_sender,
                 Recycler::default(),
-                Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
+                Arc::new(StreamerReceiveStats::new(
+                    solana_metrics::names::streamer::REPAIR_REQUEST_RECEIVER,
+                )),
                 Some(Duration::from_millis(1)), // coalesce
                 false,
                 false,

@@ -90,7 +90,7 @@ impl PrioritizationFeeCacheMetrics {
 
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "block_prioritization_fee_counters",
+            solana_metrics::names::runtime::BLOCK_PRIORITIZATION_FEE_COUNTERS,
             ("slot", slot as i64, i64),
             (
                 "successful_transaction_update_count",

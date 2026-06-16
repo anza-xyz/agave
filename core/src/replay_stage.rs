@@ -365,7 +365,7 @@ impl PartitionInfo {
                  {last_voted_slot:?}, reset slot: {reset_bank_slot}",
             );
             datapoint_info!(
-                "replay_stage-partition-start",
+                solana_metrics::names::replay::REPLAY_STAGE_PARTITION_START,
                 ("heaviest_slot", heaviest_slot as i64, i64),
                 ("last_vote_slot", last_voted_slot as i64, i64),
                 ("reset_slot", reset_bank_slot as i64, i64),
@@ -387,7 +387,7 @@ impl PartitionInfo {
                  {last_voted_slot:?}, reset slot: {reset_bank_slot}"
             );
             datapoint_info!(
-                "replay_stage-partition-resolved",
+                solana_metrics::names::replay::REPLAY_STAGE_PARTITION_RESOLVED,
                 ("heaviest_slot", heaviest_slot as i64, i64),
                 ("last_vote_slot", last_voted_slot as i64, i64),
                 ("reset_slot", reset_bank_slot as i64, i64),
@@ -564,7 +564,7 @@ impl ReplayLoopTiming {
 
         if elapsed_ms > 1000 {
             datapoint_info!(
-                "replay-loop-voting-stats",
+                solana_metrics::names::replay::REPLAY_LOOP_VOTING_STATS,
                 ("generate_vote_us", self.generate_vote_us, i64),
                 (
                     "update_commitment_cache_us",
@@ -583,7 +583,7 @@ impl ReplayLoopTiming {
                 ..
             } = self;
             datapoint_info!(
-                "replay-loop-timing-stats",
+                solana_metrics::names::replay::REPLAY_LOOP_TIMING_STATS,
                 ("loop_count", self.loop_count as i64, i64),
                 ("total_elapsed_us", elapsed_ms * 1000, i64),
                 (
@@ -1382,7 +1382,7 @@ impl ReplayStage {
                                 .get(&reset_bank.slot())
                                 .expect("bank to reset to must exist in progress map");
                             datapoint_info!(
-                                "blocks_produced",
+                                solana_metrics::names::replay::BLOCKS_PRODUCED,
                                 ("num_blocks_on_fork", fork_progress.num_blocks_on_fork, i64),
                                 (
                                     "num_dropped_blocks_on_fork",
@@ -1730,7 +1730,7 @@ impl ReplayStage {
 
         assert!(migration_status.is_alpenglow_enabled());
         datapoint_info!(
-            "migration-complete",
+            solana_metrics::names::replay::MIGRATION_COMPLETE,
             ("genesis_slot", genesis_block.slot as i64, i64),
         );
     }
@@ -2903,7 +2903,7 @@ impl ReplayStage {
             }
 
             datapoint_info!(
-                "replay_stage-new_leader",
+                solana_metrics::names::replay::REPLAY_STAGE_NEW_LEADER,
                 ("slot", poh_slot, i64),
                 ("leader", next_leader_id.to_string(), String),
             );
@@ -2917,7 +2917,7 @@ impl ReplayStage {
                     );
                 if poh_slot != skipped_slots_info.last_skipped_slot {
                     datapoint_info!(
-                        "replay_stage-skip_leader_slot",
+                        solana_metrics::names::replay::REPLAY_STAGE_SKIP_LEADER_SLOT,
                         ("slot", poh_slot, i64),
                         ("parent_slot", parent_slot, i64),
                         (
@@ -2941,12 +2941,18 @@ impl ReplayStage {
             }
 
             let root_slot = bank_forks.read().unwrap().root();
-            datapoint_info!("replay_stage-my_leader_slot", ("slot", poh_slot, i64),);
+            datapoint_info!(
+                solana_metrics::names::replay::REPLAY_STAGE_MY_LEADER_SLOT,
+                ("slot", poh_slot, i64),
+            );
             info!("new fork:{poh_slot} parent:{parent_slot} (leader) root:{root_slot}");
 
             let vote_only_bank = if migration_status.should_bank_be_vote_only(poh_slot) {
                 info!("{my_pubkey}: Creating block in slot {poh_slot} in VoM");
-                datapoint_info!("vote-only-bank", ("slot", poh_slot, i64));
+                datapoint_info!(
+                    solana_metrics::names::replay::VOTE_ONLY_BANK,
+                    ("slot", poh_slot, i64)
+                );
                 true
             } else {
                 false
@@ -3047,7 +3053,10 @@ impl ReplayStage {
     ) {
         assert!(!migration_status.is_alpenglow_enabled());
         if bank.is_empty() {
-            datapoint_info!("replay_stage-voted_empty_bank", ("slot", bank.slot(), i64));
+            datapoint_info!(
+                solana_metrics::names::replay::REPLAY_STAGE_VOTED_EMPTY_BANK,
+                ("slot", bank.slot(), i64)
+            );
         }
         trace!("handle votable bank {}", bank.slot());
         let new_root = tower.record_bank_vote(bank).filter(|root| {
@@ -3091,7 +3100,7 @@ impl ReplayStage {
                 {
                     let migration_slot = migration_status.record_feature_activation(slot);
                     datapoint_info!(
-                        "migration-started",
+                        solana_metrics::names::replay::MIGRATION_STARTED,
                         ("migration_slot", migration_slot as i64, i64),
                     );
                 }
@@ -3333,7 +3342,7 @@ impl ReplayStage {
                 last_voted_slot
             );
             datapoint_error!(
-                "adoption_failure",
+                solana_metrics::names::replay::ADOPTION_FAILURE,
                 ("latest_landed_vote_slot", latest_landed_vote_slot, i64),
                 (
                     "heaviest_bank_on_fork",
@@ -3434,7 +3443,7 @@ impl ReplayStage {
             // Send the votes to the TPU and gossip for network propagation
             let hash_string = format!("{recent_blockhash}");
             datapoint_info!(
-                "refresh_vote",
+                solana_metrics::names::replay::REFRESH_VOTE,
                 ("last_voted_slot", last_voted_slot, i64),
                 ("target_bank_slot", heaviest_bank_on_same_fork.slot(), i64),
                 ("target_bank_hash", hash_string, String),
@@ -3969,7 +3978,7 @@ impl ReplayStage {
                 };
 
                 datapoint_info!(
-                    "bank_frozen",
+                    solana_metrics::names::replay::BANK_FROZEN,
                     ("slot", bank_slot, i64),
                     ("hash", bank.hash().to_string(), String),
                 );
@@ -3981,7 +3990,7 @@ impl ReplayStage {
                     );
 
                     datapoint_warn!(
-                        "bank_hash_mismatch",
+                        solana_metrics::names::replay::BANK_HASH_MISMATCH,
                         ("slot", bank_slot, i64),
                         ("expected", expected_hash.to_string(), String),
                         ("computed", computed_hash.to_string(), String),
@@ -4355,7 +4364,7 @@ impl ReplayStage {
 
                 if dropped > 0 {
                     datapoint_info!(
-                        "replay_stage-optimistic_parent_notification_dropped",
+                        solana_metrics::names::replay::REPLAY_STAGE_OPTIMISTIC_PARENT_NOTIFICATION_DROPPED,
                         ("start_slot", start_slot, i64),
                         ("end_slot", end_slot, i64),
                         ("latest_start_slot", latest_start_slot, i64),
@@ -4503,7 +4512,7 @@ impl ReplayStage {
                     stats.computed = true;
                     new_stats.push(bank_slot);
                     datapoint_info!(
-                        "bank_weight",
+                        solana_metrics::names::replay::BANK_WEIGHT,
                         ("slot", bank_slot, i64),
                         ("fork_stake", stats.fork_stake, i64),
                         ("fork_weight", stats.fork_weight(), f64),
@@ -4941,7 +4950,7 @@ impl ReplayStage {
                     *slot, duration
                 );
                 datapoint_info!(
-                    "validator-duplicate-confirmation",
+                    solana_metrics::names::replay::VALIDATOR_DUPLICATE_CONFIRMATION,
                     ("duration_ms", duration, i64)
                 );
                 duplicate_confirmed_forks.push((*slot, bank.hash()));
@@ -5423,7 +5432,7 @@ impl ReplayStage {
                             false
                         };
                         datapoint_info!(
-                            "replay_stage-threshold-failure",
+                            solana_metrics::names::replay::REPLAY_STAGE_THRESHOLD_FAILURE,
                             ("slot", slot as i64, i64),
                             ("depth", depth as i64, i64),
                             ("observed_stake", observed_stake as i64, i64),

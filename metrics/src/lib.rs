@@ -3,6 +3,7 @@
 pub mod counter;
 pub mod datapoint;
 pub mod metrics;
+pub mod names;
 pub use crate::metrics::{flush, set_host_id, set_panic_hook, submit};
 use std::sync::{
     Arc,

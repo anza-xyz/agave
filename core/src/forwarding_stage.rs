@@ -521,7 +521,7 @@ impl TpuClientNextClient {
         );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
-            "forwarding-stage-tpu-client",
+            solana_metrics::names::tpu::FORWARDING_STAGE_TPU_CLIENT,
             METRICS_REPORTING_INTERVAL,
             cancel,
         ));
@@ -690,7 +690,7 @@ impl ForwardingStageMetrics {
             }
 
             datapoint_info!(
-                "forwarding_stage",
+                solana_metrics::names::tpu::FORWARDING_STAGE,
                 ("votes_received", metrics.votes_received, i64),
                 (
                     "votes_dropped_on_receive",

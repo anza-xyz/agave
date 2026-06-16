@@ -25,7 +25,7 @@ impl DropBankService {
                     dropped_banks_time.stop();
                     if dropped_banks_time.as_ms() > 10 {
                         datapoint_info!(
-                            "handle_new_root-dropped_banks",
+                            solana_metrics::names::core::HANDLE_NEW_ROOT_DROPPED_BANKS,
                             ("elapsed_ms", dropped_banks_time.as_ms(), i64),
                             ("len", len, i64)
                         );

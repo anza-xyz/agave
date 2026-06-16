@@ -124,7 +124,7 @@ impl SigVerifierStats {
         vote_stats.report();
         cert_stats.report();
         datapoint_info!(
-            "bls_sig_verifier_stats",
+            solana_metrics::names::bls_sigverify::BLS_SIG_VERIFIER_STATS,
             ("root_slot", root_slot, i64),
             (
                 "extract_and_verify_us_count",
@@ -253,7 +253,7 @@ impl SigVerifyCertStats {
         } = self;
 
         datapoint_info!(
-            "bls_cert_sigverify_stats",
+            solana_metrics::names::bls_sigverify::BLS_CERT_SIGVERIFY_STATS,
             ("certs_to_sig_verify", certs_to_sig_verify.0, i64),
             ("sig_verified_certs", sig_verified_certs.0, i64),
             (
@@ -393,7 +393,7 @@ impl SigVerifyVoteStats {
             distinct_votes_stats,
         } = self;
         datapoint_info!(
-            "bls_vote_sigverify_stats",
+            solana_metrics::names::bls_sigverify::BLS_VOTE_SIGVERIFY_STATS,
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
             ("sig_verified_votes", sig_verified_votes.0, i64),
             ("too_far_in_future", too_far_in_future.0, i64),

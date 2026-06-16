@@ -274,7 +274,7 @@ impl BlockIdRepairService {
             response_sender,
             Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
-                "block_id_repair_response_receiver",
+                solana_metrics::names::streamer::BLOCK_ID_REPAIR_RESPONSE_RECEIVER,
             )),
             None,  // coalesce
             false, // use_pinned_memory
@@ -821,7 +821,7 @@ impl BlockIdRepairService {
                         block.slot, block.block_id
                     );
                     datapoint_error!(
-                        "block_id_repair_service-too_many_alternate_blocks",
+                        solana_metrics::names::repair::BLOCK_ID_REPAIR_SERVICE_TOO_MANY_ALTERNATE_BLOCKS,
                         ("slot", block.slot, i64),
                         ("block_id", block.block_id.to_string(), String),
                     );

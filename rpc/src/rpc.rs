@@ -3920,14 +3920,20 @@ pub mod rpc_full {
                     match meta.health.check() {
                         RpcHealthStatus::Ok => (),
                         RpcHealthStatus::Unknown => {
-                            inc_new_counter_info!("rpc-send-tx_health-unknown", 1);
+                            inc_new_counter_info!(
+                                solana_metrics::names::rpc::RPC_SEND_TX_HEALTH_UNKNOWN,
+                                1
+                            );
                             return Err(RpcCustomError::NodeUnhealthy {
                                 num_slots_behind: None,
                             }
                             .into());
                         }
                         RpcHealthStatus::Behind { num_slots } => {
-                            inc_new_counter_info!("rpc-send-tx_health-behind", 1);
+                            inc_new_counter_info!(
+                                solana_metrics::names::rpc::RPC_SEND_TX_HEALTH_BEHIND,
+                                1
+                            );
                             return Err(RpcCustomError::NodeUnhealthy {
                                 num_slots_behind: Some(num_slots),
                             }
@@ -3959,10 +3965,16 @@ pub mod rpc_full {
                 {
                     match err {
                         TransactionError::BlockhashNotFound => {
-                            inc_new_counter_info!("rpc-send-tx_err-blockhash-not-found", 1);
+                            inc_new_counter_info!(
+                                solana_metrics::names::rpc::RPC_SEND_TX_ERR_BLOCKHASH_NOT_FOUND,
+                                1
+                            );
                         }
                         _ => {
-                            inc_new_counter_info!("rpc-send-tx_err-other", 1);
+                            inc_new_counter_info!(
+                                solana_metrics::names::rpc::RPC_SEND_TX_ERR_OTHER,
+                                1
+                            );
                         }
                     }
                     return Err(RpcCustomError::SendTransactionPreflightFailure {
@@ -4401,7 +4413,7 @@ where
 {
     let (wire_output, max_raw_size) = match encoding {
         TransactionBinaryEncoding::Base58 => {
-            inc_new_counter_info!("rpc-base58_encoded_tx", 1);
+            inc_new_counter_info!(solana_metrics::names::rpc::RPC_BASE58_ENCODED_TX, 1);
             if encoded.len() > MAX_BASE58_SIZE {
                 return Err(Error::invalid_params(format!(
                     "base58 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
@@ -4418,7 +4430,7 @@ where
             (bytes, PACKET_DATA_SIZE)
         }
         TransactionBinaryEncoding::Base64 => {
-            inc_new_counter_info!("rpc-base64_encoded_tx", 1);
+            inc_new_counter_info!(solana_metrics::names::rpc::RPC_BASE64_ENCODED_TX, 1);
             let (max_encoded_size, max_raw_size) = if encoded
                 .as_bytes()
                 .get(..2)

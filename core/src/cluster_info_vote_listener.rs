@@ -173,7 +173,7 @@ impl VoteProcessingTiming {
             .should_update(VOTE_PROCESSING_REPORT_INTERVAL_MS)
         {
             datapoint_info!(
-                "vote-processing-timing",
+                solana_metrics::names::core::VOTE_PROCESSING_TIMING,
                 (
                     "vote_txn_processing_us",
                     self.gossip_txn_processing_time_us as i64,
@@ -517,7 +517,7 @@ impl ClusterInfoVoteListener {
             }
             if last_report.elapsed() >= STATS_REPORT_INTERVAL {
                 datapoint_info!(
-                    "cluster_info_vote_listener",
+                    solana_metrics::names::core::CLUSTER_INFO_VOTE_LISTENER,
                     ("received_count", stats.received_count as i64, i64),
                     (
                         "banking_channel_max_len",

@@ -875,7 +875,7 @@ pub(crate) fn check_slot_agrees_with_cluster(
         }
 
         datapoint_info!(
-            "duplicate_slot",
+            solana_metrics::names::repair::DUPLICATE_SLOT,
             ("slot", slot, i64),
             (
                 "duplicate_confirmed_hash",
@@ -907,7 +907,7 @@ pub(crate) fn check_slot_agrees_with_cluster(
         }
 
         datapoint_info!(
-            "duplicate_confirmed_slot",
+            solana_metrics::names::repair::DUPLICATE_CONFIRMED_SLOT,
             ("slot", slot, i64),
             (
                 "duplicate_confirmed_hash",

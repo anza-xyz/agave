@@ -257,11 +257,11 @@ impl RpcRequestMiddleware {
             let stem = Self::strip_leading_slash(path).expect("path already verified");
             match path {
                 DEFAULT_GENESIS_DOWNLOAD_PATH => {
-                    inc_new_counter_info!("rpc-get_genesis", 1);
+                    inc_new_counter_info!(solana_metrics::names::rpc::RPC_GET_GENESIS, 1);
                     (self.ledger_path.join(stem), None)
                 }
                 _ => {
-                    inc_new_counter_info!("rpc-get_snapshot", 1);
+                    inc_new_counter_info!(solana_metrics::names::rpc::RPC_GET_SNAPSHOT, 1);
                     let (path, snapshot_type) = self.find_snapshot_file(stem);
                     (path, Some(snapshot_type))
                 }

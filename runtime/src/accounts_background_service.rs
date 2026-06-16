@@ -68,7 +68,10 @@ impl PrunedBankQueueLenReporter {
         if q_len > MAX_DROP_BANK_SIGNAL_QUEUE_SIZE
             && now.saturating_sub(last_report_time) > BANK_DROP_SIGNAL_CHANNEL_REPORT_INTERVAL
         {
-            datapoint_warn!("excessive_pruned_bank_channel_len", ("len", q_len, i64));
+            datapoint_warn!(
+                solana_metrics::names::runtime::EXCESSIVE_PRUNED_BANK_CHANNEL_LEN,
+                ("len", q_len, i64)
+            );
             self.last_report_time.store(now, Ordering::Release);
         }
     }
@@ -151,7 +154,7 @@ impl SnapshotRequestHandler {
             self.get_next_snapshot_request()?;
 
         datapoint_info!(
-            "handle_snapshot_requests",
+            solana_metrics::names::runtime::HANDLE_SNAPSHOT_REQUESTS,
             ("num_outstanding_requests", num_outstanding_requests, i64),
             ("num_re_enqueued_requests", num_re_enqueued_requests, i64),
             (
@@ -300,7 +303,7 @@ impl SnapshotRequestHandler {
         total_time.stop();
 
         datapoint_info!(
-            "handle_snapshot_requests-timing",
+            solana_metrics::names::runtime::HANDLE_SNAPSHOT_REQUESTS_TIMING,
             (
                 "flush_accounts_cache_time",
                 flush_accounts_cache_time.as_us(),
@@ -358,7 +361,7 @@ impl PrunedBanksRequestHandler {
             num_banks_to_purge.saturating_sub(grouped_banks_to_purge.len());
         if num_banks_with_same_slot > 0 {
             datapoint_info!(
-                "pruned_banks_request_handler",
+                solana_metrics::names::runtime::PRUNED_BANKS_REQUEST_HANDLER,
                 ("num_pruned_banks", num_banks_to_purge, i64),
                 ("num_banks_with_same_slot", num_banks_with_same_slot, i64),
             );
@@ -391,7 +394,7 @@ impl PrunedBanksRequestHandler {
 
         if *removed_slots_count >= 100 {
             datapoint_info!(
-                "remove_slots_timing",
+                solana_metrics::names::runtime::REMOVE_SLOTS_TIMING,
                 ("remove_slots_time", *total_remove_slots_time, i64),
                 ("removed_slots_count", *removed_slots_count, i64),
             );

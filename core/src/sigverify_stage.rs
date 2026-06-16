@@ -222,12 +222,12 @@ impl SigVerifyStage {
             exit.clone(),
             ServicerState {
                 deduper: non_vote_deduper,
-                metrics_name: "tpu-verifier",
+                metrics_name: solana_metrics::names::tpu::VERIFIER,
                 stats: non_vote_stats,
             },
             ServicerState {
                 deduper: tpu_vote_deduper,
-                metrics_name: "tpu-vote-verifier",
+                metrics_name: solana_metrics::names::tpu::VOTE_VERIFIER,
                 stats: tpu_vote_stats,
             },
         );

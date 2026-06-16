@@ -166,7 +166,7 @@ impl BankingStageStats {
         }
         if self.last_report.should_update(report_interval_ms) {
             datapoint_info!(
-                "banking_stage-vote_loop_stats",
+                solana_metrics::names::banking::BANKING_STAGE_VOTE_LOOP_STATS,
                 (
                     "tpu_receive_and_buffer_packets_count",
                     self.tpu_counts

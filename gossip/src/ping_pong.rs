@@ -186,7 +186,7 @@ impl<const N: usize> PingCache<N> {
         {
             let rtt = now.saturating_duration_since(sent_time);
             datapoint_info!(
-                "ping_rtt",
+                solana_metrics::names::gossip::PING_RTT,
                 ("peer_ip", socket.ip().to_string(), String),
                 ("rtt_us", rtt.as_micros() as i64, i64),
             );

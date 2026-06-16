@@ -628,7 +628,10 @@ impl SystemMonitorService {
         current_limits
             .iter()
             .all(|(key, interesting_limit, current_value)| {
-                datapoint_warn!("os-config", (key, *current_value, i64));
+                datapoint_warn!(
+                    solana_metrics::names::system_monitor::OS_CONFIG,
+                    (key, *current_value, i64)
+                );
                 match interesting_limit {
                     InterestingLimit::Recommend(recommended_value)
                         if current_value < recommended_value =>
@@ -653,13 +656,19 @@ impl SystemMonitorService {
 
     #[cfg(not(target_os = "linux"))]
     pub fn check_os_network_limits() -> bool {
-        datapoint_info!("os-config", ("platform", platform_id(), String));
+        datapoint_info!(
+            solana_metrics::names::system_monitor::OS_CONFIG,
+            ("platform", platform_id(), String)
+        );
         true
     }
 
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
-        datapoint_info!("os-config", ("platform", platform_id(), String));
+        datapoint_info!(
+            solana_metrics::names::system_monitor::OS_CONFIG,
+            ("platform", platform_id(), String)
+        );
         let current_limits = Self::linux_get_current_network_limits();
         Self::linux_report_network_limits(&current_limits)
     }
@@ -683,7 +692,7 @@ impl SystemMonitorService {
     #[cfg(target_os = "linux")]
     fn report_net_stats(old_stats: &NetStats, new_stats: &NetStats) {
         datapoint_info!(
-            "net-stats-validator",
+            solana_metrics::names::system_monitor::NET_STATS_VALIDATOR,
             (
                 "in_datagrams_delta",
                 new_stats.udp_stats.in_datagrams - old_stats.udp_stats.in_datagrams,
@@ -839,7 +848,7 @@ impl SystemMonitorService {
         if let Ok(info) = sys_info::mem_info() {
             const KB: u64 = 1_024;
             datapoint_info!(
-                "memory-stats",
+                solana_metrics::names::system_monitor::MEMORY_STATS,
                 ("total", info.total * KB, i64),
                 ("swap_total", info.swap_total * KB, i64),
                 ("buffers_bytes", info.buffers * KB, i64),
@@ -896,7 +905,7 @@ impl SystemMonitorService {
             .and_then(|m| m.read())
             .expect("Jemalloc stats is compiled in");
         datapoint_info!(
-            "jemalloc_stats",
+            solana_metrics::names::system_monitor::JEMALLOC_STATS,
             ("allocated_bytes", allocated, i64),
             ("active_bytes", active, i64),
             ("resident_bytes", resident, i64),
@@ -990,7 +999,7 @@ impl SystemMonitorService {
         };
 
         datapoint_info!(
-            "cpuid-values",
+            solana_metrics::names::system_monitor::CPUID_VALUES,
             ("manufacturer_id", i64::from(mfr_id), i64),
             ("cpuid_processor_eax", i64::from(cpuid_processor.eax), i64),
             ("cpuid_processor_ebx", i64::from(cpuid_processor.ebx), i64),
@@ -1014,7 +1023,7 @@ impl SystemMonitorService {
     fn report_cpu_stats() {
         if let Ok(info) = Self::cpu_info() {
             datapoint_info!(
-                "cpu-stats",
+                solana_metrics::names::system_monitor::CPU_STATS,
                 ("cpu_num", info.cpu_num as i64, i64),
                 ("cpu0_freq_mhz", info.cpu_freq_mhz as i64, i64),
                 ("average_load_one_minute", info.load_avg.one, f64),
@@ -1044,7 +1053,7 @@ impl SystemMonitorService {
     #[cfg(target_os = "linux")]
     fn report_disk_stats(old_stats: &DiskStats, new_stats: &DiskStats) {
         datapoint_info!(
-            "disk-stats",
+            solana_metrics::names::system_monitor::DISK_STATS,
             (
                 "reads_completed",
                 new_stats
@@ -1302,7 +1311,7 @@ impl SystemMonitorService {
         metrics: &XdpNetworkConfigMetrics,
     ) {
         solana_metrics::datapoint_info!(
-            "xdp-network-config",
+            solana_metrics::names::system_monitor::XDP_NETWORK_CONFIG,
             "driver" => metrics.driver.clone(),
             "zero_copy" => config.zero_copy.to_string(),
             ("kernel_version", metrics.kernel_version.clone(), String),

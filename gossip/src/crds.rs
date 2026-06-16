@@ -232,7 +232,10 @@ fn emit_contact_info_event(sender: Option<&ContactInfoSender>, event: ContactInf
         // "this should never happen" in steady state, but flag it
         // immediately if it does — sustained drops indicate a slow
         // consumer or a misconfigured channel capacity.
-        solana_metrics::inc_new_counter_warn!("gossip_contact_info_dropped", 1);
+        solana_metrics::inc_new_counter_warn!(
+            solana_metrics::names::gossip::GOSSIP_CONTACT_INFO_DROPPED,
+            1
+        );
     }
 }
 
@@ -776,7 +779,7 @@ impl CrdsDataStats {
         if should_report_message_signature(entry.value.signature(), SIGNATURE_SAMPLE_LEADING_ZEROS)
         {
             datapoint_info!(
-                "gossip_crds_sample",
+                solana_metrics::names::gossip::GOSSIP_CRDS_SAMPLE,
                 (
                     "origin",
                     last_four_chars(&entry.value.pubkey().to_string()),

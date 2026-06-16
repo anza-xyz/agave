@@ -232,7 +232,7 @@ pub(crate) fn submit_gossip_stats(
     .map(|counter| counter.0.load(Ordering::Relaxed))
     .sum();
     datapoint_info!(
-        "cluster_info_stats",
+        solana_metrics::names::gossip::CLUSTER_INFO_STATS,
         ("entrypoint", stats.entrypoint.clear(), i64),
         ("entrypoint2", stats.entrypoint2.clear(), i64),
         ("push_vote_read", stats.push_vote_read.clear(), i64),
@@ -247,7 +247,7 @@ pub(crate) fn submit_gossip_stats(
         ("num_pubkeys", num_pubkeys, i64),
     );
     datapoint_info!(
-        "cluster_info_stats2",
+        solana_metrics::names::gossip::CLUSTER_INFO_STATS2,
         (
             "gossip_packets_dropped_count",
             stats.gossip_packets_dropped_count.clear(),
@@ -346,7 +346,7 @@ pub(crate) fn submit_gossip_stats(
         ),
     );
     datapoint_info!(
-        "cluster_info_stats3",
+        solana_metrics::names::gossip::CLUSTER_INFO_STATS3,
         (
             "process_pull_resp_len",
             stats.process_pull_response_len.clear(),
@@ -436,7 +436,7 @@ pub(crate) fn submit_gossip_stats(
         ),
     );
     datapoint_info!(
-        "cluster_info_stats4",
+        solana_metrics::names::gossip::CLUSTER_INFO_STATS4,
         (
             "skip_push_message_shred_version",
             stats.skip_push_message_shred_version.clear(),
@@ -491,7 +491,7 @@ pub(crate) fn submit_gossip_stats(
         ),
     );
     datapoint_info!(
-        "cluster_info_stats5",
+        solana_metrics::names::gossip::CLUSTER_INFO_STATS5,
         (
             "num_unverifed_gossip_addrs",
             stats.num_unverifed_gossip_addrs.clear(),
@@ -585,7 +585,7 @@ pub(crate) fn submit_gossip_stats(
         ),
     );
     datapoint_info!(
-        "cluster_info_crds_stats",
+        solana_metrics::names::gossip::CLUSTER_INFO_CRDS_STATS,
         ("LegacyContactInfo-push", crds_stats.push.counts[0], i64),
         ("LegacyContactInfo-pull", crds_stats.pull.counts[0], i64),
         ("Vote-push", crds_stats.push.counts[1], i64),
@@ -634,7 +634,7 @@ pub(crate) fn submit_gossip_stats(
         ),
     );
     datapoint_info!(
-        "cluster_info_crds_stats_fails",
+        solana_metrics::names::gossip::CLUSTER_INFO_CRDS_STATS_FAILS,
         ("LegacyContactInfo-push", crds_stats.push.fails[0], i64),
         ("LegacyContactInfo-pull", crds_stats.pull.fails[0], i64),
         ("Vote-push", crds_stats.push.fails[1], i64),
@@ -677,8 +677,14 @@ pub(crate) fn submit_gossip_stats(
     if !log::log_enabled!(log::Level::Trace) {
         return;
     }
-    submit_vote_stats("cluster_info_crds_stats_votes_pull", &crds_stats.pull.votes);
-    submit_vote_stats("cluster_info_crds_stats_votes_push", &crds_stats.push.votes);
+    submit_vote_stats(
+        solana_metrics::names::gossip::CLUSTER_INFO_CRDS_STATS_VOTES_PULL,
+        &crds_stats.pull.votes,
+    );
+    submit_vote_stats(
+        solana_metrics::names::gossip::CLUSTER_INFO_CRDS_STATS_VOTES_PUSH,
+        &crds_stats.push.votes,
+    );
     let votes: HashMap<Slot, usize> = crds_stats
         .pull
         .votes
@@ -686,7 +692,10 @@ pub(crate) fn submit_gossip_stats(
         .chain(crds_stats.push.votes)
         .into_grouping_map()
         .aggregate(|acc, _slot, num_votes| Some(acc.unwrap_or_default() + num_votes));
-    submit_vote_stats("cluster_info_crds_stats_votes", &votes);
+    submit_vote_stats(
+        solana_metrics::names::gossip::CLUSTER_INFO_CRDS_STATS_VOTES,
+        &votes,
+    );
 }
 
 fn submit_vote_stats<'a, I>(name: &'static str, votes: I)
@@ -720,7 +729,7 @@ pub(crate) fn last_four_chars(s: &str) -> Option<&str> {
 
 pub(crate) fn log_gossip_crds_sample_egress(value: &CrdsValue, peer: &Pubkey) {
     datapoint_info!(
-        "gossip_crds_sample_egress",
+        solana_metrics::names::gossip::GOSSIP_CRDS_SAMPLE_EGRESS,
         (
             "origin",
             last_four_chars(&value.pubkey().to_string()),

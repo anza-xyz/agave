@@ -2561,7 +2561,7 @@ struct ConsumeWorkerCountMetrics {
 impl ConsumeWorkerCountMetrics {
     fn report_and_reset(&self, id: &str) {
         let datapoint = create_datapoint!(
-            @point "banking_stage_worker_counts",
+            @point solana_metrics::names::banking::BANKING_STAGE_WORKER_COUNTS,
             "id" => id,
             ("max_queue_len", self.max_queue_len.swap(0, Ordering::Relaxed), i64),
             (
@@ -2623,7 +2623,7 @@ struct ConsumeWorkerTimingMetrics {
 impl ConsumeWorkerTimingMetrics {
     fn report_and_reset(&self, id: &str) {
         let datapoint = create_datapoint!(
-            @point "banking_stage_worker_timing",
+            @point solana_metrics::names::banking::BANKING_STAGE_WORKER_TIMING,
             "id" => id,
             (
                 "cost_model_us",
@@ -2698,7 +2698,7 @@ struct ConsumeWorkerTransactionErrorMetrics {
 impl ConsumeWorkerTransactionErrorMetrics {
     fn report_and_reset(&self, id: &str) {
         let datapoint = create_datapoint!(
-            @point "banking_stage_worker_error_metrics",
+            @point solana_metrics::names::banking::BANKING_STAGE_WORKER_ERROR_METRICS,
             "id" => id,
             ("total", self.total.swap(0, Ordering::Relaxed), i64),
             (

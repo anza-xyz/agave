@@ -148,7 +148,7 @@ fn calculate_stake_points_for_tower(
 fn record_error(msg: String) {
     error!("{msg}");
     datapoint_error!(
-        "PER-total-stake-calculation-failure",
+        solana_metrics::names::runtime::PER_TOTAL_STAKE_CALCULATION_FAILURE,
         ("error", msg, String)
     );
 }

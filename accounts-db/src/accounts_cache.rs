@@ -70,7 +70,7 @@ impl SlotCache {
 
     pub fn report_slot_store_metrics(&self) {
         datapoint_info!(
-            "slot_repeated_writes",
+            solana_metrics::names::accounts_db::SLOT_REPEATED_WRITES,
             (
                 "same_account_writes",
                 self.same_account_writes.load(Ordering::Relaxed),
@@ -267,7 +267,7 @@ impl AccountsCache {
     }
     pub fn report_size(&self) {
         datapoint_info!(
-            "accounts_cache_size",
+            solana_metrics::names::accounts_db::ACCOUNTS_CACHE_SIZE,
             ("num_roots", self.unflushed_roots.read().unwrap().len(), i64),
             ("num_slots", self.cache.len(), i64),
             ("total_size", self.size(), i64),

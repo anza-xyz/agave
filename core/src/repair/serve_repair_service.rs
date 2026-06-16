@@ -41,7 +41,9 @@ impl ServeRepairService {
             exit.clone(),
             request_sender,
             Recycler::default(),
-            Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
+            Arc::new(StreamerReceiveStats::new(
+                solana_metrics::names::streamer::SERVE_REPAIR_RECEIVER,
+            )),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // use_pinned_memory
             false,                          // is_staked_service
