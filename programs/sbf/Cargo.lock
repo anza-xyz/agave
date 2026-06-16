@@ -7995,9 +7995,9 @@ dependencies = [
 
 [[package]]
 name = "solana-rent"
-version = "4.2.0"
+version = "4.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9809b081e99bc142ce803bcd7ee18306759ce3b30a96a9da3f6f41c45e50ef0"
+checksum = "40f02fbe2669ebe5d851dbf29a02e91ed6244b051bb64fcc57e6644aba636063"
 dependencies = [
  "serde",
  "serde_derive",
