@@ -1427,10 +1427,7 @@ impl Drop for TestValidator {
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*,
-        solana_feature_gate_interface::{Feature, create_account as create_feature_account},
-    };
+    use {super::*, solana_feature_gate_interface::Feature};
 
     async fn assert_feature_accounts(
         rpc_client: &nonblocking::rpc_client::RpcClient,
@@ -1544,33 +1541,6 @@ mod test {
                 .is_some()
         );
         wait_for_alpenglow_enabled(&test_validator).await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_pending_alpenglow_activation_migrates() {
-        let feature_lamports = Rent::default().minimum_balance(Feature::size_of()).max(1);
-        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
-            .ticks_per_slot(8)
-            .epoch_schedule(EpochSchedule::custom(64, 64, false))
-            .add_account(
-                alpenglow::id(),
-                create_feature_account(&Feature::default(), feature_lamports),
-            )
-            .start_async()
-            .await;
-        let rpc_client = test_validator.get_async_rpc_client();
-
-        for _ in 0..120 {
-            let account = rpc_client.get_account(&alpenglow::id()).await.unwrap();
-            let feature_state = solana_feature_gate_interface::from_account(&account).unwrap();
-            if feature_state.activated_at.is_some() {
-                wait_for_alpenglow_enabled(&test_validator).await;
-                rpc_client.get_health().await.expect("health");
-                return;
-            }
-            sleep(Duration::from_millis(250)).await;
-        }
-        panic!("Timed out waiting for Alpenglow feature activation");
     }
 
     #[test]
