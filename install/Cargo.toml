@@ -36,6 +36,7 @@ reqwest = { workspace = true, features = [
 scopeguard = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
+serde_yaml = { workspace = true }
 solana-hash = "=4.4.0"
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }

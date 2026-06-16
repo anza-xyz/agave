@@ -188,6 +188,7 @@ dependencies = [
  "scopeguard",
  "semver 1.0.28",
  "serde",
+ "serde_yaml",
  "solana-hash 4.4.0",
  "solana-sha256-hasher",
  "solana-version",
