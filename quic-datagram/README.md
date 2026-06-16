@@ -72,32 +72,15 @@ each direction). The connection tables serve two purposes:
 * Dispatch of egress packets - egress always picks the peer's outbound
   connection (dialing one if absent).
 
-Each control loop owns one `peer_state` table keyed by peer pubkey
-(**owned exclusively by that loop**); the inbound and outbound tables are
-separate, one per direction:
+Each control loop owns one state table keyed by peer pubkey. The outbound table
+is an LRU and the sole owner of each outbound `Connection`: it is critical 
+that no other task hold any references to `Connection` objects, else such tasks
+may leak quinn resources (assuming the server never closes our connection). 
 
-```text
-// outbound loop (we-dial, send-only)
-peer_state: LruCache<Pubkey, PeerState>  // capacity 2 × MAX_ALPENGLOW_VOTE_ACCOUNTS
-
-enum PeerState {
-    Dialing,                                 // placeholder; one dial task in flight
-    Established { connection: Connection },  // live send-only connection
-}
-
-// inbound loop (we-accept, receive-only)
-peer_state: HashMap<Pubkey, ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>>
-```
-
-The outbound table is an LRU rather than a HashMap and the sole owner of
-each outbound `Connection`. It is critical that no client task hold any
-references to `Connection` objects, else such tasks may result in quinn
-resource leak (assuming server never closes our connection). As peers leave
-the staked set, we can end up with some stale idle connections (but they
-are of little consequence CPU cost wise), which will be reclaimed if needed
-by new peers. Any idle connection that ages out of the LRU should already be
-gone server-side if the server was not stuck, no explicit close code is provided
-for this path.
+As peers leave the staked set we can accumulate stale idle connections (of 
+little CPU cost), which are reclaimed by LRU eviction when new peers need the 
+slots. An idle connection that ages out should already be gone server-side 
+if the server was not stuck, so no explicit close code is sent on that path.
 
 ## Split send/receive directions
 

@@ -254,16 +254,13 @@ impl InboundLoop {
     }
 
     /// Remove the connection with the given `stable_id` from `peer`'s inbound
-    /// set; drop the map entry once its last connection is gone.
-    /// Called by the read loop on exit. No-op if the
-    /// connection was already removed (e.g. by an identity rotation).
+    /// set. Keeps the `PeerEntry` so the rate limiter state survives a reconnect.
+    /// Entries are reclaimed by the prune task once the rate limiter has refilled.
     fn reap_connection(&mut self, peer: &Pubkey, stable_id: usize) {
         if let Entry::Occupied(mut slot) = self.peer_state.entry(*peer) {
-            let connections = &mut slot.get_mut().connections;
-            connections.retain(|c| c.stable_id() != stable_id);
-            if connections.is_empty() {
-                slot.remove();
-            }
+            slot.get_mut()
+                .connections
+                .retain(|c| c.stable_id() != stable_id);
         }
     }
 
@@ -319,7 +316,14 @@ impl InboundLoop {
                     accept_allowed = false;
                 }
                 // When idle we can take care of bookkeeping.
-                _ = prune.tick() => self.banlist.prune(),
+                _ = prune.tick() => {
+                    self.banlist.prune();
+                    // Reclaim empty connection slots
+                    self.peer_state.retain(|_, e| {
+                        !e.connections.is_empty()
+                            || e.rate_limiter.current_tokens() < PEER_RATE_LIMIT_BURST_DOS
+                    });
+                }
                 // Shutdown is never done in a hurry
                 _ = self.shutdown.cancelled() => break,
             }
@@ -374,11 +378,12 @@ impl InboundLoop {
             InboundEvent::Closed {
                 peer, stable_id, ..
             } => self.reap_connection(&peer, stable_id),
-            // Flood detected - close connection
+            // Flood detected: close all connections but keep the entry as a
+            // tombstone so the depleted rate limiter persists on reconnect.
             InboundEvent::FloodDetected { peer } => {
-                if let Some(entry) = self.peer_state.remove(&peer) {
-                    for connection in &entry.connections {
-                        close_codes::BANNED.close(connection);
+                if let Some(entry) = self.peer_state.get_mut(&peer) {
+                    for connection in entry.connections.drain(..) {
+                        close_codes::BANNED.close(&connection);
                     }
                     add(&self.stats.connection_lost);
                 }

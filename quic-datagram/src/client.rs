@@ -34,8 +34,13 @@ pub(crate) enum PeerState {
     /// Dialing attempt in progress; holds the most recent datagram to send once
     /// the connection is up (newer arrivals overwrite older ones).
     Dialing { trigger: Bytes },
-    /// Live send-only connection.
-    Established { connection: Connection },
+    /// Live send-only connection. `addr` is cached at install (no migration on
+    /// our send-only client) so the egress hot path avoids a quinn state-lock
+    /// acquisition for `remote_address()` on every datagram.
+    Established {
+        connection: Connection,
+        addr: SocketAddr,
+    },
 }
 
 /// Dial result reported by a dial task to the outbound control loop.
@@ -203,7 +208,7 @@ impl OutboundLoop {
             .peer_state
             .iter()
             .map(|(_peer, entry)| {
-                if let PeerState::Established { connection } = entry {
+                if let PeerState::Established { connection, .. } = entry {
                     close_codes::IDENTITY_ROTATED.close(connection);
                     1
                 } else {
@@ -242,7 +247,10 @@ impl OutboundLoop {
                         .fetch_add(1, Ordering::Relaxed);
                     return;
                 }
-                PeerState::Established { connection } if connection.remote_address() == addr => {
+                PeerState::Established {
+                    connection,
+                    addr: conn_addr,
+                } if *conn_addr == addr => {
                     match connection.send_datagram(bytes.clone()) {
                         Ok(()) => {
                             add(&self.stats.datagrams_sent);
@@ -264,6 +272,7 @@ impl OutboundLoop {
                     // ... and close the displaced connection with PEER_MOVED.
                     if let PeerState::Established {
                         connection: old_connection,
+                        ..
                     } = old
                     {
                         close_codes::PEER_MOVED.close(&old_connection);
@@ -320,6 +329,7 @@ impl OutboundLoop {
                     let PeerState::Dialing { trigger } = mem::replace(
                         slot,
                         PeerState::Established {
+                            addr: connection.remote_address(),
                             connection: connection.clone(),
                         },
                     ) else {
