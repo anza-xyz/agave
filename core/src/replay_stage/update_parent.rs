@@ -16,11 +16,13 @@ use {
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
     solana_ledger::{
-        blockstore::{Blockstore, UpdateParentReceiver},
+        blockstore::{Blockstore, UpdateParentReceiver, UpdateParentSignal},
         blockstore_meta::SlotMeta,
-        blockstore_processor::AsyncVerificationProgress,
+        blockstore_processor::{AsyncVerificationProgress, TransactionStatusSender},
     },
+    solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
+    solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, leader_schedule_utils::leader_slot_index,
         vote_sender_types::ReplayVoteSender,
@@ -178,6 +180,66 @@ fn try_restart_slot_from_update_parent(
     true
 }
 
+fn update_parent_signal_from_blockstore(
+    blockstore: &Blockstore,
+    slot: Slot,
+) -> Option<UpdateParentSignal> {
+    let slot_meta = blockstore.meta(slot).expect("Blockstore should not fail")?;
+    UpdateParentSignal::from_slot_meta(slot, &slot_meta)
+}
+
+pub(super) struct UpdateParentNotificationSenders<'a> {
+    replay_vote_sender: &'a ReplayVoteSender,
+    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
+    slot_status_notifier: Option<SlotStatusNotifier>,
+    transaction_status_sender: Option<&'a TransactionStatusSender>,
+}
+
+impl<'a> UpdateParentNotificationSenders<'a> {
+    pub(super) fn new(
+        replay_vote_sender: &'a ReplayVoteSender,
+        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
+        slot_status_notifier: Option<SlotStatusNotifier>,
+        transaction_status_sender: Option<&'a TransactionStatusSender>,
+    ) -> Self {
+        Self {
+            replay_vote_sender,
+            rpc_subscriptions,
+            slot_status_notifier,
+            transaction_status_sender,
+        }
+    }
+
+    fn replay_vote_sender(&self) -> &ReplayVoteSender {
+        self.replay_vote_sender
+    }
+
+    fn dead_slot_notifications(&self, blockstore: Arc<Blockstore>) -> DeadSlotNotifications {
+        DeadSlotNotifications {
+            blockstore,
+            rpc_subscriptions: self.rpc_subscriptions.clone(),
+            slot_status_notifier: self.slot_status_notifier.clone(),
+            replay_vote_sender: self.replay_vote_sender.clone(),
+        }
+    }
+
+    fn notify_read_layer_consumers(&self, update_parent: &UpdateParentSignal) {
+        if let Some(transaction_status_sender) = self.transaction_status_sender {
+            transaction_status_sender.send_update_parent(update_parent.clone());
+        }
+        datapoint_info!(
+            "replay-stage-update-parent-read-layer-invalidation",
+            ("slot", update_parent.slot, i64),
+            (
+                "update_parent_fec_set_index",
+                update_parent.update_parent_fec_set_index,
+                i64
+            ),
+            ("parent_slot", update_parent.parent_slot, i64),
+        );
+    }
+}
+
 /// Revisit soft-dead slots as more shreds arrive.
 ///
 /// If an UpdateParent marker is now visible in SlotMeta, replay is restarted
@@ -187,11 +249,9 @@ pub(super) fn process_soft_dead_slots(
     my_pubkey: &Pubkey,
     blockstore: &Arc<Blockstore>,
     bank_forks: &RwLock<BankForks>,
-    rpc_subscriptions: &Option<Arc<solana_rpc::rpc_subscriptions::RpcSubscriptions>>,
-    slot_status_notifier: &Option<solana_rpc::slot_status_notifier::SlotStatusNotifier>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    replay_vote_sender: &ReplayVoteSender,
+    notification_senders: &UpdateParentNotificationSenders,
     migration_status: &MigrationStatus,
 ) {
     let soft_dead_slots = progress
@@ -220,17 +280,24 @@ pub(super) fn process_soft_dead_slots(
             update_parent_replay_offset(slot, &slot_meta, bank_forks.read().unwrap().root());
 
         if replay_offset.is_some() {
-            try_restart_slot_from_update_parent(
+            let did_restart = try_restart_slot_from_update_parent(
                 my_pubkey,
                 blockstore.as_ref(),
                 bank_forks,
                 progress,
                 async_verification_freelist,
                 slot,
-                replay_vote_sender,
+                notification_senders.replay_vote_sender(),
                 migration_status,
                 "soft-dead scan",
             );
+            if did_restart {
+                if let Some(update_parent) =
+                    update_parent_signal_from_blockstore(blockstore.as_ref(), slot)
+                {
+                    notification_senders.notify_read_layer_consumers(&update_parent);
+                }
+            }
             continue;
         }
 
@@ -252,12 +319,8 @@ pub(super) fn process_soft_dead_slots(
             };
             let bank = bank_forks.read().unwrap().get(slot);
             if let Some(bank) = bank {
-                let notifications = DeadSlotNotifications {
-                    blockstore: blockstore.clone(),
-                    rpc_subscriptions: rpc_subscriptions.clone(),
-                    slot_status_notifier: slot_status_notifier.clone(),
-                    replay_vote_sender: replay_vote_sender.clone(),
-                };
+                let notifications =
+                    notification_senders.dead_slot_notifications(blockstore.clone());
                 mark_hard_dead_slot_notifications(&bank, err, log_level, progress, &notifications);
             }
         }
@@ -274,21 +337,28 @@ pub(super) fn handle_update_parent_interrupts(
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     update_parent_receiver: &UpdateParentReceiver,
-    replay_vote_sender: &ReplayVoteSender,
+    notification_senders: &UpdateParentNotificationSenders,
     migration_status: &MigrationStatus,
 ) {
     while let Ok(signal) = update_parent_receiver.try_recv() {
-        try_restart_slot_from_update_parent(
+        let did_restart = try_restart_slot_from_update_parent(
             my_pubkey,
             blockstore,
             bank_forks,
             progress,
             async_verification_freelist,
             signal.slot,
-            replay_vote_sender,
+            notification_senders.replay_vote_sender(),
             migration_status,
             "UpdateParent signal",
         );
+        if did_restart {
+            if let Some(update_parent) =
+                update_parent_signal_from_blockstore(blockstore, signal.slot)
+            {
+                notification_senders.notify_read_layer_consumers(&update_parent);
+            }
+        }
     }
 }
 

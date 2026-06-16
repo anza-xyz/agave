@@ -1,6 +1,6 @@
 use {
-    solana_clock::Slot, solana_hash::Hash, solana_signature::Signature,
-    solana_transaction::versioned::VersionedTransaction,
+    solana_clock::Slot, solana_hash::Hash, solana_ledger::blockstore::UpdateParentSignal,
+    solana_signature::Signature, solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::TransactionStatusMeta, std::sync::Arc,
 };
 
@@ -15,6 +15,12 @@ pub trait TransactionNotifier {
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
     );
+
+    /// Called when an Alpenglow UpdateParent marker invalidates transaction
+    /// status data for the same slot that may have been emitted before the
+    /// marker boundary. Delivery is best-effort and ordered by the
+    /// TransactionStatusService message channel.
+    fn notify_update_parent(&self, _update_parent: &UpdateParentSignal) {}
 }
 
 pub type TransactionNotifierArc = Arc<dyn TransactionNotifier + Sync + Send>;

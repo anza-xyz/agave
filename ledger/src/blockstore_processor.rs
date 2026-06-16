@@ -1,7 +1,7 @@
 use {
     crate::{
         block_error::BlockError,
-        blockstore::{Blockstore, BlockstoreError},
+        blockstore::{Blockstore, BlockstoreError, UpdateParentSignal},
         blockstore_meta::SlotMeta,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,
@@ -22,7 +22,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::{
-        block_component::BlockComponent,
+        block_component::{BlockComponent, VersionedUpdateParent},
         entry::{self, Entry, EntrySlice, EntryType, create_ticks},
     },
     solana_genesis_config::GenesisConfig,
@@ -1883,21 +1883,31 @@ fn confirm_slot_with_components(
                 if let Some(parent_bank) = bank.parent() {
                     let allow_initial_update_parent =
                         replay_starts_at_update_parent && marker.is_update_parent();
-                    processor
-                        .on_marker(
-                            bank.clone_without_scheduler(),
-                            parent_bank,
-                            marker,
-                            allow_initial_update_parent,
-                            finalization_cert_sender,
-                            migration_status,
-                        )
-                        .inspect_err(|err| {
-                            warn!(
-                                "BlockComponentProcessor::on_marker() for slot {slot} failed with \
-                                 {err}"
+                    if let Err(err) = processor.on_marker(
+                        bank.clone_without_scheduler(),
+                        parent_bank,
+                        marker,
+                        allow_initial_update_parent,
+                        finalization_cert_sender,
+                        migration_status,
+                    ) {
+                        warn!(
+                            "BlockComponentProcessor::on_marker() for slot {slot} failed with \
+                             {err}"
+                        );
+                        if let BlockComponentProcessorError::AbandonedBank(update_parent) = &err {
+                            let update_parent = update_parent_signal_from_marker(
+                                slot,
+                                completed_range.start,
+                                update_parent,
                             );
-                        })?;
+                            send_update_parent_transaction_status_notification(
+                                &update_parent,
+                                transaction_status_sender,
+                            );
+                        }
+                        return Err(err.into());
+                    }
                 }
                 progress.num_shreds += num_shreds as u64;
             }
@@ -2885,6 +2895,30 @@ pub fn process_single_slot(
     Ok(())
 }
 
+fn update_parent_signal_from_marker(
+    slot: Slot,
+    update_parent_fec_set_index: u32,
+    update_parent: &VersionedUpdateParent,
+) -> UpdateParentSignal {
+    match update_parent {
+        VersionedUpdateParent::V1(update_parent) => UpdateParentSignal {
+            slot,
+            update_parent_fec_set_index,
+            parent_slot: update_parent.new_parent_slot,
+            parent_block_id: Some(update_parent.new_parent_block_id),
+        },
+    }
+}
+
+fn send_update_parent_transaction_status_notification(
+    update_parent: &UpdateParentSignal,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+) {
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_update_parent(update_parent.clone());
+    }
+}
+
 type WorkSequence = u64;
 
 #[allow(clippy::large_enum_variant)]
@@ -2892,6 +2926,13 @@ type WorkSequence = u64;
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    /// Invalidate same-slot transaction-status data emitted before an
+    /// Alpenglow UpdateParent marker. Delivery is best-effort and follows the
+    /// same channel-drop behavior as other transaction-status messages.
+    UpdateParent {
+        update_parent: UpdateParentSignal,
+        work_sequence: Option<WorkSequence>,
+    },
 }
 
 #[derive(Debug)]
@@ -2950,6 +2991,25 @@ impl TransactionStatusSender {
         {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
+        }
+    }
+
+    pub fn send_update_parent(&self, update_parent: UpdateParentSignal) {
+        let slot = update_parent.slot;
+        let work_sequence = self
+            .dependency_tracker
+            .as_ref()
+            .map(|dependency_tracker| dependency_tracker.declare_work());
+
+        if let Err(e) = self.sender.send(TransactionStatusMessage::UpdateParent {
+            update_parent,
+            work_sequence,
+        }) {
+            warn!("Slot {slot} transaction_status send UpdateParent failed: {e:?}");
+            datapoint_error!(
+                "transaction_status-update-parent-send-failed",
+                ("slot", slot, i64),
+            );
         }
     }
 }

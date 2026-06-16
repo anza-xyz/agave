@@ -2853,11 +2853,19 @@ fn test_update_parent_restart() {
             parent_block_id,
             32,
         );
-        tx.send(UpdateParentSignal { slot }).unwrap();
+        tx.send(UpdateParentSignal {
+            slot,
+            update_parent_fec_set_index: 32,
+            parent_slot: 0,
+            parent_block_id: Some(parent_block_id),
+        })
+        .unwrap();
     }
 
     let cleared_bank_id = bank_forks.read().unwrap().get(4).unwrap().bank_id();
     let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let update_parent_notification_senders =
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -2866,7 +2874,7 @@ fn test_update_parent_restart() {
         &mut progress,
         &mut async_verification_freelist,
         &rx,
-        &replay_vote_sender,
+        &update_parent_notification_senders,
         &post_migration_status_for_tests(),
     );
 
@@ -2986,9 +2994,17 @@ fn test_update_parent_tower_gated() {
     progress.insert(slot, p);
 
     let (tx, rx) = bounded(1024);
-    tx.send(UpdateParentSignal { slot }).unwrap();
+    tx.send(UpdateParentSignal {
+        slot,
+        update_parent_fec_set_index: 10,
+        parent_slot: 0,
+        parent_block_id: Some(parent_block_id),
+    })
+    .unwrap();
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let update_parent_notification_senders =
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -2997,7 +3013,7 @@ fn test_update_parent_tower_gated() {
         &mut progress,
         &mut async_verification_freelist,
         &rx,
-        &replay_vote_sender,
+        &update_parent_notification_senders,
         &MigrationStatus::default(),
     );
 
@@ -3030,9 +3046,17 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
     progress.insert(slot, p);
 
     let (tx, rx) = bounded(1024);
-    tx.send(UpdateParentSignal { slot }).unwrap();
+    tx.send(UpdateParentSignal {
+        slot,
+        update_parent_fec_set_index: 10,
+        parent_slot: 0,
+        parent_block_id: Some(meta.parent_block_id),
+    })
+    .unwrap();
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let update_parent_notification_senders =
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3041,7 +3065,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
         &mut progress,
         &mut async_verification_freelist,
         &rx,
-        &replay_vote_sender,
+        &update_parent_notification_senders,
         &post_migration_status_for_tests(),
     );
 
@@ -3077,9 +3101,17 @@ fn test_update_parent_keeps_hard() {
     progress.insert(slot, p);
 
     let (tx, rx) = bounded(1024);
-    tx.send(UpdateParentSignal { slot }).unwrap();
+    tx.send(UpdateParentSignal {
+        slot,
+        update_parent_fec_set_index: 10,
+        parent_slot: 0,
+        parent_block_id: Some(parent_block_id),
+    })
+    .unwrap();
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let update_parent_notification_senders =
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3088,7 +3120,7 @@ fn test_update_parent_keeps_hard() {
         &mut progress,
         &mut async_verification_freelist,
         &rx,
-        &replay_vote_sender,
+        &update_parent_notification_senders,
         &post_migration_status_for_tests(),
     );
 
@@ -3299,16 +3331,16 @@ fn test_soft_dead_restarts() {
     progress.insert(slot, p);
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let update_parent_notification_senders =
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
         &blockstore,
         &bank_forks,
-        &None,
-        &None,
         &mut progress,
         &mut async_verification_freelist,
-        &replay_vote_sender,
+        &update_parent_notification_senders,
         &post_migration_status_for_tests(),
     );
 
@@ -3342,16 +3374,16 @@ fn test_full_soft_dead_hardens() {
     progress.insert(slot, p);
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let update_parent_notification_senders =
+        UpdateParentNotificationSenders::new(&replay_vote_sender, None, None, None);
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
         &blockstore,
         &bank_forks,
-        &None,
-        &None,
         &mut progress,
         &mut async_verification_freelist,
-        &replay_vote_sender,
+        &update_parent_notification_senders,
         &post_migration_status_for_tests(),
     );
 

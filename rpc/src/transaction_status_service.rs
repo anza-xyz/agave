@@ -12,6 +12,7 @@ use {
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
+    solana_metrics::datapoint_info,
     solana_runtime::{
         bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
@@ -272,6 +273,35 @@ impl TransactionStatusService {
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
+            TransactionStatusMessage::UpdateParent {
+                update_parent,
+                work_sequence,
+            } => {
+                let deleted_transaction_statuses =
+                    blockstore.delete_transaction_status_slot(update_parent.slot)?;
+                if let Some(transaction_notifier) = transaction_notifier.as_ref() {
+                    transaction_notifier.notify_update_parent(&update_parent);
+                }
+                datapoint_info!(
+                    "transaction_status-update-parent-invalidated",
+                    ("slot", update_parent.slot, i64),
+                    (
+                        "update_parent_fec_set_index",
+                        update_parent.update_parent_fec_set_index,
+                        i64
+                    ),
+                    (
+                        "deleted_transaction_statuses",
+                        deleted_transaction_statuses,
+                        i64
+                    ),
+                );
+                if let Some(dependency_tracker) = dependency_tracker.as_ref() {
+                    if let Some(work_id) = work_sequence {
+                        dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -359,7 +389,10 @@ pub(crate) mod tests {
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
+        solana_ledger::{
+            blockstore::UpdateParentSignal, blockstore_processor::TransactionStatusSender,
+            genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete,
+        },
         solana_message::SimpleAddressLoader,
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
@@ -378,7 +411,7 @@ pub(crate) mod tests {
             TransactionStatusMeta, TransactionTokenBalance,
             token_balances::TransactionTokenBalancesSet,
         },
-        std::sync::{Arc, atomic::AtomicBool},
+        std::sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
     #[derive(Eq, Hash, PartialEq)]
@@ -395,12 +428,14 @@ pub(crate) mod tests {
 
     struct TestTransactionNotifier {
         notifications: DashMap<TestNotifierKey, TestNotification>,
+        update_parents: Mutex<Vec<UpdateParentSignal>>,
     }
 
     impl TestTransactionNotifier {
         pub fn new() -> Self {
             Self {
                 notifications: DashMap::default(),
+                update_parents: Mutex::default(),
             }
         }
     }
@@ -427,6 +462,13 @@ pub(crate) mod tests {
                     transaction: transaction.clone(),
                 },
             );
+        }
+
+        fn notify_update_parent(&self, update_parent: &UpdateParentSignal) {
+            self.update_parents
+                .lock()
+                .unwrap()
+                .push(update_parent.clone());
         }
     }
 
@@ -692,6 +734,158 @@ pub(crate) mod tests {
         assert_eq!(
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
+        );
+    }
+
+    #[test]
+    fn test_update_parent_invalidates_transaction_status_storage() {
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger"),
+        );
+
+        let sanitize = |transaction: Transaction| {
+            SanitizedTransaction::try_create(
+                VersionedTransaction::from(transaction),
+                MessageHash::Compute,
+                None,
+                SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set(),
+            )
+            .unwrap()
+        };
+
+        let stale_transaction = sanitize(build_test_transaction_legacy());
+        let replacement_transaction = sanitize(build_test_transaction_legacy());
+        let stale_signature = *stale_transaction.signature();
+        let replacement_signature = *replacement_transaction.signature();
+
+        let commit_result = Ok(CommittedTransaction {
+            status: Ok(()),
+            log_messages: Some(vec!["log".to_string()]),
+            inner_instructions: None,
+            return_data: None,
+            executed_units: 1,
+            fee_details: FeeDetails::default(),
+            loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            fee_payer_post_balance: 0,
+        });
+
+        let slot = bank.slot();
+        blockstore
+            .write_transaction_memos(&stale_signature, slot, "stale memo".to_string())
+            .unwrap();
+        blockstore.set_block_height(slot, 42).unwrap();
+        blockstore
+            .write_rewards(
+                slot,
+                RewardsAndNumPartitions {
+                    rewards: vec![Reward {
+                        pubkey: Pubkey::new_unique().to_string(),
+                        lamports: 1,
+                        post_balance: 2,
+                        reward_type: None,
+                        commission: None,
+                        commission_bps: None,
+                    }],
+                    num_partitions: None,
+                },
+            )
+            .unwrap();
+
+        let test_notifier = Arc::new(TestTransactionNotifier::new());
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(99));
+        let dependency_tracker = Arc::new(DependencyTracker::default());
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            max_complete_transaction_status_slot.clone(),
+            true,
+            Some(test_notifier.clone()),
+            blockstore.clone(),
+            true,
+            Some(dependency_tracker.clone()),
+            exit.clone(),
+        );
+        let update_parent_sender = TransactionStatusSender {
+            sender: transaction_status_sender.clone(),
+            dependency_tracker: Some(dependency_tracker.clone()),
+        };
+
+        let make_batch = |transaction: SanitizedTransaction, index| TransactionStatusBatch {
+            slot,
+            transactions: vec![transaction],
+            commit_results: vec![commit_result.clone()],
+            balances: TransactionBalancesSet {
+                pre_balances: vec![vec![1]],
+                post_balances: vec![vec![2]],
+            },
+            token_balances: TransactionTokenBalancesSet {
+                pre_token_balances: vec![vec![]],
+                post_token_balances: vec![vec![]],
+            },
+            costs: vec![Some(3)],
+            transaction_indexes: vec![index],
+        };
+
+        let update_parent = UpdateParentSignal {
+            slot,
+            update_parent_fec_set_index: 32,
+            parent_slot: 0,
+            parent_block_id: Some(Hash::new_unique()),
+        };
+
+        transaction_status_sender
+            .send(TransactionStatusMessage::Batch((
+                make_batch(stale_transaction, 0),
+                None,
+            )))
+            .unwrap();
+        update_parent_sender.send_update_parent(update_parent.clone());
+        let update_parent_work = dependency_tracker.get_current_declared_work();
+        assert_eq!(update_parent_work, 1);
+        transaction_status_sender
+            .send(TransactionStatusMessage::Batch((
+                make_batch(replacement_transaction, 0),
+                None,
+            )))
+            .unwrap();
+
+        transaction_status_service.quiesce_and_join_for_tests(exit);
+        dependency_tracker.wait_for_dependency(update_parent_work);
+
+        assert!(
+            blockstore
+                .read_transaction_status((stale_signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(stale_signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(blockstore.get_block_height(slot).unwrap(), None);
+        assert_eq!(blockstore.read_rewards(slot).unwrap(), None);
+        assert!(
+            blockstore
+                .read_transaction_status((replacement_signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            max_complete_transaction_status_slot.load(Ordering::SeqCst),
+            99
+        );
+        assert_eq!(
+            *test_notifier.update_parents.lock().unwrap(),
+            vec![update_parent]
         );
     }
 }
