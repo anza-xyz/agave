@@ -75,7 +75,7 @@ each direction). The connection tables serve two purposes:
 Two tables keyed by peer pubkey, each **owned exclusively by its control loop**:
 
 ```text
-outgoing: LruCache<Pubkey, OutgoingEntry>  // capacity 2 × MAX_PEERS
+outgoing: LruCache<Pubkey, OutgoingEntry>  // capacity 2 × MAX_ALPENGLOW_VOTE_ACCOUNTS
 incoming: HashMap<Pubkey, ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>>
 
 enum OutgoingEntry {
@@ -107,18 +107,20 @@ doubling the connection count.
 
 ### Minimal buffering during `Dialing`
 
-When no connection exists to a peer, the first packet to be sent is
-buffered while dialing is going on. This is critical for standstill to
-deliver the cert if connection got lost while we were waiting for a
-rebroadcast. Further traffic that arrives while a dial is in flight
-is **dropped on the floor** (counted in `egress_dropped_dial_in_progress`).
+When no connection exists to a peer, a single-packet slot is buffered
+while dialing is going on, and it always holds the **most recent**
+datagram: each new arrival overwrites the previously buffered one (the
+displaced older packet is counted in `egress_dropped_dial_in_progress`).
+This is critical for standstill - when the rebroadcast cert is the only
+packet produced during the dial window it is both the first and the
+latest, so it is the one delivered once the connection comes up.
 Rationale:
 
 - Votor sends ≤4 pkt/slot/peer (~50 ms apart). A dial-in-flight window
   loses ~a few packets; the upper layer keeps producing fresh ones.
-- Buffering would require a queue - how big would it need to be?
-- Old votes probably not worth delivering by the time a dial completes.
-- Standstill is covered by buffering of the first packet.
+- A full queue would just raise the question of how big it must be.
+- Old votes are probably not worth delivering by the time a dial
+  completes, the freshest packet is the one worth sending.
 
 ### Why no `Backoff` state
 
@@ -159,12 +161,12 @@ Loopback is exempt from the pre-handshake rate limit (for local-cluster
 and tests).
 
 **Handshake-level DoS (junk packets, spoofed-IP flood, real-IP flood).**
-Before spending any TLS-handshake CPU the inbound loop charges one token to a
-global `TokenBucket` (shared across all source IPs). On exhaustion the inbound is
-silently `ignore()`d (no reply, no close). IPv6 and multicast sources are dropped
-outright. Spoofed-IP packets cannot complete the QUIC crypto handshake so their
-further impact is limited. There is no QUIC RETRY or per-IP throttling yet. These
-hardening features should be considered.
+IPv6 and multicast sources are dropped outright. Before spending any TLS-handshake
+CPU the inbound loop charges one token to a global `TokenBucket` (shared across all
+source IPs). On exhaustion the inbound is silently `ignore()`d (no reply, no close).
+Spoofed-IP packets cannot complete the QUIC crypto handshake, so an attacker cannot
+use them to occupy connection-table slots or reach ingress. The bucket is global and
+protects the existing connections only.
 
 **Unauthorized connections / identity spoofing.**
 The peer's cert must yield a valid ed25519 pubkey. The client checks that
@@ -186,8 +188,7 @@ being actively closed.
 At most `MAX_INBOUND_CONNECTIONS_PER_PEER` inbound connections per pubkey;
 further ones are refused with `TABLE_FULL`. The total number of distinct inbound peers is
 bounded by the allowlist (only staked pubkeys are admitted), so no absolute
-connection-count ceiling is needed. `MAX_PEERS` is just a sizing constant for
-buffers and channels.
+inbound connection-count ceiling is needed.
 
 **Datagram flood over an open connection.**
 Each accepted connection runs a per-connection RX token bucket. Bursts within
@@ -237,7 +238,7 @@ whose generation no longer matches, closing any connection it carries with
 
 ## Egress / ingress channels
 
-- **Egress** (caller → endpoint, `EGRESS_CHANNEL_CAP = 4 × MAX_PEERS = 8000`).
+- **Egress** (caller → endpoint, `EGRESS_CHANNEL_CAP = 4 × MAX_ALPENGLOW_VOTE_ACCOUNTS = 8000`).
   Bounded mpsc. Callers must `try_send` and accept drop-on-full -
   matches `VotingService::broadcast_consensus_message`. Sized to absorb
   a full slot's burst with headroom.
