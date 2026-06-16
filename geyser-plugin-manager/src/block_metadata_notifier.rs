@@ -4,11 +4,13 @@ use {
         geyser_plugin_manager::GeyserPluginManager,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
+        ReplicaBlockInfoV4, ReplicaBlockInfoVersions, ReplicaUpdateParentInfo,
+        ReplicaUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::UnixTimestamp,
+    solana_ledger::blockstore::UpdateParentSignal,
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
     std::sync::Arc,
@@ -72,6 +74,30 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             }
         }
     }
+
+    fn notify_update_parent(&self, update_parent: &UpdateParentSignal) {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+
+        let update_parent_info = Self::build_replica_update_parent_info(update_parent);
+        for plugin in plugin_manager.plugins.iter() {
+            match plugin
+                .notify_update_parent(ReplicaUpdateParentInfoVersions::V0_0_1(&update_parent_info))
+            {
+                Err(err) => error!(
+                    "Failed to notify block metadata UpdateParent, error: ({}) to plugin {}",
+                    err,
+                    plugin.name()
+                ),
+                Ok(_) => trace!(
+                    "Successfully notified block metadata UpdateParent to plugin {}",
+                    plugin.name()
+                ),
+            }
+        }
+    }
 }
 
 impl BlockMetadataNotifierImpl {
@@ -125,6 +151,17 @@ impl BlockMetadataNotifierImpl {
             block_height,
             executed_transaction_count,
             entry_count,
+        }
+    }
+
+    fn build_replica_update_parent_info(
+        update_parent: &UpdateParentSignal,
+    ) -> ReplicaUpdateParentInfo<'_> {
+        ReplicaUpdateParentInfo {
+            slot: update_parent.slot,
+            update_parent_fec_set_index: update_parent.update_parent_fec_set_index,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: update_parent.parent_block_id.as_ref(),
         }
     }
 

@@ -2,13 +2,14 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaEntryInfoV2, ReplicaEntryInfoVersions,
+        ReplicaEntryInfoV2, ReplicaEntryInfoVersions, ReplicaUpdateParentInfo,
+        ReplicaUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
     solana_entry::entry::EntrySummary,
-    solana_ledger::entry_notifier_interface::EntryNotifier,
+    solana_ledger::{blockstore::UpdateParentSignal, entry_notifier_interface::EntryNotifier},
     std::sync::Arc,
 };
 
@@ -50,6 +51,33 @@ impl EntryNotifier for EntryNotifierImpl {
             }
         }
     }
+
+    fn notify_update_parent(&self, update_parent: &UpdateParentSignal) {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+
+        let update_parent_info = Self::build_replica_update_parent_info(update_parent);
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.entry_notifications_enabled() {
+                continue;
+            }
+            match plugin
+                .notify_update_parent(ReplicaUpdateParentInfoVersions::V0_0_1(&update_parent_info))
+            {
+                Err(err) => error!(
+                    "Failed to notify entry UpdateParent, error: ({}) to plugin {}",
+                    err,
+                    plugin.name()
+                ),
+                Ok(_) => trace!(
+                    "Successfully notified entry UpdateParent to plugin {}",
+                    plugin.name()
+                ),
+            }
+        }
+    }
 }
 
 impl EntryNotifierImpl {
@@ -70,6 +98,17 @@ impl EntryNotifierImpl {
             hash: entry.hash.as_ref(),
             executed_transaction_count: entry.num_transactions,
             starting_transaction_index,
+        }
+    }
+
+    fn build_replica_update_parent_info(
+        update_parent: &UpdateParentSignal,
+    ) -> ReplicaUpdateParentInfo<'_> {
+        ReplicaUpdateParentInfo {
+            slot: update_parent.slot,
+            update_parent_fec_set_index: update_parent.update_parent_fec_set_index,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: update_parent.parent_block_id.as_ref(),
         }
     }
 }

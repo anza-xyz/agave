@@ -3,11 +3,15 @@ use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
+        ReplicaUpdateParentInfo, ReplicaUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
-    solana_ledger::deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+    solana_ledger::{
+        blockstore::UpdateParentSignal,
+        deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+    },
     solana_measure::measure::Measure,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -83,10 +87,49 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             .load()
             .deshred_transaction_alt_resolution_enabled()
     }
+
+    fn notify_update_parent(&self, update_parent: &UpdateParentSignal) {
+        let plugin_manager = self.plugin_manager.load();
+
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+
+        let update_parent_info = Self::build_replica_update_parent_info(update_parent);
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.deshred_transaction_notifications_enabled() {
+                continue;
+            }
+            match plugin
+                .notify_update_parent(ReplicaUpdateParentInfoVersions::V0_0_1(&update_parent_info))
+            {
+                Err(err) => error!(
+                    "Failed to notify deshred UpdateParent, error: ({}) to plugin {}",
+                    err,
+                    plugin.name()
+                ),
+                Ok(_) => trace!(
+                    "Successfully notified deshred UpdateParent to plugin {}",
+                    plugin.name()
+                ),
+            }
+        }
+    }
 }
 
 impl DeshredTransactionNotifierImpl {
     pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
         Self { plugin_manager }
+    }
+
+    fn build_replica_update_parent_info(
+        update_parent: &UpdateParentSignal,
+    ) -> ReplicaUpdateParentInfo<'_> {
+        ReplicaUpdateParentInfo {
+            slot: update_parent.slot,
+            update_parent_fec_set_index: update_parent.update_parent_fec_set_index,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: update_parent.parent_block_id.as_ref(),
+        }
     }
 }

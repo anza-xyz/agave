@@ -2,12 +2,14 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
+        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions, ReplicaUpdateParentInfo,
+        ReplicaUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_ledger::blockstore::UpdateParentSignal,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
@@ -73,6 +75,33 @@ impl TransactionNotifier for TransactionNotifierImpl {
             }
         }
     }
+
+    fn notify_update_parent(&self, update_parent: &UpdateParentSignal) {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+
+        let update_parent_info = Self::build_replica_update_parent_info(update_parent);
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.transaction_notifications_enabled() {
+                continue;
+            }
+            match plugin
+                .notify_update_parent(ReplicaUpdateParentInfoVersions::V0_0_1(&update_parent_info))
+            {
+                Err(err) => error!(
+                    "Failed to notify UpdateParent, error: ({}) to plugin {}",
+                    err,
+                    plugin.name()
+                ),
+                Ok(_) => trace!(
+                    "Successfully notified UpdateParent to plugin {}",
+                    plugin.name()
+                ),
+            }
+        }
+    }
 }
 
 impl TransactionNotifierImpl {
@@ -95,6 +124,17 @@ impl TransactionNotifierImpl {
             is_vote,
             transaction,
             transaction_status_meta,
+        }
+    }
+
+    fn build_replica_update_parent_info(
+        update_parent: &UpdateParentSignal,
+    ) -> ReplicaUpdateParentInfo<'_> {
+        ReplicaUpdateParentInfo {
+            slot: update_parent.slot,
+            update_parent_fec_set_index: update_parent.update_parent_fec_set_index,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: update_parent.parent_block_id.as_ref(),
         }
     }
 }

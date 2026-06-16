@@ -296,6 +296,32 @@ pub enum ReplicaEntryInfoVersions<'a> {
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
 }
 
+/// Information about an Alpenglow UpdateParent marker that invalidates
+/// same-slot read-layer data observed before `update_parent_fec_set_index`.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaUpdateParentInfo<'a> {
+    /// Slot whose same-slot prefix was invalidated.
+    pub slot: Slot,
+    /// FEC set index of the UpdateParent marker. Entries, transactions, block
+    /// metadata, and deshred transactions previously emitted for this slot
+    /// before this boundary must be discarded or rewritten.
+    ///
+    /// Notifications sourced from TPU entry streaming use the marker's
+    /// pre-shred stream position because no shred index has been assigned yet.
+    pub update_parent_fec_set_index: u32,
+    /// Parent slot selected by UpdateParent.
+    pub parent_slot: Slot,
+    /// Parent block id selected by UpdateParent, when available.
+    pub parent_block_id: Option<&'a Hash>,
+}
+
+/// A wrapper to future-proof ReplicaUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaUpdateParentInfo<'a>),
+}
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct ReplicaBlockInfo<'a> {
@@ -629,6 +655,19 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Called when block's metadata is updated.
     #[allow(unused_variables)]
     fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called when an Alpenglow UpdateParent marker invalidates same-slot data
+    /// that may already have been delivered to read-layer consumers.
+    ///
+    /// Plugins that persist entries, transactions, block metadata, or deshred
+    /// transactions must treat this as a rollback of same-slot data observed
+    /// before `update_parent_fec_set_index` and be prepared to accept
+    /// replacement data for the same slot. Delivery is best-effort and ordered
+    /// within each validator notification channel.
+    #[allow(unused_variables)]
+    fn notify_update_parent(&self, update_parent: ReplicaUpdateParentInfoVersions) -> Result<()> {
         Ok(())
     }
 
