@@ -57,7 +57,8 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         let versioned_transaction_config =
             VersionedTransactionConfiguration::try_from_sanitized_versioned_message(
                 sanitized_versioned_tx.get_message(),
-            )?;
+            )?
+            .with_simple_vote_defaults(is_simple_vote_tx);
 
         Ok(Self {
             transaction: sanitized_versioned_tx,
@@ -175,6 +176,10 @@ impl RuntimeTransaction<SanitizedTransaction> {
 mod tests {
     use {
         super::*,
+        crate::transaction_meta::{
+            DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT,
+            DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+        },
         agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -216,8 +221,8 @@ mod tests {
         TestTransaction::new().to_sanitized_versioned_transaction()
     }
 
-    // Simple transfer transaction for testing, it does not support vote instruction
-    // because simple vote transaction will not request limits
+    // Simple transfer transaction for testing explicit compute-budget requests
+    // without applying the simple-vote default overrides.
     struct TestTransaction {
         from_keypair: Keypair,
         hash: Hash,
@@ -372,6 +377,32 @@ mod tests {
                 loaded_accounts_bytes,
                 transaction_configuration.loaded_accounts_data_size_limit
             );
+        }
+    }
+
+    #[test]
+    fn test_simple_vote_transaction_config_uses_vote_defaults() {
+        let runtime_transaction = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+            vote_sanitized_versioned_transaction(),
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        assert!(runtime_transaction.is_simple_vote_transaction());
+        for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
+            let transaction_configuration = runtime_transaction
+                .transaction_configuration(&feature_set)
+                .unwrap();
+            assert_eq!(
+                transaction_configuration.compute_unit_limit,
+                DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT
+            );
+            assert_eq!(
+                transaction_configuration.loaded_accounts_data_size_limit,
+                DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT
+            );
+            assert_eq!(transaction_configuration.priority_fee_lamports, 0);
         }
     }
 

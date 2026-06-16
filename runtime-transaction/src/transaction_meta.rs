@@ -14,8 +14,8 @@
 use {
     agave_feature_set::FeatureSet,
     solana_compute_budget::compute_budget_limits::{
-        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
-        MIN_HEAP_FRAME_BYTES,
+        MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES,
+        MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, MIN_HEAP_FRAME_BYTES,
     },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash,
@@ -28,6 +28,14 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
     solana_transaction::TransactionError,
 };
+
+/// Default compute-unit limit used for simple vote transactions without
+/// compute-budget instructions.
+pub const DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT: u32 =
+    MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT;
+/// Default loaded accounts data size limit used for simple vote transactions
+/// without compute-budget instructions.
+pub const DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT: u32 = 32 * 1024;
 
 pub trait TransactionMeta {
     fn message_hash(&self) -> &Hash;
@@ -60,6 +68,16 @@ pub struct TransactionConfiguration {
 }
 
 impl TransactionConfiguration {
+    pub fn default_for_simple_vote_transaction() -> Self {
+        Self {
+            updated_heap_bytes: MIN_HEAP_FRAME_BYTES,
+            compute_unit_limit: DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT,
+            priority_fee_lamports: 0,
+            loaded_accounts_data_size_limit:
+                DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+        }
+    }
+
     pub fn try_from_sanitized_message(
         message: &SanitizedMessage,
         feature_set: &FeatureSet,
@@ -88,9 +106,18 @@ impl TransactionConfiguration {
 pub(crate) enum VersionedTransactionConfiguration {
     LegacyAndV0(ComputeBudgetInstructionDetails),
     V1(TransactionConfiguration),
+    SimpleVoteDefault,
 }
 
 impl VersionedTransactionConfiguration {
+    pub(crate) fn with_simple_vote_defaults(self, is_simple_vote_transaction: bool) -> Self {
+        if is_simple_vote_transaction {
+            Self::SimpleVoteDefault
+        } else {
+            self
+        }
+    }
+
     pub(crate) fn try_from_sanitized_message(
         message: &SanitizedMessage,
     ) -> Result<Self, TransactionError> {
@@ -174,6 +201,9 @@ impl VersionedTransactionConfiguration {
                         .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()),
                 })
             }
+            Self::SimpleVoteDefault => {
+                Ok(TransactionConfiguration::default_for_simple_vote_transaction())
+            }
         }
     }
 }
@@ -225,6 +255,26 @@ mod tests {
         assert_eq!(config.compute_unit_limit, 123_456);
         assert_eq!(config.priority_fee_lamports, 2 * 123_456);
         assert_eq!(config.loaded_accounts_data_size_limit, 456_789);
+    }
+
+    #[test]
+    fn test_try_into_config_simple_vote_defaults() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let config = VersionedTransactionConfiguration::SimpleVoteDefault
+            .try_into_config(&feature_set)
+            .unwrap();
+
+        assert_eq!(config.updated_heap_bytes, HEAP_LENGTH as u32);
+        assert_eq!(
+            config.compute_unit_limit,
+            DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT
+        );
+        assert_eq!(config.priority_fee_lamports, 0);
+        assert_eq!(
+            config.loaded_accounts_data_size_limit,
+            DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT
+        );
     }
 
     #[test]
