@@ -522,6 +522,35 @@ The following are the tables in the Postgres database
 | transaction   | Transaction data        |
 | account_audit | Account historical data |
 
+## Alpenglow UpdateParent Invalidation
+
+Alpenglow fast leader handover can produce an `UpdateParent` marker in the
+first slot of a leader window. When a validator observes this marker, data that
+was already emitted for the same slot before the marker is stale. The validator
+calls `notify_update_parent` with:
+
+- `slot`: the affected slot
+- `update_parent_fec_set_index`: the marker boundary
+- `parent_slot`: the replacement parent selected by the marker
+- `parent_block_id`: the replacement parent block id, when available
+
+Plugins that store transactions, entries, block metadata, or deshred
+transactions must treat this notification as a same-slot rollback of data before
+the boundary. They should key slot-local records by slot plus ordering metadata,
+such as transaction index, entry index, or completed-data-set shred range, and be
+prepared to delete and rewrite a prefix of the same slot.
+
+Entry and transaction notifications delivered after `notify_update_parent` for
+the same slot represent the replacement block contents. Deshred transaction
+plugins should discard completed-data-set ranges for the slot whose ending shred
+index is at or before the UpdateParent boundary. TPU entry-stream notifications
+use the marker's pre-shred stream position as the boundary because shred indexes
+have not been assigned yet.
+
+Delivery is best-effort and ordered within each validator notification channel.
+Plugins that require stronger durability should make their own writes
+idempotent and reconcile same-slot records when a later UpdateParent arrives.
+
 
 ### Performance Considerations
 
