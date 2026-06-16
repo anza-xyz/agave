@@ -50,9 +50,6 @@ pub const PEER_RATE_LIMIT_BURST: u64 = 100;
 pub const PEER_RATE_LIMIT_BURST_DOS: u64 = 100000;
 
 /// Maximum simultaneous TLS handshakes in flight across all peers.
-/// Acts as the burst ceiling for [`HANDSHAKE_GLOBAL_RATE`].
-pub const HANDSHAKE_GLOBAL_BURST: u64 = 200;
-
 /// Sustained inbound TLS handshake rate across all peers (handshakes/second).
 pub const HANDSHAKE_GLOBAL_RATE: f64 = 800.0;
 

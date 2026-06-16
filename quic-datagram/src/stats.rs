@@ -47,11 +47,6 @@ pub struct QuicDatagramStats {
     // --- Drops on internal channels (distinct backpressure signals) ---
     /// We have received a datagram but have nowhere to put it
     pub(crate) datagram_ingress_dropped_channel_full: AtomicU64,
-
-    // --- DOS management ---
-    /// Inbound dropped before the handshake: global handshake rate cap hit
-    /// (many-IP flood or cluster-wide reconnection storm).
-    pub(crate) handshake_rejected_global_limit: AtomicU64,
 }
 
 #[inline]
@@ -153,11 +148,6 @@ pub(crate) fn report_server(stats: &QuicDatagramStats, live_connections: u64) {
         (
             "datagram_ingress_dropped_channel_full",
             swap!(stats.datagram_ingress_dropped_channel_full),
-            i64
-        ),
-        (
-            "handshake_rejected_global_limit",
-            swap!(stats.handshake_rejected_global_limit),
             i64
         ),
         (

@@ -1,7 +1,7 @@
 //! QUIC datagram endpoint
 use {
     crate::{
-        ALPENGLOW_ALPN, EGRESS_CHANNEL_CAP, HANDSHAKE_GLOBAL_BURST, HANDSHAKE_GLOBAL_RATE,
+        ALPENGLOW_ALPN, EGRESS_CHANNEL_CAP,
         allowlist::Allowlist,
         client::OutboundLoop,
         error::Error,
@@ -13,7 +13,7 @@ use {
     crossbeam_channel::Sender,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
-    solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
+    solana_net_utils::banlist::Banlist,
     solana_pubkey::Pubkey,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate},
     std::{
@@ -104,12 +104,6 @@ impl QuicDatagramEndpoint {
         let (id_tx, identity_rx) = watch::channel(None);
         let key_updater = Arc::new(KeyUpdater { tx: id_tx });
 
-        // Limits total TLS verification effort spent by all threads
-        let handshake_global_limiter = TokenBucket::new(
-            HANDSHAKE_GLOBAL_BURST,
-            HANDSHAKE_GLOBAL_BURST,
-            HANDSHAKE_GLOBAL_RATE,
-        );
         let outbound = OutboundLoop::new(
             endpoint.clone(),
             local_pubkey,
@@ -126,7 +120,6 @@ impl QuicDatagramEndpoint {
             banlist,
             allowlist,
             identity_rx,
-            handshake_global_limiter,
             server_stats.clone(),
             shutdown.clone(),
         );

@@ -3,8 +3,8 @@
 use {
     crate::{
         ALLOWLIST_CHECK_INTERVAL, ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, CONN_EVENT_CHANNEL_CAP,
-        MAX_DATAGRAMS_PER_SECOND_PER_PEER, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
-        PEER_RATE_LIMIT_BURST, PEER_RATE_LIMIT_BURST_DOS,
+        HANDSHAKE_GLOBAL_RATE, MAX_DATAGRAMS_PER_SECOND_PER_PEER, MAX_INBOUND_CONNECTIONS_PER_PEER,
+        METRICS_INTERVAL, PEER_RATE_LIMIT_BURST, PEER_RATE_LIMIT_BURST_DOS,
         allowlist::Allowlist,
         close_codes,
         endpoint::Datagram,
@@ -215,21 +215,17 @@ pub(crate) struct InboundLoop {
     pub(crate) events_tx: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_rx: mpsc::Receiver<InboundEvent>,
-    /// Global cap on inbound handshake rate across all source IPs.
-    pub(crate) handshake_global_limiter: TokenBucket,
     pub(crate) stats: Arc<QuicDatagramStats>,
     pub(crate) shutdown: CancellationToken,
 }
 
 impl InboundLoop {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         endpoint: Endpoint,
         ingress: Sender<Datagram>,
         banlist: Arc<Banlist<Pubkey>>,
         allowlist: Arc<dyn Allowlist>,
         identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-        handshake_global_limiter: TokenBucket,
         stats: Arc<QuicDatagramStats>,
         shutdown: CancellationToken,
     ) -> Self {
@@ -244,7 +240,6 @@ impl InboundLoop {
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_tx,
             events_rx,
-            handshake_global_limiter,
             stats,
             shutdown,
         }
@@ -279,10 +274,9 @@ impl InboundLoop {
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        // Gate for the accept branch: when armed, accept is disabled until the
-        // sleep fires (at which point a fresh token should be available).
+        // Gate for the accept branch: accept is disabled until sleep fires.
         let mut accept_gate = Box::pin(sleep(Duration::ZERO)); // starts open
-        let mut accept_allowed = false;
+        let mut accept_allowed = true;
 
         // TODO: this flag is a workaround for some local-cluster tests that are a
         // nightmare to refactor. But they really should be.
@@ -307,30 +301,22 @@ impl InboundLoop {
                 Some(event) = self.events_rx.recv() => self.handle_event(event),
                 // Metrics are quite handy to have even if we are flooded with incoming.
                 _ = metrics.tick() => stats::report_server(&self.stats, self.connection_count()),
-                // Re-open the accept gate when the bucket has refilled.
-                _ = &mut accept_gate, if accept_allowed => {
-                    accept_allowed = false;
+                // Accept gate timer expired, re-open accept
+                _ = &mut accept_gate, if !accept_allowed => {
+                    accept_allowed = true;
                 }
-                // We admit more load only when we're done with everything important,
-                // and only as fast as the global handshake token bucket allows.
-                maybe_incoming = self.endpoint.accept(), if !accept_allowed => {
+                // We admit Initial only when we're done with everything important.
+
+                maybe_incoming = self.endpoint.accept(), if accept_allowed => {
                     let Some(incoming) = maybe_incoming else { break };
-                    let ip = incoming.remote_address().ip();
-                    if !ip.is_loopback() && self.handshake_global_limiter.consume_tokens(1).is_err() {
-                        add(&self.stats.handshake_rejected_global_limit);
-                        // us_to_have_tokens always succeeds, but we do not want
-                        // panicking code here. Adding some min sleep to ensure
-                        // we do not spin here.
-                        let wait_us = self.handshake_global_limiter
-                            .us_to_have_tokens(1).unwrap_or(0).clamp(100, 100_000);
-                        accept_gate
-                            .as_mut()
-                            .reset(Instant::now().checked_add(Duration::from_micros(wait_us)).expect("Inputs should be bounded") );
-                        accept_allowed = true;
-                        incoming.ignore();
-                    } else {
-                        self.maybe_accept_connection(incoming);
-                    }
+                    self.maybe_accept_connection(incoming);
+                    // After each handshake we sleep before processing the next,
+                    // bounding the CPU usage for non-connected peers.
+                    const HANDSHAKE_SLEEP:Duration = Duration::from_micros((1e6 / HANDSHAKE_GLOBAL_RATE)as u64);
+                    accept_gate
+                        .as_mut()
+                        .reset(Instant::now().checked_add(HANDSHAKE_SLEEP).expect("add with bounded operand should never overflow"));
+                    accept_allowed = false;
                 }
                 // When idle we can take care of bookkeeping.
                 _ = prune.tick() => self.banlist.prune(),
