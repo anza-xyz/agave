@@ -542,6 +542,7 @@ dependencies = [
 name = "agave-watchtower"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "agave-logger",
  "clap 2.33.3",
  "humantime",
@@ -557,6 +558,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-version",
+ "solana-vote-interface",
 ]
 
 [[package]]
