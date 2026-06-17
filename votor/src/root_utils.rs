@@ -65,7 +65,7 @@ pub(crate) fn set_root(
     {
         error!(
             "failed to record optimistic slot in blockstore: slot={}: {:?}",
-            new_root, &e
+            new_root, e
         );
     }
 
