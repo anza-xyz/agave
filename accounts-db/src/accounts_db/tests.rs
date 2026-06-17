@@ -3840,7 +3840,7 @@ impl AccountsDb {
                 assert_eq!(slot_found, slot);
 
                 let storage_location = account_info.storage_location();
-                let mut accessor = self.get_account_accessor(slot, pubkey, &storage_location);
+                let mut accessor = self.get_account_accessor(slot, &storage_location);
 
                 accessor.check_and_get_loaded_account_shared_data()
             },

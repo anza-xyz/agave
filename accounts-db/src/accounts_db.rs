@@ -3499,7 +3499,7 @@ impl AccountsDb {
                 }
 
                 let mut account_accessor =
-                    self.get_account_accessor(slot, pubkey, &account_info.storage_location());
+                    self.get_account_accessor(slot, &account_info.storage_location());
 
                 let account_slot = match account_accessor {
                     LoadedAccountAccessor::Cached(None) => None,
@@ -3716,8 +3716,8 @@ impl AccountsDb {
         self.accounts_index
             .get_with_and_then(pubkey, ancestors, true, |(slot, account_info)| {
                 let storage_location = account_info.storage_location();
-                let account_accessor = clone_in_lock
-                    .then(|| self.get_account_accessor(slot, pubkey, &storage_location));
+                let account_accessor =
+                    clone_in_lock.then(|| self.get_account_accessor(slot, &storage_location));
                 (slot, storage_location, account_accessor)
             })
     }
@@ -3877,7 +3877,7 @@ impl AccountsDb {
         // Failsafe for potential race conditions with other subsystems
         let mut num_acceptable_failed_iterations = 0;
         loop {
-            let account_accessor = self.get_account_accessor(slot, pubkey, &storage_location);
+            let account_accessor = self.get_account_accessor(slot, &storage_location);
             match account_accessor {
                 LoadedAccountAccessor::Cached(Some(_)) | LoadedAccountAccessor::Stored(Some(_)) => {
                     // Great! There was no race, just return :) This is the most usual situation
@@ -3992,50 +3992,37 @@ impl AccountsDb {
             // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
             if new_slot == slot && new_storage_location.is_store_id_equal(&storage_location) {
-                if !new_storage_location.is_cached() {
-                    self.accounts_index
-                        .get_and_then(pubkey, |entry| -> (_, ()) {
-                            let message = format!(
-                                "Bad index entry detected ({pubkey}, {slot}, \
-                                 {storage_location:?}, {load_hint:?}, {new_storage_location:?}, \
-                                 {entry:?})"
-                            );
-                            // Considering that we've failed to get accessor above and further that
-                            // the index still returned the same (slot, store_id) tuple, offset must be same
-                            // too.
-                            assert!(
-                                new_storage_location.is_offset_equal(&storage_location),
-                                "{message}"
-                            );
+                self.accounts_index
+                    .get_and_then(pubkey, |entry| -> (_, ()) {
+                        let message = format!(
+                            "Bad index entry detected ({pubkey}, {slot}, {storage_location:?}, \
+                             {load_hint:?}, {new_storage_location:?}, {entry:?})"
+                        );
+                        // Considering that we've failed to get accessor above and further that
+                        // the index still returned the same (slot, store_id) tuple, offset must be same
+                        // too.
+                        assert!(
+                            new_storage_location.is_offset_equal(&storage_location),
+                            "{message}"
+                        );
 
-                            // If this is not a cache entry, then this was a minor fork slot
-                            // that had its storage entries cleaned up by purge_slots() but hasn't been
-                            // cleaned yet. That means this must be rpc access and not replay/banking at the
-                            // very least. Note that purge shouldn't occur even for RPC as caller must hold all
-                            // of ancestor slots..
-                            assert_eq!(load_hint, LoadHint::Unspecified, "{message}");
+                        // If this is not a cache entry, then this was a minor fork slot
+                        // that had its storage entries cleaned up by purge_slots() but hasn't been
+                        // cleaned yet. That means this must be rpc access and not replay/banking at the
+                        // very least. Note that purge shouldn't occur even for RPC as caller must hold all
+                        // of ancestor slots..
+                        assert_eq!(load_hint, LoadHint::Unspecified, "{message}");
 
-                            // Everything being assert!()-ed, let's panic!() here as it's an error condition
-                            // after all....
-                            // That reasoning is based on the fact all of code-path reaching this fn
-                            // retry_to_get_account_accessor() must outlive the Arc<Bank> (and its all
-                            // ancestors) over this fn invocation, guaranteeing the prevention of being purged,
-                            // first of all.
-                            // For details, see the comment in ScanGuard::should_use_ancestors(),
-                            // which is referring back here.
-                            panic!("{message}");
-                        });
-                } else {
-                    // For the Cached variant: remove_unrooted_slots() removes the index entry and
-                    // the cache entry, then a subsequent re-store writes a fresh Cached entry for
-                    // the same slot.  This produces the observable sequence:
-                    //   get_account_accessor()              -> Cached(None)   [old entry gone]
-                    //   read_index_for_accessor_or_load_slow() -> (slot, Cached) [new entry]
-                    // That is not an index corruption -- the next get_account_accessor() call on
-                    // the fresh (slot, Cached) will succeed.  Fall through to retry.
-                    //
-                    // Also no code in this arm!
-                }
+                        // Everything being assert!()-ed, let's panic!() here as it's an error condition
+                        // after all....
+                        // That reasoning is based on the fact all of code-path reaching this fn
+                        // retry_to_get_account_accessor() must outlive the Arc<Bank> (and its all
+                        // ancestors) over this fn invocation, guaranteeing the prevention of being purged,
+                        // first of all.
+                        // For details, see the comment in ScanGuard::should_use_ancestors(),
+                        // which is referring back here.
+                        panic!("{message}");
+                    });
             } else if fallback_to_slow_path {
                 // the above bad-index-entry check must had been checked first to retain the same
                 // behavior
@@ -4074,15 +4061,12 @@ impl AccountsDb {
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
-        let in_write_cache = storage_location.is_cached();
-        if !in_write_cache {
-            let result = self.read_only_accounts_cache.load(*pubkey, slot);
-            if let Some(account) = result {
-                self.load_account_stats
-                    .num_loaded_from_read_cache
-                    .fetch_add(1, Ordering::Relaxed);
-                return Some((account, slot));
-            }
+        let result = self.read_only_accounts_cache.load(*pubkey, slot);
+        if let Some(account) = result {
+            self.load_account_stats
+                .num_loaded_from_read_cache
+                .fetch_add(1, Ordering::Relaxed);
+            return Some((account, slot));
         }
 
         let (mut account_accessor, slot) = self.retry_to_get_account_accessor(
@@ -4092,24 +4076,16 @@ impl AccountsDb {
             pubkey,
             load_hint,
         )?;
-        // note that the account being in the cache could be different now than it was previously
-        // since the cache could be flushed in between the 2 calls.
-        let in_write_cache = matches!(account_accessor, LoadedAccountAccessor::Cached(_));
-        if in_write_cache {
-            // `load_latest` missed above (otherwise we'd have returned early), but the account
-            // was written to the cache between then and the index lookup, so the index pointed
-            // us back at the cache.
-            self.load_account_stats
-                .num_loaded_from_index_cache
-                .fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.load_account_stats
-                .num_loaded_from_index_storage
-                .fetch_add(1, Ordering::Relaxed);
-        }
+        // `load_latest` missed above (otherwise we'd have returned early), but the account
+        // was written to the cache between then and the index lookup, so the index pointed
+        // us back at the cache.
+        self.load_account_stats
+            .num_loaded_from_index_cache
+            .fetch_add(1, Ordering::Relaxed);
+
         let account = account_accessor.check_and_get_loaded_account_shared_data();
 
-        if !in_write_cache && populate_read_cache == PopulateReadCache::True {
+        if populate_read_cache == PopulateReadCache::True {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
@@ -4143,14 +4119,9 @@ impl AccountsDb {
     fn get_account_accessor<'a>(
         &'a self,
         slot: Slot,
-        pubkey: &'a Pubkey,
         storage_location: &StorageLocation,
     ) -> LoadedAccountAccessor<'a> {
         match storage_location {
-            StorageLocation::Cached => {
-                let maybe_cached_account = self.accounts_cache.load(slot, pubkey).map(Cow::Owned);
-                LoadedAccountAccessor::Cached(maybe_cached_account)
-            }
             StorageLocation::AppendVec(store_id, offset) => {
                 let maybe_storage_entry = self
                     .storage
@@ -4946,7 +4917,6 @@ impl AccountsDb {
                                 (!account_info.is_zero_lamport()).then(|| {
                                     self.get_account_accessor(
                                         slot,
-                                        &pubkey,
                                         &account_info.storage_location(),
                                     )
                                     .get_loaded_account(|loaded_account| {
@@ -4979,7 +4949,7 @@ impl AccountsDb {
                     ancestors,
                     false,
                     |(slot, account_info)| {
-                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                        self.get_account_accessor(slot, &account_info.storage_location())
                             .get_loaded_account(|loaded_account| {
                                 cache_lt_hash
                                     .mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
@@ -5016,7 +4986,7 @@ impl AccountsDb {
             self.accounts_index
                 .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
                     (!account_info.is_zero_lamport()).then(|| {
-                        self.get_account_accessor(slot, pubkey, &account_info.storage_location())
+                        self.get_account_accessor(slot, &account_info.storage_location())
                             .get_loaded_account(|loaded_account| loaded_account.lamports())
                             // SAFETY: The index said this pubkey exists, so
                             // there must be an account to load.
