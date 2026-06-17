@@ -375,7 +375,7 @@ fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
             let on = u128::from(on);
             // Calculate mine and theirs independently and symmetrically instead of
             // using the remainder of the other to treat them strictly equally.
-            // This is also to cancel the rewarding if either of the parties
+            // In Tower, this is also to cancel the rewarding if either of the parties
             // should receive only fractional lamports, resulting in not being rewarded at all.
             // Thus, note that we intentionally discard any residual fractional lamports.
             let mine = on
