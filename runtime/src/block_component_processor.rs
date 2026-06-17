@@ -11,10 +11,7 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
-        certificate::Certificate,
-        consensus_message::ConsensusMessage,
-        fraction::Fraction,
-        migration::{GENESIS_VOTE_THRESHOLD, MigrationStatus},
+        certificate::Certificate, consensus_message::ConsensusMessage, migration::MigrationStatus,
     },
     crossbeam_channel::Sender,
     log::*,
@@ -288,23 +285,13 @@ impl BlockComponentProcessor {
         debug_assert!(cert.cert_type.is_genesis());
 
         let cert_slot = cert.cert_type.slot();
-        let (genesis_stake, total_stake) = bank.verify_certificate(cert).map_err(|_| {
+        bank.verify_certificate(cert).map_err(|_| {
             warn!(
                 "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
                 bank.slot()
             );
             BlockComponentProcessorError::GenesisCertificateFailedVerification
         })?;
-
-        let genesis_percent = Fraction::new(genesis_stake, total_stake);
-        if genesis_percent < GENESIS_VOTE_THRESHOLD {
-            warn!(
-                "Received a genesis certificate for slot {cert_slot} in bank slot {} with \
-                 {genesis_percent} stake < {GENESIS_VOTE_THRESHOLD}",
-                bank.slot()
-            );
-            return Err(BlockComponentProcessorError::GenesisCertificateFailedVerification);
-        }
 
         Ok(())
     }

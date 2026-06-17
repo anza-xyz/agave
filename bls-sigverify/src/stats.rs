@@ -195,10 +195,8 @@ pub(super) struct SigVerifyCertStats {
     /// Number of times we are banning a validator that was already banned.
     pub(super) already_banned: Saturating<u64>,
 
-    /// Number of times stake verification failed on a cert.
-    pub(super) stake_verification_failed: Saturating<u64>,
-    /// Number of times signature verification failed on a cert.
-    pub(super) signature_verification_failed: Saturating<u64>,
+    /// Number of times cert verification failed.
+    pub(super) certificate_verification_failed: Saturating<u64>,
     /// Number of times the cert was too far in the future and discarded.
     pub(super) too_far_in_future: Saturating<u64>,
 
@@ -220,8 +218,7 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             already_banned,
-            stake_verification_failed,
-            signature_verification_failed,
+            certificate_verification_failed,
             too_far_in_future,
             pool_outstanding_msgs,
             pool_sent,
@@ -232,8 +229,7 @@ impl SigVerifyCertStats {
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.already_banned += already_banned;
-        self.stake_verification_failed += stake_verification_failed;
-        self.signature_verification_failed += signature_verification_failed;
+        self.certificate_verification_failed += certificate_verification_failed;
         self.too_far_in_future += too_far_in_future;
         self.pool_outstanding_msgs += pool_outstanding_msgs;
         self.pool_sent += pool_sent;
@@ -248,8 +244,7 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             already_banned,
-            stake_verification_failed,
-            signature_verification_failed,
+            certificate_verification_failed,
             too_far_in_future,
             pool_outstanding_msgs,
             pool_sent,
@@ -268,13 +263,8 @@ impl SigVerifyCertStats {
             ),
             ("already_banned", already_banned.0, i64),
             (
-                "stake_verification_failed",
-                stake_verification_failed.0,
-                i64
-            ),
-            (
-                "signature_verification_failed",
-                signature_verification_failed.0,
+                "certificate_verification_failed",
+                certificate_verification_failed.0,
                 i64
             ),
             ("too_far_in_future", too_far_in_future.0, i64),

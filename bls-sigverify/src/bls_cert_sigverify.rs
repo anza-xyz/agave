@@ -7,10 +7,7 @@ use {
         utils::send_certs_to_pool,
     },
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
-    agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
-        fraction::Fraction,
-    },
+    agave_votor_messages::certificate::{Certificate, CertificateType},
     crossbeam_channel::Sender,
     log::info,
     rayon::{
@@ -22,7 +19,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
-    std::{collections::HashSet, num::NonZero},
+    std::collections::HashSet,
     thiserror::Error,
 };
 
@@ -36,12 +33,6 @@ pub(super) struct CertPayload {
 enum CertVerifyError {
     #[error("Cert Verification Error {0}")]
     CertVerifyFailed(#[from] BlsCertVerifyError),
-    #[error("Not enough stake {aggregate_stake}: {cert_fraction} < {required_fraction}")]
-    NotEnoughStake {
-        aggregate_stake: u64,
-        cert_fraction: Fraction,
-        required_fraction: Fraction,
-    },
     #[error("discarding cert with slot {cert_slot} too far in future from root slot {root_slot}")]
     TooFarInFuture { cert_slot: Slot, root_slot: Slot },
 }
@@ -125,8 +116,7 @@ fn verify_certs(
             }
             Err(e) => {
                 match &e {
-                    CertVerifyError::NotEnoughStake { .. }
-                    | CertVerifyError::CertVerifyFailed(_) => {
+                    CertVerifyError::CertVerifyFailed(_) => {
                         if banlist.ban(cert_payload.sender_identity_pubkey, BAN_TIMEOUT) {
                             stats.already_banned += 1;
                         } else {
@@ -140,11 +130,8 @@ fn verify_certs(
                 }
 
                 match e {
-                    CertVerifyError::NotEnoughStake { .. } => {
-                        stats.stake_verification_failed += 1;
-                    }
                     CertVerifyError::CertVerifyFailed(_) => {
-                        stats.signature_verification_failed += 1;
+                        stats.certificate_verification_failed += 1;
                     }
                     CertVerifyError::TooFarInFuture { .. } => {
                         stats.too_far_in_future += 1;
@@ -166,25 +153,6 @@ fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyErr
             root_slot,
         });
     }
-    let (aggregate_stake, total_stake) = root_bank.verify_certificate(cert)?;
-    debug_assert!(aggregate_stake <= total_stake.get());
-    verify_stake(cert, aggregate_stake, total_stake)
-}
-
-fn verify_stake(
-    cert: &Certificate,
-    aggregate_stake: u64,
-    total_stake: NonZero<u64>,
-) -> Result<(), CertVerifyError> {
-    let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
-    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
-    if cert_fraction >= required_fraction {
-        Ok(())
-    } else {
-        Err(CertVerifyError::NotEnoughStake {
-            aggregate_stake,
-            cert_fraction,
-            required_fraction,
-        })
-    }
+    root_bank.verify_certificate(cert)?;
+    Ok(())
 }

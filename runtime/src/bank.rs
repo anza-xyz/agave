@@ -5706,12 +5706,10 @@ impl Bank {
     }
 
     /// Verify a BLS certificate's signature using this bank's epoch stakes.
-    ///
-    /// Returns (stake present in certificate, total stake in validator set) on success.
     pub fn verify_certificate(
         &self,
         cert: &Certificate,
-    ) -> std::result::Result<(u64, NonZero<u64>), CertVerifyError> {
+    ) -> std::result::Result<(), CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
             .epoch_stakes_from_slot(slot)
@@ -5720,13 +5718,13 @@ impl Bank {
         let total_stake =
             NonZero::new(key_to_rank_map.total_stake()).expect("total stake cannot be 0");
 
-        let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
+        cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
             key_to_rank_map
                 .get_pubkey_stake_entry(rank)
                 .map(|entry| (entry.stake, entry.bls_pubkey))
         })?;
 
-        Ok((stake, total_stake))
+        Ok(())
     }
 
     pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, VersionedEpochStakes> {

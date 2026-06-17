@@ -1039,37 +1039,6 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_certificate_base2_not_enough_stake() {
-        let mut ctx = TestContext::new();
-
-        // < 60% of validators sign the cert
-        assert!(ctx.validator_keypairs.len() >= 2);
-        let num_signers = (ctx.validator_keypairs.len() * 6) / 10 - 1;
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
-        let cert = create_signed_certificate_message(
-            &ctx.validator_keypairs,
-            cert_type,
-            &(0..num_signers).collect::<Vec<_>>(),
-        );
-        let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
-
-        // The call still succeeds, but the packet is marked for discard.
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().count(),
-            0,
-            "This certificate should be invalid"
-        );
-        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed.0, 1);
-    }
-
-    #[test]
     fn test_verify_certificate_base3_valid() {
         let mut ctx = TestContext::new();
 
@@ -1162,53 +1131,6 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_certificate_base3_not_enough_stake() {
-        let mut ctx = TestContext::new();
-
-        let slot = 20;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
-        let notarize_vote = Vote::new_notarization_vote(block);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
-        let mut all_vote_messages = Vec::new();
-        (0..4).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(
-                &ctx.validator_keypairs,
-                notarize_vote,
-                i,
-            ))
-        });
-        (4..5).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(
-                &ctx.validator_keypairs,
-                notarize_fallback_vote,
-                i,
-            ))
-        });
-        let cert_type = CertificateType::NotarizeFallback(block);
-        let mut builder = CertificateBuilder::new(cert_type);
-        builder
-            .aggregate(&all_vote_messages)
-            .expect("Failed to aggregate votes");
-        let cert = builder.build().expect("Failed to build certificate");
-        let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
-
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
-        assert_eq!(
-            ctx.pool_receiver.try_iter().count(),
-            0,
-            "This certificate should be invalid"
-        );
-        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed.0, 1);
-    }
-
-    #[test]
     fn test_verify_certificate_invalid_signature() {
         let mut ctx = TestContext::new();
 
@@ -1243,7 +1165,7 @@ mod tests {
             ctx.verifier
                 .stats
                 .cert_stats
-                .signature_verification_failed
+                .certificate_verification_failed
                 .0,
             1
         );

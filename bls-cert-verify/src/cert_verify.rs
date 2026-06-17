@@ -3,6 +3,7 @@ use qualifier_attr::qualifiers;
 use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
+        fraction::Fraction,
         vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -14,6 +15,7 @@ use {
         signature::AsSignatureAffine,
     },
     solana_signer_store::{DecodeError, Decoded, decode},
+    std::num::NonZero,
     thiserror::Error,
 };
 
@@ -35,6 +37,12 @@ pub enum Error {
     WrongEncoding,
     #[error("overlapping primary and fallback bitmaps")]
     BitmapOverlap,
+    #[error("Not enough stake {aggregate_stake}: {cert_fraction} < {required_fraction}")]
+    NotEnoughStake {
+        aggregate_stake: u64,
+        cert_fraction: Fraction,
+        required_fraction: Fraction,
+    },
 }
 
 /// Verifies an Alpenglow `Certificate` and calculates the total signing stake.
@@ -61,21 +69,18 @@ pub enum Error {
 /// * `cert` - The certificate to verify.
 /// * `max_validators` - The maximum number of validators (used for decoding the bitmap).
 /// * `rank_map` - A closure that maps a validator's rank (index) to their stake and public key.
-///
-/// # Returns
-///
-/// On success, returns the total stake of validators present in the certificate.
 pub fn verify_certificate(
     cert: &Certificate,
     max_validators: usize,
+    total_stake: NonZero<u64>,
     mut rank_map: impl FnMut(usize) -> Option<(u64, PopVerified<BlsPubkeyAffine>)>,
-) -> Result<u64, Error> {
-    let mut total_stake = 0u64;
+) -> Result<(), Error> {
+    let mut aggregate_stake = 0u64;
 
     // Wrap the `rank_map` to accumulate stake as a side-effect
     let accumulating_rank_map = |ind: usize| {
         rank_map(ind).map(|(stake, pubkey)| {
-            total_stake = total_stake.saturating_add(stake);
+            aggregate_stake = aggregate_stake.saturating_add(stake);
             pubkey
         })
     };
@@ -102,8 +107,26 @@ pub fn verify_certificate(
             accumulating_rank_map,
         )
     }?;
+    verify_stake(cert, aggregate_stake, total_stake)?;
+    Ok(())
+}
 
-    Ok(total_stake)
+fn verify_stake(
+    cert: &Certificate,
+    aggregate_stake: u64,
+    total_stake: NonZero<u64>,
+) -> Result<(), Error> {
+    let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
+    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+    if cert_fraction >= required_fraction {
+        Ok(())
+    } else {
+        Err(Error::NotEnoughStake {
+            aggregate_stake,
+            cert_fraction,
+            required_fraction,
+        })
+    }
 }
 
 fn get_vote_payloads(cert_type: CertificateType) -> (Vote, Option<Vote>) {
@@ -335,15 +358,58 @@ mod test {
             cert_type,
             &(0..6).collect::<Vec<_>>(),
         );
-        assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public))
-            })
-            .unwrap(),
-            600
-        );
+        verify_certificate(&cert, 10, NonZero::new(600).unwrap(), |rank| {
+            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+        })
+        .unwrap();
     }
 
+    #[test]
+    fn test_stake_verification() {
+        let bls_keypairs = create_bls_keypairs(10);
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let per_validator_stake = 100;
+        let num_validators = 10;
+        let total_stake = NonZero::new(per_validator_stake * num_validators as u64).unwrap();
+
+        // with enough stake should succeed.
+        let cert = create_signed_certificate_message(
+            &bls_keypairs,
+            cert_type,
+            &(0..6).collect::<Vec<_>>(),
+        );
+        verify_certificate(&cert, 10, total_stake, |rank| {
+            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+        })
+        .unwrap();
+
+        // not enough stake, should fail.
+        let cert = create_signed_certificate_message(
+            &bls_keypairs,
+            cert_type,
+            &(0..5).collect::<Vec<_>>(),
+        );
+        let Err(err) = verify_certificate(&cert, 10, total_stake, |rank| {
+            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+        }) else {
+            panic!("should fail");
+        };
+        match err {
+            Error::NotEnoughStake {
+                aggregate_stake,
+                cert_fraction,
+                required_fraction,
+            } => {
+                assert_eq!(aggregate_stake, 500);
+                assert_eq!(required_fraction, cert_type.limits_and_vote_types().0);
+                assert_eq!(cert_fraction, Fraction::new(500, total_stake));
+            }
+            rest => panic!("wrong variant {rest:?}"),
+        }
+    }
     #[test]
     fn test_verify_certificate_base3_valid() {
         let bls_keypairs = create_bls_keypairs(10);
@@ -370,13 +436,10 @@ mod test {
             .aggregate(&all_vote_messages)
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
-        assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public))
-            })
-            .unwrap(),
-            700
-        );
+        verify_certificate(&cert, 10, NonZero::new(700).unwrap(), |rank| {
+            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+        })
+        .unwrap();
     }
 
     #[test]
@@ -402,7 +465,7 @@ mod test {
             bitmap: encoded_bitmap,
         };
         assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
+            verify_certificate(&cert, 10, NonZero::new(1000).unwrap(), |rank| {
                 bls_keypairs.get(rank).map(|kp| (100, kp.public))
             })
             .unwrap_err(),
@@ -427,15 +490,17 @@ mod test {
         builder.aggregate(&vote_msgs).unwrap();
         let cert = builder.build().unwrap();
         let per_validator_stake = 100;
-        assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
+        verify_certificate(
+            &cert,
+            10,
+            NonZero::new(per_validator_stake * max_validators as u64).unwrap(),
+            |rank| {
                 bls_keypairs
                     .get(rank)
                     .map(|kp| (per_validator_stake, kp.public))
-            })
-            .unwrap(),
-            per_validator_stake * max_validators as u64
-        );
+            },
+        )
+        .unwrap();
     }
 
     #[test]
@@ -570,7 +635,8 @@ mod test {
         // Must fail at the signature stage (not via a decode / missing-rank path),
         // proving the extra validator cannot be smuggled in.
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -588,7 +654,8 @@ mod test {
         cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4], 6);
 
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -612,7 +679,8 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -629,7 +697,8 @@ mod test {
 
         // An empty signer set cannot produce a valid aggregate signature.
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::EmptyAggregation)
         );
     }
@@ -644,7 +713,8 @@ mod test {
         let cert = unsigned_cert(CertificateType::Notarize(fresh_block(10)), bitmap);
 
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::WrongEncoding
         );
     }
@@ -659,7 +729,7 @@ mod test {
         let cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
 
         // rank_map returns None for rank 3, simulating an unknown/unstaked validator.
-        let result = verify_certificate(&cert, 10, |rank| {
+        let result = verify_certificate(&cert, 10, NonZero::new(10).unwrap(), |rank| {
             if rank == 3 {
                 None
             } else {
@@ -684,7 +754,8 @@ mod test {
         );
 
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::Decode(DecodeError::CorruptDataPayload)
         );
     }
@@ -702,7 +773,8 @@ mod test {
             let cert = unsigned_cert(CertificateType::Notarize(fresh_block(10)), bitmap);
             // Must return (Ok/Err) without panicking; a zero signature can never
             // produce a valid certificate, so the result must be an error.
-            assert!(verify_certificate(&cert, 10, rank_map(&keypairs)).is_err());
+            verify_certificate(&cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err();
         }
     }
 
@@ -724,7 +796,8 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -745,7 +818,8 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(&forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
