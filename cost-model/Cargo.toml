@@ -83,8 +83,5 @@ solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
-[[bench]]
-name = "cost_tracker"
-
 [lints]
 workspace = true
