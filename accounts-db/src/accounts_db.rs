@@ -4267,7 +4267,7 @@ impl AccountsDb {
                 // the slot and from the Accounts Index
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
-                self.remove_dead_slots_metadata(std::iter::once(remove_slot));
+                self.remove_dead_slots_metadata(iter::once(remove_slot));
                 remove_cache_elapsed.stop();
                 remove_cache_elapsed_across_slots += remove_cache_elapsed.as_us();
                 // Nobody else should have removed the slot cache entry yet
@@ -4280,6 +4280,12 @@ impl AccountsDb {
                 // secondary entry.
                 // Explicitly ignore the return value as there is no need to purge the account
                 // from the primary index as well
+                //
+                // Narrow race: If a write re-adds the same pubkey key between `remove_slot` and
+                // `handle_dead_keys`, the new secondary entry will be dropped. Only
+                // secondary-index scans observe it (no consensus impact), and it self-heals: the
+                // entry is re-added when that slot flushes, or stays correctly removed if the slot
+                // is later purged.
                 if !self.account_indexes.is_empty() {
                     let _ = self
                         .accounts_index
@@ -4839,7 +4845,7 @@ impl AccountsDb {
         } else {
             // Every account in this slot was superseded by a newer root, so it flushes to no
             // storage. Drop the now-dead slot from the index roots metadata
-            self.remove_dead_slots_metadata(std::iter::once(&slot));
+            self.remove_dead_slots_metadata(iter::once(&slot));
         }
 
         // Remove this slot from the cache, which will to AccountsDb's new readers should look like an
