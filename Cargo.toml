@@ -165,8 +165,6 @@ used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
-## Due to recent switch to Rust 2024, should be removed after repo auto-fix before release cut
-collapsible_if = "allow"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
