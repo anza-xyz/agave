@@ -194,6 +194,7 @@ impl Bank {
         // decrease distributed capital from epoch rewards sysvar
         self.update_epoch_rewards_sysvar(
             stake_reward_lamports_minted + stake_reward_lamports_burned,
+            0, // debit_block_rewards
         );
 
         // update reward history for this partitioned distribution
@@ -548,6 +549,7 @@ mod tests {
 
         // Set up epoch_rewards sysvar with rewards with 1e9 lamports to distribute.
         let inflation_rewards = 1_000_000_000;
+        let block_rewards = 0;
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = (inflation_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
         bank.create_epoch_rewards_sysvar(
@@ -558,6 +560,7 @@ mod tests {
                 rewards: inflation_rewards,
                 points: total_points,
             },
+            block_rewards,
         );
         let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
         let expected_balance =
@@ -1051,6 +1054,7 @@ mod tests {
 
         // Set up epoch_rewards sysvar with rewards with 10e9 lamports to distribute.
         let total_rewards = 10 * LAMPORTS_PER_SOL;
+        let block_rewards = 0;
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = (total_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
         bank.create_epoch_rewards_sysvar(
@@ -1061,6 +1065,7 @@ mod tests {
                 rewards: total_rewards,
                 points: total_points,
             },
+            block_rewards,
         );
         let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
         let expected_balance =
@@ -1146,6 +1151,7 @@ mod tests {
 
         // Set up epoch_rewards sysvar with rewards with 10e9 lamports to distribute.
         let total_rewards = 10 * LAMPORTS_PER_SOL;
+        let block_rewards = 0;
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = (total_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
         bank.create_epoch_rewards_sysvar(
@@ -1156,6 +1162,7 @@ mod tests {
                 rewards: total_rewards,
                 points: total_points,
             },
+            block_rewards,
         );
         let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
         let expected_balance =

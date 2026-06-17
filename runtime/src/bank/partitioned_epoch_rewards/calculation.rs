@@ -205,6 +205,7 @@ impl Bank {
             distribution_starting_block_height,
             num_partitions,
             point_value,
+            0, // block_rewards
         );
 
         datapoint_info!(
