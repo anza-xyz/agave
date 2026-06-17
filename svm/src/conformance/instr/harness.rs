@@ -197,6 +197,13 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         effects.custom_err = Some(0);
     }
 
+    // TODO: Firedancer's tooling compares resulting account contents even
+    // when execution fails, so the harness must report them. Account
+    // contents are not meaningful on error (partial writes can diverge based
+    // on timing, e.g. with direct mapping or builtins), so once the tooling
+    // supports it, the harness should skip the account comparison on error
+    // entirely, which would also make the CU-exhaustion workaround below
+    // unnecessary.
     direct_mapping_handle_cu_exhaustion(
         instr_context.feature_set.virtual_address_space_adjustments,
         effects.cu_avail,

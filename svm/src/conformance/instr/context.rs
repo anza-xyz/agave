@@ -71,6 +71,12 @@ impl From<ProtoInstrContext> for InstrContext {
         // Match Firedancer harness limit (FD_INSTR_ACCT_MAX = 1094)
         // which is derived from the MTU
         // (see FD_BPF_INSTR_ACCT_MAX comment in Firedancer)
+        //
+        // TODO: This limit exceeds 255 because native programs can currently
+        // be invoked with more than 255 instruction accounts. Once the
+        // feature gate restricting instruction accounts to 255 is activated
+        // (https://github.com/anza-xyz/feature-gate-tracker/issues/115),
+        // this limit should be tightened to 255, eliminating any ambiguity.
         assert!(
             instruction_accounts.len() <= 1094,
             "too many instruction accounts",
