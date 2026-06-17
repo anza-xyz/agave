@@ -180,7 +180,7 @@ pub(crate) async fn verify_all_reachable_tcp(
             .collect_vec();
         info!(
             "Checking that tcp ports {:?} are reachable from {:?}",
-            &ports, ip_echo_server_addr
+            ports, ip_echo_server_addr
         );
 
         // make request to the echo server

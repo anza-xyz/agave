@@ -2170,7 +2170,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {:?}", deserialized_request);
         }
     }
 
@@ -2214,7 +2214,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {:?}", deserialized_request);
         }
     }
 
@@ -2268,7 +2268,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {:?}", deserialized_request);
         }
 
         let request = ShredRepairType::HighestShred(slot, shred_index);
@@ -2303,7 +2303,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {:?}", deserialized_request);
         }
     }
 
@@ -2797,7 +2797,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {:?}", ancestor_hashes_response);
             }
         }
 
@@ -2814,7 +2814,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {:?}", ancestor_hashes_response);
             }
         }
 
@@ -2838,7 +2838,7 @@ mod tests {
                 assert_eq!(hashes, expected_ancestors);
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {:?}", ancestor_hashes_response);
             }
         }
     }
