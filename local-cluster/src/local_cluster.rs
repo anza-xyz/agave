@@ -559,7 +559,7 @@ impl LocalCluster {
 
     pub fn close_preserve_ledgers(&mut self) {
         self.exit();
-        for (_, node) in self.validators.iter_mut() {
+        for node in self.validators.values_mut() {
             if let Some(v) = node.validator.take() {
                 v.join();
             }
