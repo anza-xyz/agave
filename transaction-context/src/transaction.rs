@@ -9,7 +9,8 @@ use {
             GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_ACCOUNT_PAYLOAD_END_ADDRESS,
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS,
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_END_ADDRESS,
-            GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD, abiv2_region_index_from_vm_address,
+            GUEST_REGION_SIZE, INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD,
+            abiv2_region_index_from_vm_address,
         },
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -818,6 +819,24 @@ impl<'ix_data> TransactionContext<'ix_data> {
             }
         };
         Ok(new_region)
+    }
+
+    /// Return the guest pointer for the InstructionFrame address for the instruction
+    /// under execution
+    pub fn ix_frame_guest_ptr(&self) -> Result<u64, InstructionError> {
+        let current_instruction_idx = self.get_current_instruction_index()?;
+        Ok(INSTRUCTION_TRACE_AREA.saturating_add(
+            size_of::<InstructionFrame>().saturating_mul(current_instruction_idx) as u64,
+        ))
+    }
+
+    /// Return the InstructionFrame for the instruction under execution
+    pub fn current_ix_frame(&self) -> Result<&InstructionFrame, InstructionError> {
+        let current_instruction_idx = self.get_current_instruction_index()?;
+        Ok(self
+            .instruction_trace
+            .get(current_instruction_idx)
+            .expect("The frame for this instruction must exist"))
     }
 }
 

@@ -327,7 +327,13 @@ unsafe fn test_sol_transfer_lamports(
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn entrypoint() -> u64 {
+pub unsafe extern "C" fn entrypoint(
+    ix_metadata: u64,
+    ix_accounts_ptr: u64,
+    ix_accounts_len: u64,
+    ix_payload_ptr: u64,
+    ix_payload_len: u64,
+) -> u64 {
     // Transaction frame
     let tx_frame_ptr = TRANSACTION_FRAME_ADDRESS as *const TransactionFrame;
     let tx_frame = &*tx_frame_ptr;
@@ -344,6 +350,14 @@ pub unsafe extern "C" fn entrypoint() -> u64 {
     let current_ix = instruction_trace
         .get(tx_frame.current_executing_instruction as usize)
         .unwrap();
+
+    // Verify arguments
+    assert_eq!(ix_metadata, current_ix as *const InstructionFrame as u64);
+    assert_eq!(current_ix.instruction_accounts.ptr(), ix_accounts_ptr);
+    assert_eq!(current_ix.instruction_accounts.len(), ix_accounts_len);
+    assert_eq!(current_ix.instruction_data.ptr(), ix_payload_ptr);
+    assert_eq!(current_ix.instruction_data.len(), ix_payload_len);
+
     match current_ix.instruction_data.as_slice() {
         [0x00, ..] => {
             let mes = format!("tx accs: {}", tx_frame.number_of_transaction_accounts);
