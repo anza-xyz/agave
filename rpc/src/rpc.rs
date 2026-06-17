@@ -3803,8 +3803,7 @@ pub mod rpc_full {
         ) -> Result<String> {
             debug!("request_airdrop rpc request received");
             trace!(
-                "request_airdrop id={} lamports={} config: {:?}",
-                pubkey_str, lamports, config
+                "request_airdrop id={pubkey_str} lamports={lamports} config: {config:?}"
             );
 
             let faucet_addr = meta.config.faucet_addr.ok_or_else(Error::invalid_request)?;
@@ -4460,7 +4459,7 @@ where
             Error::invalid_params(format!(
                 "failed to deserialize {}: {}",
                 type_name::<T>(),
-                err.to_string()
+                err
             ))
         })
         .map(|output| (wire_output, output))

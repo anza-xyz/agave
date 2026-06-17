@@ -1856,9 +1856,8 @@ impl ReplayStage {
                 ) {
                     if retransmit_info.reached_retransmit_threshold() {
                         info!(
-                            "Retrying retransmit: latest_leader_slot={} slot={} \
-                             retransmit_info={:?}",
-                            latest_leader_slot, slot, retransmit_info,
+                            "Retrying retransmit: latest_leader_slot={latest_leader_slot} slot={slot} \
+                             retransmit_info={retransmit_info:?}",
                         );
                         datapoint_info!(
                             metric_name,
@@ -1870,8 +1869,7 @@ impl ReplayStage {
                         retransmit_info.increment_retry_iteration();
                     } else {
                         debug!(
-                            "Bypass retransmit of slot={} retransmit_info={:?}",
-                            slot, retransmit_info
+                            "Bypass retransmit of slot={slot} retransmit_info={retransmit_info:?}"
                         );
                     }
                 }

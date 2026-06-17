@@ -1128,9 +1128,8 @@ impl LedgerStorage {
                     }
                     Some(Ok(fetched_tx_info)) => {
                         warn!(
-                            "skipped tx row {} because the bigtable entry ({:?}) did not match to \
-                             {:?}",
-                            signature, fetched_tx_info, expected_tx_info,
+                            "skipped tx row {signature} because the bigtable entry ({fetched_tx_info:?}) did not match to \
+                             {expected_tx_info:?}",
                         );
                     }
                     Some(Err(err)) => {

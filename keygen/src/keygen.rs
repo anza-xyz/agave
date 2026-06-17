@@ -849,9 +849,8 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                             keypair.pubkey()
                                         );
                                         println!(
-                                            "\nSave this seed phrase{} to recover your new \
-                                             keypair:\n{}\n{}",
-                                            passphrase_message, phrase, divider
+                                            "\nSave this seed phrase{passphrase_message} to recover your new \
+                                             keypair:\n{phrase}\n{divider}"
                                         );
                                     }
                                 }

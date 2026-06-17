@@ -422,7 +422,7 @@ fn process_get_transaction(
             stats.errors += 1;
             stats.total_errors_time_us += measure.as_us();
             if last_error.elapsed().as_secs() > 2 {
-                info!("get_transaction error: {:?}", e);
+                info!("get_transaction error: {e:?}");
                 *last_error = Instant::now();
             }
         }

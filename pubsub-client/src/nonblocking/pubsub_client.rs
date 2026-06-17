@@ -577,7 +577,7 @@ impl PubsubClient {
                         Some(msg) => msg.map_err(Box::new)?,
                         None => break,
                     };
-                    trace!("ws.next(): {:?}", msg);
+                    trace!("ws.next(): {msg:?}");
 
                     // Get text from the message
                     let text = match msg {

@@ -610,8 +610,7 @@ impl AdminRpc for AdminRpcImpl {
         let loaded_config = load_staked_nodes_overrides(&path)
             .map_err(|err| {
                 error!(
-                    "Failed to load staked nodes overrides from {}: {}",
-                    path, err
+                    "Failed to load staked nodes overrides from {path}: {err}"
                 );
                 jsonrpc_core::error::Error::internal_error()
             })?
