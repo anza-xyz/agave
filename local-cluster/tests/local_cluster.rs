@@ -2716,10 +2716,7 @@ fn test_oc_bad_signatures() {
     );
 
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        format!(
-            "ws://{}",
-            cluster.entry_point_info.rpc_pubsub().unwrap()
-        ),
+        format!("ws://{}", cluster.entry_point_info.rpc_pubsub().unwrap()),
         RpcBlockSubscribeFilter::All,
         Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig::confirmed()),

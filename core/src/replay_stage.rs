@@ -1856,8 +1856,8 @@ impl ReplayStage {
                 ) {
                     if retransmit_info.reached_retransmit_threshold() {
                         info!(
-                            "Retrying retransmit: latest_leader_slot={latest_leader_slot} slot={slot} \
-                             retransmit_info={retransmit_info:?}",
+                            "Retrying retransmit: latest_leader_slot={latest_leader_slot} \
+                             slot={slot} retransmit_info={retransmit_info:?}",
                         );
                         datapoint_info!(
                             metric_name,
