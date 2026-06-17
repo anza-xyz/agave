@@ -4076,11 +4076,8 @@ impl AccountsDb {
             pubkey,
             load_hint,
         )?;
-        // `load_latest` missed above (otherwise we'd have returned early), but the account
-        // was written to the cache between then and the index lookup, so the index pointed
-        // us back at the cache.
         self.load_account_stats
-            .num_loaded_from_index_cache
+            .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
 
         let account = account_accessor.check_and_get_loaded_account_shared_data();
