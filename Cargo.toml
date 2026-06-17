@@ -108,7 +108,6 @@ members = [
     "test-validator",
     "tls-utils",
     "tokens",
-    "tps-client",
     "tpu-client",
     "tpu-client-next",
     "transaction-context",

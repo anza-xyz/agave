@@ -11036,37 +11036,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-tps-client"
-version = "4.2.0-alpha.0"
-dependencies = [
- "log",
- "solana-account 4.3.0",
- "solana-client",
- "solana-client-traits",
- "solana-clock",
- "solana-commitment-config",
- "solana-connection-cache",
- "solana-epoch-info",
- "solana-hash 4.4.0",
- "solana-keypair",
- "solana-message",
- "solana-net-utils",
- "solana-pubkey 4.2.0",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-streamer",
- "solana-tpu-client",
- "solana-transaction",
- "solana-transaction-error",
- "solana-transaction-status",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "solana-tpu-client"
 version = "4.2.0-alpha.0"
 dependencies = [
