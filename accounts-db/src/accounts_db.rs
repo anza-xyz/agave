@@ -3078,7 +3078,7 @@ impl AccountsDb {
         old_store: Arc<AccountStorageEntry>,
         size: u64,
     ) -> ShrinkInProgress<'_> {
-        let shrunken_store = self.create_store(slot, size, "shrink", self.paths.as_slice());
+        let shrunken_store = self.create_store(slot, size, "shrink");
         self.storage
             .shrinking_in_progress(slot, old_store, shrunken_store)
     }
@@ -4162,16 +4162,11 @@ impl AccountsDb {
         }
     }
 
-    fn create_store(
-        &self,
-        slot: Slot,
-        size: u64,
-        from: &str,
-        paths: &[PathBuf],
-    ) -> Arc<AccountStorageEntry> {
+    fn create_store(&self, slot: Slot, size: u64, from: &str) -> Arc<AccountStorageEntry> {
         self.stats
             .create_store_count
             .fetch_add(1, Ordering::Relaxed);
+        let paths = &self.paths;
         let path_index = rng().random_range(0..paths.len());
         let store = Arc::new(self.new_storage_entry(slot, Path::new(&paths[path_index]), size));
 
@@ -4188,23 +4183,14 @@ impl AccountsDb {
         store
     }
 
+    #[cfg(test)]
     fn create_and_insert_store(
         &self,
         slot: Slot,
         size: u64,
         from: &str,
     ) -> Arc<AccountStorageEntry> {
-        self.create_and_insert_store_with_paths(slot, size, from, &self.paths)
-    }
-
-    fn create_and_insert_store_with_paths(
-        &self,
-        slot: Slot,
-        size: u64,
-        from: &str,
-        paths: &[PathBuf],
-    ) -> Arc<AccountStorageEntry> {
-        let store = self.create_store(slot, size, from, paths);
+        let store = self.create_store(slot, size, from);
         self.storage.insert(store.clone());
         store
     }
@@ -4843,11 +4829,9 @@ impl AccountsDb {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
             // will be able to find the account in storage
-            let flushed_store = self.create_and_insert_store(
-                slot,
-                flush_stats.num_bytes_flushed.0,
-                "flush_slot_cache",
-            );
+            let flushed_store =
+                self.create_store(slot, flush_stats.num_bytes_flushed.0, "flush_slot_cache");
+            self.storage.insert(Arc::clone(&flushed_store));
 
             let (store_accounts_timing_inner, store_accounts_total_inner_us) =
                 measure_us!(self.store_accounts_for_flush(
@@ -6008,7 +5992,8 @@ impl AccountsDb {
                         infos.len(),
                         accounts_and_meta_to_store.len()
                     );
-                    self.create_and_insert_store(slot, data_len * 2, "large create");
+                    let store = self.create_store(slot, data_len * 2, "large create");
+                    self.storage.insert(store);
                 }
                 continue;
             };
