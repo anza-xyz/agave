@@ -15,7 +15,13 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 default = ["linux-static-hidraw"]
 agave-unstable-api = []
-keystone = ["dep:hex", "dep:rusb", "dep:serde_json", "dep:ur-parse-lib", "dep:ur-registry"]
+keystone = [
+    "dep:hex",
+    "dep:rusb",
+    "dep:serde_json",
+    "dep:ur-parse-lib",
+    "dep:ur-registry",
+]
 linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
 linux-shared-libusb = ["hidapi/linux-shared-libusb"]
 linux-static-hidraw = ["hidapi/linux-static-hidraw"]
