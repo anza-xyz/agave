@@ -342,10 +342,10 @@ impl KeystoneWallet {
 
         match response_status {
             Some(EAPDU_SUCCESS_STATUS) | None => {}
-            Some(EAPDU_EXPORT_ADDRESS_PAGE_STATUS) => {
-                return Err(RemoteWalletError::Protocol(ERROR_EXPORT_ADDRESS_PAGE));
-            }
             Some(_) => {
+                if let Some(payload) = keystone_response_payload(&result_data) {
+                    return Err(RemoteWalletError::KeystoneError(payload));
+                }
                 return Err(RemoteWalletError::Protocol(
                     "EAPDU returned non-success status",
                 ));
@@ -558,6 +558,18 @@ fn find_endpoint_pair(
 
 fn is_valid_command(value: u16) -> bool {
     matches!(value, 0x01..=0x06)
+}
+
+fn keystone_response_payload(data: &[u8]) -> Option<String> {
+    let message = String::from_utf8_lossy(data);
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&message) {
+        return json
+            .get(JSON_FIELD_PAYLOAD)
+            .and_then(|payload| payload.as_str())
+            .map(str::to_string);
+    }
+
+    (!message.trim().is_empty()).then(|| message.to_string())
 }
 
 fn parse_ur_pubkey(ur: &str) -> Result<Vec<u8>, RemoteWalletError> {
