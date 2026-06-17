@@ -606,7 +606,7 @@ impl RepairWeight {
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = Vec::default();
-        for (_slot, tree) in self.trees.iter() {
+        for tree in self.trees.values() {
             if repairs.len() >= max_new_repairs {
                 break;
             }
@@ -638,7 +638,7 @@ impl RepairWeight {
     ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
         let mut repairs = Vec::default();
         let mut total_processed_slots = 0;
-        for (_slot, tree) in self.trees.iter() {
+        for tree in self.trees.values() {
             if repairs.len() >= max_new_repairs {
                 break;
             }
