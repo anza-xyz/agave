@@ -311,9 +311,9 @@ mod tests {
 
         use {
             crate::block_cost_limits::INSTRUCTION_DATA_BYTES_COST,
-            solana_compute_budget::compute_budget_limits::{
-                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
-                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            solana_runtime_transaction::transaction_meta::{
+                DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT,
+                DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
             },
         };
 
@@ -338,18 +338,11 @@ mod tests {
             let write_lock_cost = 2 * block_cost_limits::WRITE_LOCK_UNITS;
             let data_bytes_cost =
                 vote_transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16);
-            // Estimated execution cost depends on whether the Vote program is
-            // tracked in cost modeling as a builtin.
-            let programs_execution_cost = if simd_0387_enabled {
-                // SIMD-0387: Vote program removed from builtin cost modeling.
-                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64
-            } else {
-                MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT as u64
-            };
-            // and it has default loaded_account_data_size
+            let programs_execution_cost =
+                u64::from(DEFAULT_SIMPLE_VOTE_TRANSACTION_COMPUTE_UNIT_LIMIT);
             let loaded_accounts_data_size_cost =
                 CostModel::calculate_loaded_accounts_data_size_cost(
-                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+                    DEFAULT_SIMPLE_VOTE_TRANSACTION_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
                     &feature_set,
                 );
             let vote_program_usage_details = UsageCostDetails {
