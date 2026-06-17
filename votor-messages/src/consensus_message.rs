@@ -54,7 +54,7 @@ pub struct Block {
     derive(AbiExample),
     frozen_abi(digest = "CTiXEk2aQbpf6TS6PNKcaTsGkLruDvAYsTLFhHKW2vsm")
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
@@ -71,7 +71,7 @@ pub struct VoteMessage {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "CbPatwRWz8NyUAj3HeAxAAWAWTxJnHGAfekLspUQpMHN")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
     /// A vote from a single party.
@@ -101,6 +101,14 @@ impl ConsensusMessage {
             signature,
             bitmap,
         })
+    }
+
+    /// Returns the slot this message is for.
+    pub fn slot(&self) -> Slot {
+        match self {
+            Self::Vote(vote) => vote.vote.slot(),
+            Self::Certificate(certificate) => certificate.cert_type.slot(),
+        }
     }
 }
 

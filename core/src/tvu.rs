@@ -35,7 +35,9 @@ use {
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
+        voting_service::{
+            VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService, VotingServiceOverride,
+        },
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::{
@@ -311,7 +313,7 @@ impl Tvu {
                     ..Default::default()
                 };
                 let qos_config = SimpleQosConfig {
-                    max_streams_per_second: 30,
+                    max_streams_per_second: VOTOR_RATE_LIMIT_PPS,
                     // Cap by # of active validators (some overhead for epoch boundaries)
                     max_staked_connections: MAX_ALPENGLOW_VOTE_ACCOUNTS * 2,
                     // Two staked connection per validator to account for hotspares
@@ -522,7 +524,7 @@ impl Tvu {
             cluster_info: cluster_info.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             consensus_metrics_sender,
-            highest_finalized,
+            highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
             bls_sender: bls_sender.clone(),
             commitment_sender: votor_commitment_sender,
@@ -615,6 +617,7 @@ impl Tvu {
             vote_history_storage,
             bls_connection_cache,
             bank_forks.clone(),
+            highest_finalized,
             voting_service_test_override,
         );
 

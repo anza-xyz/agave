@@ -28,7 +28,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
-    std::{cmp::Ordering, collections::BTreeMap, num::NonZero, sync::Arc},
+    std::{collections::BTreeMap, num::NonZero, sync::Arc},
     thiserror::Error,
 };
 
@@ -629,33 +629,15 @@ impl ConsensusPool {
     }
 
     pub(crate) fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
-        let (highest_slot, has_fast_finalize) = self
+        let highest_slot = self
             .highest_finalized_slot_cert
             .as_ref()
-            .map(|certs| (certs.slot(), certs.is_fast()))
-            .unwrap_or((0, false));
+            .map(ValidatedBlockFinalizationCert::slot)
+            .unwrap_or(0);
         self.completed_certificates
             .iter()
             .filter_map(|(cert_type, cert)| {
-                let cert_to_send = match (
-                    cert_type.slot().cmp(&highest_slot),
-                    cert_type,
-                    has_fast_finalize,
-                ) {
-                    (Ordering::Greater, _, _)
-                    | (
-                        Ordering::Equal,
-                        CertificateType::Finalize(_) | CertificateType::Notarize(_),
-                        false,
-                    )
-                    | (Ordering::Equal, CertificateType::FinalizeFast(_), true) => {
-                        Some(cert.clone())
-                    }
-                    (Ordering::Equal, CertificateType::FinalizeFast(_), false) => {
-                        panic!("Should not happen while certificate pool is single threaded")
-                    }
-                    _ => None,
-                };
+                let cert_to_send = (cert_type.slot() > highest_slot).then(|| cert.clone());
                 if cert_to_send.is_some() {
                     trace!(
                         "{}: Refreshing certificate {:?}",
@@ -1917,13 +1899,10 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_5));
-        // Should return only FinalizeFast cert on 5
+        // Slot 5 is now the highest finalized slot, so standstill cert refresh only returns
+        // certificates for later slots.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 1);
-        assert!(
-            certs[0].cert_type.slot() == 5
-                && matches!(certs[0].cert_type, CertificateType::FinalizeFast(_))
-        );
+        assert!(certs.is_empty());
 
         // Now add Notarize cert on 6
         let cert_6 = Certificate {
@@ -1935,11 +1914,9 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6));
-        // Should return certs on 5 and 6
+        // Should return certs after highest finalized slot 5.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 5
-            && matches!(cert.cert_type, CertificateType::FinalizeFast(_))));
+        assert_eq!(certs.len(), 1);
         assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
             && matches!(cert.cert_type, CertificateType::Notarize(_))));
 
@@ -1960,14 +1937,10 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6_notarize_fallback));
-        // This should not be returned because 6 is the current highest finalized slot
-        // only Notarize/Finalze/FinalizeFast should be returned
+        // Slot 6 is now the current highest finalized slot, so no slot-6 certs should
+        // be returned by the queued refresh path.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Finalize(_))));
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Notarize(_))));
+        assert!(certs.is_empty());
 
         // Add another skip on 7
         let cert_7 = Certificate {
@@ -1976,13 +1949,9 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_7));
-        // Should return certs on 6 and 7
+        // Should return certs after highest finalized slot 6.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 3);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Finalize(_))));
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Notarize(_))));
+        assert_eq!(certs.len(), 1);
         assert!(
             certs.iter().any(|cert| cert.cert_type.slot() == 7
                 && matches!(cert.cert_type, CertificateType::Skip(_)))
@@ -2005,13 +1974,10 @@ mod tests {
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_8_notarize));
 
-        // Should only return certs on 8 now
+        // Slot 8 is now the current highest finalized slot, so latest-finalization
+        // certs are refreshed from highest_finalized instead of this queue.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 8
-            && matches!(cert.cert_type, CertificateType::Finalize(_))));
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 8
-            && matches!(cert.cert_type, CertificateType::Notarize(_))));
+        assert!(certs.is_empty());
     }
 
     #[test]

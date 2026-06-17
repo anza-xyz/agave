@@ -239,6 +239,20 @@ impl ValidatedBlockFinalizationCert {
         )
     }
 
+    /// Returns cloned copies of the certificates that prove this finalization.
+    ///
+    /// For slow finalization this returns the finalize certificate followed by the notarize
+    /// certificate. For fast finalization this returns the single fast-finalize certificate.
+    pub fn clone_certificates(&self) -> Vec<Certificate> {
+        match &self.kind {
+            ValidatedBlockFinalizationCertKind::Finalize {
+                finalize_cert,
+                notarize_cert,
+            } => vec![finalize_cert.clone(), notarize_cert.clone()],
+            ValidatedBlockFinalizationCertKind::FastFinalize(cert) => vec![cert.clone()],
+        }
+    }
+
     /// Returns the data needed to calculating and paying vote rewards.
     pub fn vote_rewards_input(&self) -> (&HashSet<Pubkey>, Slot) {
         (&self.signers, self.slot())
@@ -438,11 +452,10 @@ mod tests {
                 notar_aggregate: None,
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
-            assert!(
-                result.is_ok(),
-                "Valid fast finalize certificate should pass verification: {result:?}"
-            );
+            let validated =
+                ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank)
+                    .expect("Valid fast finalize certificate should pass verification");
+            assert_eq!(validated.clone_certificates(), vec![fast_finalize_cert]);
         }
 
         // Test 2: Slow finalize (requires 60% stake = 3300 for both certs)
@@ -475,10 +488,12 @@ mod tests {
                 notar_aggregate: Some(VotesAggregate::from_certificate(&notarize_cert)),
             };
 
-            let result = ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank);
-            assert!(
-                result.is_ok(),
-                "Valid slow finalize certificate should pass verification: {result:?}"
+            let validated =
+                ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank)
+                    .expect("Valid slow finalize certificate should pass verification");
+            assert_eq!(
+                validated.clone_certificates(),
+                vec![finalize_cert, notarize_cert]
             );
         }
     }
