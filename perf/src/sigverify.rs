@@ -8,6 +8,7 @@ use {
         transaction_view::SanitizedTransactionView,
     },
     rayon::prelude::*,
+    solana_runtime_transaction::sanitize_config::sanitize_config,
 };
 
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
@@ -27,7 +28,8 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool, enable_tx_v1:
     };
 
     let (is_simple_vote_tx, verified) = {
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, true) else {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, &sanitize_config(true))
+        else {
             return false;
         };
 
@@ -604,7 +606,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                true,
+                &sanitize_config(true),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
@@ -617,7 +619,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                true,
+                &sanitize_config(true),
             )
             .unwrap();
             assert!(is_simple_vote_transaction_view(&view));
@@ -630,7 +632,7 @@ mod tests {
 
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                true,
+                &sanitize_config(true),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
@@ -655,7 +657,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                true,
+                &sanitize_config(true),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
@@ -670,7 +672,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                true,
+                &sanitize_config(true),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));

@@ -391,6 +391,7 @@ pub(crate) mod tests {
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
+        solana_runtime_transaction::sanitize_config::sanitize_config,
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
@@ -519,8 +520,11 @@ pub(crate) mod tests {
     }
 
     fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
-        SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), true)
-            .unwrap()
+        SanitizedTransactionView::try_new_sanitized(
+            Arc::new(packet.buffer().to_vec()),
+            &sanitize_config(true),
+        )
+        .unwrap()
     }
 
     #[test]

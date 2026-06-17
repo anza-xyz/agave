@@ -5,6 +5,7 @@ use {
     solana_runtime::bank::{Bank, CollectorFeeDetails},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction,
+        sanitize_config::sanitize_config,
         transaction_meta::{TransactionConfiguration, TransactionMeta},
     },
     solana_svm_transaction::svm_message::SVMStaticMessage,
@@ -65,9 +66,8 @@ pub(crate) fn calculate_priority_and_cost<Tx: TransactionMeta + SVMStaticMessage
 /// Returns `None` if the bytes don't parse as a valid transaction, in which
 /// case the caller should leave the packet to downstream stages to reject.
 pub(crate) fn calculate_priority_from_bytes(bank: &Bank, data: &[u8]) -> Option<u64> {
-    let enable_instruction_accounts_limit = bank.feature_set.snapshot().limit_instruction_accounts;
-    let view = SanitizedTransactionView::try_new_sanitized(data, enable_instruction_accounts_limit)
-        .ok()?;
+    let config = sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
+    let view = SanitizedTransactionView::try_new_sanitized(data, &config).ok()?;
     let runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
         view,
         MessageHash::Compute,
@@ -172,7 +172,7 @@ mod tests {
 
         let view = SanitizedTransactionView::try_new_sanitized(
             &bytes[..],
-            bank.feature_set.snapshot().limit_instruction_accounts,
+            &sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts),
         )
         .unwrap();
         let runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
