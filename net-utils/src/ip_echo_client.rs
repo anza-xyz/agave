@@ -179,8 +179,7 @@ pub(crate) async fn verify_all_reachable_tcp(
             .map(|l| l.local_addr().expect("Sockets should be bound").port())
             .collect_vec();
         info!(
-            "Checking that tcp ports {:?} are reachable from {:?}",
-            ports, ip_echo_server_addr
+            "Checking that tcp ports {ports:?} are reachable from {ip_echo_server_addr:?}"
         );
 
         // make request to the echo server
