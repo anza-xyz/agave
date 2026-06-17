@@ -60,7 +60,8 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     /// stats related to starting up
     pub(crate) startup_stats: Arc<StartupStats>,
 
-    /// Whether to write through to disk on upsert (true when threshold-based bin management is active)
+    /// If true, flush dirty entries to disk once `slot_list.len() == 1` and
+    /// `ref_count == 1`, making it evictable
     should_write_through: bool,
 }
 
@@ -147,8 +148,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             ),
             num_ages_to_distribute_flushes,
             startup_stats: Arc::clone(&storage.startup_stats),
-            // should_write_through: write through on every upsert so inline eviction can fire immediately
-            should_write_through: storage.threshold_entries_per_bin.is_some(),
+            should_write_through: storage.should_write_through(),
         }
     }
 
@@ -400,7 +400,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// The entry is always marked dirty after `user_fn` returns, regardless of whether
     /// `user_fn` modifies the slot list — callers should ideally know they will modify it.
     /// When write-through is active and the resulting slot list has exactly one entry with
-    /// ref_count=1, the entry is additionally flushed to disk immediately and the dirty
+    /// `ref_count == 1`, the entry is additionally flushed to disk immediately and the dirty
     /// flag may be cleared.
     pub(crate) fn slot_list_mut_with_entry<RT>(
         &self,
@@ -481,6 +481,31 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         });
     }
 
+    /// If the in-mem entry for pubkey is `slot_list.len() == 1` with `ref_count == 1` and
+    /// currently dirty, write it through to disk
+    pub fn try_write_through(&self, pubkey: &Pubkey) {
+        let to_write = self.get_only_in_mem(pubkey, false, |entry| {
+            entry.and_then(|entry| {
+                if !entry.dirty() {
+                    return None;
+                }
+
+                let slot_list = entry.slot_list_read_lock();
+                match (entry.ref_count(), &slot_list[..]) {
+                    (1, [info]) => Some(*info),
+                    _ => None,
+                }
+            })
+        });
+        if let Some((slot, info)) = to_write {
+            debug_assert!(
+                !info.is_cached(),
+                "Cached entries should not be written through"
+            );
+            self.write_through(pubkey, slot, info);
+        }
+    }
+
     /// Clean the slot list by removing all slot_list items older than the max_slot.
     /// Decrease the reference count of the entry by the number of removed accounts.
     /// Note: This must only be called on startup, and reclaims must be reclaimed.
@@ -548,7 +573,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     ) {
         let (slot, account_info) = new_value.into();
         let is_cached = account_info.is_cached();
-        let mut should_write_through = false;
 
         self.get_or_create_index_entry_for_pubkey(pubkey, |entry| {
             if is_cached {
@@ -562,14 +586,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     reclaims,
                     reclaim,
                 );
-                should_write_through =
-                    self.should_write_through && slot_list_length == 1 && entry.ref_count() == 1;
                 self.set_age_to_future(entry, slot_list_length > 1);
             }
         });
-        if should_write_through {
-            self.write_through(pubkey, slot, account_info);
-        }
     }
 
     /// Replaces the slot list entry at `old_slot` with `new_item`.
@@ -3010,7 +3029,7 @@ mod tests {
         );
     }
 
-    /// `slot_list_mut` write-through fires only for single-slot, ref_count=1 entries.
+    /// `slot_list_mut` write-through fires only for `slot_list.len() == 1`, `ref_count == 1` entries.
     #[test_case(SlotList::from([(1, 0)]), 1, true  ; "writes_through")]
     #[test_case(SlotList::from(vec![(1, 10), (2, 20)]),  1, false ; "multi_slot")]
     #[test_case(SlotList::from([(1, 0)]), 2, false ; "multi_ref")]
@@ -3043,9 +3062,9 @@ mod tests {
         );
     }
 
-    /// `upsert` with `should_write_through=true` writes through to disk and clears the dirty flag.
+    /// `upsert` then `try_write_through` clears the dirty flag.
     #[test]
-    fn test_upsert_write_through_clears_dirty() {
+    fn test_try_write_through_clears_dirty() {
         let index = new_should_write_through_for_test(None);
         let pubkey = solana_pubkey::new_rand();
         let slot = 1;
@@ -3061,6 +3080,7 @@ mod tests {
             &mut ReclaimsSlotList::new(),
             UpsertReclaim::IgnoreReclaims,
         );
+        index.try_write_through(&pubkey);
 
         index.get_only_in_mem(&pubkey, false, |entry| {
             let entry = entry.expect("entry should be in memory");
@@ -3072,6 +3092,66 @@ mod tests {
             .expect("upsert should have written entry to disk");
         assert_eq!(slot_list, SlotList::from([(slot, info)]));
         assert_eq!(ref_count, 1);
+    }
+
+    /// `try_write_through` must leave a multi-ref entry alone: if the pubkey still has more
+    /// than one slot-list entry (ref_count > 1), persisting just one of them to disk would let a
+    /// later eviction drop the fresher in-mem entry in favor of an incomplete disk entry. The
+    /// entry must stay dirty and nothing must be written to disk.
+    #[test]
+    fn test_try_write_through_skips_multi_ref_entry() {
+        let index = new_should_write_through_for_test(None);
+        let pubkey = solana_pubkey::new_rand();
+        let info = 10;
+
+        assert!(index.load_from_disk(&pubkey).is_none(), "not on disk yet");
+
+        // Upsert the same pubkey at two different (uncached) slots so its slot list has two
+        // entries and ref_count == 2
+        for slot in [1, 2] {
+            let new_value = PreAllocatedAccountMapEntry::new(slot, info, &index.storage, true);
+            index.upsert(
+                &pubkey,
+                new_value,
+                None,
+                &mut ReclaimsSlotList::new(),
+                UpsertReclaim::IgnoreReclaims,
+            );
+        }
+        index.get_only_in_mem(&pubkey, false, |entry| {
+            let entry = entry.expect("entry should be in memory");
+            assert_eq!(
+                entry.slot_list_read_lock().len(),
+                2,
+                "two-version slot list"
+            );
+            assert_eq!(entry.ref_count(), 2);
+            assert!(entry.dirty(), "dirty before write-through attempt");
+        });
+
+        let immediate_writes_before = index
+            .stats()
+            .flush_entries_updated_on_disk_immediate
+            .load(Ordering::Relaxed);
+
+        index.try_write_through(&pubkey);
+
+        index.get_only_in_mem(&pubkey, false, |entry| {
+            let entry = entry.expect("entry should still be in memory");
+            assert!(entry.dirty(), "multi-version entry must stay dirty");
+        });
+        assert!(
+            index.load_from_disk(&pubkey).is_none(),
+            "multi-version entry must not be written through to disk"
+        );
+        assert_eq!(
+            index
+                .stats()
+                .flush_entries_updated_on_disk_immediate
+                .load(Ordering::Relaxed),
+            immediate_writes_before,
+            "no immediate disk write should have fired"
+        );
     }
 
     /// When the bin exceeds the threshold and a new pubkey is inserted in `should_write_through`
@@ -3094,6 +3174,7 @@ mod tests {
                 &mut ReclaimsSlotList::new(),
                 UpsertReclaim::IgnoreReclaims,
             );
+            index.try_write_through(pubkey);
         }
         assert_eq!(index.map_internal.read().unwrap().len(), 3);
 

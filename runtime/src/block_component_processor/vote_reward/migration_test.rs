@@ -3,7 +3,7 @@ mod tests {
 
     use {
         crate::{
-            bank::{Bank, VAT_TO_BURN_PER_EPOCH},
+            bank::Bank,
             block_component_processor::vote_reward::{
                 VoteState, increment_credits,
                 tests::{new_bank_from_parent, set_commission},
@@ -20,7 +20,7 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::Block,
         },
-        solana_account::{Account, ReadableAccount},
+        solana_account::{Account, ReadableAccount, from_account},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
@@ -34,6 +34,7 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_stake_interface::state::StakeStateV2,
+        solana_sysvar::{self as sysvar, epoch_rewards::EpochRewards},
         std::{collections::HashMap, num::NonZero, sync::Arc},
         test_case::test_matrix,
     };
@@ -271,21 +272,12 @@ mod tests {
                 return ret;
             }
 
-            let total_points = self
-                .validators
-                .iter()
-                .map(|validator| {
-                    let vote_pubkey = validator.vote_keypair.pubkey();
-                    let validator_stake = self.get_validator_stake(reward_bank, &vote_pubkey);
-                    let points = validator_stake * self.pay_type.tower();
-                    points as u128
-                })
-                .sum::<u128>();
-
-            let epoch_inflation = payout_bank.calculate_epoch_inflation_rewards(
-                reward_bank.capitalization(),
-                reward_bank.epoch(),
-            );
+            let epoch_rewards: EpochRewards = payout_bank
+                .get_account(&sysvar::epoch_rewards::id())
+                .and_then(|account| from_account(&account))
+                .unwrap();
+            let epoch_inflation = epoch_rewards.total_rewards;
+            let total_points = epoch_rewards.total_points;
             let genesis_cert = payout_bank.get_alpenglow_genesis_certificate().unwrap();
             let first_slot_in_reward_epoch = payout_bank
                 .epoch_schedule
@@ -388,10 +380,12 @@ mod tests {
 
             let (initial_lamports, final_lamports) =
                 self.get_initial_and_final_lamports(reward_bank, payout_bank, &vote_pubkey);
-            let diff = final_lamports
-                + VAT_TO_BURN_PER_EPOCH * (payout_bank.epoch() - reward_bank.epoch())
-                - initial_lamports;
-            assert_eq!(expected_validator_reward, diff);
+            let vat_burn =
+                payout_bank.vat_to_burn_per_epoch() * (payout_bank.epoch() - reward_bank.epoch());
+            assert_eq!(
+                expected_validator_reward,
+                final_lamports + vat_burn - initial_lamports
+            );
         }
 
         fn validate_rewards(&self, reward_bank: &Bank, payout_bank: &Bank) {

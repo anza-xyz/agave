@@ -1,6 +1,6 @@
 use {
     crate::{
-        bit_vec::BitVec,
+        bit_vec::{BitVec, BitVecRef},
         blockstore::ParentInfo,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
@@ -185,6 +185,24 @@ pub struct SlotMetaV3 {
 
 pub type SlotMeta = SlotMetaV3;
 
+/// Lighter-weight version of [`SlotMeta`] containing just the set
+/// of fields needed for repair.
+///
+/// wincode deserializes in field declaration order, so [`SlotMetaRepair`]
+/// can always be deserialized from [`SlotMeta`].
+#[derive(Clone, Debug, Default, SchemaRead, Eq, PartialEq)]
+pub struct SlotMetaRepair {
+    pub slot: Slot,
+    pub consumed: u64,
+    pub received: u64,
+    pub first_shred_timestamp: u64,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub last_index: Option<u64>,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub parent_slot: Option<Slot>,
+    pub next_slots: Vec<Slot>,
+}
+
 // Wincode implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod wincode_compat {
@@ -275,6 +293,13 @@ pub struct Index {
     pub slot: Slot,
     data: ShredIndex,
     coding: ShredIndex,
+}
+
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct IndexRef<'a> {
+    pub slot: Slot,
+    data: ShredIndexRef<'a>,
+    coding: ShredIndexRef<'a>,
 }
 
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
@@ -448,6 +473,12 @@ impl Index {
     }
 }
 
+impl IndexRef<'_> {
+    pub fn data(&self) -> &ShredIndexRef<'_> {
+        &self.data
+    }
+}
+
 /// A bitvec (`Box<[u8]>`) of shred indices, where each u8 represents 8 shred indices.
 ///
 /// Bit vec implementation provides:
@@ -517,32 +548,58 @@ impl FromIterator<u64> for ShredIndex {
     }
 }
 
-impl SlotMeta {
-    pub fn is_full(&self) -> bool {
-        // last_index is None when it has no information about how
-        // many shreds will fill this slot.
-        // Note: A full slot with zero shreds is not possible.
-        // Should never happen
-        if self
-            .last_index
-            .map(|ix| self.consumed > ix + 1)
-            .unwrap_or_default()
-        {
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
-                        self.consumed,
-                        self.last_index.map(|ix| ix + 1),
-                    ),
-                    String
-                )
-            );
-        }
+/// A reference to a [`ShredIndex`].
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct ShredIndexRef<'a> {
+    index: BitVecRef<'a, MAX_DATA_SHREDS_PER_SLOT>,
+    num_shreds: usize,
+}
 
-        Some(self.consumed) == self.last_index.map(|ix| ix + 1)
+impl ShredIndexRef<'_> {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index
+            .range((start, end))
+            .iter_ones()
+            .map(|idx| idx as u64)
+    }
+}
+
+fn slot_meta_is_full(last_index: Option<u64>, consumed: u64) -> bool {
+    // last_index is None when it has no information about how
+    // many shreds will fill this slot.
+    // Note: A full slot with zero shreds is not possible.
+    // Should never happen
+    if last_index.map(|ix| consumed > ix + 1).unwrap_or_default() {
+        datapoint_error!(
+            "blockstore_error",
+            (
+                "error",
+                format!(
+                    "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
+                    consumed,
+                    last_index.map(|ix| ix + 1),
+                ),
+                String
+            )
+        );
+    }
+
+    Some(consumed) == last_index.map(|ix| ix + 1)
+}
+
+impl SlotMeta {
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        slot_meta_is_full(self.last_index, self.consumed)
     }
 
     /// Returns a boolean indicating whether this meta's parent slot is known.
@@ -642,6 +699,13 @@ impl SlotMeta {
     /// `UpdateParent` marker.
     pub fn has_update_parent(&self) -> bool {
         self.replay_fec_set_index > 0
+    }
+}
+
+impl SlotMetaRepair {
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        slot_meta_is_full(self.last_index, self.consumed)
     }
 }
 
@@ -980,6 +1044,112 @@ mod test {
                 index.range(indices.clone()).collect::<Vec<_>>(),
                 indices.into_iter().collect::<Vec<_>>()
             );
+        }
+    }
+
+    fn arb_slot_meta() -> impl Strategy<Value = SlotMeta> {
+        (
+            any::<Slot>(),
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(any::<Slot>()),
+            proptest::collection::vec(any::<Slot>(), 0..32),
+            any::<u8>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u32, 0..64),
+            any::<[u8; HASH_BYTES]>(),
+            any::<u32>(),
+        )
+            .prop_map(
+                |(
+                    slot,
+                    consumed,
+                    received,
+                    first_shred_timestamp,
+                    last_index,
+                    parent_slot,
+                    next_slots,
+                    connected_flags,
+                    completed_data_indexes,
+                    parent_block_id,
+                    replay_fec_set_index,
+                )| SlotMeta {
+                    slot,
+                    consumed,
+                    received,
+                    first_shred_timestamp,
+                    last_index,
+                    parent_slot,
+                    next_slots,
+                    connected_flags: ConnectedFlags::from_bits_truncate(connected_flags),
+                    completed_data_indexes: completed_data_indexes.into_iter().collect(),
+                    parent_block_id: Hash::new_from_array(parent_block_id),
+                    replay_fec_set_index,
+                },
+            )
+    }
+
+    fn arb_index() -> impl Strategy<Value = Index> {
+        (
+            any::<Slot>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+        )
+            .prop_map(|(slot, data_indexes, coding_indexes)| {
+                let mut index = Index::new(slot);
+                for index_to_insert in data_indexes {
+                    index.data_mut().insert(index_to_insert);
+                }
+                for index_to_insert in coding_indexes {
+                    index.coding_mut().insert(index_to_insert);
+                }
+                index
+            })
+    }
+
+    proptest! {
+        // Property: `SlotMetaRepair` is always deserializable from serialized `SlotMeta`.
+        #[test]
+        fn test_slot_meta_repair_deserialization(
+            slot_meta in arb_slot_meta(),
+        ) {
+            let serialized = wincode::serialize(&slot_meta).unwrap();
+            let deserialized: SlotMetaRepair = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, slot_meta.slot);
+            prop_assert_eq!(deserialized.consumed, slot_meta.consumed);
+            prop_assert_eq!(deserialized.received, slot_meta.received);
+            prop_assert_eq!(
+                deserialized.first_shred_timestamp,
+                slot_meta.first_shred_timestamp
+            );
+            prop_assert_eq!(deserialized.last_index, slot_meta.last_index);
+            prop_assert_eq!(deserialized.parent_slot, slot_meta.parent_slot);
+            prop_assert_eq!(deserialized.next_slots, slot_meta.next_slots);
+        }
+    }
+
+    proptest! {
+        // Property: `IndexRef` is always deserializable from `Index`.
+        #[test]
+        fn test_index_ref_deserialization(
+            index in arb_index(),
+        ) {
+            let serialized = wincode::serialize(&index).unwrap();
+            let deserialized: IndexRef = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, index.slot);
+            prop_assert_eq!(
+                deserialized.data().range(..).collect::<Vec<_>>(),
+                index.data().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(
+                deserialized.coding.range(..).collect::<Vec<_>>(),
+                index.coding().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(deserialized.data().num_shreds(), index.data().num_shreds());
+            prop_assert_eq!(deserialized.coding.num_shreds(), index.coding().num_shreds());
         }
     }
 

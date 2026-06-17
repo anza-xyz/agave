@@ -9,7 +9,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_votor_messages::{consensus_message::SigVerifiedBatch, migration::MigrationStatus},
+    agave_votor_messages::{consensus_message::ConsensusMessage, migration::MigrationStatus},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
@@ -19,7 +19,7 @@ use {
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
-    solana_clock::Slot,
+    solana_clock::{BankId, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::{
         block_component::BlockComponent,
@@ -1675,7 +1675,7 @@ pub fn confirm_slot(
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+    finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
@@ -1778,7 +1778,7 @@ fn confirm_slot_with_components(
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+    finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
@@ -2215,9 +2215,24 @@ fn process_bank_0(
     Ok(())
 }
 
-/// Clean up a failed slot and restart processing from the given genesis slot
+fn cleanup_outdated_tower_bft_startup_banks(
+    root_bank: &Bank,
+    blockstore: &Blockstore,
+    slots_to_cleanup: &[(Slot, BankId)],
+) {
+    root_bank.remove_unrooted_slots(slots_to_cleanup);
+
+    for &(slot, _) in slots_to_cleanup {
+        root_bank.clear_slot_signatures(slot);
+        root_bank.prune_program_cache_by_deployment_slot(slot);
+        reset_dead_if_primary_access(blockstore, slot);
+    }
+}
+
+/// Clean up failed startup slots and restart processing from the given genesis slot
 ///
-/// `first_alpenglow_bank` is removed from runtime caches, and its dead status is reset
+/// `first_alpenglow_bank` and any current `pending_slots` banks are removed from runtime caches,
+/// and their dead statuses are reset.
 /// `pending_slots` is the current child blocks left to be processed. We clear and update
 /// this with the children of `genesis_slot` instead.
 fn cleanup_and_populate_pending_from_alpenglow_genesis(
@@ -2230,24 +2245,18 @@ fn cleanup_and_populate_pending_from_alpenglow_genesis(
     opts: &ProcessOptions,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
-    // `first_alpenglow_bank` was processed as a TowerBFT bank. Reset it.
-    let first_alpenglow_slot = first_alpenglow_bank.slot();
-    let root_bank = bank_forks.read().unwrap().root_bank();
-    root_bank
-        .remove_unrooted_slots(&[(first_alpenglow_bank.slot(), first_alpenglow_bank.bank_id())]);
-    root_bank.clear_slot_signatures(first_alpenglow_bank.slot());
-    root_bank.prune_program_cache_by_deployment_slot(first_alpenglow_bank.slot());
-
-    if blockstore.is_dead(first_alpenglow_slot) {
-        if blockstore.is_primary_access() {
-            blockstore.remove_dead_slot(first_alpenglow_slot).unwrap();
-        } else {
-            info!(
-                "First alpenglow slot {first_alpenglow_slot} won't be cleared from dead due to \
-                 being read-only blockstore access"
+    // The frontier is now out of date, as all banks were created as TowerBFT banks.
+    // Cleanup all the banks in the frontier and recreate them as Alpenglow banks.
+    let slots_to_cleanup =
+        std::iter::once((first_alpenglow_bank.slot(), first_alpenglow_bank.bank_id()))
+            .chain(
+                pending_slots
+                    .iter()
+                    .map(|(_, bank, _)| (bank.slot(), bank.bank_id())),
             )
-        }
-    }
+            .collect::<Vec<_>>();
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    cleanup_outdated_tower_bft_startup_banks(&root_bank, blockstore, &slots_to_cleanup);
 
     let genesis_slot_meta = blockstore
         .meta(genesis_slot)
@@ -2765,8 +2774,32 @@ pub fn check_chained_block_id(
     }
 }
 
+fn mark_dead_if_primary_access(blockstore: &Blockstore, slot: Slot) {
+    if blockstore.is_primary_access() {
+        blockstore
+            .set_dead_slot(slot)
+            .expect("Failed to mark slot as dead in blockstore");
+    } else {
+        info!("Failed slot {slot} won't be marked dead due to being read-only blockstore access");
+    }
+}
+
+fn reset_dead_if_primary_access(blockstore: &Blockstore, slot: Slot) {
+    if !blockstore.is_dead(slot) {
+        return;
+    }
+    if blockstore.is_primary_access() {
+        blockstore.remove_dead_slot(slot).unwrap();
+    } else {
+        info!("slot {slot} won't be cleared from dead due to being read-only blockstore access");
+    }
+}
+
 // Processes and replays the contents of a single slot, returns Error
-// if failed to play the slot
+// if failed to play the slot.
+//
+// For use during startup replay, enforces any pre and post replay checks
+// that occur in ReplayStage.
 #[allow(clippy::too_many_arguments)]
 pub fn process_single_slot(
     blockstore: &Blockstore,
@@ -2789,16 +2822,7 @@ pub fn process_single_slot(
         }
         ChainedBlockIdCheck::Mismatch => {
             // Mismatch, mark dead
-            if blockstore.is_primary_access() {
-                blockstore
-                    .set_dead_slot(slot)
-                    .expect("Failed to mark slot as dead in blockstore");
-            } else {
-                info!(
-                    "Failed slot {slot} won't be marked dead due to being read-only blockstore \
-                     access"
-                );
-            }
+            mark_dead_if_primary_access(blockstore, slot);
             return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
                 slot,
                 bank.parent_slot(),
@@ -2822,15 +2846,7 @@ pub fn process_single_slot(
     )
     .map_err(|err| {
         warn!("slot {slot} failed to verify: {err}");
-        if blockstore.is_primary_access() {
-            blockstore
-                .set_dead_slot(slot)
-                .expect("Failed to mark slot as dead in blockstore");
-        } else {
-            info!(
-                "Failed slot {slot} won't be marked dead due to being read-only blockstore access"
-            );
-        }
+        mark_dead_if_primary_access(blockstore, slot);
         err
     })?;
 
@@ -2839,7 +2855,20 @@ pub fn process_single_slot(
         .expect("Blockstore operations must succeed")
         .expect("Full block must have block id");
     bank.set_block_id(Some(block_id));
-    bank.freeze(); // all banks handled by this routine are created from complete slots
+    let verify_result = bank.freeze_and_verify_bank_hash(); // all banks handled by this routine are created from complete slots
+
+    if let Err((expected_hash, computed_hash)) = verify_result {
+        warn!(
+            "slot {slot} failed to freeze, bank hash mismatch expected {expected_hash} computed \
+             {computed_hash}"
+        );
+        mark_dead_if_primary_access(blockstore, slot);
+        return Err(BlockstoreProcessorError::BankHashMismatch(
+            slot,
+            expected_hash,
+            computed_hash,
+        ));
+    }
 
     if let Some(slot_callback) = &opts.slot_callback {
         slot_callback(bank);
@@ -4229,7 +4258,7 @@ pub mod tests {
         );
 
         let tx = Transaction::new_signed_with_payer(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 mock_program_id,
                 &10,
                 Vec::new(),
@@ -4273,7 +4302,7 @@ pub mod tests {
             );
 
             let tx = Transaction::new_signed_with_payer(
-                &[Instruction::new_with_bincode(
+                &[Instruction::new_with_wincode(
                     mock_program_id,
                     &(err as u8),
                     Vec::new(),
@@ -4745,7 +4774,7 @@ pub mod tests {
         // Make sure fees-only transactions still update the signature cache
         let missing_program_id = Pubkey::new_unique();
         let tx = Transaction::new_signed_with_payer(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 missing_program_id,
                 &10,
                 Vec::new(),
@@ -6118,9 +6147,16 @@ pub mod tests {
         });
         let header_component = BlockComponent::new_block_marker(header);
 
+        let block_producer_time_nanos = u64::try_from(
+            genesis_config
+                .creation_time
+                .saturating_mul(1_000_000_000)
+                .saturating_add(1),
+        )
+        .unwrap();
         let footer = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
-            block_producer_time_nanos: 1_000_000_000,
+            block_producer_time_nanos,
             block_user_agent: b"test".to_vec(),
             block_final_cert: None,
             skip_reward_cert: None,
@@ -6450,6 +6486,86 @@ pub mod tests {
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Pass
         ));
+    }
+
+    #[test]
+    fn test_cleanup_alpenglow_genesis_cleans_pending_slots() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
+
+        let mut genesis_meta = SlotMeta::new(0, None);
+        genesis_meta.next_slots = vec![1, 2];
+        blockstore.put_meta(0, &genesis_meta).unwrap();
+
+        for slot in [1, 2] {
+            let mut meta = SlotMeta::new(slot, Some(0));
+            meta.consumed = 1;
+            meta.received = 1;
+            meta.last_index = Some(0);
+            blockstore.put_meta(slot, &meta).unwrap();
+            blockstore.set_dead_slot(slot).unwrap();
+        }
+
+        let owner = Pubkey::new_unique();
+        let first_alpenglow_key = Pubkey::new_unique();
+        let pending_key = Pubkey::new_unique();
+
+        let first_alpenglow_bank = Arc::new(Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeader::default(),
+            1,
+        ));
+        first_alpenglow_bank
+            .store_account(&first_alpenglow_key, &AccountSharedData::new(1, 0, &owner));
+        assert!(
+            first_alpenglow_bank
+                .get_account(&first_alpenglow_key)
+                .is_some()
+        );
+        let first_alpenglow_bank =
+            BankWithScheduler::new_without_scheduler(first_alpenglow_bank.clone());
+
+        let pending_bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 2);
+        pending_bank.store_account(&pending_key, &AccountSharedData::new(1, 0, &owner));
+        assert!(pending_bank.get_account(&pending_key).is_some());
+
+        let pending_meta = blockstore.meta(2).unwrap().unwrap();
+        let mut pending_slots = vec![(pending_meta, pending_bank, bank0.last_blockhash())];
+
+        cleanup_and_populate_pending_from_alpenglow_genesis(
+            &first_alpenglow_bank,
+            0,
+            &bank_forks,
+            &blockstore,
+            &leader_schedule_cache,
+            &mut pending_slots,
+            &ProcessOptions::default(),
+            &MigrationStatus::post_migration_status(),
+        )
+        .unwrap();
+
+        assert!(!blockstore.is_dead(1));
+        assert!(!blockstore.is_dead(2));
+        assert!(
+            first_alpenglow_bank
+                .get_account(&first_alpenglow_key)
+                .is_none()
+        );
+
+        let queued_slots: BTreeSet<_> = pending_slots
+            .iter()
+            .map(|(_, bank, _)| bank.slot())
+            .collect();
+        assert_eq!(queued_slots, BTreeSet::from([1, 2]));
+        for (_, bank, _) in &pending_slots {
+            assert!(bank.get_account(&first_alpenglow_key).is_none());
+            assert!(bank.get_account(&pending_key).is_none());
+        }
     }
 
     #[test]

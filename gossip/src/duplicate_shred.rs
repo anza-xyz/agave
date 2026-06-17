@@ -24,7 +24,15 @@ const DUPLICATE_SHRED_HEADER_SIZE: usize = 63;
 pub(crate) type DuplicateShredIndex = u16;
 pub(crate) const MAX_DUPLICATE_SHREDS: DuplicateShredIndex = 512;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "9zVjcmgLcLv1YDhBwDFYgMMjtpoZjk77YoL3sLBnABTf",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
 pub struct DuplicateShred {
     pub(crate) from: Pubkey,

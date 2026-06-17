@@ -20,6 +20,7 @@ dev-context-only-utils = [
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
     "solana-streamer/dev-context-only-utils",
+    "solana-tpu-client-next/dev-context-only-utils",
     "agave-votor/dev-context-only-utils",
 ]
 frozen-abi = [
@@ -42,6 +43,7 @@ frozen-abi = [
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 agave-bls-cert-verify = { workspace = true }
+agave-bls-sigverify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-logger = { workspace = true }
@@ -221,10 +223,6 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "sigverify_stage"
-harness = false
-
-[[bench]]
-name = "bls_vote_sigverify"
 harness = false
 
 [[bench]]

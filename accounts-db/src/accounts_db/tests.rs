@@ -3,7 +3,10 @@ use {
     super::*,
     crate::{
         accounts_file::AccountsFileProvider,
-        accounts_index::{AccountSecondaryIndexesIncludeExclude, test_utils::*},
+        accounts_index::{
+            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountSecondaryIndexesIncludeExclude,
+            AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
+        },
         append_vec::{AppendVec, test_utils::TempFile},
         storable_accounts::AccountForStorage,
     },
@@ -630,6 +633,159 @@ fn test_flush_slots_with_reclaim_old_slots() {
         );
     }
     assert!(accounts.storage.get_slot_storage_entry(new_slot).is_some());
+}
+
+/// With write-through enabled, a pubkey that is hot-written across multiple cached
+/// slots must not be written through to disk until the *last* cached slot leaves the
+/// cache.
+#[test]
+fn test_flush_defers_write_through_until_all_cached_slots_drop() {
+    // Build an AccountsDb whose index has IndexLimit::Threshold so write-through is enabled.
+    let db = AccountsDb::new_single_for_tests_with_provider_and_config(
+        AccountsFileProvider::AppendVec,
+        AccountsDbConfig {
+            index: Some(AccountsIndexConfig {
+                index_limit: IndexLimit::Threshold(IndexLimitThreshold {
+                    num_bytes: 25_000_000_000,
+                    num_entries_overhead: 1,
+                    num_entries_to_evict: 1,
+                }),
+                ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
+            }),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    );
+
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // Cache the same pubkey at three consecutive slots without flushing in between.
+    db.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+    db.store_for_tests((1, [(&pubkey, &account)].as_slice()));
+    db.store_for_tests((2, [(&pubkey, &account)].as_slice()));
+
+    let immediate_disk_writes = || {
+        db.accounts_index
+            .stats()
+            .flush_entries_updated_on_disk_immediate
+            .load(Ordering::Relaxed)
+    };
+
+    let baseline_writes = immediate_disk_writes();
+
+    // Flush slot 0. Pubkey is still cached at slots 1 and 2, so remove_slot does
+    // not return it and try_write_through is never called, so no immediate disk
+    // write must fire.
+    db.add_root_and_flush_write_cache(0);
+    assert_eq!(immediate_disk_writes(), baseline_writes);
+
+    // Flush slot 1. Pubkey is still cached at slot 2, same story.
+    db.add_root_and_flush_write_cache(1);
+    assert_eq!(immediate_disk_writes(), baseline_writes);
+
+    // Flush slot 2. The pubkey is no longer in any cached slot, so the cache-drop
+    // loop in flush_slot_cache calls try_write_through. ReclaimOldSlots has
+    // collapsed the slot list to a single storage entry with ref_count == 1, so
+    // write-through fires and bumps the counter by exactly one.
+    db.add_root_and_flush_write_cache(2);
+    assert_eq!(
+        immediate_disk_writes(),
+        baseline_writes + 1,
+        "exactly one immediate disk write should have fired across all flushes",
+    );
+}
+
+/// With write-through disabled (the default, non-threshold index config) the cache-drop path
+/// must be a pure no-op: flushing a slot leaves the in-mem entry dirty and writes nothing
+/// through to disk. Guards the "disabled => old behavior preserved" contract for the most
+/// common production configuration.
+#[test]
+fn test_flush_does_not_write_through_when_write_through_disabled() {
+    // new_single_for_tests uses IndexLimit::InMemOnly, so write-through is disabled. The
+    // behavioral assertions below (entry stays dirty, no disk write) would fail if that default
+    // ever changed to a threshold config.
+    let db = AccountsDb::new_single_for_tests();
+
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    db.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+
+    let immediate_disk_writes = || {
+        db.accounts_index
+            .stats()
+            .flush_entries_updated_on_disk_immediate
+            .load(Ordering::Relaxed)
+    };
+    let baseline_writes = immediate_disk_writes();
+
+    // Flush slot 0. The pubkey leaves the cache, but write-through is disabled, so
+    // write_through_pubkeys short-circuits and no immediate disk write fires.
+    db.add_root_and_flush_write_cache(0);
+    assert_eq!(immediate_disk_writes(), baseline_writes);
+}
+
+/// The dead-slot purge path removes only the purged slot's index entries, so a pubkey with
+/// a surviving dirty single-ref entry at another slot must be written through when the purge
+/// drops its last cached slot.
+#[test]
+fn test_purge_unrooted_slot_writes_through_surviving_entry() {
+    let db = AccountsDb::new_single_for_tests_with_provider_and_config(
+        AccountsFileProvider::AppendVec,
+        AccountsDbConfig {
+            index: Some(AccountsIndexConfig {
+                index_limit: IndexLimit::Threshold(IndexLimitThreshold {
+                    num_bytes: 25_000_000_000,
+                    num_entries_overhead: 1,
+                    num_entries_to_evict: 1,
+                }),
+                ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
+            }),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    );
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // Cache the pubkey at slot 0 (will be rooted + flushed) and slot 1 (stays unrooted/cached).
+    db.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+    db.store_for_tests((1, [(&pubkey, &account)].as_slice()));
+
+    let is_dirty_in_mem = |pubkey: &Pubkey| -> bool {
+        db.accounts_index.get_and_then(pubkey, |entry| {
+            (false, entry.expect("entry should be in the index").dirty())
+        })
+    };
+    let immediate_disk_writes = || {
+        db.accounts_index
+            .stats()
+            .flush_entries_updated_on_disk_immediate
+            .load(Ordering::Relaxed)
+    };
+
+    // Flush slot 0. The pubkey is still cached at slot 1, so it does not leave the cache and
+    // write-through does not fire; its slot-0 storage entry is left dirty (slot list now has the
+    // uncached slot-0 entry plus the cached slot-1 entry).
+    let baseline_writes = immediate_disk_writes();
+    db.add_root_and_flush_write_cache(0);
+    assert!(
+        is_dirty_in_mem(&pubkey),
+        "dirty after flushing slot 0 while still cached at slot 1"
+    );
+    assert_eq!(immediate_disk_writes(), baseline_writes);
+
+    // Purge the unrooted slot 1 from the cache. `purge_slot_cache` removes only the slot-1
+    // entry, leaving the slot-0 entry as a single-ref dirty entry; the pubkey leaves the cache
+    // entirely, so the purge path's write-through fires on that surviving entry exactly once.
+    db.remove_unrooted_slots(&[(1, 1)]);
+    assert!(
+        !is_dirty_in_mem(&pubkey),
+        "should be clean after purge writes through the surviving entry"
+    );
+    assert_eq!(
+        immediate_disk_writes(),
+        baseline_writes + 1,
+        "purge path must write through the surviving single-ref entry exactly once"
+    );
 }
 
 define_accounts_db_test!(test_remove_unrooted_slot_cached, |db| {
@@ -3330,6 +3486,44 @@ fn test_load_with_read_only_accounts_cache() {
     assert_eq!(slot, 2);
 }
 
+/// `select_pubkeys_to_flush` keeps only the newest version of each account across the
+/// cleaned roots and flushes roots above `max_clean_root` in full.
+#[test]
+fn test_select_pubkeys_to_flush() {
+    let db = AccountsDb::new_single_for_tests();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // The same account is written in all three roots.
+    let roots = BTreeSet::from([5, 10, 15]);
+    let shared = Pubkey::new_unique();
+    for &slot in &roots {
+        db.accounts_cache.store(slot, &shared, account.clone());
+    }
+
+    let shared_only = PubkeysToFlush::Only([shared].into_iter().collect());
+    let deduped = PubkeysToFlush::Only(HashSet::default());
+
+    // No bound: every flushed root is cleaned, so `shared` is written only at its newest root
+    // (15), deduped from 5 and 10.
+    let plans = db.select_pubkeys_to_flush(&roots, None);
+    assert_eq!(plans[&15], shared_only);
+    assert_eq!(plans[&10], deduped);
+    assert_eq!(plans[&5], deduped);
+
+    // max_clean_root = 15 (== newest root): same result, every root is at or below the bound.
+    let plans = db.select_pubkeys_to_flush(&roots, Some(15));
+    assert_eq!(plans[&15], shared_only);
+    assert_eq!(plans[&10], deduped);
+    assert_eq!(plans[&5], deduped);
+
+    // max_clean_root = 10: root 15 is above the boundary and flushes `All` (no dedup), so
+    // `shared` is not dropped from root 10 — a scan at root 10 may still need that version.
+    let plans = db.select_pubkeys_to_flush(&roots, Some(10));
+    assert_eq!(plans[&15], PubkeysToFlush::All);
+    assert_eq!(plans[&10], shared_only);
+    assert_eq!(plans[&5], deduped);
+}
+
 #[test]
 fn test_flush_cache_clean() {
     let db = Arc::new(AccountsDb::new_single_for_tests());
@@ -3856,7 +4050,7 @@ fn setup_accounts_db_cache_clean(
         }
     }
 
-    accounts_db.accounts_cache.remove_slot(stall_slot);
+    let _ = accounts_db.accounts_cache.remove_slot(stall_slot);
 
     // If there's <= max_cache_slots(), no slots should be flushed
     if accounts_db.accounts_cache.num_slots() <= max_cache_slots() {
@@ -4164,6 +4358,32 @@ fn test_flush_rooted_accounts_cache_with_clean() {
 #[test]
 fn test_flush_rooted_accounts_cache_without_clean() {
     run_flush_rooted_accounts_cache(false);
+}
+
+/// A rooted slot with no write-cache entry (e.g. genesis, whose accounts load straight to storage)
+/// is still tracked by `add_root`. Flushing must untrack it rather than leave it stranded in
+/// `unflushed_roots` at or below `max_flushed_root`.
+#[test]
+fn test_flush_untracks_cacheless_root() {
+    let db = AccountsDb::new_single_for_tests();
+
+    // Slot 0: rooted but never written to the write cache.
+    db.accounts_cache.add_root(0);
+
+    // Slot 10: a normal rooted slot with a cached account.
+    let pubkey = Pubkey::new_unique();
+    db.accounts_cache.store(
+        10,
+        &pubkey,
+        AccountSharedData::new(10, 0, &Pubkey::default()),
+    );
+    db.add_root(10);
+
+    // Flushing through slot 10 must drop the cacheless root 0 instead of stranding it below
+    // max_flushed_root (which would otherwise trip the unflushed-root invariant).
+    db.flush_accounts_cache(true, Some(10));
+
+    assert_eq!(db.accounts_cache.num_unflushed_roots(), 0);
 }
 #[test]
 fn test_shrink_unref() {
@@ -6795,42 +7015,27 @@ fn test_is_ancestor_zero_lamport_index_only() {
     assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
 }
 
-/// Verifies that when the cache entry is in a `*BeingFlushed` state, is_ancestor_zero_lamport
-/// also consults the index and returns the zero lamport status of whichever version sits on the
-/// higher slot, regardless of whether that version is in the cache or the index.
-#[test_case(10, 5, true; "newer_cache_wins")]
-#[test_case(5, 10, false; "newer_index_wins")]
-fn test_is_ancestor_zero_lamport_being_flushed_picks_higher_slot(
-    cache_slot: Slot,
-    index_slot: Slot,
-    expected: bool,
-) {
+/// Verifies that when a pubkey is in both storage and the write cache, is_ancestor_zero_lamport
+/// returns the cached version's zero lamport status.
+#[test]
+fn test_is_ancestor_zero_lamport_cache_over_storage() {
     let db = AccountsDb::new_single_for_tests();
     let pubkey = Pubkey::new_unique();
+    let storage_slot = 5;
+    let cache_slot = 10;
 
-    // Non-zero lamport entry in the index. Set up first: flushing goes through the cache,
-    // so doing it after the cache setup would conflict with `begin_flush_roots`.
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
-    db.store_for_tests((index_slot, [(&pubkey, &account)].as_slice()));
-    db.add_root_and_flush_write_cache(index_slot);
+    // Non-zero lamport entry in storage at the older slot.
+    let nonzero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+    db.store_for_tests((storage_slot, [(&pubkey, &nonzero_account)].as_slice()));
+    db.add_root_and_flush_write_cache(storage_slot);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
 
-    // Zero lamport entry in the cache. Note: this entry may be older than the slot that was
-    // flushed above which is normally not allowed to be added to the cache. However,
-    // this state is a valid intermediate state when flushing the cache so needs
-    // test coverage
-    let account = AccountSharedData::new(0, 0, &Pubkey::default());
-    db.accounts_cache.store(cache_slot, &pubkey, account);
-    db.accounts_cache.add_root(cache_slot);
-    db.accounts_cache.begin_flush_roots(Some(cache_slot));
+    // Zero lamport entry in the cache at the newer slot.
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    db.accounts_cache.store(cache_slot, &pubkey, zero_account);
 
-    let ancestors = Ancestors::from(vec![cache_slot, index_slot]);
-    assert_eq!(
-        db.is_ancestor_zero_lamport(&pubkey, &ancestors),
-        Some(expected)
-    );
-
-    db.accounts_cache.end_flush_roots();
+    let ancestors = Ancestors::from(vec![cache_slot, storage_slot]);
+    assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
 }
 
 /// loading an account through an older bank must not return

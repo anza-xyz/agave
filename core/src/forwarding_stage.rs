@@ -765,7 +765,7 @@ fn initial_packet_meta_filter(meta: &packet::Meta) -> bool {
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         packet::PacketFlags,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_forwarding() {
-        let (packet_batch_sender, packet_batch_receiver) = unbounded();
+        let (packet_batch_sender, packet_batch_receiver) = bounded(1024);
 
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);

@@ -15,11 +15,16 @@ use {
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Uncompressed {
     pub first_slot: Slot,
     pub num: usize,
+    // `BitVec` has no `StableAbi` impl; sample a non-empty one (see `sample_bit_vec`).
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "std::sync::Arc::new(solana_bloom::bloom::sample_bit_vec(rng))")
+    )]
     pub slots: Arc<BitVec<u8>>,
 }
 
@@ -44,7 +49,7 @@ impl Sanitize for Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Flate2 {
     pub first_slot: Slot,
@@ -198,7 +203,10 @@ impl Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CompressedSlots {
     Flate2(Flate2),
@@ -265,7 +273,15 @@ impl CompressedSlots {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "7fXxq9nG7ywp9LhMiGTJ7MLNtghPo9mz5xQNE74RxWGj",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct EpochSlots {
     pub from: Pubkey,

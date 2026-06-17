@@ -354,7 +354,7 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::BankingTracer,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{VersionedMessage, v1},
@@ -410,11 +410,11 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = unbounded();
-        let (vote_packet_s, vote_packet_r) = unbounded();
+        let (packet_s, packet_r) = bounded(1024);
+        let (vote_packet_s, vote_packet_r) = bounded(1024);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
-        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_r,
             vote_packet_r,
@@ -485,11 +485,11 @@ mod tests {
         }
         let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = unbounded();
-        let (vote_packet_s, vote_packet_r) = unbounded();
+        let (packet_s, packet_r) = bounded(1024);
+        let (vote_packet_s, vote_packet_r) = bounded(1024);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
-        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_r,
             vote_packet_r,

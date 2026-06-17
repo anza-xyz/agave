@@ -16,7 +16,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
-    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_syscalls::create_program_runtime_environment,
@@ -177,8 +177,6 @@ pub fn fill_program_cache_from_accounts(
 }
 
 struct FillFromAccountsCallback<'a>(&'a [(Pubkey, Account)]);
-
-impl InvokeContextCallback for FillFromAccountsCallback<'_> {}
 
 impl TransactionProcessingCallback for FillFromAccountsCallback<'_> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, u64)> {

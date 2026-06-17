@@ -55,7 +55,7 @@ use {
     },
 };
 
-const CRDS_SHARDS_BITS: u32 = 12;
+pub(crate) const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
 const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // Required number of leading zero bits for crds signature to get reported to influx

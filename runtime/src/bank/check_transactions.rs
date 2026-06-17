@@ -6,7 +6,7 @@ use {
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::{FeeFeatures, calculate_fee_details},
     solana_nonce::state::{Data as NonceData, DurableNonce},
-    solana_nonce_account as nonce_account,
+    solana_nonce_account::{self as nonce_account, SystemAccountKind, get_system_account_kind},
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -41,6 +41,7 @@ impl Bank {
             self.max_processing_age()
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
+            false,
             &mut error_counters,
         )
     }
@@ -50,6 +51,7 @@ impl Bank {
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
+        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
         self.check_transactions_with_processed_slots(
@@ -57,6 +59,7 @@ impl Bank {
             lock_results,
             max_age,
             false,
+            strict_nonce_size_check,
             error_counters,
         )
         .0
@@ -68,6 +71,7 @@ impl Bank {
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         collect_processed_slots: bool,
+        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
         let lock_results = self.filter_v1_transactions(sanitized_txs, lock_results);
@@ -76,6 +80,7 @@ impl Bank {
             sanitized_txs,
             &lock_results,
             max_age,
+            strict_nonce_size_check,
             error_counters,
         );
         self.check_status_cache(
@@ -113,6 +118,7 @@ impl Bank {
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
+        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
         let hash_queue = self.blockhash_queue.read().unwrap();
@@ -173,6 +179,7 @@ impl Bank {
                         &hash_queue,
                         error_counters,
                         compute_budget_and_limits,
+                        strict_nonce_size_check,
                     )
                 }
                 Err(e) => Err(e.clone()),
@@ -188,6 +195,7 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         error_counters: &mut TransactionErrorMetrics,
         compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
+        strict_nonce_size_check: bool,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if hash_queue
@@ -196,7 +204,7 @@ impl Bank {
         {
             Ok(CheckedTransactionDetails::new(None, compute_budget))
         } else if let Some((nonce_address, _)) =
-            self.check_nonce_transaction_validity(tx, next_durable_nonce)
+            self.check_nonce_transaction_validity(tx, next_durable_nonce, strict_nonce_size_check)
         {
             Ok(CheckedTransactionDetails::new(
                 Some(nonce_address),
@@ -212,13 +220,15 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
         next_durable_nonce: &DurableNonce,
+        strict_nonce_size_check: bool,
     ) -> Option<(Pubkey, u64)> {
         let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
         if !nonce_is_advanceable {
             return None;
         }
 
-        let (nonce_address, nonce_data) = self.load_message_nonce_data(message)?;
+        let (nonce_address, nonce_data) =
+            self.load_message_nonce_data(message, strict_nonce_size_check)?;
         let previous_lamports_per_signature = nonce_data.get_lamports_per_signature();
 
         Some((nonce_address, previous_lamports_per_signature))
@@ -227,9 +237,15 @@ impl Bank {
     pub(super) fn load_message_nonce_data(
         &self,
         message: &impl SVMMessage,
+        strict_nonce_size_check: bool,
     ) -> Option<(Pubkey, NonceData)> {
         let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
+        if strict_nonce_size_check
+            && get_system_account_kind(&nonce_account) != Some(SystemAccountKind::Nonce)
+        {
+            return None;
+        }
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
 
@@ -351,7 +367,7 @@ mod tests {
         bank.store_account(&nonce_pubkey, &nonce_account);
 
         assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false),
             Some((nonce_pubkey, STALE_LAMPORTS_PER_SIGNATURE)),
         );
     }
@@ -373,7 +389,7 @@ mod tests {
             &nonce_hash,
         ));
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
                 .is_none()
         );
     }
@@ -399,6 +415,7 @@ mod tests {
             bank.check_nonce_transaction_validity(
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
+                false,
             )
             .is_none()
         );
@@ -423,7 +440,7 @@ mod tests {
             &nonce_hash,
         ));
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
                 .is_none()
         );
     }
@@ -444,7 +461,7 @@ mod tests {
             &Hash::default(),
         ));
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
                 .is_none()
         );
     }
@@ -502,7 +519,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false),
             None,
         );
     }

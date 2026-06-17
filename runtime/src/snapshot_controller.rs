@@ -172,7 +172,7 @@ impl SnapshotController {
 mod tests {
     use {
         super::*, crate::accounts_background_service::SnapshotRequestKind,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
         solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
         std::sync::Arc, test_case::test_case,
     };
@@ -227,7 +227,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
 
@@ -287,7 +287,7 @@ mod tests {
             incremental_snapshot_archive_interval,
             ..Default::default()
         };
-        let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, _snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
         assert_eq!(snapshot_controller.is_generating_snapshots(), expected);
@@ -318,7 +318,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
 

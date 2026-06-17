@@ -19,7 +19,7 @@ use {
         ConfirmationProgress, ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks,
         process_bank_0,
     },
-    crossbeam_channel::{bounded, unbounded},
+    crossbeam_channel::bounded,
     itertools::Itertools,
     solana_account::{ReadableAccount, state_traits::StateMut},
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -93,11 +93,10 @@ impl ProcessActiveBanksContext {
         blockstore: Arc<Blockstore>,
         replay_vote_sender: ReplayVoteSender,
     ) -> Self {
-        use crossbeam_channel::unbounded;
-        let (cluster_slots_update_sender, _) = unbounded();
-        let (cost_update_sender, _) = unbounded();
-        let (ancestor_hashes_replay_update_sender, _) = unbounded();
-        let (votor_event_sender, _) = unbounded();
+        let (cluster_slots_update_sender, _) = bounded(1024);
+        let (cost_update_sender, _) = bounded(1024);
+        let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
+        let (votor_event_sender, _) = bounded(1024);
         let migration_status = Arc::new(MigrationStatus::default());
         let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
@@ -535,7 +534,7 @@ fn test_handle_new_root() {
         .into_iter()
         .map(|slot| (slot, Hash::default()))
         .collect();
-    let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+    let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
     let mut tbft_structs = TowerBFTStructures {
         heaviest_subtree_fork_choice,
         duplicate_slots_tracker,
@@ -626,7 +625,7 @@ fn test_handle_new_root_ahead_of_highest_super_majority_root() {
             ForkProgress::new(Hash::default(), None, None, 0, 0, None),
         );
     }
-    let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+    let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
     let mut tbft_structs = TowerBFTStructures {
         heaviest_subtree_fork_choice: HeaviestSubtreeForkChoice::new((root, root_hash)),
         duplicate_slots_tracker: DuplicateSlotsTracker::default(),
@@ -958,8 +957,8 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
     let bank = bank_forks.write().unwrap().insert(child_bank);
 
     let slot = bank.slot();
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-    let (finalization_cert_sender, _finalization_cert_receiver) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
     let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
         bank_forks.clone(),
         blockstore.clone(),
@@ -1084,7 +1083,7 @@ fn test_cmr_mismatch_hard_dead() {
         ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None),
     );
 
-    let (replay_vote_sender, replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
     let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
         bank_forks.clone(),
         blockstore.clone(),
@@ -1146,7 +1145,7 @@ fn test_abandon_invalidates() {
         ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None),
     );
 
-    let (replay_vote_sender, replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
     let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
         bank_forks.clone(),
         blockstore,
@@ -1224,8 +1223,8 @@ where
         blockstore.insert_shreds(shreds, None, false).unwrap();
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let exit = Arc::new(AtomicBool::new(false));
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let (finalization_cert_sender, _finalization_cert_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
         let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
             bank_forks.clone(),
             blockstore.clone(),
@@ -1262,7 +1261,7 @@ where
             block_commitment_cache,
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
         ));
-        let (replay_vote_sender, replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
         let dead_slots = Arc::new(Mutex::new(HashSet::default()));
 
         let slot_status_notifier: Option<SlotStatusNotifier> = Some(Arc::new(RwLock::new(
@@ -2843,7 +2842,7 @@ fn test_update_parent_restart() {
         progress.insert(slot, p);
     }
 
-    let (tx, rx) = crossbeam_channel::unbounded();
+    let (tx, rx) = bounded(1024);
     for slot in [4, 8] {
         let parent_block_id = Hash::new_unique();
         insert_update_parent_slot(
@@ -2858,7 +2857,7 @@ fn test_update_parent_restart() {
     }
 
     let cleared_bank_id = bank_forks.read().unwrap().get(4).unwrap().bank_id();
-    let (replay_vote_sender, replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -2986,10 +2985,10 @@ fn test_update_parent_tower_gated() {
     p.replay_progress.write().unwrap().num_shreds = 5;
     progress.insert(slot, p);
 
-    let (tx, rx) = crossbeam_channel::unbounded();
+    let (tx, rx) = bounded(1024);
     tx.send(UpdateParentSignal { slot }).unwrap();
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3030,10 +3029,10 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
     p.replay_progress.write().unwrap().num_shreds = 5;
     progress.insert(slot, p);
 
-    let (tx, rx) = crossbeam_channel::unbounded();
+    let (tx, rx) = bounded(1024);
     tx.send(UpdateParentSignal { slot }).unwrap();
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3077,10 +3076,10 @@ fn test_update_parent_keeps_hard() {
     p.mark_dead(DeadSlotReason::Hard);
     progress.insert(slot, p);
 
-    let (tx, rx) = crossbeam_channel::unbounded();
+    let (tx, rx) = bounded(1024);
     tx.send(UpdateParentSignal { slot }).unwrap();
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3122,8 +3121,8 @@ fn test_pre_update_soft_dead() {
     p.replay_progress.write().unwrap().num_shreds = 5;
     progress.insert(slot, p);
 
-    let (replay_vote_sender, replay_vote_receiver) = unbounded();
-    let (ancestor_hashes_replay_update_sender, _) = unbounded();
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
     let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
     let migration_status = post_migration_status_for_tests();
@@ -3181,8 +3180,8 @@ fn test_after_update_hard_dead() {
     p.replay_progress.write().unwrap().num_shreds = 5;
     progress.insert(slot, p);
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-    let (ancestor_hashes_replay_update_sender, _) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
     let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
     let migration_status = post_migration_status_for_tests();
@@ -3244,8 +3243,8 @@ fn test_before_update_soft_dead() {
     p.replay_progress.write().unwrap().num_shreds = 5;
     progress.insert(slot, p);
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-    let (ancestor_hashes_replay_update_sender, _) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
     let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
     let migration_status = post_migration_status_for_tests();
@@ -3299,7 +3298,7 @@ fn test_soft_dead_restarts() {
     p.mark_dead(DeadSlotReason::ReplayFailureBeforeUpdateParent);
     progress.insert(slot, p);
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3342,7 +3341,7 @@ fn test_full_soft_dead_hardens() {
     p.mark_dead(DeadSlotReason::ReplayFailureBeforeUpdateParent);
     progress.insert(slot, p);
 
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3727,7 +3726,7 @@ fn test_unconfirmed_duplicate_slots_and_lockouts_for_non_heaviest_fork() {
         || Some(bank5_hash),
     );
     let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-        unbounded();
+        bounded(1024);
     check_slot_agrees_with_cluster(
         5,
         bank_forks.read().unwrap().root(),
@@ -3938,7 +3937,7 @@ fn test_unconfirmed_duplicate_slots_and_lockouts() {
         || Some(bank4_hash),
     );
     let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-        unbounded();
+        bounded(1024);
     check_slot_agrees_with_cluster(
         4,
         bank_forks.read().unwrap().root(),
@@ -4073,7 +4072,7 @@ fn test_dump_then_repair_correct_slots() {
     duplicate_slots_to_repair.insert(1, Hash::new_unique());
     duplicate_slots_to_repair.insert(2, Hash::new_unique());
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
-    let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
+    let (dumped_slots_sender, dumped_slots_receiver) = bounded(1024);
     let should_be_dumped = duplicate_slots_to_repair
         .iter()
         .map(|(&s, &h)| (s, h))
@@ -4176,7 +4175,7 @@ fn setup_vote_then_rollback(
         || Some(our_bank2_hash),
     );
     let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-        unbounded();
+        bounded(1024);
     check_slot_agrees_with_cluster(
         2,
         bank_forks.read().unwrap().root(),
@@ -4196,7 +4195,7 @@ fn setup_vote_then_rollback(
     let mut ancestors = bank_forks.read().unwrap().ancestors();
     let mut descendants = bank_forks.read().unwrap().descendants();
     let old_descendants_of_2 = descendants.get(&2).unwrap().clone();
-    let (dumped_slots_sender, _dumped_slots_receiver) = unbounded();
+    let (dumped_slots_sender, _dumped_slots_receiver) = bounded(1024);
 
     ReplayStage::dump_then_repair_correct_slots(
         &mut duplicate_slots_to_repair,
@@ -4487,7 +4486,7 @@ fn test_gossip_vote_doesnt_affect_fork_choice() {
 
     let vote_pubkey = vote_pubkeys[0];
     let mut unfrozen_gossip_verified_vote_hashes = UnfrozenGossipVerifiedVoteHashes::default();
-    let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
+    let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
 
     // Best slot is 4
     assert_eq!(
@@ -4575,7 +4574,7 @@ fn test_replay_stage_refresh_last_vote() {
         ),
     );
 
-    let (voting_sender, voting_receiver) = unbounded();
+    let (voting_sender, voting_receiver) = bounded(1024);
 
     // Simulate landing a vote for slot 0 landing in slot 1
     let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -5104,7 +5103,7 @@ fn test_replay_stage_last_vote_outside_slot_hashes() {
         )
     });
 
-    let (voting_sender, voting_receiver) = unbounded();
+    let (voting_sender, voting_receiver) = bounded(1024);
     let mut cursor = Cursor::default();
 
     let mut new_bank = send_vote_in_new_bank(
@@ -5272,7 +5271,7 @@ fn test_retransmit_latest_unpropagated_leader_slot() {
     } = vote_simulator;
 
     let poh_recorder = Arc::new(poh_recorder);
-    let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+    let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(1024);
 
     let bank1 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(0).unwrap(),
@@ -5446,7 +5445,7 @@ fn test_maybe_retransmit_unpropagated_slots() {
         ..
     } = vote_simulator;
 
-    let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+    let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(1024);
     let retry_time = Instant::now()
         .checked_sub(Duration::from_millis(RETRANSMIT_BASE_DELAY_MS + 1))
         .unwrap();
@@ -5534,7 +5533,7 @@ fn test_dumped_slot_not_causing_panic() {
     } = vote_simulator;
 
     let poh_recorder = Arc::new(poh_recorder);
-    let (retransmit_slots_sender, _) = unbounded();
+    let (retransmit_slots_sender, _) = bounded(1024);
 
     // Use a bank slot when I was not leader to avoid panic for dumping my own slot
     let slot_to_dump = (1..100)
@@ -5590,7 +5589,7 @@ fn test_dumped_slot_not_causing_panic() {
     let bank_to_dump_bad_hash = Hash::new_unique();
     duplicate_slots_to_repair.insert(slot_to_dump, bank_to_dump_bad_hash);
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
-    let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
+    let (dumped_slots_sender, dumped_slots_receiver) = bounded(1024);
 
     ReplayStage::dump_then_repair_correct_slots(
         &mut duplicate_slots_to_repair,
@@ -5675,7 +5674,7 @@ fn test_dump_own_slots_fails() {
     duplicate_slots_to_repair.insert(1, Hash::new_unique());
     duplicate_slots_to_repair.insert(2, Hash::new_unique());
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
-    let (dumped_slots_sender, _) = unbounded();
+    let (dumped_slots_sender, _) = bounded(1024);
 
     ReplayStage::dump_then_repair_correct_slots(
         &mut duplicate_slots_to_repair,
@@ -6291,7 +6290,7 @@ fn test_skip_leader_slot_for_existing_slot() {
         .unwrap();
 
     let poh_recorder = Arc::new(poh_recorder);
-    let (retransmit_slots_sender, _) = unbounded();
+    let (retransmit_slots_sender, _) = bounded(1024);
     let (banking_tracer, _) = BankingTracer::new(None).unwrap();
     // A vote has not technically been rooted, but it doesn't matter for
     // this test to use true to avoid skipping the leader slot
@@ -6384,7 +6383,7 @@ fn test_mark_slots_duplicate_confirmed() {
         ..
     } = vote_simulator;
 
-    let (ancestor_hashes_replay_update_sender, _) = unbounded();
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
     let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
     let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
     bank_forks.write().unwrap().set_root(1, None, None);
@@ -6503,8 +6502,8 @@ fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         ..
     } = vote_simulator;
 
-    let (ancestor_hashes_replay_update_sender, _) = unbounded();
-    let (sender, receiver) = unbounded();
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
+    let (sender, receiver) = bounded(1024);
     let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
     let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
     bank_forks.write().unwrap().set_root(1, None, None);
