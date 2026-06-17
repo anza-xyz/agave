@@ -625,30 +625,37 @@ impl SystemMonitorService {
     fn linux_report_network_limits(
         current_limits: &[(&'static str, &'static InterestingLimit, i64)],
     ) -> bool {
-        current_limits
-            .iter()
-            .all(|(key, interesting_limit, current_value)| {
-                datapoint_warn!("os-config", (key, *current_value, i64));
-                match interesting_limit {
-                    InterestingLimit::Recommend(recommended_value)
-                        if current_value < recommended_value =>
-                    {
-                        warn!(
-                            "  {key}: recommended={recommended_value}, current={current_value} \
-                             too small"
-                        );
-                        false
-                    }
-                    InterestingLimit::Recommend(recommended_value) => {
-                        info!("  {key}: recommended={recommended_value} current={current_value}");
-                        true
-                    }
-                    InterestingLimit::QueryOnly => {
-                        info!("  {key}: report-only --  current={current_value}");
-                        true
-                    }
+        datapoint_info!(
+            "os-config",
+            ("platform", platform_id(), String),
+            (current_limits[0].0, current_limits[0].2, i64),
+            (current_limits[1].0, current_limits[1].2, i64),
+            (current_limits[2].0, current_limits[2].2, i64),
+            (current_limits[3].0, current_limits[3].2, i64),
+            (current_limits[4].0, current_limits[4].2, i64)
+        );
+
+        current_limits.iter().all(
+            |(key, interesting_limit, current_value)| match interesting_limit {
+                InterestingLimit::Recommend(recommended_value)
+                    if current_value < recommended_value =>
+                {
+                    warn!(
+                        "  {key}: recommended={recommended_value}, current={current_value} too \
+                         small"
+                    );
+                    false
                 }
-            })
+                InterestingLimit::Recommend(recommended_value) => {
+                    info!("  {key}: recommended={recommended_value} current={current_value}");
+                    true
+                }
+                InterestingLimit::QueryOnly => {
+                    info!("  {key}: report-only --  current={current_value}");
+                    true
+                }
+            },
+        )
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -659,7 +666,6 @@ impl SystemMonitorService {
 
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
-        datapoint_info!("os-config", ("platform", platform_id(), String));
         let current_limits = Self::linux_get_current_network_limits();
         Self::linux_report_network_limits(&current_limits)
     }
