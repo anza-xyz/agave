@@ -47,8 +47,8 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
-            AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
-            SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
+            AccountsIndexScanResult, IndexKey, ReclaimsSlotList, RefCount, ScanFilter, SlotList,
+            Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -1995,13 +1995,6 @@ impl AccountsDb {
                     } else {
                         let mut key_set = HashSet::new();
                         key_set.insert(*pubkey);
-                        assert!(
-                            !account_info.is_cached(),
-                            "The Accounts Cache must be flushed first for this account info. \
-                             pubkey: {}, slot: {}",
-                            *pubkey,
-                            *slot
-                        );
                         let count = self
                             .storage
                             .get_account_storage_entry(*slot, account_info.store_id())
@@ -2780,7 +2773,7 @@ impl AccountsDb {
                         // Let's handle the special case - after unref, the result is a single ref zero lamport account.
                         if slot_list.len() == 1 && ref_count == 2 {
                             if let Some((slot_alive, acct_info)) = slot_list.first() {
-                                if acct_info.is_zero_lamport() && !acct_info.is_cached() {
+                                if acct_info.is_zero_lamport() {
                                     self.zero_lamport_single_ref_found(
                                         *slot_alive,
                                         acct_info.offset(),
@@ -5086,7 +5079,6 @@ impl AccountsDb {
 
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
-                debug_assert!(!info.is_cached());
                 let old_slot = accounts.slot(i);
                 let pubkey = accounts.pubkey(i);
                 self.accounts_index.upsert(
@@ -5162,7 +5154,6 @@ impl AccountsDb {
         let update = |start, end| {
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
-                debug_assert!(!info.is_cached());
                 let old_slot = accounts.slot(i);
                 let pubkey = accounts.pubkey(i);
                 self.accounts_index
@@ -5266,8 +5257,6 @@ impl AccountsDb {
         let mut new_shrink_candidates = ShrinkCandidates::default();
         let mut measure = Measure::start("remove");
         for (slot, account_info) in reclaims {
-            // No cached accounts should make it here
-            assert!(!account_info.is_cached());
             reclaimed_offsets
                 .entry(*slot)
                 .or_default()
@@ -5410,7 +5399,7 @@ impl AccountsDb {
                             // Let's handle the special case - after unref, the result is a single ref zero lamport account.
                             if slot_list.len() == 1 && ref_count == 2 {
                                 if let Some((slot_alive, acct_info)) = slot_list.first() {
-                                    if acct_info.is_zero_lamport() && !acct_info.is_cached() {
+                                    if acct_info.is_zero_lamport() {
                                         self.zero_lamport_single_ref_found(
                                             *slot_alive,
                                             acct_info.offset(),
@@ -5932,7 +5921,6 @@ impl AccountsDb {
                     (false, is_single_ref)
                 });
                 if is_single_ref {
-                    debug_assert!(!account_info.is_cached());
                     debug_assert_eq!(account_info.store_id(), storage.id());
                     if storage.insert_zero_lamport_single_ref_account_offset(account_info.offset())
                     {
