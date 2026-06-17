@@ -142,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
             NaiveTime::MIN,
         );
         let logfile = std::fs::File::create(&path)?;
-        info!("Logfile in {}", &path);
+        info!("Logfile in {}", path);
         let mut logfile = std::io::BufWriter::new(logfile);
         let mut sum = 0;
         for batch in receiver {

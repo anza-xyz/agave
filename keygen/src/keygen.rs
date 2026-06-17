@@ -601,12 +601,12 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                 println!(
                     "{}\npubkey: {}\n{}\nSave this seed phrase{} to recover your new \
                      keypair:\n{}\n{}",
-                    &divider,
+                    divider,
                     keypair.pubkey(),
-                    &divider,
+                    divider,
                     passphrase_message,
-                    &phrase,
-                    &divider
+                    phrase,
+                    divider
                 );
             }
         }
@@ -845,13 +845,13 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                             String::from_utf8(vec![b'='; phrase.len()]).unwrap();
                                         println!(
                                             "{}\nFound matching key {}",
-                                            &divider,
+                                            divider,
                                             keypair.pubkey()
                                         );
                                         println!(
                                             "\nSave this seed phrase{} to recover your new \
                                              keypair:\n{}\n{}",
-                                            passphrase_message, phrase, &divider
+                                            passphrase_message, phrase, divider
                                         );
                                     }
                                 }

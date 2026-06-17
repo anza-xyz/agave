@@ -511,7 +511,7 @@ pub fn info(config_file: &str, local_info_only: bool, eval: bool) -> Result<(), 
     if eval {
         println!(
             "SOLANA_INSTALL_ACTIVE_RELEASE={}",
-            &config.active_release_dir().to_str().unwrap_or("")
+            config.active_release_dir().to_str().unwrap_or("")
         );
         let channel = match &config.explicit_release {
             ExplicitRelease::Semver(semver) => semver,

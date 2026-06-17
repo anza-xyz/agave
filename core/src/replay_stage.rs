@@ -1858,7 +1858,7 @@ impl ReplayStage {
                         info!(
                             "Retrying retransmit: latest_leader_slot={} slot={} \
                              retransmit_info={:?}",
-                            latest_leader_slot, slot, &retransmit_info,
+                            latest_leader_slot, slot, retransmit_info,
                         );
                         datapoint_info!(
                             metric_name,
@@ -1871,7 +1871,7 @@ impl ReplayStage {
                     } else {
                         debug!(
                             "Bypass retransmit of slot={} retransmit_info={:?}",
-                            slot, &retransmit_info
+                            slot, retransmit_info
                         );
                     }
                 }

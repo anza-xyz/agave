@@ -159,7 +159,7 @@ impl solana_cli_output::QuietDisplay for AdminRpcContactInfo {}
 
 impl Display for AdminRpcRepairWhitelist {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Repair whitelist: {:?}", &self.whitelist)
+        writeln!(f, "Repair whitelist: {:?}", self.whitelist)
     }
 }
 impl solana_cli_output::VerboseDisplay for AdminRpcRepairWhitelist {}
@@ -611,7 +611,7 @@ impl AdminRpc for AdminRpcImpl {
             .map_err(|err| {
                 error!(
                     "Failed to load staked nodes overrides from {}: {}",
-                    &path, err
+                    path, err
                 );
                 jsonrpc_core::error::Error::internal_error()
             })?
@@ -692,7 +692,7 @@ impl AdminRpc for AdminRpcImpl {
             *post_init.repair_whitelist.write().unwrap() = whitelist;
             warn!(
                 "Repair whitelist set to {:?}",
-                &post_init.repair_whitelist.read().unwrap()
+                post_init.repair_whitelist.read().unwrap()
             );
             Ok(())
         })

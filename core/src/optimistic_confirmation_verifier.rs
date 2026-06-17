@@ -74,7 +74,7 @@ impl OptimisticConfirmationVerifier {
                 ) {
                     error!(
                         "failed to record optimistic slot in blockstore: slot={}: {:?}",
-                        new_optimistic_slot, &e
+                        new_optimistic_slot, e
                     );
                 }
                 datapoint_info!("optimistic_slot", ("slot", new_optimistic_slot, i64),);
