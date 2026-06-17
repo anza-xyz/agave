@@ -500,7 +500,6 @@ impl SubscriptionsTracker {
         }
     }
 
-    #[allow(clippy::collapsible_if)]
     pub fn unsubscribe(&mut self, params: SubscriptionParams, id: SubscriptionId) {
         match &params {
             SubscriptionParams::Logs(params) => {
@@ -520,21 +519,18 @@ impl SubscriptionsTracker {
             }
             _ => {}
         }
-        if params.is_commitment_watcher() {
-            if self.commitment_watchers.remove(&id).is_none() {
+        if params.is_commitment_watcher()
+            && self.commitment_watchers.remove(&id).is_none() {
                 warn!("Subscriptions inconsistency (missing entry in commitment_watchers)");
             }
-        }
-        if params.is_gossip_watcher() {
-            if self.gossip_watchers.remove(&id).is_none() {
+        if params.is_gossip_watcher()
+            && self.gossip_watchers.remove(&id).is_none() {
                 warn!("Subscriptions inconsistency (missing entry in gossip_watchers)");
             }
-        }
-        if params.is_node_progress_watcher() {
-            if self.node_progress_watchers.remove(&params).is_none() {
+        if params.is_node_progress_watcher()
+            && self.node_progress_watchers.remove(&params).is_none() {
                 warn!("Subscriptions inconsistency (missing entry in node_progress_watchers)");
             }
-        }
     }
 
     pub fn by_signature(
@@ -571,7 +567,6 @@ impl fmt::Debug for SubscriptionTokenInner {
 }
 
 impl Drop for SubscriptionTokenInner {
-    #[allow(clippy::collapsible_if)]
     fn drop(&mut self) {
         match self.control.subscriptions.entry(self.params.clone()) {
             DashEntry::Vacant(_) => {
