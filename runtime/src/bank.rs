@@ -1486,11 +1486,9 @@ impl Bank {
         };
 
         let (_, ancestors_time_us) = measure_us!({
-            let mut ancestors = Vec::with_capacity(1 + new.parents().len());
+            let mut ancestors = Vec::with_capacity(parent.ancestors.len() + 1);
             ancestors.push(new.slot());
-            new.parents().iter().for_each(|p| {
-                ancestors.push(p.slot());
-            });
+            ancestors.extend(new.parents_iter().map(|parent| parent.slot()));
             new.ancestors = Ancestors::from(ancestors);
         });
 
@@ -2291,17 +2289,21 @@ impl Bank {
     }
 
     pub fn status_cache_ancestors(&self) -> Vec<u64> {
-        let mut roots = self.status_cache.read().unwrap().roots().clone();
-        let min = roots.iter().min().cloned().unwrap_or(0);
-        for ancestor in self.ancestors.keys() {
-            if ancestor >= min {
-                roots.insert(ancestor);
+        let (min, mut ancestors) = {
+            let status_cache = self.status_cache.read().unwrap();
+            let roots = status_cache.roots();
+            let mut ancestors = Vec::with_capacity(roots.len() + self.ancestors.len());
+            let mut min = Slot::MAX;
+            for root in roots {
+                ancestors.push(*root);
+                min = min.min(*root);
             }
-        }
+            (if roots.is_empty() { 0 } else { min }, ancestors)
+        };
 
-        let mut ancestors: Vec<_> = roots.into_iter().collect();
-        #[expect(clippy::stable_sort_primitive)]
-        ancestors.sort();
+        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
+        ancestors.sort_unstable();
+        ancestors.dedup();
         ancestors
     }
 
@@ -3041,8 +3043,9 @@ impl Bank {
         self.freeze();
 
         //this bank and all its parents are now on the rooted path
-        let mut roots = vec![self.slot()];
-        roots.append(&mut self.parents().iter().map(|p| p.slot()).collect());
+        let mut roots = Vec::with_capacity(self.ancestors.len());
+        roots.push(self.slot());
+        roots.extend(self.parents_iter().map(|parent| parent.slot()));
 
         let mut total_index_us = 0;
         let mut total_cache_us = 0;
@@ -3059,9 +3062,10 @@ impl Bank {
         *self.rc.parent.write().unwrap() = None;
 
         let mut squash_cache_time = Measure::start("squash_cache_time");
-        roots
-            .iter()
-            .for_each(|slot| self.status_cache.write().unwrap().add_root(*slot));
+        self.status_cache
+            .write()
+            .unwrap()
+            .add_roots(roots.iter().copied());
         squash_cache_time.stop();
 
         SquashTiming {
@@ -3379,13 +3383,14 @@ impl Bank {
     pub fn confirmed_last_blockhash(&self) -> Hash {
         const NUM_BLOCKHASH_CONFIRMATIONS: usize = 3;
 
-        let parents = self.parents();
-        if parents.is_empty() {
-            self.last_blockhash()
-        } else {
-            let index = NUM_BLOCKHASH_CONFIRMATIONS.min(parents.len() - 1);
-            parents[index].last_blockhash()
+        let mut last_parent = None;
+        for (index, parent) in self.parents_iter().enumerate() {
+            if index == NUM_BLOCKHASH_CONFIRMATIONS {
+                return parent.last_blockhash();
+            }
+            last_parent = Some(parent);
         }
+        last_parent.map_or_else(|| self.last_blockhash(), |parent| parent.last_blockhash())
     }
 
     /// Forget all signatures. Useful for benchmarking.
@@ -4598,19 +4603,23 @@ impl Bank {
 
     /// Compute all the parents of the bank in order
     pub fn parents(&self) -> Vec<Arc<Bank>> {
-        let mut parents = vec![];
+        self.parents_iter().collect()
+    }
+
+    pub(crate) fn parents_iter(&self) -> impl Iterator<Item = Arc<Bank>> + '_ {
         let mut bank = self.parent();
-        while let Some(parent) = bank {
-            parents.push(parent.clone());
+        core::iter::from_fn(move || {
+            let parent = bank.take()?;
             bank = parent.parent();
-        }
-        parents
+            Some(parent)
+        })
     }
 
     /// Compute all the parents of the bank including this bank itself
     pub fn parents_inclusive(self: Arc<Self>) -> Vec<Arc<Bank>> {
-        let mut parents = self.parents();
-        parents.insert(0, self);
+        let mut parents = Vec::with_capacity(self.ancestors.len());
+        parents.push(Arc::clone(&self));
+        parents.extend(self.parents_iter());
         parents
     }
 

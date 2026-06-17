@@ -6,6 +6,7 @@ use {
     ahash::{HashMap, HashMapExt as _},
     log::*,
     serde::Serialize,
+    smallvec::SmallVec,
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
@@ -172,16 +173,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         key: K,
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
-        let keys: Vec<_> = self.cache.keys().copied().collect();
-
-        for blockhash in keys.iter() {
+        self.cache.keys().find_map(|blockhash| {
             trace!("get_status_any_blockhash: trying {blockhash}");
-            let status = self.get_status(&key, blockhash, ancestors);
-            if status.is_some() {
-                return status;
-            }
-        }
-        None
+            self.get_status(&key, blockhash, ancestors)
+        })
     }
 
     /// Add a known root fork.
@@ -190,6 +185,11 @@ impl<T: Serialize + Clone> StatusCache<T> {
     /// keys are cleared.
     pub fn add_root(&mut self, fork: Slot) {
         self.roots.insert(fork);
+        self.purge_roots();
+    }
+
+    pub fn add_roots<I: IntoIterator<Item = Slot>>(&mut self, forks: I) {
+        self.roots.extend(forks);
         self.purge_roots();
     }
 
@@ -239,12 +239,20 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        while self.roots.len() > self.max_root_entries() {
-            if let Some(min) = self.roots.iter().min().cloned() {
-                self.roots.remove(&min);
-                self.cache.retain(|_, (fork, _, _)| *fork > min);
-                self.slot_deltas.retain(|slot, _| *slot > min);
-            }
+        let max_root_entries = self.max_root_entries();
+        if self.roots.len() > max_root_entries {
+            let num_roots_to_purge = self.roots.len() - max_root_entries;
+            let mut roots = self
+                .roots
+                .iter()
+                .copied()
+                .collect::<SmallVec<[Slot; 0x200]>>();
+            let (_, cutoff, _) = roots.select_nth_unstable(num_roots_to_purge - 1);
+            let cutoff = *cutoff;
+
+            self.roots.retain(|root| *root > cutoff);
+            self.cache.retain(|_, (fork, _, _)| *fork > cutoff);
+            self.slot_deltas.retain(|slot, _| *slot > cutoff);
         }
     }
 
