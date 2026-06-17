@@ -284,29 +284,35 @@ impl<T> HashSetFreelist<T> {
         // Else, check if pushing the container would exceed the max capacity of the freelist.
         // If so, also do not put it back into the freelist.
         let capacity = container.capacity();
-        if capacity != 0
-            && self.max_capacity.is_none_or(|max_capacity| {
-                // only check the `total_capacity` atomic if a max capacity is set
-                if let Some(new_total_capacity) = self
-                    .total_capacity
-                    .load(Ordering::Relaxed)
+        if capacity == 0 {
+            return;
+        }
+
+        // try to reserve the new total capacity
+        let max_capacity = self.max_capacity.unwrap_or(usize::MAX);
+        let reserve_result = self.total_capacity.try_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |total_capacity| {
+                total_capacity
                     .checked_add(capacity)
-                {
-                    new_total_capacity <= max_capacity
-                } else {
-                    // if the total capacity would overflow, do not push
-                    false
-                }
-            })
-        {
-            container.clear();
-            let result = self.list.push(container);
-            if result.is_ok() {
-                // pushing the container may fail if the freelist is full,
-                // so only update the stats once we know push succeeded
-                self.num_containers.fetch_add(1, Ordering::Relaxed);
-                self.total_capacity.fetch_add(capacity, Ordering::Relaxed);
-            }
+                    .filter(|&new_total_capacity| new_total_capacity <= max_capacity)
+            },
+        );
+        if reserve_result.is_err() {
+            // the total capacity would overflow, do not push
+            return;
+        }
+
+        container.clear();
+        let push_result = self.list.push(container);
+        if push_result.is_ok() {
+            // pushing the container may fail if the freelist is full,
+            // so only update the stats once we know push succeeded
+            self.num_containers.fetch_add(1, Ordering::Relaxed);
+        } else {
+            // if pushing the container failed, undo the capacity update from above
+            self.total_capacity.fetch_sub(capacity, Ordering::Relaxed);
         }
     }
 
@@ -328,7 +334,7 @@ impl<T> HashSetFreelist<T> {
         FreelistStats {
             num_containers: self.num_containers.load(Ordering::Relaxed),
             capacity_elems,
-            capacity_bytes: capacity_elems * size_of::<T>(),
+            capacity_bytes: capacity_elems.saturating_mul(size_of::<T>()),
         }
     }
 }
@@ -368,6 +374,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
+        ahash::HashSetExt as _,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             accounts_index::{ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, IndexLimit},
@@ -382,7 +389,12 @@ mod tests {
         solana_pubkey::{self as pubkey, Pubkey},
         solana_rent::Rent,
         solana_signer::Signer as _,
-        std::{cmp, iter, str::FromStr as _, sync::Arc},
+        std::{
+            cmp, iter,
+            str::FromStr as _,
+            sync::{Arc, Barrier},
+            thread,
+        },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -848,7 +860,6 @@ mod tests {
     /// Ensure freelist respects max size.
     #[test]
     fn test_freelist_max_capacity() {
-        use ahash::HashSetExt as _;
         type Container = ahash::HashSet<u64>;
 
         // This test uses a hashbrown container, which has some special power-of-two sizing plus
@@ -889,5 +900,40 @@ mod tests {
             stats2.capacity_bytes,
             max_bytes + container_capacity * size_of::<u64>(),
         );
+    }
+
+    /// Ensure concurrent pushes do not exceed the freelist's max capacity.
+    #[test]
+    fn test_freelist_concurrent_push() {
+        // This test uses a hashbrown container, which has some special power-of-two sizing plus
+        // a buffer.  So create the container first, and use that to derive the max capacity.
+        let container = ahash::HashSet::<u64>::with_capacity(77);
+
+        let num_threads = 16;
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let max_capacity = container.capacity();
+        let max_bytes = max_capacity * size_of::<u64>();
+        let freelist = Arc::new(HashSetFreelist::new(num_threads, Some(max_bytes)));
+
+        let threads: Vec<_> = iter::repeat_with(|| {
+            let container = container.clone();
+            let freelist = Arc::clone(&freelist);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                freelist.try_push(container);
+            })
+        })
+        .take(num_threads)
+        .collect();
+
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let stats = freelist.stats();
+        assert_eq!(stats.num_containers, 1);
+        assert_eq!(stats.capacity_elems, max_capacity);
+        assert_eq!(stats.capacity_bytes, max_bytes);
     }
 }
