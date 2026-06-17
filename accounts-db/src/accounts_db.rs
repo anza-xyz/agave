@@ -5663,21 +5663,21 @@ impl AccountsDb {
         let write_accounts_us = write_accounts_time.end_as_us();
 
         // Update the secondary index
-        let update_index_time = Measure::start("update_index");
+        let update_secondary_index_time = Measure::start("update_secondary_index");
         self.update_secondary_index_cached_accounts(
             &accounts,
             &store_account,
             update_index_thread_selection,
         );
-        let update_index_us = update_index_time.end_as_us();
+        let update_secondary_index_us = update_secondary_index_time.end_as_us();
 
         let stats = &self.store_accounts_unfrozen_stats;
         stats
             .write_to_cache_us
             .fetch_add(write_accounts_us, Ordering::Relaxed);
         stats
-            .update_index_us
-            .fetch_add(update_index_us, Ordering::Relaxed);
+            .update_secondary_index_us
+            .fetch_add(update_secondary_index_us, Ordering::Relaxed);
         stats
             .num_initial_accounts_to_store
             .fetch_add(write_stats.num_initial_accounts_to_store, Ordering::Relaxed);
