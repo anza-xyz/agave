@@ -87,21 +87,6 @@ async fn send_data_async(
     handle_send_result(result, connection)
 }
 
-async fn send_data_batch_async(
-    connection: Arc<NonblockingQuicConnection>,
-    buffers: Vec<Vec<u8>>,
-) -> TransportResult<()> {
-    let result = timeout(
-        u32::try_from(buffers.len())
-            .map(|size| SEND_DATA_TIMEOUT.saturating_mul(size))
-            .unwrap_or(Duration::MAX),
-        connection.send_data_batch(&buffers),
-    )
-    .await;
-    ASYNC_TASK_SEMAPHORE.release();
-    handle_send_result(result, connection)
-}
-
 /// Check the send result and update stats if timedout. Returns the checked result.
 fn handle_send_result(
     result: Result<Result<(), TransportError>, tokio::time::error::Elapsed>,
@@ -155,23 +140,11 @@ impl ClientConnection for QuicClientConnection {
         self.inner.server_addr()
     }
 
-    fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
-        RUNTIME.block_on(self.inner.send_data_batch(buffers))?;
-        Ok(())
-    }
-
     fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
         let _lock = ASYNC_TASK_SEMAPHORE.acquire();
         let inner = self.inner.clone();
 
         let _handle = RUNTIME.spawn(send_data_async(inner, data));
-        Ok(())
-    }
-
-    fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
-        let _lock = ASYNC_TASK_SEMAPHORE.acquire();
-        let inner = self.inner.clone();
-        let _handle = RUNTIME.spawn(send_data_batch_async(inner, buffers));
         Ok(())
     }
 

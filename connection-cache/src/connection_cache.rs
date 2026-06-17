@@ -664,12 +664,6 @@ mod tests {
         fn send_data_async(&self, _data: Arc<Vec<u8>>) -> TransportResult<()> {
             unimplemented!()
         }
-        fn send_data_batch(&self, _buffers: &[Vec<u8>]) -> TransportResult<()> {
-            unimplemented!()
-        }
-        fn send_data_batch_async(&self, _buffers: Vec<Vec<u8>>) -> TransportResult<()> {
-            unimplemented!()
-        }
     }
 
     #[async_trait]
@@ -678,9 +672,6 @@ mod tests {
             &self.addr
         }
         async fn send_data(&self, _data: &[u8]) -> TransportResult<()> {
-            unimplemented!()
-        }
-        async fn send_data_batch(&self, _buffers: &[Vec<u8>]) -> TransportResult<()> {
             unimplemented!()
         }
     }

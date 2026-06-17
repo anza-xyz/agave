@@ -18,8 +18,4 @@ impl ClientConnection for UdpClientConnection {
     async fn send_data(&self, _buffer: &[u8]) -> TransportResult<()> {
         unreachable!()
     }
-
-    async fn send_data_batch(&self, _buffers: &[Vec<u8>]) -> TransportResult<()> {
-        unreachable!()
-    }
 }

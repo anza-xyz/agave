@@ -1,7 +1,6 @@
 pub use crate::nonblocking::tpu_client::TpuSenderError;
 use {
     crate::nonblocking::tpu_client::TpuClient as NonblockingTpuClient,
-    rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_client_traits::AsyncClient,
     solana_clock::Slot,
     solana_connection_cache::{
@@ -91,13 +90,6 @@ where
         self.invoke(self.tpu_client.send_wire_transaction(wire_transaction))
     }
 
-    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// size
-    /// Returns the last error if all sends fail
-    pub fn try_send_transaction(&self, transaction: &VersionedTransaction) -> TransportResult<()> {
-        self.invoke(self.tpu_client.try_send_transaction(transaction))
-    }
-
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout.
     ///
     /// Returns an error if:
@@ -137,38 +129,6 @@ where
     }
 
     /// Serialize and send a batch of transactions to the current and upcoming leader TPUs according
-    /// to fanout size
-    /// Returns the last error if all sends fail
-    pub fn try_send_transaction_batch(
-        &self,
-        transactions: &[VersionedTransaction],
-    ) -> TransportResult<()> {
-        let wire_transactions = transactions
-            .into_par_iter()
-            .map(|tx| wincode::serialize(&tx).expect("serialize Transaction in send_batch"))
-            .collect::<Vec<_>>();
-        self.invoke(
-            self.tpu_client
-                .try_send_wire_transaction_batch(wire_transactions),
-        )
-    }
-
-    /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
-    /// Returns the last error if all sends fail
-    pub fn try_send_wire_transaction(&self, wire_transaction: Vec<u8>) -> TransportResult<()> {
-        self.invoke(self.tpu_client.try_send_wire_transaction(wire_transaction))
-    }
-
-    pub fn try_send_wire_transaction_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> TransportResult<()> {
-        self.invoke(
-            self.tpu_client
-                .try_send_wire_transaction_batch(wire_transactions),
-        )
-    }
-
     /// Create a new client that disconnects when dropped
     pub fn new(
         name: &'static str,
@@ -255,18 +215,6 @@ where
             wincode::serialize(&transaction).expect("serialize Transaction in send_batch");
         self.send_wire_transaction(wire_transaction);
         Ok(transaction.signatures[0])
-    }
-
-    fn async_send_versioned_transaction_batch(
-        &self,
-        batch: Vec<VersionedTransaction>,
-    ) -> TransportResult<()> {
-        let buffers = batch
-            .into_par_iter()
-            .map(|tx| wincode::serialize(&tx).expect("serialize Transaction in send_batch"))
-            .collect::<Vec<_>>();
-        self.try_send_wire_transaction_batch(buffers)?;
-        Ok(())
     }
 }
 

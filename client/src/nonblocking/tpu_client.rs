@@ -10,8 +10,8 @@ use {
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::signers::Signers,
     solana_tpu_client::nonblocking::tpu_client::{Result, TpuClient as BackendTpuClient},
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_transaction_error::{TransactionError, TransportResult},
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     std::sync::Arc,
 };
 
@@ -41,39 +41,6 @@ where
     pub async fn send_wire_transaction(&self, wire_transaction: Vec<u8>) -> bool {
         self.tpu_client
             .send_wire_transaction(wire_transaction)
-            .await
-    }
-
-    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// size
-    /// Returns the last error if all sends fail
-    pub async fn try_send_transaction(
-        &self,
-        transaction: &VersionedTransaction,
-    ) -> TransportResult<()> {
-        self.tpu_client.try_send_transaction(transaction).await
-    }
-
-    /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
-    /// Returns the last error if all sends fail
-    pub async fn try_send_wire_transaction(
-        &self,
-        wire_transaction: Vec<u8>,
-    ) -> TransportResult<()> {
-        self.tpu_client
-            .try_send_wire_transaction(wire_transaction)
-            .await
-    }
-
-    /// Send a batch of wire transactions to the current and upcoming leader TPUs according to
-    /// fanout size
-    /// Returns the last error if all sends fail
-    pub async fn try_send_wire_transaction_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> TransportResult<()> {
-        self.tpu_client
-            .try_send_wire_transaction_batch(wire_transactions)
             .await
     }
 }

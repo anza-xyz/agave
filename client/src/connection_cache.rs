@@ -192,8 +192,6 @@ impl ClientConnection for BlockingClientConnection {
     dispatch!(fn server_addr(&self) -> &SocketAddr);
     dispatch!(fn send_data(&self, buffer: &[u8]) -> TransportResult<()>);
     dispatch!(fn send_data_async(&self, buffer: Arc<Vec<u8>>) -> TransportResult<()>);
-    dispatch!(fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()>);
-    dispatch!(fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()>);
 }
 
 #[async_trait::async_trait]
@@ -206,13 +204,6 @@ impl solana_connection_cache::nonblocking::client_connection::ClientConnection
         match self {
             Self::Quic(cache) => Ok(cache.send_data(buffer).await?),
             Self::Udp(cache) => Ok(cache.send_data(buffer).await?),
-        }
-    }
-
-    async fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
-        match self {
-            Self::Quic(cache) => Ok(cache.send_data_batch(buffers).await?),
-            Self::Udp(cache) => Ok(cache.send_data_batch(buffers).await?),
         }
     }
 }

@@ -39,8 +39,4 @@ pub trait ClientConnection: Sync + Send {
     fn send_data(&self, buffer: &[u8]) -> TransportResult<()>;
 
     fn send_data_async(&self, buffer: Arc<Vec<u8>>) -> TransportResult<()>;
-
-    fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()>;
-
-    fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()>;
 }

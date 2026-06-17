@@ -3,7 +3,6 @@
 
 use {
     solana_connection_cache::client_connection::ClientConnection,
-    solana_streamer::sendmmsg::batch_send,
     solana_transaction_error::TransportResult,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -33,18 +32,6 @@ impl ClientConnection for UdpClientConnection {
     fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
         self.socket.send_to(data.as_ref(), self.addr)?;
         Ok(())
-    }
-
-    fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
-        let addr = self.server_addr();
-        let pkts = buffers.iter().map(|bytes| (bytes, addr));
-        Ok(batch_send(&self.socket, pkts)?)
-    }
-
-    fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
-        let addr = self.server_addr();
-        let pkts = buffers.iter().map(|bytes| (bytes, addr));
-        Ok(batch_send(&self.socket, pkts)?)
     }
 
     fn send_data(&self, buffer: &[u8]) -> TransportResult<()> {
