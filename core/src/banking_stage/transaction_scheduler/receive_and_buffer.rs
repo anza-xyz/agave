@@ -275,6 +275,7 @@ impl TransactionViewReceiveAndBuffer {
                         &transactions,
                         &lock_results[..transactions.len()],
                         working_bank.max_processing_age(),
+                        true,
                         &mut error_counters,
                     )
                 };
@@ -548,7 +549,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
@@ -657,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_disconnected_channel() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
@@ -670,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_no_hold() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -720,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_discard() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -773,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_invalid_transaction_format() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
@@ -817,7 +818,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_invalid_blockhash() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
@@ -860,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_simple_transfer_unfunded_fee_payer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -908,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_failed_alt_resolve() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -971,7 +972,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_simple_transfer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -1019,7 +1020,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_filters_fee_payer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer_with_filter_keys(
@@ -1049,7 +1050,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_filters_account_key() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let filtered_key = Pubkey::new_unique();
         let (mut receive_and_buffer, mut container) =
@@ -1080,7 +1081,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_does_not_filter_unmatched_keys() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer_with_filter_keys(
@@ -1110,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_overfull() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -1189,7 +1190,7 @@ mod tests {
             .unwrap()
         }
 
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());

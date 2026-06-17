@@ -45,6 +45,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         no_poh_speed_test: config.no_poh_speed_test,
         no_os_memory_stats_reporting: config.no_os_memory_stats_reporting,
         no_os_network_stats_reporting: config.no_os_network_stats_reporting,
+        xdp_network_config_report: config.xdp_network_config_report.clone(),
         no_os_cpu_stats_reporting: config.no_os_cpu_stats_reporting,
         no_os_disk_stats_reporting: config.no_os_disk_stats_reporting,
         enforce_ulimit_nofile: config.enforce_ulimit_nofile,

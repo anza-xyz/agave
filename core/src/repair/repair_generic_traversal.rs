@@ -8,7 +8,7 @@ use {
     },
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMeta},
+    solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMetaRepair},
     std::collections::{HashMap, HashSet},
 };
 
@@ -31,12 +31,11 @@ impl Iterator for GenericTraversal<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.pending.pop();
         if let Some(slot) = next {
-            let children: Vec<_> = self
+            let children = self
                 .tree
                 .children(&(slot, Hash::default()))
                 .unwrap()
-                .map(|(child_slot, _)| *child_slot)
-                .collect();
+                .map(|(child_slot, _)| *child_slot);
             self.pending.extend(children);
         }
         next
@@ -52,7 +51,7 @@ impl Iterator for GenericTraversal<'_> {
 pub fn get_unknown_last_index(
     tree: &HeaviestSubtreeForkChoice,
     blockstore: &Blockstore,
-    slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+    slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
     outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -65,7 +64,7 @@ pub fn get_unknown_last_index(
         }
         let slot_meta = slot_meta_cache
             .entry(slot)
-            .or_insert_with(|| blockstore.meta(slot).unwrap());
+            .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
         if let Some(slot_meta) = slot_meta {
             if slot_meta.last_index.is_none() {
                 let shred_index = blockstore.get_index(slot).unwrap();
@@ -98,7 +97,7 @@ pub fn get_unknown_last_index(
 fn get_unrepaired_path(
     start_slot: Slot,
     blockstore: &Blockstore,
-    slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+    slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
     visited: &mut HashSet<Slot>,
 ) -> Vec<Slot> {
     let mut path = Vec::new();
@@ -106,7 +105,7 @@ fn get_unrepaired_path(
     while visited.insert(slot) {
         let slot_meta = slot_meta_cache
             .entry(slot)
-            .or_insert_with(|| blockstore.meta(slot).unwrap());
+            .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
         if let Some(slot_meta) = slot_meta {
             if !slot_meta.is_full() {
                 path.push(slot);
@@ -127,7 +126,7 @@ pub fn get_closest_completion(
     tree: &HeaviestSubtreeForkChoice,
     blockstore: &Blockstore,
     root_slot: Slot,
-    slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+    slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
     repair_eligibility: &mut RepairEligibility,
@@ -141,7 +140,7 @@ pub fn get_closest_completion(
         }
         let slot_meta = slot_meta_cache
             .entry(slot)
-            .or_insert_with(|| blockstore.meta(slot).unwrap());
+            .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
         if let Some(slot_meta) = slot_meta {
             if slot_meta.is_full() {
                 continue;

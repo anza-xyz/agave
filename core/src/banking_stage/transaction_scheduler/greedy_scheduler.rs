@@ -101,8 +101,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
         let mut schedulable_threads = ThreadSet::any(num_threads);
         for thread_id in 0..num_threads {
-            if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                >= target_cu_per_thread
+            if self.common.consume_work_senders[thread_id].is_full()
+                || self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
+                    >= target_cu_per_thread
             {
                 schedulable_threads.remove(thread_id);
             }
@@ -203,9 +204,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
                     // if there are no more schedulable threads, stop scheduling.
-                    if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                        + self.common.batches.total_cus()[thread_id]
-                        >= target_cu_per_thread
+                    if self.common.consume_work_senders[thread_id].is_full()
+                        || self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
+                            + self.common.batches.total_cus()[thread_id]
+                            >= target_cu_per_thread
                     {
                         schedulable_threads.remove(thread_id);
                         if schedulable_threads.is_empty() {
@@ -292,7 +294,7 @@ mod test {
             scheduler_messages::{MaxAge, TransactionId},
             transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
@@ -316,8 +318,8 @@ mod test {
         Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
-            (0..num_threads).map(|_| unbounded()).unzip();
-        let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
+            (0..num_threads).map(|_| bounded(1024)).unzip();
+        let (finished_consume_work_sender, finished_consume_work_receiver) = bounded(1024);
         let scheduler =
             GreedyScheduler::new(consume_work_senders, finished_consume_work_receiver, config);
         (

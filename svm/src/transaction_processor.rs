@@ -35,7 +35,7 @@ use {
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
     },
-    solana_nonce_account::verify_nonce_account,
+    solana_nonce_account::{SystemAccountKind, get_system_account_kind, verify_nonce_account},
     solana_program_runtime::{
         execution_budget::{
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
@@ -47,12 +47,13 @@ use {
             ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+        program_metrics::ProgramStatistics,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::LogCollector,
     solana_svm_measure::{measure::Measure, measure_us},
@@ -140,6 +141,10 @@ pub struct TransactionProcessingConfig<'a> {
     /// failing transactions to be committed. If both flags are set then any
     /// failing transaction will cause all transactions to be aborted.
     pub all_or_nothing: bool,
+    /// Strictly require durable nonce accounts to have the canonical nonce account size.
+    ///
+    /// This is a leader-side filtering policy. It must not be enabled for replay.
+    pub strict_nonce_size_check: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -391,7 +396,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     /// Main entrypoint to the SVM.
-    pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
+    pub fn load_and_execute_sanitized_transactions<
+        CB: TransactionProcessingCallback + InvokeContextCallback,
+    >(
         &self,
         callbacks: &CB,
         sanitized_txs: &[impl SVMTransaction],
@@ -468,6 +475,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         environment.blockhash_lamports_per_signature,
                         &environment.rent,
                         environment.feature_set.relax_post_exec_min_balance_check,
+                        config.strict_nonce_size_check,
                         &mut error_metrics,
                     )
                 }));
@@ -507,7 +515,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         measure_us!(filter_executable_program_accounts(
                             &account_loader,
                             &program_cache_for_tx_batch,
-                            tx,
+                            tx.account_keys().iter(),
                             config.check_program_deployment_slot,
                         ));
                     execute_timings.saturating_add_in_place(
@@ -567,6 +575,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             account_loader.update_accounts_for_successful_tx(
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
+                                &executed_tx.loaded_transaction.touched_flags,
                                 self.slot,
                             );
                             // Also update local program cache with modifications made by the
@@ -672,6 +681,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         next_lamports_per_signature: u64,
         rent: &Rent,
         relax_post_exec_min_balance_check: bool,
+        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
@@ -690,6 +700,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 nonce_address,
                 &next_durable_nonce,
                 next_lamports_per_signature,
+                strict_nonce_size_check,
                 error_counters,
             )?)
         } else {
@@ -769,6 +780,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_address: &Pubkey,
         next_durable_nonce: &DurableNonce,
         next_lamports_per_signature: u64,
+        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<NonceInfo> {
         // When SIMD83 is enabled, if the nonce has been used in this batch already, we must drop
@@ -784,6 +796,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
         };
+
+        if strict_nonce_size_check
+            && get_system_account_kind(&nonce_account) != Some(SystemAccountKind::Nonce)
+        {
+            error_counters.blockhash_not_found += 1;
+            return Err(TransactionError::BlockhashNotFound);
+        }
 
         // This function verifies:
         // * Nonce account owner is SystemProgram
@@ -893,9 +912,65 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
+    /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().
+    pub fn prepare_one_program_for_upcoming_feature_set<CB: TransactionProcessingCallback>(
+        &self,
+        account_loader: &CB,
+        check_program_deployment_slot: bool,
+        upcoming_environment: &ProgramRuntimeEnvironment,
+        key: &Pubkey,
+        stats_of_enqueued_program: &ProgramStatistics,
+    ) {
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        let mut missing_programs = filter_executable_program_accounts(
+            account_loader,
+            &program_cache_for_tx_batch,
+            std::iter::once(key),
+            check_program_deployment_slot,
+        );
+        if missing_programs.is_empty() {
+            // Program account was closed
+            return;
+        }
+        let program_to_load = {
+            let program_cache_guard = self.global_program_cache.read().unwrap();
+            program_cache_guard.extract(
+                &mut missing_programs,
+                &mut program_cache_for_tx_batch,
+                upcoming_environment,
+                false, // increment_usage_counter
+                false, // count_hits_and_misses
+            )
+            // Unlock again because load_program_with_pubkey() might take a while.
+        };
+        // Maybe the enqueued program was already loaded and can be skipped.
+        if let Some(key) = program_to_load {
+            // Load, verify and compile one program.
+            let (recompiled, last_modification_slot) = load_program_with_pubkey(
+                account_loader,
+                upcoming_environment,
+                &key,
+                self.slot,
+                &mut ExecuteTimings::default(),
+            )
+            .expect("called load_program_with_pubkey() with nonexistent account");
+            recompiled.stats.merge_from(stats_of_enqueued_program);
+            // Lock the global cache as writable this time.
+            let mut program_cache_guard = self.global_program_cache.write().unwrap();
+            // Submit our last completed loading task.
+            program_cache_guard.finish_cooperative_loading_task(
+                upcoming_environment,
+                self.slot,
+                key,
+                last_modification_slot,
+                recompiled,
+            );
+        }
+    }
+
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
-    fn execute_loaded_transaction<CB: TransactionProcessingCallback>(
+    fn execute_loaded_transaction<CB: InvokeContextCallback>(
         &self,
         callback: &CB,
         tx: &impl SVMTransaction,
@@ -1034,9 +1109,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let ExecutionRecord {
             accounts,
             return_data,
-            touched_account_count,
+            mut touched_flags,
             accounts_resize_delta,
         } = execution_record;
+
+        // The fee payer (account index 0) is debited during loading, outside the
+        // VM, so it carries no VM touch flag but must still be written back.
+        if let Some(fee_payer_touched) = touched_flags.first_mut() {
+            *fee_payer_touched = true;
+        }
+
+        // changed_account_count reflects every account that will be written back,
+        // including the fee payer marked above.
+        let touched_account_count = touched_flags.iter().filter(|touched| **touched).count();
 
         if post_account_state_info_result.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
@@ -1063,8 +1148,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap_or_else(|err| (Err(err), None));
 
         loaded_transaction.accounts = accounts;
+        loaded_transaction.touched_flags = touched_flags;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
-        execute_timings.details.changed_account_count += touched_account_count;
+        execute_timings.details.changed_account_count += touched_account_count as u64;
 
         let return_data = if config.recording_config.enable_return_data_recording
             && !return_data.data.is_empty()
@@ -1581,6 +1667,7 @@ mod tests {
 
         let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
+            touched_flags: Box::default(),
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -1675,6 +1762,7 @@ mod tests {
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
             ],
+            touched_flags: Box::default(),
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -2080,6 +2168,7 @@ mod tests {
                 lamports_per_signature,
                 &rent,
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2132,6 +2221,7 @@ mod tests {
                 lamports_per_signature,
                 &Rent::default(),
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2173,6 +2263,7 @@ mod tests {
                 lamports_per_signature,
                 &Rent::default(),
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2218,6 +2309,7 @@ mod tests {
                 lamports_per_signature,
                 &rent,
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2261,6 +2353,7 @@ mod tests {
                 lamports_per_signature,
                 &Rent::default(),
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2355,6 +2448,7 @@ mod tests {
             &nonce_address,
             &next_durable_nonce,
             lamports_per_signature,
+            false,
             &mut error_counters,
         );
 
@@ -2448,6 +2542,7 @@ mod tests {
                 lamports_per_signature,
                 &rent,
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2509,6 +2604,7 @@ mod tests {
                 lamports_per_signature,
                 &rent,
                 mock_bank.feature_set.relax_post_exec_min_balance_check,
+                false,
                 &mut error_counters,
             );
 
@@ -2558,6 +2654,7 @@ mod tests {
             lamports_per_signature,
             &Rent::default(),
             mock_bank.feature_set.relax_post_exec_min_balance_check,
+            false,
             &mut TransactionErrorMetrics::default(),
         )
         .unwrap();

@@ -930,6 +930,7 @@ pub(crate) mod external {
                     &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
                     working_bank.max_processing_age(),
                     true,
+                    true,
                     &mut error_counters,
                 );
             let included_slots = included_slots.expect("requested to collect processed slots");
@@ -1116,7 +1117,7 @@ pub(crate) mod external {
                 handshake::{ClientLogon, client, server::Server},
                 responses_region::{CheckResponsesPtr, ExecutionResponsesPtr},
             },
-            crossbeam_channel::unbounded,
+            crossbeam_channel::bounded,
             solana_account::AccountSharedData,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,
@@ -1333,7 +1334,7 @@ pub(crate) mod external {
 
             let (record_sender, record_receiver) = record_channels(false);
             let recorder = TransactionRecorder::new(record_sender);
-            let (replay_vote_sender, replay_vote_receiver) = unbounded();
+            let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
             let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, None);
             let shared_leader_state = SharedLeaderState::new(0, None, None);
@@ -2817,7 +2818,7 @@ mod tests {
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_clock::Slot,
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
@@ -2887,13 +2888,13 @@ mod tests {
         let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        let (replay_vote_sender, replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
-        let (consume_sender, consume_receiver) = unbounded();
-        let (consumed_sender, consumed_receiver) = unbounded();
+        let (consume_sender, consume_receiver) = bounded(1024);
+        let (consumed_sender, consumed_receiver) = bounded(1024);
         let worker = ConsumeWorker::new(
             0,
             Arc::new(AtomicBool::new(false)),
@@ -3345,6 +3346,7 @@ mod tests {
                 &sanitized_txs,
                 &vec![Ok(()); sanitized_txs.len()],
                 bank.max_processing_age(),
+                true,
                 &mut TransactionErrorMetrics::default(),
             )
             .into_iter()

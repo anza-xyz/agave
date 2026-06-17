@@ -21,7 +21,6 @@ use {
     },
     agave_votor_messages::certificate::Certificate,
     base64::{Engine, prelude::BASE64_STANDARD},
-    bincode::serialize,
     futures::join,
     log::*,
     serde_json::{Value, json},
@@ -57,6 +56,7 @@ use {
         time::{Duration, Instant},
     },
     tokio::time::sleep,
+    wincode::{SchemaWrite, config::DefaultConfig},
 };
 
 /// A client of a remote Solana node.
@@ -5111,9 +5111,9 @@ impl RpcClient {
 
 fn serialize_and_encode<T>(input: &T, encoding: UiTransactionEncoding) -> ClientResult<String>
 where
-    T: serde::ser::Serialize,
+    T: SchemaWrite<DefaultConfig, Src = T>,
 {
-    let serialized = serialize(input)
+    let serialized = wincode::serialize(input)
         .map_err(|e| ClientErrorKind::Custom(format!("Serialization failed: {e}")))?;
     let encoded = match encoding {
         UiTransactionEncoding::Base58 => bs58::encode(serialized).into_string(),

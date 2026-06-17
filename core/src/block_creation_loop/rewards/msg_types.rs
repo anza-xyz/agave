@@ -1,9 +1,6 @@
 use {
-    agave_votor_messages::{
-        consensus_message::VoteMessage,
-        reward_certificate::{
-            BuildRewardCertsRespError, NotarRewardCertificate, SkipRewardCertificate,
-        },
+    agave_votor_messages::reward_certificate::{
+        BuildRewardCertsRespError, NotarRewardCertificate, SkipRewardCertificate,
     },
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
@@ -34,13 +31,6 @@ pub(crate) struct RewardRespSucc {
 pub(crate) struct RewardResponse {
     /// The result of building reward certs for `bank_slot`.
     pub(crate) result: Result<RewardRespSucc, BuildRewardCertsRespError>,
-}
-
-/// Message to add votes to the rewards container.
-#[derive(Debug)]
-pub struct AddVoteMessage {
-    /// List of [`VoteMessage`]s.
-    pub(crate) votes: Vec<VoteMessage>,
 }
 
 /// The request token to be used to receive responses on previously sent requests to build reward certs.

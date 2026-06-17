@@ -1852,6 +1852,7 @@ fn main() {
                         SystemMonitorStatsReportConfig {
                             report_os_memory_stats,
                             report_os_network_stats: false,
+                            xdp_network_config_report: None,
                             report_os_cpu_stats: false,
                             report_os_disk_stats: false,
                         },
@@ -1990,6 +1991,7 @@ fn main() {
                                 SystemMonitorStatsReportConfig {
                                     report_os_memory_stats: true,
                                     report_os_network_stats: false,
+                                    xdp_network_config_report: None,
                                     report_os_cpu_stats: false,
                                     report_os_disk_stats: false,
                                 },

@@ -5,6 +5,7 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
+    bytesize::ByteSize,
     clap::{App, Arg, ArgMatches, values_t},
     solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
@@ -30,7 +31,7 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
+    std::{collections::HashSet, net::SocketAddr, path::PathBuf},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
@@ -864,21 +865,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     )
     .arg(
         Arg::with_name("poh_pinned_cpu_core")
-            .hidden(hidden_unless_forced())
-            .long("experimental-poh-pinned-cpu-core")
+            .long("poh-pinned-cpu-core")
             .takes_value(true)
-            .value_name("CPU_CORE_INDEX")
-            .validator(|s| {
-                let core_index = usize::from_str(&s).map_err(|e| e.to_string())?;
-                let max_index = core_affinity::get_core_ids()
-                    .map(|cids| cids.len() - 1)
-                    .unwrap_or(0);
-                if core_index > max_index {
-                    return Err(format!("core index must be in the range [0, {max_index}]"));
-                }
-                Ok(())
-            })
-            .help("EXPERIMENTAL: Specify which CPU core PoH is pinned to"),
+            .value_name("CPU_ID")
+            .validator(is_parsable::<usize>)
+            .help("Specify which CPU core PoH is pinned to. Defaults to CPU 0 on Linux"),
     )
     .arg(
         Arg::with_name("poh_hashes_per_batch")
@@ -988,14 +979,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_cache_limit_mb")
-            .long("accounts-db-cache-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<u64>)
+        Arg::with_name("accounts_db_write_cache_limit")
+            .long("accounts-db-write-cache-limit")
+            .value_name("BYTES")
+            .validator(is_parsable::<ByteSize>)
             .takes_value(true)
-            .help(
-                "How large the write cache for account data can become. If this is exceeded, the \
-                 cache is flushed more aggressively.",
+            .help("How large the write cache for account data can become, in bytes")
+            .long_help(
+                "How large the write cache for account data can become, in bytes. If this is \
+                 exceeded, the write cache is flushed more aggressively. Accepts SI and IEC \
+                 prefixes, e.g. 17.1GB or 18Gi.",
             ),
     )
     .arg(
@@ -1007,11 +1000,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .max_values(2)
             .multiple(false)
             .require_delimiter(true)
+            .validator(is_parsable::<ByteSize>)
             .help("How large the read cache for account data can become, in bytes")
             .long_help(
                 "How large the read cache for account data can become, in bytes. The values will \
                  be the low and high watermarks for the cache. When the cache exceeds the high \
-                 watermark, entries will be evicted until the size reaches the low watermark.",
+                 watermark, entries will be evicted until the size reaches the low watermark. \
+                 Accepts SI and IEC prefixes, e.g. 8.1GB,8.3GiB. LOW must be <= HIGH.",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1148,17 +1143,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Disables the banking trace"),
     )
     .arg(
-        Arg::with_name("delay_leader_block_for_pending_fork")
+        Arg::with_name("no_delay_leader_block_for_pending_fork")
             .hidden(hidden_unless_forced())
-            .long("delay-leader-block-for-pending-fork")
+            .long("no-delay-leader-block-for-pending-fork")
             .takes_value(false)
             .help(
-                "Delay leader block creation while replaying a block which descends from the \
-                 current fork and has a lower slot than our next leader slot. If we don't delay \
-                 here, our new leader block will be on a different fork from the block we are \
-                 replaying and there is a high chance that the cluster will confirm that block's \
-                 fork rather than our leader block's fork because it was created before we \
-                 started creating ours.",
+                "Disable delaying leader block creation while replaying a block which descends \
+                 from the current fork and has a lower slot than our next leader slot. If we \
+                 don't delay here, our new leader block will be on a different fork from the \
+                 block we are replaying and there is a high chance that the cluster will confirm \
+                 that block's fork rather than our leader block's fork because it was created \
+                 before we started creating ours.",
             ),
     )
     .arg(

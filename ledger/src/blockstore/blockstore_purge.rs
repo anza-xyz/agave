@@ -394,8 +394,11 @@ impl Blockstore {
         }
 
         for slot in from_slot..=to_slot {
-            let (slot_entries, _, _) =
-                self.get_slot_entries_with_shred_info(slot, 0, true /* allow_dead_slots */)?;
+            let Ok((slot_entries, _, _)) =
+                self.get_slot_entries_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+            else {
+                continue;
+            };
             let transactions = slot_entries
                 .into_iter()
                 .flat_map(|entry| entry.transactions);
@@ -466,13 +469,13 @@ pub mod tests {
         crate::{
             blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path_auto_delete,
         },
-        bincode::serialize,
         solana_entry::entry::next_entry_mut,
         solana_hash::Hash,
         solana_message::Message,
         solana_sha256_hasher::hash,
         solana_transaction::Transaction,
         test_case::test_case,
+        wincode::serialize,
     };
 
     fn all_columns_empty_or_greater_than_slot(blockstore: &Blockstore, min_slot: Slot) {

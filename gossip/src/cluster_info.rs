@@ -17,13 +17,13 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute},
+        crds::{CRDS_SHARDS_BITS, Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsFilter, CrdsTimeouts, ProcessPullStats,
+            self, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsFilter, CrdsTimeouts, ProcessPullStats,
             PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -53,6 +53,7 @@ use {
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
+        token_bucket::{KeyedRateLimiter, TokenBucket},
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -121,6 +122,27 @@ pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 4096; // 2^12
 const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
 const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 const GOSSIP_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(1280 / 64);
+// Per-IP scan budget for incoming pull requests; validators are assumed not
+// to share IPs. Mirrors the ping-pong cache capacity.
+const GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY: usize = GOSSIP_PING_CACHE_CAPACITY;
+const GOSSIP_PULL_SCAN_BUDGET_CAPACITY: u64 = 16 * crds_gossip_pull::MIN_NUM_BLOOM_ITEMS as u64;
+const GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC: u64 =
+    4 * crds_gossip_pull::MIN_NUM_BLOOM_ITEMS as u64;
+const GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT: usize = 64;
+
+/// Estimated CRDS shard scan work for a pull request filter.
+#[inline]
+fn pull_request_scan_cost(crds_len: usize, mask_bits: u32, bloom_hash_count: usize) -> u64 {
+    // Extra mask bits still require one full shard scan.
+    let shift = mask_bits.min(CRDS_SHARDS_BITS);
+    let scan_entries = (crds_len >> shift).max(1) as u64;
+
+    let bloom_hash_count = u64::try_from(bloom_hash_count)
+        .unwrap_or(u64::MAX)
+        .max(crds_gossip_pull::KEYS as u64);
+    scan_entries.saturating_mul(bloom_hash_count)
+}
+
 pub const DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS: u64 = 10_000;
 pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
 // Limit number of unique pubkeys in the crds table.
@@ -163,6 +185,7 @@ pub struct ClusterInfo {
     outbound_budget: DataBudget,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
+    pull_request_budget: KeyedRateLimiter<IpAddr>,
     pub(crate) stats: GossipStats,
     local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
     contact_debug_interval: u64, // milliseconds, 0 = disabled
@@ -191,6 +214,15 @@ impl ClusterInfo {
                 GOSSIP_PING_CACHE_RATE_LIMIT_DELAY,
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
+            pull_request_budget: KeyedRateLimiter::new(
+                GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY,
+                TokenBucket::new(
+                    GOSSIP_PULL_SCAN_BUDGET_CAPACITY,
+                    GOSSIP_PULL_SCAN_BUDGET_CAPACITY,
+                    GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC as f64,
+                ),
+                GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT,
+            ),
             stats: GossipStats::default(),
             local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
@@ -1638,6 +1670,24 @@ impl ClusterInfo {
         }
     }
 
+    fn try_consume_pull_request_scan_budget(&self, request: &PullRequest, crds_len: usize) -> bool {
+        let cost = pull_request_scan_cost(
+            crds_len,
+            request.filter.get_mask_bits(),
+            request.filter.bloom_hash_count(),
+        );
+        if self
+            .pull_request_budget
+            .consume_tokens(request.addr.ip(), cost)
+            .is_ok()
+        {
+            true
+        } else {
+            self.stats.pull_request_scan_budget_exhausted.add_relaxed(1);
+            false
+        }
+    }
+
     // Pull requests take an incoming bloom filter of contained entries from a node
     // and tries to send back to them the values it detects are missing.
     fn handle_pull_requests(
@@ -1673,6 +1723,7 @@ impl ClusterInfo {
                         GossipFilterDirection::EgressPullResponse,
                     )
                 },
+                |request, crds_len| self.try_consume_pull_request_scan_budget(request, crds_len),
                 &self.stats,
             )
         };
@@ -2350,7 +2401,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage non-vote transactions
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// Socket for alpenglow consensus logic
-    pub alpenglow: Option<UdpSocket>, // udp read/write
+    pub alpenglow: UdpSocket, // quic read/write
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket, // quic write only
     /// Connection cache endpoint for QUIC-based Alpenglow messages
@@ -2757,7 +2808,7 @@ mod tests {
             assert_eq!(packet.meta().socket_addr(), socket);
             let bytes = wincode::serialize(&pong).unwrap();
             assert_eq!(bytes, bincode::serialize(&pong).unwrap());
-            match packet.deserialize_slice(..).unwrap() {
+            match deserialize_protocol(packet.data(..).unwrap_or_default()).unwrap() {
                 Protocol::PongMessage(pong) => {
                     let pong_bytes = wincode::serialize(&pong).unwrap();
                     assert_eq!(pong_bytes, bincode::serialize(&pong).unwrap());
@@ -2895,9 +2946,7 @@ mod tests {
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
-        if let Some(alpenglow_port) = &node.sockets.alpenglow {
-            check_socket(alpenglow_port, ip, range);
-        }
+        check_socket(&node.sockets.alpenglow, ip, range);
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu_quic, ip, range);
@@ -3279,13 +3328,16 @@ mod tests {
         tower.clear();
         tower.extend(0..=slot);
         let vote = new_vote_transaction(vec![slot]);
+        // `KeyedRateLimiter` is not unwind-safe; this test only checks the panic.
         assert!(
-            panic::catch_unwind(|| cluster_info.push_vote(&tower, vote))
-                .err()
-                .and_then(|a| a
-                    .downcast_ref::<String>()
-                    .map(|s| { s.starts_with("Submitting old vote") }))
-                .unwrap_or_default()
+            panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                cluster_info.push_vote(&tower, vote)
+            }))
+            .err()
+            .and_then(|a| a
+                .downcast_ref::<String>()
+                .map(|s| { s.starts_with("Submitting old vote") }))
+            .unwrap_or_default()
         );
     }
 

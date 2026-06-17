@@ -280,7 +280,7 @@ mod test {
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
         },
         solana_hash::Hash,
-        solana_signer_store::encode_base2,
+        solana_signer_store::{encode_base2, encode_base3},
     };
 
     fn create_bls_keypairs(num_signers: usize) -> Vec<BLSKeypair> {
@@ -463,6 +463,290 @@ mod test {
         assert_eq!(
             check_disjoint(&short_ranks, &fallback_ranks),
             Err(Error::WrongEncoding)
+        );
+    }
+
+    // ----------------------------------------------------------------------------
+    // Adversarial / corruption robustness.
+    //
+    // These tests cover the unit-level core of "a single bad validator corrupting a
+    // BLS certificate" (anza-xyz/alpenglow#474): a tampered certificate must be
+    // rejected and must never report stake it cannot prove a signature for. The
+    // network-level blacklisting test described in that issue builds on top of this
+    // verification contract.
+    // ----------------------------------------------------------------------------
+
+    const STAKE_PER_VALIDATOR: u64 = 100;
+
+    /// A `Block` for `slot` with a fresh, unique block id.
+    fn fresh_block(slot: u64) -> Block {
+        Block {
+            slot,
+            block_id: Hash::new_unique(),
+        }
+    }
+
+    /// Encode a Base2 rank bitmap with the given `ranks` set out of `num_bits`.
+    fn encoded_base2_bitmap(ranks: &[usize], num_bits: usize) -> Vec<u8> {
+        let mut bitmap = BitVec::new();
+        bitmap.resize(num_bits, false);
+        for &rank in ranks {
+            bitmap.set(rank, true);
+        }
+        encode_base2(&bitmap).unwrap()
+    }
+
+    /// Encode a Base3 rank bitmap where `primary` ranks signed the primary vote and
+    /// `fallback` ranks signed the fallback vote. The two sets must be disjoint.
+    fn encoded_base3_bitmap(primary: &[usize], fallback: &[usize], num_bits: usize) -> Vec<u8> {
+        let mut base = BitVec::new();
+        base.resize(num_bits, false);
+        for &rank in primary {
+            base.set(rank, true);
+        }
+        let mut fallback_bits = BitVec::new();
+        fallback_bits.resize(num_bits, false);
+        for &rank in fallback {
+            fallback_bits.set(rank, true);
+        }
+        encode_base3(&base, &fallback_bits).unwrap()
+    }
+
+    /// Uniform `rank_map` over `keypairs`, each with `STAKE_PER_VALIDATOR` stake.
+    fn rank_map(
+        keypairs: &[BLSKeypair],
+    ) -> impl FnMut(usize) -> Option<(u64, PopVerified<BlsPubkeyAffine>)> + '_ {
+        move |rank| {
+            keypairs
+                .get(rank)
+                .map(|kp| (STAKE_PER_VALIDATOR, kp.public))
+        }
+    }
+
+    /// A certificate with the given bitmap and a placeholder (all-zero) signature,
+    /// for tests whose rejection is independent of the signature contents.
+    fn unsigned_cert(cert_type: CertificateType, bitmap: Vec<u8>) -> Certificate {
+        Certificate {
+            cert_type,
+            signature: BLSSignature([0; 192]),
+            bitmap,
+        }
+    }
+
+    /// Build a valid Base3 `NotarizeFallback` certificate where `primary_ranks` signed
+    /// the notarization vote and `fallback_ranks` signed the notarization fallback vote.
+    fn signed_notarize_fallback_cert(
+        keypairs: &[BLSKeypair],
+        block: Block,
+        primary_ranks: &[usize],
+        fallback_ranks: &[usize],
+    ) -> Certificate {
+        let notarize = Vote::new_notarization_vote(block);
+        let fallback = Vote::new_notarization_fallback_vote(block);
+        let mut messages = Vec::new();
+        for &rank in primary_ranks {
+            messages.push(create_signed_vote_message(keypairs, notarize, rank));
+        }
+        for &rank in fallback_ranks {
+            messages.push(create_signed_vote_message(keypairs, fallback, rank));
+        }
+        let mut builder = CertificateBuilder::new(CertificateType::NotarizeFallback(block));
+        builder.aggregate(&messages).unwrap();
+        builder.build().unwrap()
+    }
+
+    /// Adding a validator to the bitmap who did not actually sign must fail
+    /// verification (the aggregate no longer matches the signature) - a bad actor
+    /// cannot inflate the signing stake of a certificate.
+    #[test]
+    fn tampered_bitmap_adding_unsigned_validator_fails() {
+        let keypairs = create_bls_keypairs(10);
+        let cert_type = CertificateType::Notarize(fresh_block(10));
+        let mut cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
+
+        // Claim rank 6 also signed, even though it never did.
+        cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4, 5, 6], 7);
+
+        // Must fail at the signature stage (not via a decode / missing-rank path),
+        // proving the extra validator cannot be smuggled in.
+        assert_eq!(
+            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::VerifySig(BlsError::VerificationFailed)
+        );
+    }
+
+    /// Removing a genuine signer from the bitmap must also fail: the aggregate
+    /// signature still carries that signer's contribution, so the reduced key set
+    /// will not verify.
+    #[test]
+    fn tampered_bitmap_removing_signer_fails() {
+        let keypairs = create_bls_keypairs(10);
+        let cert_type = CertificateType::Notarize(fresh_block(10));
+        let mut cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
+
+        // Drop rank 5 from the bitmap while keeping its signature in the aggregate.
+        cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4], 6);
+
+        assert_eq!(
+            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::VerifySig(BlsError::VerificationFailed)
+        );
+    }
+
+    /// A certificate whose `cert_type` (here the block id) is altered after the votes
+    /// were signed must fail: the reconstructed payload no longer matches what the
+    /// validators signed.
+    #[test]
+    fn tampered_cert_type_payload_fails() {
+        let keypairs = create_bls_keypairs(10);
+        let cert = create_signed_certificate_message(
+            &keypairs,
+            CertificateType::Notarize(fresh_block(10)),
+            &[0, 1, 2, 3, 4, 5],
+        );
+
+        let forged = Certificate {
+            cert_type: CertificateType::Notarize(fresh_block(10)),
+            signature: cert.signature,
+            bitmap: cert.bitmap.clone(),
+        };
+
+        assert_eq!(
+            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::VerifySig(BlsError::VerificationFailed)
+        );
+    }
+
+    /// A certificate with no signers (empty bitmap) must NOT verify. Accepting it
+    /// would let an attacker present a "certificate" backed by zero stake.
+    #[test]
+    fn empty_bitmap_certificate_does_not_verify() {
+        let keypairs = create_bls_keypairs(10);
+        let cert = unsigned_cert(
+            CertificateType::Notarize(fresh_block(10)),
+            encoded_base2_bitmap(&[], 0),
+        );
+
+        // An empty signer set cannot produce a valid aggregate signature.
+        assert_eq!(
+            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::VerifySig(BlsError::EmptyAggregation)
+        );
+    }
+
+    /// A Base3-encoded bitmap supplied for a certificate type that is verified as
+    /// Base2 (e.g. `Notarize`) must be rejected with `WrongEncoding` rather than
+    /// silently mis-decoded.
+    #[test]
+    fn base3_bitmap_rejected_for_base2_certificate() {
+        let keypairs = create_bls_keypairs(10);
+        let bitmap = encoded_base3_bitmap(&[0, 1], &[2], 6);
+        let cert = unsigned_cert(CertificateType::Notarize(fresh_block(10)), bitmap);
+
+        assert_eq!(
+            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::WrongEncoding
+        );
+    }
+
+    /// If a rank present in the bitmap is unknown to the `rank_map` (e.g. not in the
+    /// epoch's stake table), verification fails with `MissingRank` rather than
+    /// silently skipping that validator.
+    #[test]
+    fn unknown_rank_in_bitmap_fails() {
+        let keypairs = create_bls_keypairs(10);
+        let cert_type = CertificateType::Notarize(fresh_block(10));
+        let cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
+
+        // rank_map returns None for rank 3, simulating an unknown/unstaked validator.
+        let result = verify_certificate(&cert, 10, |rank| {
+            if rank == 3 {
+                None
+            } else {
+                keypairs
+                    .get(rank)
+                    .map(|kp| (STAKE_PER_VALIDATOR, kp.public))
+            }
+        });
+
+        assert_eq!(result.unwrap_err(), Error::MissingRank);
+    }
+
+    /// A bitmap declaring more bits than `max_validators` must be rejected by the
+    /// decoder (no panic, no out-of-bounds rank lookups).
+    #[test]
+    fn oversized_bitmap_is_rejected() {
+        let keypairs = create_bls_keypairs(10);
+        // 20 bits declared, but only 10 validators allowed.
+        let cert = unsigned_cert(
+            CertificateType::Notarize(fresh_block(10)),
+            encoded_base2_bitmap(&[0, 1], 20),
+        );
+
+        assert_eq!(
+            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::Decode(DecodeError::CorruptDataPayload)
+        );
+    }
+
+    /// Arbitrary attacker-controlled bitmap bytes must never panic the verifier and
+    /// must never verify (these certificates carry no valid aggregate signature).
+    #[test]
+    fn garbage_bitmap_never_panics_and_never_verifies() {
+        let keypairs = create_bls_keypairs(10);
+        for seed in 0u64..512 {
+            let len = (seed % 40) as usize;
+            let bitmap: Vec<u8> = (0..len)
+                .map(|i| seed.wrapping_mul(2_654_435_761).wrapping_add(i as u64 * 7) as u8)
+                .collect();
+            let cert = unsigned_cert(CertificateType::Notarize(fresh_block(10)), bitmap);
+            // Must return (Ok/Err) without panicking; a zero signature can never
+            // produce a valid certificate, so the result must be an error.
+            assert!(verify_certificate(&cert, 10, rank_map(&keypairs)).is_err());
+        }
+    }
+
+    /// In a Base3 (split-vote) certificate, swapping which payload each validator is
+    /// claimed to have signed must fail: every validator's signature is bound to a
+    /// specific vote payload, so misattributing it breaks the aggregate check.
+    #[test]
+    fn base3_tampered_swapping_vote_types_fails() {
+        let keypairs = create_bls_keypairs(10);
+        let block = fresh_block(20);
+        // 0,1 signed the primary (notarize) vote; 2,3 signed the fallback vote.
+        let cert = signed_notarize_fallback_cert(&keypairs, block, &[0, 1], &[2, 3]);
+
+        // Forge a bitmap claiming the opposite: 2,3 as primary and 0,1 as fallback.
+        let forged = Certificate {
+            cert_type: cert.cert_type,
+            signature: cert.signature,
+            bitmap: encoded_base3_bitmap(&[2, 3], &[0, 1], 4),
+        };
+
+        assert_eq!(
+            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::VerifySig(BlsError::VerificationFailed)
+        );
+    }
+
+    /// Adding an unsigned validator to the fallback set of a Base3 certificate must
+    /// fail verification - the split-vote path is no easier to inflate than Base2.
+    #[test]
+    fn base3_tampered_adding_unsigned_validator_fails() {
+        let keypairs = create_bls_keypairs(10);
+        let block = fresh_block(20);
+        let cert = signed_notarize_fallback_cert(&keypairs, block, &[0, 1], &[2, 3]);
+
+        // Claim rank 4 also cast a fallback vote, though it never signed.
+        let forged = Certificate {
+            cert_type: cert.cert_type,
+            signature: cert.signature,
+            bitmap: encoded_base3_bitmap(&[0, 1], &[2, 3, 4], 5),
+        };
+
+        assert_eq!(
+            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            Error::VerifySig(BlsError::VerificationFailed)
         );
     }
 }

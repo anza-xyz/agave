@@ -12,7 +12,7 @@ use {
     },
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::SigVerifiedBatch,
+        consensus_message::ConsensusMessage,
         fraction::Fraction,
         migration::{GENESIS_VOTE_THRESHOLD, MigrationStatus},
     },
@@ -25,7 +25,7 @@ use {
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::{collections::HashSet, num::NonZeroU64, sync::Arc},
+    std::{collections::HashSet, sync::Arc},
     thiserror::Error,
 };
 
@@ -181,7 +181,7 @@ impl BlockComponentProcessor {
         parent_bank: Arc<Bank>,
         marker: VersionedBlockMarker,
         allow_initial_update_parent: bool,
-        finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         let slot = bank.slot();
@@ -296,7 +296,7 @@ impl BlockComponentProcessor {
             BlockComponentProcessorError::GenesisCertificateFailedVerification
         })?;
 
-        let genesis_percent = Fraction::new(genesis_stake, NonZeroU64::new(total_stake).unwrap());
+        let genesis_percent = Fraction::new(genesis_stake, total_stake);
         if genesis_percent < GENESIS_VOTE_THRESHOLD {
             warn!(
                 "Received a genesis certificate for slot {cert_slot} in bank slot {} with \
@@ -314,7 +314,7 @@ impl BlockComponentProcessor {
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         footer: VersionedBlockFooter,
-        finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
     ) -> Result<(), BlockComponentProcessorError> {
         if !self.has_header && self.update_parent.is_none() {
             return Err(BlockComponentProcessorError::MissingParentMarker);
@@ -374,17 +374,17 @@ impl BlockComponentProcessor {
         if let Some((finalize_cert, notarize_cert)) = pool_input {
             if let Some(sender) = finalization_cert_sender {
                 if let Some(notarize_cert) = notarize_cert {
-                    let certs = SigVerifiedBatch::Certificates(vec![notarize_cert]);
+                    let cert = ConsensusMessage::Certificate(notarize_cert);
                     // TODO blocking send.
                     let _ = sender
-                        .send(certs)
-                        .inspect_err(|_| info!("SigVerifiedBatch sender disconnected"));
+                        .send(cert)
+                        .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
                 }
-                let certs = SigVerifiedBatch::Certificates(vec![finalize_cert]);
+                let cert = ConsensusMessage::Certificate(finalize_cert);
                 // TODO blocking send.
                 let _ = sender
-                    .send(certs)
-                    .inspect_err(|_| info!("SigVerifiedBatch sender disconnected"));
+                    .send(cert)
+                    .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
             }
         }
 
@@ -454,12 +454,11 @@ impl BlockComponentProcessor {
         parent_bank: &Bank,
         footer: &BlockFooterV1,
     ) -> Result<(), BlockComponentProcessorError> {
-        // Get parent time from nanosecond clock account
-        // If nanosecond clock hasn't been populated, don't enforce the bounds; note that the
-        // nanosecond clock is populated as soon as Alpenglow migration is complete.
-        let Some(parent_time_nanos) = parent_bank.get_nanosecond_clock() else {
-            return Ok(());
-        };
+        // Get parent time from the nanosecond clock account, or from the Tower-based
+        // clock for the first Alpenglow block.
+        let parent_time_nanos = parent_bank
+            .get_nanosecond_clock()
+            .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
 
         let parent_slot = parent_bank.slot();
         let current_time_nanos =
@@ -1214,6 +1213,40 @@ mod tests {
     fn test_clock_bounds_timestamp_equals_parent() {
         // Timestamp equal to parent time (should fail, must be strictly greater)
         test_clock_bounds_helper(1, |parent_time, _, _| parent_time, false);
+    }
+
+    #[test]
+    fn test_clock_bounds_without_parent_nanosecond_clock_rejects_out_of_bounds() {
+        let mut processor = BlockComponentProcessor {
+            has_header: true,
+            ..Default::default()
+        };
+
+        let (parent, bank_forks) = create_test_bank_alpenglow();
+        assert_eq!(parent.get_nanosecond_clock(), None);
+
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let parent_time_nanos = bank.clock().unix_timestamp.saturating_mul(1_000_000_000);
+        let elapsed_slot_duration_nanos =
+            bank.slot_range_duration_nanos(parent.slot().saturating_add(1), bank.slot());
+        let (_, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
+            parent_time_nanos,
+            elapsed_slot_duration_nanos,
+        );
+
+        let footer = VersionedBlockFooter::V1(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: u64::try_from(upper_bound.saturating_add(1)).unwrap(),
+            block_user_agent: vec![],
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        });
+
+        assert!(matches!(
+            processor.on_footer(bank, parent, footer, None),
+            Err(BlockComponentProcessorError::NanosecondClockOutOfBounds)
+        ));
     }
 
     #[test]

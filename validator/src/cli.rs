@@ -151,12 +151,37 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("No-op; account storages are always accessed via file I/O"),
     );
     add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("accounts_db_cache_limit_mb")
+            .long("accounts-db-cache-limit-mb")
+            .value_name("MEGABYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help(
+                "How large the write cache for account data can become. If this is exceeded, the \
+                 cache is flushed more aggressively.",
+            )
+            .conflicts_with("accounts_db_write_cache_limit"),
+        replaced_by: "accounts-db-write-cache-limit",
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
             .help("Enables the disk-based accounts index")
             .conflicts_with("accounts_index_limit"),
         replaced_by: "accounts-index-limit",
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("experimental_poh_pinned_cpu_core")
+            .long("experimental-poh-pinned-cpu-core")
+            .takes_value(true)
+            .value_name("CPU_ID")
+            .conflicts_with("poh_pinned_cpu_core")
+            .validator(is_parsable::<usize>)
+            .help("Specify which CPU core PoH is pinned to. Use --poh-pinned-cpu-core instead"),
+        replaced_by: "poh-pinned-cpu-core",
     );
     add_arg!(
         // deprecated in v4.1.0
@@ -831,6 +856,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .long("enable-scheduler-bindings")
                 .takes_value(false)
                 .help("Enables external processes to connect and manage block production"),
+        )
+        .arg(
+            Arg::with_name("alpenglow")
+                .long("alpenglow")
+                .takes_value(false)
+                .help(
+                    "Activate Alpenglow at genesis. The validator_admission_ticket feature must \
+                     remain active",
+                ),
         )
         .arg(
             Arg::with_name("deactivate_feature")

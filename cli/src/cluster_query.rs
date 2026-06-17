@@ -1258,9 +1258,8 @@ pub async fn process_show_block_production(
         .value
         .unwrap();
 
-    let slot_history: SlotHistory = from_account(&slot_history_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize slot history".to_string())
-    })?;
+    let slot_history: SlotHistory = wincode::deserialize(&slot_history_account.data)
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize slot history".to_string()))?;
 
     let (confirmed_blocks, start_slot) =
         if start_slot >= slot_history.oldest() && end_slot <= slot_history.newest() {

@@ -69,10 +69,6 @@ impl Bank {
     // form of transaction fees as well.
     pub(super) fn distribute_transaction_fee_details(&self) {
         let fee_details = self.collector_fee_details.read().unwrap();
-        if fee_details.total_transaction_fee() == 0 {
-            // nothing to distribute, exit early
-            return;
-        }
 
         let FeeDistribution { deposit, burn } =
             self.calculate_reward_and_burn_fee_details(&fee_details);
@@ -103,10 +99,6 @@ impl Bank {
         &self,
         fee_details: &CollectorFeeDetails,
     ) -> FeeDistribution {
-        if fee_details.transaction_fee == 0 {
-            return FeeDistribution::default();
-        }
-
         let burn = fee_details.transaction_fee * self.burn_percent() / 100;
         let deposit = fee_details
             .priority_fee
