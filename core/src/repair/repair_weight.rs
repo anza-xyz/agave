@@ -9,6 +9,7 @@ use {
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
+    ahash::{AHashMap, AHashSet},
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -214,8 +215,8 @@ impl RepairWeight {
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = vec![];
-        let mut processed_slots = HashSet::from([self.root]);
-        let mut slot_meta_cache = HashMap::default();
+        let mut processed_slots = AHashSet::from([self.root]);
+        let mut slot_meta_cache = AHashMap::default();
 
         let mut get_best_orphans_us = Measure::start("get_best_orphans_us");
         // Find the best orphans in order from heaviest stake to least heavy
@@ -501,7 +502,7 @@ impl RepairWeight {
     fn get_best_shreds(
         &mut self,
         blockstore: &Blockstore,
-        slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
+        slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
         repair_eligibility: &mut RepairEligibility,
@@ -522,7 +523,7 @@ impl RepairWeight {
     fn get_best_orphans(
         &mut self,
         blockstore: &Blockstore,
-        processed_slots: &mut HashSet<Slot>,
+        processed_slots: &mut AHashSet<Slot>,
         repairs: &mut Vec<ShredRepairType>,
         epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
@@ -599,8 +600,8 @@ impl RepairWeight {
     fn get_best_unknown_last_index(
         &mut self,
         blockstore: &Blockstore,
-        slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
-        processed_slots: &mut HashSet<Slot>,
+        slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
+        processed_slots: &mut AHashSet<Slot>,
         max_new_repairs: usize,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
@@ -629,8 +630,8 @@ impl RepairWeight {
     fn get_best_closest_completion(
         &mut self,
         blockstore: &Blockstore,
-        slot_meta_cache: &mut HashMap<Slot, Option<SlotMetaRepair>>,
-        processed_slots: &mut HashSet<Slot>,
+        slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
+        processed_slots: &mut AHashSet<Slot>,
         max_new_repairs: usize,
         repair_eligibility: &mut RepairEligibility,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -1508,7 +1509,7 @@ mod test {
         // should prioritize smaller orphan first
         let mut repairs = vec![];
         let mut outstanding_repairs = HashMap::new();
-        let mut processed_slots: HashSet<Slot> = vec![repair_weight.root].into_iter().collect();
+        let mut processed_slots: AHashSet<Slot> = vec![repair_weight.root].into_iter().collect();
         repair_weight.get_best_orphans(
             &blockstore,
             &mut processed_slots,
@@ -1661,7 +1662,7 @@ mod test {
         // exactly one more of the remaining two
         let mut repairs = vec![];
         let mut outstanding_repairs = HashMap::new();
-        let mut processed_slots: HashSet<Slot> = vec![repair_weight.root].into_iter().collect();
+        let mut processed_slots: AHashSet<Slot> = vec![repair_weight.root].into_iter().collect();
         blockstore.add_tree(tr(100) / (tr(101)), true, true, 2, Hash::default());
         repair_weight.get_best_orphans(
             &blockstore,

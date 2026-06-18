@@ -18,6 +18,7 @@ use {
         },
     },
     agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
+    ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
@@ -139,7 +140,7 @@ impl SlotRepairFecTimes {
 /// probing.
 #[derive(Debug, Default)]
 pub struct RepairEligibility {
-    slots: HashMap<Slot, SlotRepairFecTimes>,
+    slots: AHashMap<Slot, SlotRepairFecTimes>,
 }
 
 impl RepairEligibility {
