@@ -1189,7 +1189,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -9096,9 +9096,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d495cb001d3373229ba523625783e5168707f70a9c38ddc90fbc5b0470d600ea"
+checksum = "1ab4307b353cbfab0ca1666c969f91fd7ca6f592abee2d03f5fa6a32c0e1a42b"
 dependencies = [
  "bincode",
  "cfg_eval",
