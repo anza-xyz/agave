@@ -5666,7 +5666,7 @@ dependencies = [
  "petgraph 0.8.3",
  "prettyplease 0.2.37",
  "prost 0.14.4",
- "prost-types 0.14.3",
+ "prost-types 0.14.4",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
  "regex",
@@ -5698,6 +5698,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
+dependencies = [
+ "prost 0.11.9",
 ]
 
 [[package]]
@@ -10734,7 +10743,7 @@ dependencies = [
  "hyper-util",
  "log",
  "prost 0.14.4",
- "prost-types 0.14.3",
+ "prost-types 0.14.4",
  "serde",
  "smpl_jwt",
  "solana-clock",
@@ -12699,7 +12708,7 @@ dependencies = [
  "prettyplease 0.2.37",
  "proc-macro2",
  "prost-build 0.14.3",
- "prost-types 0.14.3",
+ "prost-types 0.14.4",
  "quote",
  "syn 2.0.117",
  "tempfile",
