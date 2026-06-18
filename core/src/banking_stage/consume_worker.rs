@@ -203,7 +203,8 @@ pub(crate) mod external {
         },
         agave_transaction_view::{
             resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
-            transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
+            sanitize::SanitizeConfig, transaction_data::TransactionData,
+            transaction_view::SanitizedTransactionView,
         },
         solana_account::ReadableAccount,
         solana_clock::Slot,
@@ -214,7 +215,9 @@ pub(crate) mod external {
             bank::Bank,
             bank_forks::{BankPair, SharableBanks},
         },
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+        },
         solana_transaction::TransactionError,
         std::ptr::NonNull,
     };
@@ -468,6 +471,10 @@ pub(crate) mod external {
                 root_bank,
                 working_bank,
             } = self.sharable_banks.load();
+            // Prefer the leader bank over the highest working fork when leader
+            let working_bank = active_leader_state(&self.shared_leader_state)
+                .and_then(|leader_state| leader_state.working_bank().cloned())
+                .unwrap_or(working_bank);
 
             if working_bank.slot() > message.max_working_slot {
                 return self.return_unprocessed_message(
@@ -775,16 +782,13 @@ pub(crate) mod external {
             Vec<TxView>,
             &'a mut [CheckResponse],
         ) {
-            let enable_instruction_accounts_limit =
-                bank.feature_set.snapshot().limit_instruction_accounts;
+            let sanitize_config =
+                sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
-                match SanitizedTransactionView::try_new_sanitized(
-                    tx_ptr,
-                    enable_instruction_accounts_limit,
-                ) {
+                match SanitizedTransactionView::try_new_sanitized(tx_ptr, &sanitize_config) {
                     Ok(view) => {
                         parsing_results.push(Ok(()));
                         parsed_transactions.push(view);
@@ -926,6 +930,7 @@ pub(crate) mod external {
                     &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
                     working_bank.max_processing_age(),
                     true,
+                    true,
                     &mut error_counters,
                 );
             let included_slots = included_slots.expect("requested to collect processed slots");
@@ -967,8 +972,8 @@ pub(crate) mod external {
             batch: &TransactionPtrBatch,
             bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_instruction_accounts_limit =
-                bank.feature_set.snapshot().limit_instruction_accounts;
+            let sanitize_config =
+                sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -979,7 +984,7 @@ pub(crate) mod external {
                     transaction_ptr,
                     bank,
                     transaction_account_lock_limit,
-                    enable_instruction_accounts_limit,
+                    &sanitize_config,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -997,13 +1002,13 @@ pub(crate) mod external {
             transaction_ptr: TransactionPtr,
             bank: &Bank,
             transaction_account_lock_limit: usize,
-            enable_instruction_accounts_limit: bool,
+            sanitize_config: &SanitizeConfig,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
                 bank,
                 transaction_account_lock_limit,
-                enable_instruction_accounts_limit,
+                sanitize_config,
             )
             .map(|(view, deactivation_slot)| {
                 (
@@ -1112,7 +1117,7 @@ pub(crate) mod external {
                 handshake::{ClientLogon, client, server::Server},
                 responses_region::{CheckResponsesPtr, ExecutionResponsesPtr},
             },
-            crossbeam_channel::unbounded,
+            crossbeam_channel::bounded,
             solana_account::AccountSharedData,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,
@@ -1144,7 +1149,7 @@ pub(crate) mod external {
             mint_keypair: Keypair,
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
-            _bank_forks: Arc<RwLock<BankForks>>,
+            bank_forks: Arc<RwLock<BankForks>>,
             _replay_vote_receiver: ReplayVoteReceiver,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
@@ -1329,7 +1334,7 @@ pub(crate) mod external {
 
             let (record_sender, record_receiver) = record_channels(false);
             let recorder = TransactionRecorder::new(record_sender);
-            let (replay_vote_sender, replay_vote_receiver) = unbounded();
+            let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
             let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, None);
             let shared_leader_state = SharedLeaderState::new(0, None, None);
@@ -1349,7 +1354,7 @@ pub(crate) mod external {
                 mint_keypair,
                 genesis_config,
                 bank,
-                _bank_forks: bank_forks,
+                bank_forks,
                 _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 allocator: client_session.allocators.pop().unwrap(),
@@ -1437,7 +1442,7 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limit(),
-                        true,
+                        &sanitize_config(true),
                     )
                     .ok()
                     .unwrap()
@@ -1625,8 +1630,10 @@ pub(crate) mod external {
 
             let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
             let parsed_transactions = [
-                SanitizedTransactionView::try_new_sanitized(&tx1[..], true).unwrap(),
-                SanitizedTransactionView::try_new_sanitized(&tx2[..], true).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx1[..], &sanitize_config(true))
+                    .unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx2[..], &sanitize_config(true))
+                    .unwrap(),
             ];
             bank.store_account(
                 &parsed_transactions[1].static_account_keys()[0],
@@ -1676,7 +1683,8 @@ pub(crate) mod external {
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
                 RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
+                        SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config(true))
+                            .unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
                     )
@@ -1976,6 +1984,37 @@ pub(crate) mod external {
             );
             assert_eq!(response.responses.num_transaction_responses, 0);
             assert_eq!(response.responses.transaction_responses_offset, 0);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_check_prefers_active_leader_bank() {
+            let mut test_frame = setup_external_test_frame();
+            let batch = test_frame.allocate_batch(&[test_serialized_transaction(
+                test_frame.bank.confirmed_last_blockhash(),
+            )]);
+
+            // Insert a higher fork bank so the highest working bank exceeds
+            // `max_working_slot` while the active leader bank does not.
+            let higher_bank = Bank::new_from_parent(
+                test_frame.bank.clone(),
+                SlotLeader::new_unique(),
+                test_frame.bank.slot() + 1,
+            );
+            test_frame.bank_forks.write().unwrap().insert(higher_bank);
+            test_frame.set_active_bank();
+
+            test_frame.send_message(PackToWorkerMessage {
+                flags: pack_message_flags::CHECK | check_flags::STATUS_CHECKS,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.check_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
 
             test_frame.free_batch(batch);
         }
@@ -2782,7 +2821,7 @@ mod tests {
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_clock::Slot,
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
@@ -2852,13 +2891,13 @@ mod tests {
         let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        let (replay_vote_sender, replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
-        let (consume_sender, consume_receiver) = unbounded();
-        let (consumed_sender, consumed_receiver) = unbounded();
+        let (consume_sender, consume_receiver) = bounded(1024);
+        let (consumed_sender, consumed_receiver) = bounded(1024);
         let worker = ConsumeWorker::new(
             0,
             Arc::new(AtomicBool::new(false)),
@@ -3310,6 +3349,7 @@ mod tests {
                 &sanitized_txs,
                 &vec![Ok(()); sanitized_txs.len()],
                 bank.max_processing_age(),
+                true,
                 &mut TransactionErrorMetrics::default(),
             )
             .into_iter()

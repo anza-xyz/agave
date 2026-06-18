@@ -6,6 +6,7 @@ use {
         latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
         progress_map::ProgressMap, tree_diff::TreeDiff,
     },
+    ahash::AHashMap,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -183,7 +184,7 @@ impl PartialEq for ForkInfo {
 
 #[derive(Debug, Clone)]
 pub struct HeaviestSubtreeForkChoice {
-    fork_infos: HashMap<SlotHashKey, ForkInfo>,
+    fork_infos: AHashMap<SlotHashKey, ForkInfo>,
     latest_votes: HashMap<Pubkey, SlotHashKey>,
     tree_root: SlotHashKey,
     last_root_time: Instant,
@@ -220,7 +221,7 @@ impl HeaviestSubtreeForkChoice {
             tree_root,
             // Doesn't implement default because `root` must
             // exist in all the fields
-            fork_infos: HashMap::new(),
+            fork_infos: AHashMap::new(),
             latest_votes: HashMap::new(),
             last_root_time: Instant::now(),
         };
@@ -608,7 +609,7 @@ impl HeaviestSubtreeForkChoice {
         self.process_update_operations(update_operations);
 
         // Remove node + all children and add to new tree
-        let mut split_tree_fork_infos = HashMap::new();
+        let mut split_tree_fork_infos = AHashMap::new();
         let mut to_visit = vec![*slot_hash_key];
         while let Some(current_node) = to_visit.pop() {
             let current_fork_info = self
@@ -1381,13 +1382,13 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
 
 struct AncestorIterator<'a> {
     current_slot_hash_key: SlotHashKey,
-    fork_infos: &'a HashMap<SlotHashKey, ForkInfo>,
+    fork_infos: &'a AHashMap<SlotHashKey, ForkInfo>,
 }
 
 impl<'a> AncestorIterator<'a> {
     fn new(
         start_slot_hash_key: SlotHashKey,
-        fork_infos: &'a HashMap<SlotHashKey, ForkInfo>,
+        fork_infos: &'a AHashMap<SlotHashKey, ForkInfo>,
     ) -> Self {
         Self {
             current_slot_hash_key: start_slot_hash_key,

@@ -38,7 +38,7 @@ use {
     },
     std::{
         collections::HashSet,
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -46,7 +46,6 @@ use {
         thread::sleep,
         time::{Duration, Instant},
     },
-    systemstat::Ipv4Addr,
     tungstenite::{client::IntoClientRequest, connect},
 };
 

@@ -3,7 +3,7 @@ use {
     agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::VoteMessage,
+        consensus_message::{Block, VoteMessage},
         vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -14,6 +14,7 @@ use {
         signature::Signature as BlsSignature,
     },
     solana_hash::Hash,
+    std::num::NonZero,
 };
 
 // Creates random BLS keypairs for bench tests
@@ -36,7 +37,10 @@ fn create_signed_vote_message(bls_keypair: &BlsKeypair, vote: Vote, rank: usize)
 fn create_base2_cert(keypairs: &[BlsKeypair], num_signers: usize) -> Certificate {
     let slot = 100;
     let hash = Hash::new_unique();
-    let cert_type = CertificateType::Notarize(slot, hash);
+    let cert_type = CertificateType::Notarize(Block {
+        slot,
+        block_id: hash,
+    });
     let vote = cert_type.to_source_vote();
 
     let vote_messages: Vec<VoteMessage> = (0..num_signers)
@@ -57,10 +61,19 @@ fn create_base3_cert(
 ) -> Certificate {
     let slot = 100;
     let hash = Hash::new_unique();
-    let cert_type = CertificateType::NotarizeFallback(slot, hash);
+    let cert_type = CertificateType::NotarizeFallback(Block {
+        slot,
+        block_id: hash,
+    });
 
-    let vote_notarize = Vote::new_notarization_vote(slot, hash);
-    let vote_fallback = Vote::new_notarization_fallback_vote(slot, hash);
+    let vote_notarize = Vote::new_notarization_vote(Block {
+        slot,
+        block_id: hash,
+    });
+    let vote_fallback = Vote::new_notarization_fallback_vote(Block {
+        slot,
+        block_id: hash,
+    });
 
     let mut vote_messages = Vec::new();
 
@@ -147,10 +160,11 @@ fn bench_verify_cert(c: &mut Criterion) {
             BenchmarkId::new("Base2_Notarize", size),
             &size,
             |b, &total_validators| {
+                let total_stake = NonZero::new(TEST_STAKE * total_validators as u64).unwrap();
                 b.iter(|| {
                     // The rank_map closure simulates the Bank lookup.
                     // It adds stake (we use 1000 per validator) and returns the pubkey.
-                    let _stake = verify_certificate(&cert_base2, total_validators, |rank| {
+                    verify_certificate(&cert_base2, total_validators, total_stake, |rank| {
                         pubkeys_ref
                             .get(rank)
                             .map(|bls_pubkey| (TEST_STAKE, *bls_pubkey))
@@ -170,8 +184,9 @@ fn bench_verify_cert(c: &mut Criterion) {
             BenchmarkId::new("Base3_NotarizeFallback", size),
             &size,
             |b, &total_validators| {
+                let total_stake = NonZero::new(TEST_STAKE * total_validators as u64).unwrap();
                 b.iter(|| {
-                    let _stake = verify_certificate(&cert_base3, total_validators, |rank| {
+                    verify_certificate(&cert_base3, total_validators, total_stake, |rank| {
                         pubkeys_ref
                             .get(rank)
                             .map(|bls_pubkey| (TEST_STAKE, *bls_pubkey))

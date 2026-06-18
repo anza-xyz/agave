@@ -25,10 +25,18 @@ use {
 /// Distributing rewards to stake accounts begins AFTER this many blocks.
 const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
 
+/// Total reward for a stake account, currently just inflation rewards.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartitionedStakeReward {
     /// Stake account address
     pub stake_pubkey: Pubkey,
+    /// Inflation reward information
+    pub inflation: InflationReward,
+}
+
+/// Just the inflation portion of a partitioned stake reward
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InflationReward {
     /// `Stake` state to be stored in account
     pub stake: Stake,
     /// Stake reward for recording in the Bank on distribution
@@ -417,6 +425,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
+                deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
@@ -449,9 +458,11 @@ mod tests {
             {
                 Some(Self {
                     stake_pubkey: stake_reward.stake_pubkey,
-                    stake,
-                    stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    commission_bps: stake_reward.stake_reward_info.commission_bps,
+                    inflation: InflationReward {
+                        stake,
+                        stake_reward: stake_reward.stake_reward_info.lamports as u64,
+                        commission_bps: stake_reward.stake_reward_info.commission_bps,
+                    },
                 })
             } else {
                 None
@@ -574,6 +585,9 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
+        // Disable slot time reduction features as they will override the custom
+        // stores per block provided in this test helper.
+        let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
         let validator_keypairs = (0..stakes.len())
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -582,6 +596,7 @@ mod tests {
             mut genesis_config, ..
         } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =

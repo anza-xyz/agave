@@ -17,6 +17,11 @@ Release channels have their own copy of this changelog:
 ## 4.2.0-Unreleased
 ### RPC
 #### Breaking
+* The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
+* Blockstore reward column legacy format support removed.
+  * The `Rewards` column was updated in v1.5 (Solana Labs client) to switch from
+  storing bincode serialized values to protobuf encoded values. The old bincode
+  format will no longer be supported for fallback reads as of v4.2
 #### Changes
 * Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
   `getLatestBlockhash` response together with its context (notably `context.slot`).
@@ -26,7 +31,14 @@ Release channels have their own copy of this changelog:
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
   backward compatibility, but account storages are always accessed via file I/O.
+* `--accounts-db-cache-limit-mb` is now deprecated. Use `--accounts-db-write-cache-limit` instead.
+* `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
 #### Changes
+* Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+### CLI
+#### Breaking
+#### Changes
+* `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
 
 ## 4.1.0
 ### RPC

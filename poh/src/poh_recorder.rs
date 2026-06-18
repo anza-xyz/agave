@@ -218,11 +218,6 @@ pub struct PohRecorder {
 
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
-
-    /// When alpenglow is enabled there will be no ticks apart from a final one
-    /// to complete the block. This tick will not be verified, and we use this
-    /// flag to unset hashes_per_tick
-    alpenglow_enabled: bool,
 }
 
 impl PohRecorder {
@@ -305,7 +300,6 @@ impl PohRecorder {
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
                 entries: Vec::with_capacity(64),
-                alpenglow_enabled: false,
             },
             working_bank_receiver,
         )
@@ -479,18 +473,17 @@ impl PohRecorder {
         trace!("new working bank");
         assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
         let mut tick_height = self.tick_height();
-        if let Some(hashes_per_tick) = *working_bank.bank.hashes_per_tick() {
-            if self.poh.lock().unwrap().hashes_per_tick() != hashes_per_tick {
-                // We must clear/reset poh when changing hashes per tick because it's
-                // possible there are ticks in the cache created with the old hashes per
-                // tick value that would get flushed later. This would corrupt the leader's
-                // block and it would be disregarded by the network.
-                info!(
-                    "resetting poh due to hashes per tick change detected at {}",
-                    working_bank.bank.slot()
-                );
-                tick_height = self.reset_poh(working_bank.bank.clone(), false);
-            }
+        let hashes_per_tick = working_bank.bank.hashes_per_tick();
+        if self.poh.lock().unwrap().hashes_per_tick_config() != hashes_per_tick {
+            // We must clear/reset poh when changing hashes per tick because it's
+            // possible there are ticks in the cache created with the old hashes per
+            // tick value that would get flushed later. This would corrupt the leader's
+            // block and it would be disregarded by the network.
+            info!(
+                "resetting poh due to hashes per tick change detected at {}",
+                working_bank.bank.slot()
+            );
+            tick_height = self.reset_poh(working_bank.bank.clone(), false);
         }
 
         let leader_state = self.shared_leader_state.load();
@@ -568,11 +561,7 @@ impl PohRecorder {
     #[must_use]
     fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) -> u64 {
         let blockhash = reset_bank.last_blockhash();
-        let hashes_per_tick = if self.alpenglow_enabled {
-            None
-        } else {
-            *reset_bank.hashes_per_tick()
-        };
+        let hashes_per_tick = reset_bank.hashes_per_tick();
         let poh_hash = {
             let mut poh = self.poh.lock().unwrap();
             poh.reset(blockhash, hashes_per_tick);
@@ -638,7 +627,7 @@ impl PohRecorder {
         // Send out the block footer - we now have the bank hash
         footer.bank_hash = working_bank.bank.hash();
 
-        let footer = VersionedBlockMarker::new_block_footer(footer);
+        let footer = VersionedBlockMarker::from_block_footer(footer);
         let footer_entry_marker = (
             EntryOrMarker::Marker(footer),
             working_bank.max_tick_height - 1,
@@ -1083,7 +1072,6 @@ impl PohRecorder {
 
     pub fn enable_alpenglow(&mut self) {
         info!("Enabling Alpenglow, migrating poh to low power mode");
-        self.alpenglow_enabled = true;
         self.tick_cache = vec![];
         {
             let mut poh = self.poh.lock().unwrap();
@@ -1401,11 +1389,11 @@ mod tests {
         poh_recorder.set_bank_for_test(bank);
         drop(entry_receiver);
 
-        let marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+        let marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
             block_producer_time_nanos: 0,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
@@ -1418,7 +1406,7 @@ mod tests {
             bank_hash: Hash::default(),
             block_producer_time_nanos: 0,
             block_user_agent: vec![],
-            final_cert: None,
+            block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         }
@@ -1497,6 +1485,64 @@ mod tests {
         ));
         assert!(poh_recorder.has_bank());
         assert!(!poh_recorder.tick_cache.is_empty());
+    }
+
+    #[test]
+    fn test_set_bank_resets_to_low_power_mode() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path()).expect("Expected to be able to open ledger"),
+        );
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        genesis_config.poh_config.hashes_per_tick = Some(4);
+        let (parent, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let child = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            parent.clone(),
+            SlotLeader::default(),
+            parent.slot() + 1,
+        );
+        child.set_hashes_per_tick(None);
+        child.set_tick_height(child.max_tick_height() - 1);
+
+        let prev_hash = parent.last_blockhash();
+        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+            parent.tick_height(),
+            prev_hash,
+            parent.clone(),
+            Some((child.slot(), child.slot())),
+            parent.ticks_per_slot(),
+            blockstore,
+            &Arc::new(LeaderScheduleCache::new_from_bank(&parent)),
+            &genesis_config.poh_config,
+            Arc::new(AtomicBool::default()),
+        );
+        assert_eq!(
+            poh_recorder.poh.lock().unwrap().hashes_per_tick_config(),
+            Some(4)
+        );
+
+        poh_recorder.set_bank_for_test(child.clone());
+        assert_eq!(
+            poh_recorder.poh.lock().unwrap().hashes_per_tick_config(),
+            None
+        );
+
+        let bank_to_freeze = child.clone();
+        let freezer = std::thread::spawn(move || {
+            while bank_to_freeze.tick_height() < bank_to_freeze.max_tick_height() {
+                std::hint::spin_loop();
+            }
+            bank_to_freeze.freeze();
+        });
+        poh_recorder
+            .tick_alpenglow(child.max_tick_height(), test_footer())
+            .unwrap();
+        freezer.join().unwrap();
+        assert!(!poh_recorder.has_bank());
     }
 
     #[test]

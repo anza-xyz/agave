@@ -16,10 +16,10 @@ use {
         load_xdp_program,
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
-        set_cpu_affinity,
         tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
         umem::{OwnedUmem, PageAlignedMemory},
     },
+    agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     aya::Ebpf,
@@ -251,32 +251,33 @@ impl TransmitterBuilder {
         tx_loop_config_builder.zero_copy(zero_copy);
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
-        let reserved_cores = cpus.iter().cloned().collect::<HashSet<_>>();
-        let available_cores = core_affinity::get_core_ids()
-            .expect("linux provide affine cores")
+        let reserved_cores = cpus
+            .iter()
+            .copied()
+            .map(CpuId::new)
+            .collect::<io::Result<HashSet<_>>>()?;
+        let unreserved_cores = cpu_affinity(None)?
             .into_iter()
-            .map(|core_affinity::CoreId { id }| id)
-            .collect::<HashSet<_>>();
-        let unreserved_cores = available_cores
-            .difference(&reserved_cores)
-            .cloned()
+            .filter(|core| !reserved_cores.contains(core))
             .collect::<Vec<_>>();
 
-        let tx_loop_builders = cpus
-            .into_iter()
-            .zip(std::iter::repeat_with(|| tx_loop_config.clone()))
-            .enumerate()
-            .map(|(i, (cpu_id, config))| {
-                // since we aren't necessarily allocating from the thread that we intend to run on,
-                // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
-                // is allocated to the correct numa node
-                set_cpu_affinity([cpu_id]).unwrap();
-                let tx_loop_builder = TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev);
-                // migrate main thread back off of the last xdp reserved cpu
-                set_cpu_affinity(unreserved_cores.clone()).unwrap();
-                tx_loop_builder
-            })
-            .collect::<Vec<_>>();
+        if unreserved_cores.is_empty() {
+            return Err("all CPUs are reserved; no CPU available for the main thread".into());
+        }
+
+        let mut tx_loop_builders = Vec::with_capacity(cpus.len());
+        for (i, cpu_id) in cpus.into_iter().enumerate() {
+            // since we aren't necessarily allocating from the thread that we intend to run on,
+            // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
+            // is allocated to the correct numa node
+            let cpu = CpuId::new(cpu_id)?;
+            set_cpu_affinity(None, [cpu])?;
+            let tx_loop_builder =
+                TxLoopBuilder::new(cpu_id, QueueId(i as u64), tx_loop_config.clone(), &dev);
+            // migrate main thread back off of the last xdp reserved cpu
+            set_cpu_affinity(None, unreserved_cores.iter().copied())?;
+            tx_loop_builders.push(tx_loop_builder);
+        }
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.

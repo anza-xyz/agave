@@ -401,7 +401,7 @@ impl Node {
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
-            alpenglow: Some(alpenglow),
+            alpenglow,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tpu_vote: tpu_vote_sockets,
@@ -421,7 +421,7 @@ impl Node {
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };
-        info!("Bound all network sockets as follows: {:?}", &sockets);
+        info!("Bound all network sockets as follows: {sockets:?}");
         Node {
             info,
             sockets,

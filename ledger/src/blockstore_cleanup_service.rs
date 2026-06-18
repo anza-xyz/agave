@@ -194,8 +194,10 @@ impl BlockstoreCleanupService {
             return;
         };
 
-        // Ensure we don't cleanup anything past the last root we saw
-        let lowest_cleanup_slot = std::cmp::min(lowest_slot + num_slots_to_clean - 1, root);
+        // Use min() to ensure we do not purge the latest root or anything newer
+        // Purge is inclusive so subtract one from min() result
+        let lowest_cleanup_slot =
+            std::cmp::min(lowest_slot + num_slots_to_clean, root).saturating_sub(1);
 
         match cleanup_request_sender.try_send(lowest_cleanup_slot) {
             Ok(()) => {}
@@ -313,7 +315,7 @@ mod tests {
         // Start with 1 as the latest root
         let mut latest_root = 1;
         blockstore.set_roots(std::iter::once(&latest_root)).unwrap();
-        // Auto clean will select slot 1 (latest_root) as min clean slot
+        // Auto clean will select slot 0 (latest_root - 1) as min clean slot
         let max_ledger_shreds = Some(1);
         BlockstoreCleanupService::maybe_generate_automatic_cleanup_request(
             &blockstore,
@@ -322,7 +324,7 @@ mod tests {
             &mut last_purge_slot,
             purge_interval,
         );
-        assert_eq!(receiver.try_recv().unwrap(), latest_root);
+        assert_eq!(receiver.try_recv().unwrap(), latest_root - 1);
 
         // Reset last_purge_slot
         assert_eq!(last_purge_slot, 1);
@@ -334,7 +336,7 @@ mod tests {
             &mut last_purge_slot,
             purge_interval,
         );
-        assert_eq!(receiver.try_recv().unwrap(), latest_root);
+        assert_eq!(receiver.try_recv().unwrap(), latest_root - 1);
         // Reset last_purge_slot
         assert_eq!(last_purge_slot, 1);
         last_purge_slot = 0;
@@ -385,13 +387,14 @@ mod tests {
             &mut last_purge_slot,
             purge_interval,
         );
-        assert_eq!(receiver.try_recv().unwrap(), latest_root);
+        assert_eq!(receiver.try_recv().unwrap(), latest_root - 1);
         // Reset last_purge_slot
         assert_eq!(last_purge_slot, 1);
         last_purge_slot = 0;
 
         for slot in 1..=num_slots {
-            // Set last_root to make slots <= slot eligible for cleaning
+            // Update latest_root so that any slots < latest_root will become
+            // eligible to be cleaned
             latest_root = slot;
             blockstore.set_roots(std::iter::once(&latest_root)).unwrap();
             // Set max_ledger_shreds to 0 so that all eligible slots are cleaned
@@ -403,7 +406,7 @@ mod tests {
                 &mut last_purge_slot,
                 purge_interval,
             );
-            assert_eq!(receiver.try_recv().unwrap(), latest_root);
+            assert_eq!(receiver.try_recv().unwrap(), latest_root - 1);
         }
     }
 
@@ -439,10 +442,10 @@ mod tests {
         // A request will be generated and consumed so channel should be empty
         assert!(receiver.is_empty());
 
-        // Ensure that slots 0-40 are not present
+        // Ensure that slots 0-39 are not present; the root (40) is retained
         blockstore
             .slot_meta_iterator(0)
             .unwrap()
-            .for_each(|(slot, _)| assert!(slot > 40));
+            .for_each(|(slot, _)| assert!(slot >= 40));
     }
 }

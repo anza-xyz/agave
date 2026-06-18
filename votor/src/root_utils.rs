@@ -1,5 +1,10 @@
 use {
-    crate::{event_handler::PendingBlocks, voting_utils::VotingContext, votor::SharedContext},
+    crate::{
+        commitment::{CommitmentType, update_commitment_cache},
+        event_handler::PendingBlocks,
+        voting_utils::VotingContext,
+        votor::SharedContext,
+    },
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::Sender,
     solana_clock::Slot,
@@ -43,7 +48,10 @@ pub(crate) fn set_root(
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
     *pending_blocks = pending_blocks.split_off(&new_root);
-    *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
+    *finalized_blocks = finalized_blocks.split_off(&Block {
+        slot: new_root,
+        block_id: Hash::default(),
+    });
     *received_shred = received_shred.split_off(&new_root);
 
     rctx.bank_forks_controller
@@ -55,10 +63,13 @@ pub(crate) fn set_root(
         ctx.blockstore
             .insert_optimistic_slot(new_root, &hash, timestamp().try_into().unwrap())
     {
-        error!(
-            "failed to record optimistic slot in blockstore: slot={}: {:?}",
-            new_root, &e
-        );
+        error!("failed to record optimistic slot in blockstore: slot={new_root}: {e:?}");
+    }
+
+    if let Err(err) =
+        update_commitment_cache(CommitmentType::Rooted, new_root, &vctx.commitment_sender)
+    {
+        warn!("failed to update Alpenglow rooted commitment for root {new_root}: {err}");
     }
 
     // It is critical to send the OC notification in order to keep compatibility with

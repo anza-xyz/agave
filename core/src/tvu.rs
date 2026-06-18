@@ -6,10 +6,8 @@ use {
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
-        bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
-            VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
+            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
         cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
         commitment_service::AggregateCommitmentService,
@@ -28,15 +26,23 @@ use {
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
     },
-    agave_votor::{
-        consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-        consensus_rewards::BuildRewardCertsRequest,
-        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+    agave_bls_sigverify::{
+        bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        sig_verified_messages::SigVerifiedBatch,
+    },
+    agave_votor::{
+        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
+        voting_service::{
+            VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService, VotingServiceOverride,
+        },
         votor::{Votor, VotorConfig},
+    },
+    agave_votor_messages::{
+        VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -46,7 +52,6 @@ use {
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
         duplicate_shred_listener::DuplicateShredListener,
     },
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
@@ -56,6 +61,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
     },
+    solana_net_utils::PinnedXdpSender,
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -78,7 +84,7 @@ use {
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
-    solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
+    solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
         net::UdpSocket,
@@ -98,11 +104,18 @@ use {
 const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
 /// The maximum number of alpenglow packets that can be processed in a single batch
-const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
+pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// The maximum number of distinct bls messages that can be sent in a single batch.
 /// This is overprovisioned to account for standstill scenarios, where a large amount
 /// of votes / certificate need to be refreshed.
 const MAX_BLS_MESSAGES_TO_SEND: usize = 1000;
+
+enum BlsSigVerifyThreadsOrChannel {
+    /// Alpenglow is active so handlers to the threads related to the bls sigverify.
+    Threads(JoinHandle<()>, JoinHandle<()>),
+    /// Alpenglow is not active so hold on to the send side to prevent the channel from disconnecting.
+    Channel { _sender: Sender<SigVerifiedBatch> },
+}
 
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
@@ -118,7 +131,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
+    bls_sigverify_threads_or_channel: BlsSigVerifyThreadsOrChannel,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -144,7 +157,8 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
-    pub turbine_xdp_sender: Option<XdpSender>,
+    pub turbine_xdp_sender: Option<TurbineXdpSender>,
+    pub repair_xdp_sender: Option<PinnedXdpSender>,
 }
 
 impl Default for TvuConfig {
@@ -160,6 +174,7 @@ impl Default for TvuConfig {
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             turbine_xdp_sender: None,
+            repair_xdp_sender: None,
         }
     }
 }
@@ -171,7 +186,7 @@ pub struct AlpenglowInitializationState {
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     pub bank_forks_controller: Arc<dyn BankForksController>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
@@ -188,9 +203,6 @@ pub struct AlpenglowInitializationState {
     // For BLS voting service
     pub bls_connection_cache: Arc<ConnectionCache>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
-
-    // For rewards
-    pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
 impl Tvu {
@@ -204,7 +216,7 @@ impl Tvu {
     pub fn new(
         vote_account: &Pubkey,
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: &Arc<ClusterInfo>,
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
@@ -245,6 +257,7 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
+        reward_votes_sender: Sender<AddVoteMessage>,
     ) -> Result<Self, String> {
         let migration_status = bank_forks.read().unwrap().migration_status();
 
@@ -273,20 +286,18 @@ impl Tvu {
             bls_connection_cache,
             voting_service_test_override,
             highest_finalized,
-            build_reward_certs_receiver,
         } = votor_init;
 
         // streamer and sigverify for A2A BLS messages
         let (consensus_message_sender, consensus_message_receiver) =
             bounded(MAX_ALPENGLOW_PACKET_NUM);
-        let (reward_votes_sender, reward_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
         // The BLS socket is currently only available on Testnet and Development clusters.
         // Closer to release we will enable this for all clusters.
-        let bls_sigverify_threads = if let Some(bls_socket) = bls_socket {
+        let bls_sigverify_threads_or_channel = if let Some(bls_socket) = bls_socket {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
             let (
@@ -302,7 +313,7 @@ impl Tvu {
                     ..Default::default()
                 };
                 let qos_config = SimpleQosConfig {
-                    max_streams_per_second: 30,
+                    max_streams_per_second: VOTOR_RATE_LIMIT_PPS,
                     // Cap by # of active validators (some overhead for epoch boundaries)
                     max_staked_connections: MAX_ALPENGLOW_VOTE_ACCOUNTS * 2,
                     // Two staked connection per validator to account for hotspares
@@ -339,17 +350,18 @@ impl Tvu {
                     packet_receiver: bls_packet_receiver,
                     channel_to_repair: verified_voter_slots_sender,
                     channel_to_reward: reward_votes_sender,
-                    channel_to_pool: consensus_message_sender.clone(),
+                    channel_to_pool: consensus_message_sender,
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
             );
 
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
-
-            Some((bls_streamer_t, bls_sigverifier_t))
+            BlsSigVerifyThreadsOrChannel::Threads(bls_streamer_t, bls_sigverifier_t)
         } else {
-            None
+            BlsSigVerifyThreadsOrChannel::Channel {
+                _sender: consensus_message_sender,
+            }
         };
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -472,6 +484,7 @@ impl Tvu {
                 leader_schedule_cache.clone(),
                 tvu_config.shred_version,
                 outstanding_repair_requests,
+                tvu_config.repair_xdp_sender,
             )
         };
 
@@ -496,6 +509,7 @@ impl Tvu {
                 block_commitment_cache.clone(),
                 rpc_subscriptions.clone(),
             );
+        let (own_message_sender, own_message_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         let votor_config = VotorConfig {
             exit: exit.clone(),
@@ -510,7 +524,7 @@ impl Tvu {
             cluster_info: cluster_info.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             consensus_metrics_sender,
-            highest_finalized,
+            highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
             bls_sender: bls_sender.clone(),
             commitment_sender: votor_commitment_sender,
@@ -519,13 +533,12 @@ impl Tvu {
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
-            own_vote_sender: consensus_message_sender.clone(),
+            own_vote_sender: own_message_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
+            own_message_receiver,
             consensus_metrics_receiver,
-            reward_votes_receiver,
-            build_reward_certs_receiver,
         };
         let votor = Votor::new(votor_config);
 
@@ -546,7 +559,7 @@ impl Tvu {
             block_metadata_notifier,
             dumped_slots_sender,
             votor_event_sender,
-            own_vote_sender: consensus_message_sender,
+            own_message_sender,
             optimistic_parent_sender,
             lockouts_sender,
         };
@@ -604,6 +617,7 @@ impl Tvu {
             vote_history_storage,
             bls_connection_cache,
             bank_forks.clone(),
+            highest_finalized,
             voting_service_test_override,
         );
 
@@ -628,7 +642,7 @@ impl Tvu {
         );
 
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
-            Box::new(EpochSpecs::from(bank_forks.clone()));
+            Box::new(EpochSpecs::from(bank_forks));
 
         let duplicate_shred_listener = DuplicateShredListener::new(
             exit,
@@ -656,7 +670,7 @@ impl Tvu {
             warm_quic_cache_service,
             drop_bank_service,
             duplicate_shred_listener,
-            bls_sigverify_threads,
+            bls_sigverify_threads_or_channel,
             votor,
             commitment_service,
         })
@@ -678,7 +692,9 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let Some((streamer, sigverifier)) = self.bls_sigverify_threads {
+        if let BlsSigVerifyThreadsOrChannel::Threads(streamer, sigverifier) =
+            self.bls_sigverify_threads_or_channel
+        {
             streamer.join()?;
             sigverifier.join()?;
         }
@@ -724,6 +740,7 @@ pub mod tests {
         },
         serial_test::serial,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
@@ -786,11 +803,11 @@ pub mod tests {
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
-        let (retransmit_slots_sender, _retransmit_slots_receiver) = unbounded();
-        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let (_, gossip_confirmed_slots_receiver) = unbounded();
+        let (retransmit_slots_sender, _retransmit_slots_receiver) = bounded(1024);
+        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let (_, gossip_confirmed_slots_receiver) = bounded(1024);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
@@ -810,11 +827,17 @@ pub mod tests {
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         );
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
-        let (leader_window_info_sender, _leader_window_info_receiver) = unbounded();
-        let (optimistic_parent_sender, optimistic_parent_receiver) = unbounded();
-        let highest_parent_ready = Arc::new(RwLock::new((0, (0, Hash::default()))));
+        let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
+        let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
+        let highest_parent_ready = Arc::new(RwLock::new((
+            0,
+            Block {
+                slot: 0,
+                block_id: Hash::default(),
+            },
+        )));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
-            unbounded();
+            bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
         let cancel = CancellationToken::new();
@@ -829,22 +852,22 @@ pub mod tests {
                 thread::sleep(Duration::from_secs(1));
             }
         });
-        let (_build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
+        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
-            &bank_forks,
+            bank_forks.clone(),
             &cref1,
             TvuSockets {
                 repair: target1.sockets.repair,
                 retransmit: target1.sockets.retransmit_sockets,
                 fetch: target1.sockets.tvu,
                 ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
-                alpenglow: target1.sockets.alpenglow,
+                alpenglow: Some(target1.sockets.alpenglow),
                 block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,
@@ -906,8 +929,8 @@ pub mod tests {
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,
                 bank_forks_controller_receiver,
-                build_reward_certs_receiver,
             },
+            reward_votes_sender,
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);

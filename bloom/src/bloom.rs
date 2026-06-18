@@ -5,7 +5,6 @@ use {
     fnv::FnvHasher,
     rand::{self, Rng},
     serde::{Deserialize, Serialize},
-    solana_sanitize::{Sanitize, SanitizeError},
     solana_time_utils::AtomicInterval,
     std::{
         cmp, fmt,
@@ -23,10 +22,35 @@ pub trait BloomHashIndex {
     fn hash_at_index(&self, hash_index: u64) -> u64;
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+/// Samples a random, non-empty [`BitVec`] for `StableAbi` abi-digest tests.
+///
+/// `BitVec` implements neither `StableAbi` nor `FromIterator`, so the derive can't
+/// sample it. We build one from a non-empty random block buffer: an empty
+/// `BitVec::from_bits(&[])` has an inner `Some([])` that serde encodes as `[1, 0]`,
+/// whereas wincode normalizes empty to `[0]` (`None`) — an empty sample would make
+/// the bincode and wincode abi digests diverge. Shared via
+/// `#[stable_abi_sample(with = "...")]` by `BitVec` fields here and in gossip.
+#[cfg(feature = "frozen-abi")]
+pub fn sample_bit_vec<Block>(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> BitVec<Block>
+where
+    Block: bv::BlockType + solana_frozen_abi::stable_abi::StableAbi,
+{
+    use solana_frozen_abi::stable_abi::{context::SequenceLenRange, sample_collection_sized};
+    BitVec::from_bits(
+        sample_collection_sized::<Vec<Block>, Block>(rng, SequenceLenRange::new(1..=5)).as_slice(),
+    )
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct Bloom<T: BloomHashIndex> {
     pub keys: Vec<u64>,
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_bit_vec(rng)")
+    )]
     pub bits: BitVec<u64>,
     num_bits_set: u64,
     _phantom: PhantomData<T>,
@@ -53,17 +77,6 @@ impl<T: BloomHashIndex> fmt::Debug for Bloom<T> {
             write!(f, "..")?;
         }
         write!(f, " }}")
-    }
-}
-
-impl<T: BloomHashIndex> Sanitize for Bloom<T> {
-    fn sanitize(&self) -> Result<(), SanitizeError> {
-        // Avoid division by zero in self.pos(...).
-        if self.bits.is_empty() {
-            Err(SanitizeError::InvalidValue)
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -120,6 +133,9 @@ impl<T: BloomHashIndex> Bloom<T> {
         self.num_bits_set = 0;
     }
     pub fn add(&mut self, key: &T) {
+        if self.bits.is_empty() {
+            return;
+        }
         for k in &self.keys {
             let pos = self.pos(key, *k);
             if !self.bits.get(pos) {
@@ -129,6 +145,9 @@ impl<T: BloomHashIndex> Bloom<T> {
         }
     }
     pub fn contains(&self, key: &T) -> bool {
+        if self.keys.is_empty() || self.bits.is_empty() {
+            return false;
+        }
         for k in &self.keys {
             let pos = self.pos(key, *k);
             if !self.bits.get(pos) {
@@ -195,6 +214,9 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     /// Adds an item to the bloom filter and returns true if the item
     /// was not in the filter before.
     pub fn add(&self, key: &T) -> bool {
+        if self.bits.is_empty() {
+            return false;
+        }
         let mut added = false;
         for k in &self.keys {
             let (index, mask) = self.pos(key, *k);
@@ -205,6 +227,9 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     }
 
     pub fn contains(&self, key: &T) -> bool {
+        if self.keys.is_empty() || self.bits.is_empty() {
+            return false;
+        }
         self.keys.iter().all(|k| {
             let (index, mask) = self.pos(key, *k);
             let bit = self.bits[index].load(Ordering::Relaxed) & mask;
@@ -309,6 +334,7 @@ mod test {
         bloom.add(&key);
         assert!(bloom.contains(&key));
     }
+
     #[test]
     fn test_random() {
         let mut b1: Bloom<Hash> = Bloom::random(10, 0.1, 100);

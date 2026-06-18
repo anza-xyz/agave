@@ -46,17 +46,13 @@
 use {
     crate::{
         commitment::CommitmentAggregationData,
-        consensus_metrics::{
-            ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
-        },
+        consensus_metrics::ConsensusMetrics,
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
-        consensus_rewards::{AddVoteMessage, BuildRewardCertsRequest, ConsensusRewardsService},
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
         },
         event_handler::{EventHandler, EventHandlerContext},
-        generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
@@ -64,12 +60,17 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::consensus_message::ConsensusMessage,
+    agave_bls_sigverify::{
+        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
+    },
+    agave_votor_messages::{
+        consensus_message::{Block, ConsensusMessage},
+        metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
+    },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
@@ -111,18 +112,17 @@ pub struct VotorConfig {
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
-    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
+    pub own_vote_sender: Sender<ConsensusMessage>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
-    pub consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
+    pub consensus_message_receiver: Receiver<SigVerifiedBatch>,
+    pub own_message_receiver: Receiver<ConsensusMessage>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
-    pub reward_votes_receiver: Receiver<AddVoteMessage>,
-    pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
 /// Context shared with block creation, replay, gossip, banking stage etc
@@ -131,7 +131,7 @@ pub(crate) struct SharedContext {
     pub(crate) bank_forks: Arc<RwLock<BankForks>>,
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_window_info_sender: Sender<LeaderWindowInfo>,
-    pub(crate) highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    pub(crate) highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub(crate) repair_event_sender: RepairEventSender,
     pub(crate) latest_switch_request: LatestSwitchRequest,
@@ -141,7 +141,6 @@ pub struct Votor {
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
-    consensus_rewards_service: ConsensusRewardsService,
     metrics: JoinHandle<()>,
 }
 
@@ -169,10 +168,9 @@ impl Votor {
             latest_switch_request,
             event_receiver,
             consensus_message_receiver,
+            own_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
-            reward_votes_receiver,
-            build_reward_certs_receiver,
             generated_cert_types,
             highest_finalized,
             bank_forks_controller,
@@ -180,6 +178,7 @@ impl Votor {
 
         let migration_status = bank_forks.read().unwrap().migration_status();
         let identity_keypair = cluster_info.keypair();
+        let vote_history_highest_parent_ready = vote_history.highest_parent_ready();
 
         // Get the sharable root bank
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
@@ -241,10 +240,11 @@ impl Votor {
             blockstore,
             sharable_banks: sharable_banks.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
+            vote_history_highest_parent_ready,
             consensus_message_receiver,
+            own_message_receiver,
             bls_sender,
             event_sender,
-            commitment_sender,
             repair_event_sender,
             highest_finalized,
         };
@@ -256,19 +256,10 @@ impl Votor {
         );
         let event_handler = EventHandler::new(event_handler_context);
         let consensus_pool_service = ConsensusPoolService::new(consensus_pool_context);
-        let consensus_rewards_service = ConsensusRewardsService::new(
-            cluster_info,
-            leader_schedule_cache,
-            sharable_banks,
-            exit,
-            reward_votes_receiver,
-            build_reward_certs_receiver,
-        );
 
         Self {
             event_handler,
             consensus_pool_service,
-            consensus_rewards_service,
             timer_manager,
             metrics,
         }
@@ -276,7 +267,6 @@ impl Votor {
 
     pub fn join(self) -> thread::Result<()> {
         self.consensus_pool_service.join()?;
-        self.consensus_rewards_service.join()?;
 
         // Loop till we manage to unwrap the Arc and then we can join.
         let mut timer_manager = self.timer_manager;

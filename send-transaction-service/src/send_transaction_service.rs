@@ -158,7 +158,7 @@ pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
     pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
         client: Client,
         config: Config,
@@ -178,7 +178,7 @@ impl SendTransactionService {
         );
 
         let retry_thread = Self::retry_thread(
-            bank_forks.clone(),
+            bank_forks,
             client,
             retry_transactions,
             config,
@@ -537,7 +537,7 @@ mod test {
     use {
         super::*,
         crate::test_utils::create_client_for_tests,
-        crossbeam_channel::{bounded, unbounded},
+        crossbeam_channel::bounded,
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
@@ -555,13 +555,13 @@ mod test {
     async fn service_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
 
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client.clone(),
             Config {
@@ -598,7 +598,7 @@ mod test {
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client.clone(),
             Config {

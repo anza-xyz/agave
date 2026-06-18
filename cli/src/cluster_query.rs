@@ -1109,7 +1109,7 @@ pub async fn process_get_ag_genesis_info(
             CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
                 epoch,
                 slot: cert_type.slot(),
-                block_id: cert_type.to_block().unwrap().1,
+                block_id: cert_type.to_block().unwrap().block_id,
                 bitvec,
                 signature,
             })
@@ -1258,9 +1258,8 @@ pub async fn process_show_block_production(
         .value
         .unwrap();
 
-    let slot_history: SlotHistory = from_account(&slot_history_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize slot history".to_string())
-    })?;
+    let slot_history: SlotHistory = wincode::deserialize(&slot_history_account.data)
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize slot history".to_string()))?;
 
     let (confirmed_blocks, start_slot) =
         if start_slot >= slot_history.oldest() && end_slot <= slot_history.newest() {
@@ -1714,6 +1713,13 @@ pub async fn process_show_stakes(
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
     )
     .await?;
+    let fixed_point_activation_epoch = get_feature_activation_epoch(
+        rpc_client,
+        &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id(),
+    )
+    .await?;
+    let use_fixed_point_stake_math = fixed_point_activation_epoch
+        .is_some_and(|activation_epoch| clock.epoch >= activation_epoch);
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
@@ -1738,6 +1744,7 @@ pub async fn process_show_stakes(
                             new_rate_activation_epoch,
                             rent_exempt_balance,
                             false,
+                            use_fixed_point_stake_math,
                         ),
                     });
                 }
@@ -1756,6 +1763,7 @@ pub async fn process_show_stakes(
                             new_rate_activation_epoch,
                             rent_exempt_balance,
                             false,
+                            use_fixed_point_stake_math,
                         ),
                     });
                 }

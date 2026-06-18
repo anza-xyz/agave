@@ -5,6 +5,7 @@ pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
+pub mod pinned_xdp_sender;
 pub mod socket_addr_space;
 pub mod sockets;
 #[cfg(any(target_os = "android", target_os = "windows"))]
@@ -22,6 +23,7 @@ pub use {
     ip_echo_server::{
         DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
     },
+    pinned_xdp_sender::PinnedXdpSender,
     socket_addr_space::SocketAddrSpace,
 };
 use {
@@ -196,16 +198,21 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
     Some((start_port, end_port))
 }
 
-fn select_ipv4(host: &str, mut ips: impl Iterator<Item = IpAddr>) -> Result<IpAddr, String> {
-    let Some(first_ip) = ips.next() else {
+fn select_ipv4<T>(
+    host: &str,
+    mut values: impl Iterator<Item = T>,
+    mut ip_addr: impl FnMut(&T) -> IpAddr,
+) -> Result<T, String> {
+    let Some(first_value) = values.next() else {
         return Err(format!("Unable to resolve host: {host}"));
     };
 
-    if first_ip.is_ipv4() {
-        return Ok(first_ip);
+    if ip_addr(&first_value).is_ipv4() {
+        return Ok(first_value);
     }
 
-    ips.find(IpAddr::is_ipv4)
+    values
+        .find(|value| ip_addr(value).is_ipv4())
         .ok_or_else(|| format!("IPv6 addresses are not supported: {host}"))
 }
 
@@ -222,12 +229,12 @@ pub fn parse_host(host: &str) -> Result<IpAddr, String> {
     }
 
     // Next, check to see if it resolves to an IPv4 address
-    let mut ips = (host, 0)
+    let ips = (host, 0)
         .to_socket_addrs()
         .map_err(|err| err.to_string())?
         .map(|socket_address| socket_address.ip());
 
-    select_ipv4(host, &mut ips)
+    select_ipv4(host, ips, |ip| *ip)
 }
 
 pub fn is_host(string: String) -> Result<(), String> {
@@ -235,15 +242,10 @@ pub fn is_host(string: String) -> Result<(), String> {
 }
 
 pub fn parse_host_port(host_port: &str) -> Result<SocketAddr, String> {
-    let addrs: Vec<_> = host_port
+    let addrs = host_port
         .to_socket_addrs()
-        .map_err(|err| format!("Unable to resolve host {host_port}: {err}"))?
-        .collect();
-    if addrs.is_empty() {
-        Err(format!("Unable to resolve host: {host_port}"))
-    } else {
-        Ok(addrs[0])
-    }
+        .map_err(|err| format!("Unable to resolve host {host_port}: {err}"))?;
+    select_ipv4(host_port, addrs, SocketAddr::ip)
 }
 
 pub fn is_host_port(string: String) -> Result<(), String> {
@@ -396,7 +398,8 @@ mod tests {
         assert_eq!(
             select_ipv4(
                 "ipv6-only.test",
-                [IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)].into_iter()
+                [IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)].into_iter(),
+                |ip| *ip,
             )
             .unwrap_err(),
             "IPv6 addresses are not supported: ipv6-only.test",
@@ -409,6 +412,7 @@ mod tests {
                     IpAddr::V4(Ipv4Addr::LOCALHOST),
                 ]
                 .into_iter(),
+                |ip| *ip,
             )
             .unwrap(),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -421,6 +425,10 @@ mod tests {
         parse_host_port("localhost").unwrap_err();
         parse_host_port("127.0.0.0:1234").unwrap();
         parse_host_port("127.0.0.0").unwrap_err();
+        assert_eq!(
+            parse_host_port("[2001:db8:abcd:42::dead:beef]:1234").unwrap_err(),
+            "IPv6 addresses are not supported: [2001:db8:abcd:42::dead:beef]:1234",
+        );
     }
 
     #[test]

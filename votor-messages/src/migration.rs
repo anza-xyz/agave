@@ -77,6 +77,9 @@ pub const MIGRATION_SLOT_OFFSET: Slot = 5000;
 #[cfg(feature = "dev-context-only-utils")]
 pub const MIGRATION_SLOT_OFFSET: Slot = 32;
 
+/// A marker for vote accounts' epoch credit to indicate migration from tower to alpenwlow
+pub const AG_MIGRATION_EPOCH_CREDIT: (Epoch, u64, u64) = (Epoch::MAX, u64::MAX, u64::MAX);
+
 /// We match Alpenglow's 20 + 20 model, by allowing a maximum of 20% malicious stake during the migration.
 pub const MIGRATION_MALICIOUS_THRESHOLD: f64 = 20.0 / 100.0;
 
@@ -347,7 +350,10 @@ impl MigrationStatus {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn post_migration_status() -> Self {
         let genesis_certificate = Certificate {
-            cert_type: CertificateType::Genesis(0, Hash::default()),
+            cert_type: CertificateType::Genesis(Block {
+                slot: 0,
+                block_id: Hash::default(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
@@ -359,15 +365,18 @@ impl MigrationStatus {
     /// Enable alpenglow for testing code
     #[cfg(feature = "dev-context-only-utils")]
     pub fn enable_alpenglow_for_tests(&self) {
-        let genesis_block = (0, Hash::new_unique());
+        let genesis_block = Block {
+            slot: 0,
+            block_id: Hash::new_unique(),
+        };
         self.record_feature_activation(0);
         self.set_genesis_block(genesis_block);
         self.set_genesis_certificate(Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(genesis_block.0, genesis_block.1),
+            cert_type: CertificateType::Genesis(genesis_block),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         }));
-        assert_eq!(self.enable_alpenglow_during_startup(), genesis_block.0);
+        assert_eq!(self.enable_alpenglow_during_startup(), genesis_block.slot);
     }
 
     /// Initialize migration status based on feature flag activation and genesis certificate
@@ -409,7 +418,7 @@ impl MigrationStatus {
             }
         };
 
-        warn!("Pre startup initializing alpenglow migration from root bank: {phase:?}");
+        info!("Pre startup initializing alpenglow migration from root bank: {phase:?}");
         Self::new(phase)
     }
 
@@ -427,7 +436,7 @@ impl MigrationStatus {
     pub fn log_phase(&self) {
         let my_pubkey = self.my_pubkey();
         let phase = self.phase.read().unwrap();
-        warn!("{my_pubkey}: Alpenglow migration phase {phase:?}");
+        info!("{my_pubkey}: Alpenglow migration phase {phase:?}");
     }
 
     /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
@@ -471,7 +480,7 @@ impl MigrationStatus {
             genesis_cert: None,
         };
 
-        warn!(
+        info!(
             "{}: Alpenglow feature flag was activated in {slot}, migration will start at \
              {migration_slot}",
             self.my_pubkey()
@@ -506,7 +515,7 @@ impl MigrationStatus {
     ///
     /// Should only be used during `Migration`, and transitions to `ReadyToEnable` if we have already
     /// received a genesis certificate and it matches.
-    pub fn set_genesis_block(&self, discovered_genesis_block @ (slot, _): Block) {
+    pub fn set_genesis_block(&self, discovered_genesis_block: Block) {
         let mut phase = self.phase.write().unwrap();
         if phase.is_pre_feature_activation() {
             unreachable!(
@@ -533,10 +542,10 @@ impl MigrationStatus {
         }
 
         assert!(
-            slot < *migration_slot,
+            discovered_genesis_block.slot < *migration_slot,
             "Attempting to set a genesis block that is past the migration start"
         );
-        warn!(
+        info!(
             "{} Setting genesis block {discovered_genesis_block:?}",
             self.my_pubkey()
         );
@@ -545,18 +554,14 @@ impl MigrationStatus {
         let Some(genesis_cert) = genesis_cert else {
             return;
         };
-        let CertificateType::Genesis(slot, block_id) = genesis_cert.cert_type else {
+        let CertificateType::Genesis(block) = genesis_cert.cert_type else {
             unreachable!("Programmer error invalid genesis certificate");
         };
-        if genesis_block
-            .as_ref()
-            .map(|b| *b != (slot, block_id))
-            .unwrap_or(true)
-        {
+        if genesis_block.as_ref().map(|b| *b != block).unwrap_or(true) {
             panic!(
                 "{}: We wish to cast a genesis vote on {discovered_genesis_block:?}, however we \
-                 have received a genesis certificate for ({slot}, {block_id}). This means there \
-                 is significant malicious activity causing two distinct forks to reach the \
+                 have received a genesis certificate for ({block:?}). This means there is \
+                 significant malicious activity causing two distinct forks to reach the \
                  {GENESIS_VOTE_THRESHOLD}. We cannot recover without operator intervention.",
                 self.my_pubkey()
             );
@@ -591,29 +596,26 @@ impl MigrationStatus {
             return;
         };
 
-        let CertificateType::Genesis(slot, block_id) = cert.cert_type else {
+        let CertificateType::Genesis(block) = cert.cert_type else {
             unreachable!("Programmer error adding invalid genesis certificate");
         };
 
         assert!(
-            slot < *migration_slot,
+            block.slot < *migration_slot,
             "Attempting to set a genesis certificate past the migration start"
         );
-        warn!(
-            "{} Setting genesis cert for ({slot},{block_id:?})",
-            self.my_pubkey()
-        );
+        info!("{} Setting genesis cert for ({block:?})", self.my_pubkey());
         *genesis_cert = Some(cert.clone());
 
         let Some(genesis_block) = genesis_block else {
             return;
         };
-        if *genesis_block != (slot, block_id) {
+        if *genesis_block != block {
             panic!(
                 "{}: We cast a genesis vote on {genesis_block:?}, however we have received a \
-                 genesis certificate for ({slot}, {block_id}). This means there is significant \
-                 malicious activity causing two distinct forks to reach the \
-                 {GENESIS_VOTE_THRESHOLD}. We cannot recover without operator intervention.",
+                 genesis certificate for ({block:?}). This means there is significant malicious \
+                 activity causing two distinct forks to reach the {GENESIS_VOTE_THRESHOLD}. We \
+                 cannot recover without operator intervention.",
                 self.my_pubkey()
             );
         }
@@ -637,14 +639,14 @@ impl MigrationStatus {
         self.wait_for_migration_or_exit(exit);
 
         if exit.load(Ordering::Relaxed) {
-            warn!(
+            info!(
                 "{}: Validator shutdown before Alpenglow could be enabled",
                 self.my_pubkey()
             );
             return;
         }
 
-        warn!("{}: Alpenglow enabled!", self.my_pubkey());
+        info!("{}: Alpenglow enabled!", self.my_pubkey());
     }
 
     /// PohService is shutting down after being asked to by replay_stage via `enable_alpenglow`.
@@ -670,7 +672,7 @@ impl MigrationStatus {
     ///
     /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
     pub fn enable_alpenglow_during_startup(&self) -> Slot {
-        warn!("{}: Enabling alpenglow during startup", self.my_pubkey());
+        info!("{}: Enabling alpenglow during startup", self.my_pubkey());
         let MigrationPhase::ReadyToEnable { genesis_cert } = self.phase.read().unwrap().clone()
         else {
             unreachable!(
@@ -695,7 +697,7 @@ impl MigrationStatus {
         let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
         *is_alpenglow_enabled.lock().unwrap() = true;
         // No need to condvar as we're in startup and no one is waiting for us.
-        warn!(
+        info!(
             "{}: Alpenglow enabled during startup! Genesis slot {genesis_slot}",
             self.my_pubkey()
         );
@@ -719,7 +721,7 @@ impl MigrationStatus {
             full_alpenglow_epoch,
         };
 
-        warn!(
+        info!(
             "{}: Migration epoch has concluded, entering full alpenglow epoch {}!",
             self.my_pubkey(),
             full_alpenglow_epoch

@@ -15,7 +15,8 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     solana_clock::Slot,
     solana_ledger::{
-        block_error::BlockError, blockstore::Blockstore,
+        block_error::BlockError,
+        blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::BlockstoreProcessorError,
     },
     solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
@@ -44,6 +45,9 @@ impl DeadSlotLogLevel {
     pub(super) fn for_replay_error(err: &BlockstoreProcessorError) -> Self {
         match err {
             BlockstoreProcessorError::InvalidBlock(BlockError::TooFewTicks) => Self::Info,
+            BlockstoreProcessorError::FailedToLoadEntries(BlockstoreError::BlockAborted(_)) => {
+                Self::Info
+            }
             _ => Self::Error,
         }
     }

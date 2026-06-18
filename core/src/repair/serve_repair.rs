@@ -71,6 +71,7 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// the number of slots to respond with when responding to `Orphan` requests
@@ -189,7 +190,7 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
     Ping(Ping),
@@ -224,18 +225,18 @@ pub enum BlockIdRepairType {
 
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
-        match self {
-            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => (*slot, *block_id),
-            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => (*slot, *block_id),
+        match *self {
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block { slot, block_id },
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block { slot, block_id },
         }
     }
 
     pub(crate) fn slot(&self) -> Slot {
-        self.block().0
+        self.block().slot
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum BlockIdRepairResponse {
     ParentFecSetCount {
         fec_set_count: u32,
@@ -289,8 +290,11 @@ impl RequestResponse for BlockIdRepairType {
                     return false;
                 }
 
-                let parent_info_leaf =
-                    hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+                let parent_info_leaf = hashv(&[
+                    &parent_slot.to_le_bytes(),
+                    parent_block_id.as_ref(),
+                    &fec_set_count.to_le_bytes(),
+                ]);
                 merkle_tree::verify_merkle_proof(
                     parent_info_leaf,
                     *fec_set_count as usize,
@@ -368,7 +372,7 @@ struct ServeRepairStats {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi))]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
     sender: Pubkey,
@@ -425,7 +429,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c"
     )
 )]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum RepairProtocol {
     LegacyWindowIndex,
     LegacyHighestWindowIndex,
@@ -542,7 +546,7 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
     well_formed
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
 }
@@ -1851,7 +1855,9 @@ impl ServeRepair {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
-            if let Ok(RepairResponse::Ping(ping)) = packet.deserialize_slice(..) {
+            if let Some(data) = packet.data(..)
+                && let Ok(RepairResponse::Ping(ping)) = wincode::deserialize(data)
+            {
                 if !ping.verify() {
                     // Do _not_ set `discard` to allow shred processing to attempt to
                     // handle the packet.
@@ -1937,6 +1943,7 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
+        crossbeam_channel::bounded,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -1950,7 +1957,7 @@ mod tests {
             },
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{Packet, PacketFlags, PacketRef, deserialize_from_with_limit},
+        solana_perf::packet::{Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -2149,8 +2156,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&rsp[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), rsp.len() as u64);
         if let RepairProtocol::Orphan { header, slot } = deserialized_request {
             assert_eq!(slot, 123);
@@ -2164,7 +2170,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2190,8 +2196,7 @@ mod tests {
             .ancestor_repair_request_bytes(&keypair, &repair_peer_id, slot, nonce)
             .unwrap();
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::AncestorHashes {
             header,
@@ -2209,7 +2214,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2243,8 +2248,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::WindowIndex {
             header,
@@ -2264,7 +2268,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
 
         let request = ShredRepairType::HighestShred(slot, shred_index);
@@ -2279,8 +2283,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::HighestWindowIndex {
             header,
@@ -2300,7 +2303,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2542,8 +2545,7 @@ mod tests {
             .root_bank()
             .epoch_schedule()
             .clone();
-        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) =
-            crossbeam_channel::unbounded();
+        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = bounded(1024);
         RepairInfo {
             bank_forks,
             cluster_info,
@@ -2757,9 +2759,12 @@ mod tests {
     #[test]
     fn test_run_ancestor_hashes() {
         fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
-            packet
-                .deserialize_slice(..packet.meta().size - SIZE_OF_NONCE)
-                .unwrap()
+            wincode::deserialize(
+                packet
+                    .data(..(packet.meta().size - SIZE_OF_NONCE))
+                    .unwrap_or_default(),
+            )
+            .unwrap()
         }
 
         agave_logger::setup();
@@ -2792,7 +2797,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
 
@@ -2809,7 +2814,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
 
@@ -2833,7 +2838,7 @@ mod tests {
                 assert_eq!(hashes, expected_ancestors);
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
     }
@@ -3207,6 +3212,54 @@ mod tests {
         assert!(
             cache.add(&pong1, remote_socket, within_delay),
             "pong for original ping must still be valid — token was not overwritten"
+        );
+    }
+
+    #[test]
+    fn test_verify_fec_set_count_non_malleable() {
+        let parent_slot = 99u64;
+        let parent_block_id = Hash::new_unique();
+        let fec_set_count: u32 = 2; // even => total leaves = 3, last leaf duplicated
+        let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
+        let real_parent_leaf = hashv(&[
+            &parent_slot.to_le_bytes(),
+            parent_block_id.as_ref(),
+            &fec_set_count.to_le_bytes(),
+        ]);
+        let mut leaves: Vec<Hash> = fec_set_roots;
+        leaves.push(real_parent_leaf);
+        let tree =
+            merkle_tree::MerkleTree::try_new_with_len(leaves.iter().copied().map(Ok), leaves.len())
+                .unwrap();
+        let block_id = *tree.root();
+        let real_parent_proof: Vec<u8> = tree
+            .make_merkle_proof(fec_set_count as usize, leaves.len())
+            .flat_map(|entry| entry.unwrap().iter().copied())
+            .collect();
+
+        let request = BlockIdRepairType::ParentAndFecSetCount {
+            slot: 100,
+            block_id,
+        };
+
+        // honest response verifies
+        assert!(
+            request.verify_response(&BlockIdRepairResponse::ParentFecSetCount {
+                fec_set_count,
+                parent_info: (parent_slot, parent_block_id),
+                parent_proof: real_parent_proof.clone(),
+            })
+        );
+
+        // Attack: claim N+1 and reuse the honest proof. The padded tree puts
+        // `real_parent_leaf` at both positions N and N+1, so without binding
+        // `fec_set_count` into the leaf this proof would verify.
+        assert!(
+            !request.verify_response(&BlockIdRepairResponse::ParentFecSetCount {
+                fec_set_count: fec_set_count + 1,
+                parent_info: (parent_slot, parent_block_id),
+                parent_proof: real_parent_proof.clone(),
+            })
         );
     }
 }

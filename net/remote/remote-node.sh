@@ -18,17 +18,16 @@ maybeDisableAirdrops="$9"
 internalNodesStakeLamports="${10}"
 internalNodesLamports="${11}"
 nodeIndex="${12}"
-numBenchTpsClients="${13}"
-benchTpsExtraArgs="${14}"
-genesisOptions="${15}"
-extraNodeArgs="${16}"
-maybeWarpSlot="${17}"
-maybeFullRpc="${18}"
-waitForNodeInit="${19}"
-extraPrimordialStakes="${20:=0}"
-tmpfsAccounts="${21:false}"
-disableQuic="${22}"
-enableUdp="${23}"
+genesisOptions="${13}"
+extraNodeArgs="${14}"
+maybeWarpSlot="${15}"
+maybeFullRpc="${16}"
+waitForNodeInit="${17}"
+extraPrimordialStakes="${18:=0}"
+tmpfsAccounts="${19:false}"
+disableQuic="${20}"
+enableUdp="${21}"
+alpenglow="${22:-false}"
 
 set +x
 
@@ -143,32 +142,11 @@ EOF
       done
       setupValidatorKeypair blockstreamer-identity
 
-      lamports_per_signature="42"
-      # shellcheck disable=SC2206 # Do not want to quote $genesisOptions
-      genesis_args=($genesisOptions)
-      for i in "${!genesis_args[@]}"; do
-        if [[ "${genesis_args[$i]}" = --target-lamports-per-signature ]]; then
-          lamports_per_signature="${genesis_args[$((i+1))]}"
-          break
-        fi
-      done
-
-      for i in $(seq 0 $((numBenchTpsClients-1))); do
-        # shellcheck disable=SC2086 # Do not want to quote $benchTpsExtraArgs
-        solana-bench-tps --write-client-keys config/bench-tps"$i".yml \
-          --target-lamports-per-signature "$lamports_per_signature" $benchTpsExtraArgs
-        # Skip first line, as it contains header
-        tail -n +2 -q config/bench-tps"$i".yml >> config/client-accounts.yml
-        echo "" >> config/client-accounts.yml
-      done
       if [[ -f $externalPrimordialAccountsFile ]]; then
         cat "$externalPrimordialAccountsFile" >> config/validator-balances.yml
       fi
       if [[ -f config/validator-balances.yml ]]; then
         genesisOptions+=" --primordial-accounts-file config/validator-balances.yml"
-      fi
-      if [[ -f config/client-accounts.yml ]]; then
-        genesisOptions+=" --primordial-accounts-file config/client-accounts.yml"
       fi
 
       if [[ -n $internalNodesStakeLamports ]]; then
@@ -203,7 +181,15 @@ EOF
                                        "$(solana-keygen pubkey "config/validator-vote-$i.json")"
                                        "$(solana-keygen pubkey "config/validator-stake-$i.json")"
           )
+          args+=(--bootstrap-validator-bls-pubkey "$(solana-keygen bls_pubkey "config/validator-identity-$i.json")")
         done
+      fi
+
+      if $alpenglow; then
+        echo "Consensus method: Alpenglow"
+        args+=(--alpenglow)
+      else
+        echo "Consensus method: TowerBFT"
       fi
 
       multinode-demo/setup.sh "${args[@]}"
@@ -352,7 +338,7 @@ EOF
 
     set -x
     # Add the faucet keypair to validators for convenient access from tools
-    # like bench-tps and add to blocktreamers to run a faucet
+    # and add it to blockstreamers to run a faucet.
     scp "$entrypointIp":~/solana/config/faucet.json "$SOLANA_CONFIG_DIR"/
     if [[ $nodeType = blockstreamer ]]; then
       # Run another faucet with the same keypair on the blockstreamer node.

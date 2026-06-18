@@ -4,7 +4,7 @@
 mod tests {
 
     use {
-        crate::protocol::Protocol,
+        crate::protocol::{Protocol, deserialize_protocol},
         serde::Serialize,
         solana_net_utils::tooling_for_tests::{hexdump, validate_packet_format},
         solana_sanitize::Sanitize,
@@ -12,7 +12,7 @@ mod tests {
     };
 
     fn parse_gossip(bytes: &[u8]) -> anyhow::Result<Protocol> {
-        let pkt: Protocol = solana_perf::packet::deserialize_from_with_limit(bytes)?;
+        let pkt = deserialize_protocol(bytes)?;
         pkt.sanitize()?;
         Ok(pkt)
     }

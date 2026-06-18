@@ -11,7 +11,7 @@ use {
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VerifiedVoterSlotsSender, VoteTracker,
+            VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -23,7 +23,9 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
+    agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_votor::event::VotorEventSender,
+    agave_votor_messages::VerifiedVoterSlotsSender,
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
@@ -92,6 +94,11 @@ const TPU_CHANNEL_SIZE: usize = 50_000;
 /// Size of the channel between the vote streamer and the TPU sigverify stage.
 /// Chosen based on nominal voting load for a cluster with ~2000 validators + some margin.
 pub(crate) const TPU_VOTE_CHANNEL_SIZE: usize = 4_000;
+
+/// Size of the channel between the TPU forwards streamer and the fetch stage.
+/// Mirrors `TPU_CHANNEL_SIZE`; the streamer uses `try_send`, so an over-full
+/// channel drops packets (tracked via streamer metrics) rather than blocking.
+const TPU_FORWARD_CHANNEL_SIZE: usize = 50_000;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -172,7 +179,8 @@ impl Tpu {
         let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
         let evicting_vote_sender =
             EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
-        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
+        let (forwarded_packet_sender, forwarded_packet_receiver) =
+            bounded(TPU_FORWARD_CHANNEL_SIZE);
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),
@@ -268,6 +276,11 @@ impl Tpu {
 
         let (forward_stage_sender, forward_stage_receiver) = bounded(50_000);
 
+        // Shared between sigverify and scheduler. The scheduler publishes
+        // a priority floor under saturation; sigverify reads it and drops
+        // below-floor packets ahead of signature verification.
+        let scheduler_priority_floor = Arc::new(SchedulerPriorityFloor::new());
+
         let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_receiver,
             vote_packet_receiver,
@@ -277,6 +290,7 @@ impl Tpu {
             tpu_sigverify_threads,
             enable_block_production_forwarding,
             bank_forks.read().unwrap().sharable_banks(),
+            Some(scheduler_priority_floor.clone()),
         );
 
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
@@ -311,6 +325,7 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache,
             filter_keys,
+            scheduler_priority_floor,
         );
 
         #[cfg(unix)]

@@ -202,7 +202,7 @@ impl Faucet {
                             )
                         );
                         let memo_instruction = Instruction {
-                            program_id: spl_memo_interface::v3::id(),
+                            program_id: spl_memo_interface::v4::id(),
                             accounts: vec![],
                             data: memo.as_bytes().to_vec(),
                         };
@@ -675,7 +675,7 @@ mod tests {
             assert_eq!(tx.signatures.len(), 1);
             assert_eq!(
                 message.account_keys,
-                vec![mint_pubkey, spl_memo_interface::v3::id()]
+                vec![mint_pubkey, spl_memo_interface::v4::id()]
             );
             assert_eq!(message.recent_blockhash, blockhash);
 

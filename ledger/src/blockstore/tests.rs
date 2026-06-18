@@ -12,7 +12,6 @@ use {
     assert_matches::assert_matches,
     crossbeam_channel::unbounded,
     rand::{rng, seq::SliceRandom},
-    solana_account_decoder::parse_token::UiTokenAmount,
     solana_entry::entry::next_entry_mut,
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
@@ -20,18 +19,15 @@ use {
     solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::{Bank, RewardType},
+    solana_runtime::bank::Bank,
     solana_sha256_hasher::hash,
     solana_shred_version::version_from_hash,
     solana_signature::Signature,
-    solana_storage_proto::convert::generated,
     solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    solana_transaction_status::{
-        InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
-    },
+    solana_transaction_status::{InnerInstruction, InnerInstructions},
     std::{cmp::Ordering, num::NonZeroUsize, time::Duration},
     test_case::{test_case, test_matrix},
 };
@@ -48,7 +44,7 @@ pub(crate) fn make_slot_entries_with_transactions(num_entries: u64) -> Vec<Entry
             vec![CompiledInstruction::new(1, &(), vec![0])],
         );
         entries.push(next_entry_mut(&mut Hash::default(), 0, vec![transaction]));
-        let mut tick = create_ticks(1, 0, hash(&bincode::serialize(&x).unwrap()));
+        let mut tick = create_ticks(1, 0, hash(&wincode::serialize(&x).unwrap()));
         entries.append(&mut tick);
     }
     entries
@@ -77,7 +73,7 @@ fn create_update_parent_shreds_with_shred_parent(
     is_last_in_slot: bool,
 ) -> Vec<Shred> {
     use solana_entry::block_component::UpdateParentV1;
-    let component = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+    let component = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: parent_slot,
         new_parent_block_id: parent_block_id,
     });
@@ -109,7 +105,7 @@ fn create_block_header_shreds_with_shred_parent(
     parent_block_id: Hash,
 ) -> Vec<Shred> {
     use solana_entry::block_component::BlockHeaderV1;
-    let component = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+    let component = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot,
         parent_block_id,
     });
@@ -166,11 +162,11 @@ fn create_block_footer_shreds_with_last(
         bank_hash: Hash::new_unique(),
         block_producer_time_nanos: 0,
         block_user_agent: vec![],
-        final_cert: None,
+        block_final_cert: None,
         skip_reward_cert: None,
         notar_reward_cert: None,
     };
-    let component = VersionedBlockMarker::new_block_footer(footer);
+    let component = VersionedBlockMarker::from_block_footer(footer);
     let component = BlockComponent::new_block_marker(component);
 
     Shredder::new(slot, parent_slot, 0, 0)
@@ -190,15 +186,6 @@ fn create_block_footer_shreds_with_last(
 
 fn data_shreds(shreds: Vec<Shred>) -> Vec<Shred> {
     shreds.into_iter().filter(Shred::is_data).collect()
-}
-
-#[test]
-fn test_hashes_per_tick_for_ledger() {
-    let mut genesis_config = GenesisConfig::default();
-    assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
-
-    genesis_config.poh_config.hashes_per_tick = Some(2);
-    assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
 }
 
 #[test]
@@ -507,7 +494,7 @@ fn test_shred_cleanup_check() {
 
     let max_purge_slot = 1;
     blockstore
-        .run_purge(0, max_purge_slot, PurgeType::Exact)
+        .purge_slots(0, max_purge_slot, PurgeType::Exact)
         .unwrap();
     *blockstore.lowest_cleanup_slot.write().unwrap() = max_purge_slot;
 
@@ -3757,7 +3744,7 @@ fn test_get_rooted_transaction() {
     }
 
     blockstore
-        .run_purge(0, slot, PurgeType::CompactionFilter)
+        .purge_slots(0, slot, PurgeType::CompactionFilter)
         .unwrap();
     *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
     for VersionedTransactionWithStatusMeta { transaction, .. } in expected_transactions {
@@ -3874,7 +3861,7 @@ fn test_get_complete_transaction() {
     }
 
     blockstore
-        .run_purge(0, slot, PurgeType::CompactionFilter)
+        .purge_slots(0, slot, PurgeType::CompactionFilter)
         .unwrap();
     *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
     for VersionedTransactionWithStatusMeta { transaction, .. } in expected_transactions {
@@ -4011,7 +3998,7 @@ fn test_get_confirmed_signatures_for_address2() {
                 vec![CompiledInstruction::new(1, &(), vec![0])],
             );
             entries.push(next_entry_mut(&mut Hash::default(), 0, vec![transaction]));
-            let mut tick = create_ticks(1, 0, hash(&bincode::serialize(address).unwrap()));
+            let mut tick = create_ticks(1, 0, hash(&wincode::serialize(address).unwrap()));
             entries.append(&mut tick);
         }
         entries
@@ -4560,7 +4547,7 @@ fn test_lowest_slot() {
         blockstore.insert_shreds(shreds, None, false).unwrap();
     }
     assert_eq!(blockstore.lowest_slot(), 1);
-    blockstore.run_purge(0, 5, PurgeType::Exact).unwrap();
+    blockstore.purge_slots(0, 5, PurgeType::Exact).unwrap();
     assert_eq!(blockstore.lowest_slot(), 6);
 }
 
@@ -4576,10 +4563,10 @@ fn test_highest_slot() {
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert_eq!(blockstore.highest_slot().unwrap(), Some(slot));
     }
-    blockstore.run_purge(5, 10, PurgeType::Exact).unwrap();
+    blockstore.purge_slots(5, 10, PurgeType::Exact).unwrap();
     assert_eq!(blockstore.highest_slot().unwrap(), Some(4));
 
-    blockstore.run_purge(0, 4, PurgeType::Exact).unwrap();
+    blockstore.purge_slots(0, 4, PurgeType::Exact).unwrap();
     assert_eq!(blockstore.highest_slot().unwrap(), None);
 }
 
@@ -5304,133 +5291,6 @@ fn test_update_completed_data_indexes_out_of_order() {
     assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
 }
 
-#[test]
-fn test_rewards_protobuf_backward_compatibility() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-    let rewards: Rewards = (0..100)
-        .map(|i| Reward {
-            pubkey: solana_pubkey::new_rand().to_string(),
-            lamports: 42 + i,
-            post_balance: u64::MAX,
-            reward_type: Some(RewardType::Fee),
-            commission: None,
-            commission_bps: None,
-        })
-        .collect();
-    let protobuf_rewards: generated::Rewards = rewards.into();
-
-    let deprecated_rewards: StoredExtendedRewards = protobuf_rewards.clone().into();
-    for slot in 0..2 {
-        let data = bincode::serialize(&deprecated_rewards).unwrap();
-        blockstore.rewards_cf.put_bytes(slot, &data).unwrap();
-    }
-    for slot in 2..4 {
-        blockstore
-            .rewards_cf
-            .put_protobuf(slot, &protobuf_rewards)
-            .unwrap();
-    }
-    for slot in 0..4 {
-        assert_eq!(
-            blockstore
-                .rewards_cf
-                .get_protobuf_or_wincode::<StoredExtendedRewards>(slot)
-                .unwrap()
-                .unwrap(),
-            protobuf_rewards
-        );
-    }
-}
-
-// This test is probably superfluous, since it is highly unlikely that bincode-format
-// TransactionStatus entries exist in any current ledger. They certainly exist in historical
-// ledger archives, but typically those require contemporaraneous software for other reasons.
-// However, we are persisting the test since the apis still exist in `blockstore_db`.
-#[test]
-fn test_transaction_status_protobuf_backward_compatibility() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-    let status = TransactionStatusMeta {
-        status: Ok(()),
-        fee: 42,
-        pre_balances: vec![1, 2, 3],
-        post_balances: vec![1, 2, 3],
-        inner_instructions: Some(vec![]),
-        log_messages: Some(vec![]),
-        pre_token_balances: Some(vec![TransactionTokenBalance {
-            account_index: 0,
-            mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: UiTokenAmount {
-                ui_amount: Some(1.1),
-                decimals: 1,
-                amount: "11".to_string(),
-                ui_amount_string: "1.1".to_string(),
-            },
-            owner: Pubkey::new_unique().to_string(),
-            program_id: Pubkey::new_unique().to_string(),
-        }]),
-        post_token_balances: Some(vec![TransactionTokenBalance {
-            account_index: 0,
-            mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: UiTokenAmount {
-                ui_amount: None,
-                decimals: 1,
-                amount: "11".to_string(),
-                ui_amount_string: "1.1".to_string(),
-            },
-            owner: Pubkey::new_unique().to_string(),
-            program_id: Pubkey::new_unique().to_string(),
-        }]),
-        rewards: Some(vec![Reward {
-            pubkey: "My11111111111111111111111111111111111111111".to_string(),
-            lamports: -42,
-            post_balance: 42,
-            reward_type: Some(RewardType::Rent),
-            commission: None,
-            commission_bps: None,
-        }]),
-        loaded_addresses: LoadedAddresses::default(),
-        return_data: Some(TransactionReturnData {
-            program_id: Pubkey::new_unique(),
-            data: vec![1, 2, 3],
-        }),
-        compute_units_consumed: Some(23456),
-        cost_units: Some(5678),
-    };
-    let deprecated_status: StoredTransactionStatusMeta = status.clone().try_into().unwrap();
-    let protobuf_status: generated::TransactionStatusMeta = status.into();
-
-    for slot in 0..2 {
-        let data = bincode::serialize(&deprecated_status).unwrap();
-        blockstore
-            .transaction_status_cf
-            .put_bytes((Signature::default(), slot), &data)
-            .unwrap();
-    }
-    for slot in 2..4 {
-        blockstore
-            .transaction_status_cf
-            .put_protobuf((Signature::default(), slot), &protobuf_status)
-            .unwrap();
-    }
-    for slot in 0..4 {
-        assert_eq!(
-            blockstore
-                .transaction_status_cf
-                .get_protobuf_or_wincode::<StoredTransactionStatusMeta>((
-                    Signature::default(),
-                    slot
-                ))
-                .unwrap()
-                .unwrap(),
-            protobuf_status
-        );
-    }
-}
-
 fn make_large_tx_entry(num_txs: usize) -> Entry {
     let txs: Vec<_> = (0..num_txs)
         .map(|_| {
@@ -5644,7 +5504,7 @@ fn test_duplicate_last_index_mark_dead() {
 
             // Cleanup the slot
             blockstore
-                .run_purge(slot, slot, PurgeType::Exact)
+                .purge_slots(slot, slot, PurgeType::Exact)
                 .expect("Purge database operations failed");
             assert!(blockstore.meta(slot).unwrap().is_none());
 
@@ -6169,10 +6029,7 @@ fn test_chained_merkle_root_inconsistency_backwards_insert_code() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(
-            coding_shred,
-            coding_shred_previous.into_payload()
-        )
+        PossibleDuplicateShred::ChainedMerkleRootConflict(coding_shred.slot())
     );
 
     // Should not check again, even though this shred conflicts as well
@@ -6222,10 +6079,7 @@ fn test_chained_merkle_root_inconsistency_backwards_insert_data() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(
-            data_shred,
-            coding_shred_previous.into_payload(),
-        )
+        PossibleDuplicateShred::ChainedMerkleRootConflict(data_shred.slot())
     );
     // Should not check again, even though this shred conflicts as well
     assert!(
@@ -6272,13 +6126,58 @@ fn test_chained_merkle_root_inconsistency_forwards() {
     let duplicate_shreds =
         blockstore.insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule);
 
+    assert_eq!(duplicate_shreds.len(), 2);
+    assert!(
+        duplicate_shreds.contains(&PossibleDuplicateShred::ChainedMerkleRootConflict(
+            coding_shred.slot(),
+        ))
+    );
+    assert!(
+        duplicate_shreds.contains(&PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(
+            coding_shred.slot(),
+        ))
+    );
+}
+
+#[test]
+fn test_chained_merkle_root_inconsistency_data_shreds_only() {
+    // Insert data shreds from consecutive FEC sets without any coding shreds.
+    // The ErasureMeta-based SIMD-0340 check cannot run, so the fixed-FEC
+    // MerkleRootMeta check must catch the inconsistent chain.
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let parent_slot = 0;
+    let slot = 1;
+    let fec_set_index = 0;
+    let (data_shreds, _, leader_schedule) =
+        setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
+    let data_shred_previous = data_shreds[0].clone();
+    let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
+
+    assert!(
+        blockstore
+            .insert_shred_return_duplicate(data_shred_previous.clone(), &leader_schedule,)
+            .is_empty()
+    );
+
+    let merkle_root = Hash::new_unique();
+    assert!(merkle_root != data_shred_previous.merkle_root().unwrap());
+    let (data_shreds, _, leader_schedule) = setup_erasure_shreds_with_index_and_chained_merkle(
+        slot,
+        parent_slot,
+        10,
+        next_fec_set_index,
+        merkle_root,
+    );
+    let data_shred = data_shreds[0].clone();
+
+    let duplicate_shreds =
+        blockstore.insert_shred_return_duplicate(data_shred.clone(), &leader_schedule);
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(
-            coding_shred,
-            next_data_shred.into_payload(),
-        )
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(data_shred.slot())
     );
 }
 
@@ -6346,10 +6245,7 @@ fn test_chained_merkle_root_inconsistency_both() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(
-            data_shred,
-            prev_coding_shred.into_payload(),
-        )
+        PossibleDuplicateShred::ChainedMerkleRootConflict(data_shred.slot())
     );
 
     // Insert coding shred
@@ -6360,10 +6256,7 @@ fn test_chained_merkle_root_inconsistency_both() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(
-            coding_shred,
-            next_data_shred.into_payload(),
-        )
+        PossibleDuplicateShred::ChainedMerkleRootConflict(coding_shred.slot())
     );
 }
 
@@ -6655,7 +6548,12 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         }
     }
 
-    let parent_info_hash = hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+    let fec_set_count = u32::try_from(fec_set_roots.len()).unwrap();
+    let parent_info_hash = hashv(&[
+        &parent_slot.to_le_bytes(),
+        parent_block_id.as_ref(),
+        &fec_set_count.to_le_bytes(),
+    ]);
     let merkle_tree_leaves: Vec<_> = fec_set_roots
         .iter()
         .copied()

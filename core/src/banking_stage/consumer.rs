@@ -133,6 +133,7 @@ impl Consumer {
             txs,
             &pre_results,
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
         let check_results: Vec<_> = check_results
@@ -331,6 +332,7 @@ impl Consumer {
                     ),
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
+                    strict_nonce_size_check: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -508,13 +510,13 @@ mod tests {
         super::*,
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_account::{AccountSharedData, state_traits::StateMut},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
-        solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+        solana_cost_model::cost_model::CostModel,
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
@@ -577,7 +579,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
@@ -600,7 +602,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
@@ -969,10 +971,9 @@ mod tests {
                 };
 
             let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-            if let TransactionCost::Transaction(ref mut usage_cost) = cost {
-                usage_cost.programs_execution_cost = actual_programs_execution_cost;
-                usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
-            }
+            let usage_cost = cost.usage_cost_details_mut();
+            usage_cost.programs_execution_cost = actual_programs_execution_cost;
+            usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
 
             block_cost + cost.sum()
         };
@@ -1256,7 +1257,7 @@ mod tests {
 
     #[test]
     fn test_write_persist_transaction_status() {
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,
@@ -1327,7 +1328,7 @@ mod tests {
 
     #[test]
     fn test_write_persist_loaded_addresses() {
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,

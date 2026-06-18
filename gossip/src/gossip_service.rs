@@ -50,7 +50,7 @@ impl GossipService {
         trace!(
             "GossipService: id: {}, listening on primary interface: {:?}, all available \
              interfaces: {:?}",
-            &cluster_info.id(),
+            cluster_info.id(),
             gossip_sockets[0].local_addr().unwrap(),
             gossip_sockets,
         );

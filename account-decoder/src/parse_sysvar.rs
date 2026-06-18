@@ -56,23 +56,27 @@ pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, P
                 .ok()
                 .map(|rewards| SysvarAccountType::Rewards(rewards.into()))
         } else if pubkey == &sysvar::slot_hashes::id() {
-            deserialize::<SlotHashes>(data).ok().map(|slot_hashes| {
-                let slot_hashes = slot_hashes
-                    .iter()
-                    .map(|slot_hash| UiSlotHashEntry {
-                        slot: slot_hash.0,
-                        hash: slot_hash.1.to_string(),
-                    })
-                    .collect();
-                SysvarAccountType::SlotHashes(slot_hashes)
-            })
-        } else if pubkey == &sysvar::slot_history::id() {
-            deserialize::<SlotHistory>(data).ok().map(|slot_history| {
-                SysvarAccountType::SlotHistory(UiSlotHistory {
-                    next_slot: slot_history.next_slot,
-                    bits: format!("{:?}", SlotHistoryBits(slot_history.bits)),
+            wincode::deserialize::<SlotHashes>(data)
+                .ok()
+                .map(|slot_hashes| {
+                    let slot_hashes = slot_hashes
+                        .iter()
+                        .map(|slot_hash| UiSlotHashEntry {
+                            slot: slot_hash.0,
+                            hash: slot_hash.1.to_string(),
+                        })
+                        .collect();
+                    SysvarAccountType::SlotHashes(slot_hashes)
                 })
-            })
+        } else if pubkey == &sysvar::slot_history::id() {
+            wincode::deserialize::<SlotHistory>(data)
+                .ok()
+                .map(|slot_history| {
+                    SysvarAccountType::SlotHistory(UiSlotHistory {
+                        next_slot: slot_history.next_slot,
+                        bits: format!("{:?}", SlotHistoryBits(slot_history.bits)),
+                    })
+                })
         } else if pubkey == &sysvar::stake_history::id() {
             deserialize::<StakeHistory>(data).ok().map(|stake_history| {
                 let stake_history = stake_history

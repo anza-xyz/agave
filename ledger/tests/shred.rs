@@ -5,6 +5,7 @@ use {
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::SlotLeader,
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
@@ -32,7 +33,16 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let shred_slot = shreds.first().map(Shred::slot).unwrap_or_default();
     let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
     genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
-    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (genesis_bank, _bank_forks) =
+        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+    // Set the root bank close to the shred slot to avoid the recovery filter
+    // from discarding the shreds for being too far in the future.
+    let warp_slot = shred_slot.saturating_sub(10).max(1);
+    let root_bank = Arc::new(Bank::warp_from_parent(
+        genesis_bank,
+        SlotLeader::default(),
+        warp_slot,
+    ));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
         ReedSolomonCache::default(),
@@ -46,7 +56,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
 #[test_case(true)]
 fn test_multi_fec_block_coding(is_last_in_slot: bool) {
     let keypair = Arc::new(Keypair::new());
-    let slot = 0x1234_5678_9abc_def0;
+    let slot = 10000;
     let shredder = Shredder::new(slot, slot - 5, 0, 0).unwrap();
     let num_fec_sets = 100;
     let num_data_shreds = DATA_SHREDS_PER_FEC_BLOCK * num_fec_sets;
@@ -145,7 +155,7 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
 
 #[test]
 fn test_multi_fec_block_different_size_coding() {
-    let slot = 0x1234_5678_9abc_def0;
+    let slot = 10000;
     let parent_slot = slot - 5;
     let keypair = Arc::new(Keypair::new());
     let (fec_data, fec_coding, num_shreds_per_iter) =

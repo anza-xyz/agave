@@ -11,13 +11,13 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-    std::{collections::BTreeMap, num::NonZeroU64},
+    std::{collections::BTreeMap, num::NonZero},
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SlotStakeCounters {
     my_first_vote: Option<Vote>,
-    total_stake: Stake,
+    total_stake: NonZero<Stake>,
     skip_total: Stake,
     notarize_total: Stake,
     notarize_entry_total: BTreeMap<Hash, Stake>,
@@ -27,10 +27,16 @@ pub(crate) struct SlotStakeCounters {
 }
 
 impl SlotStakeCounters {
-    pub fn new(total_stake: Stake) -> Self {
+    pub fn new(total_stake: NonZero<Stake>) -> Self {
         Self {
+            my_first_vote: None,
             total_stake,
-            ..Default::default()
+            skip_total: 0,
+            notarize_total: 0,
+            notarize_entry_total: BTreeMap::new(),
+            top_notarized_stake: 0,
+            safe_to_notar_sent: vec![],
+            safe_to_skip_sent: false,
         }
     }
 
@@ -54,7 +60,7 @@ impl SlotStakeCounters {
             Vote::Notarize(vote) => {
                 let old_entry_stake = self
                     .notarize_entry_total
-                    .insert(vote.block_id, entry_stake)
+                    .insert(vote.block.block_id, entry_stake)
                     .unwrap_or(0);
                 self.notarize_total = self
                     .notarize_total
@@ -83,11 +89,17 @@ impl SlotStakeCounters {
 
                 if is_first_in_leader_window {
                     // First block in leader window - emit event immediately
-                    events.push(VotorEvent::SafeToNotar((slot, *block_id)));
+                    events.push(VotorEvent::SafeToNotar(Block {
+                        slot,
+                        block_id: *block_id,
+                    }));
                     stats.event_safe_to_notarize = stats.event_safe_to_notarize.saturating_add(1);
                 } else {
                     // Intrawindow block - add to pending for later processing
-                    pending_safe_to_notar.push((slot, *block_id));
+                    pending_safe_to_notar.push(Block {
+                        slot,
+                        block_id: *block_id,
+                    });
                 }
             }
         }
@@ -104,20 +116,21 @@ impl SlotStakeCounters {
         // but not to notarize b. Moreover:
         // notar(b) >= 40% or (skip(s) + notar(b) >= 60% and notar(b) >= 20%)
         if let Some(Vote::Notarize(my_vote)) = self.my_first_vote.as_ref() {
-            if &my_vote.block_id == block_id {
+            if &my_vote.block.block_id == block_id {
                 return false; // I voted for the same block, no need to send NotarizeFallback
             }
         }
         trace!(
             "safe_to_notar {block_id:?} skip_ratio={} notarized_ratio={}",
-            self.skip_total as f64 / self.total_stake as f64,
-            *stake as f64 / self.total_stake as f64
+            self.skip_total as f64 / self.total_stake.get() as f64,
+            *stake as f64 / self.total_stake.get() as f64
         );
         // Check if the block fits condition (i) 40% of stake holders voted notarize
-        let total_stake = NonZeroU64::new(self.total_stake).unwrap();
-        let notarized_ratio = Fraction::new(*stake, total_stake);
-        let notarized_plus_skip_ratio =
-            Fraction::new(self.skip_total.checked_add(*stake).unwrap(), total_stake);
+        let notarized_ratio = Fraction::new(*stake, self.total_stake);
+        let notarized_plus_skip_ratio = Fraction::new(
+            self.skip_total.checked_add(*stake).unwrap(),
+            self.total_stake,
+        );
         notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY
             // Check if the block fits condition (ii) 20% notarized, and 60% notarized or skip
             || (notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP
@@ -141,9 +154,8 @@ impl SlotStakeCounters {
             let num_stake = self
                 .skip_total
                 .saturating_add(self.notarize_total.saturating_sub(self.top_notarized_stake));
-            let total_stake = NonZeroU64::new(self.total_stake).unwrap();
 
-            Fraction::new(num_stake, total_stake) >= SAFE_TO_SKIP_THRESHOLD
+            Fraction::new(num_stake, self.total_stake) >= SAFE_TO_SKIP_THRESHOLD
         } else {
             false
         }
@@ -156,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_safe_to_notar_first_in_leader_window() {
-        let mut counters = SlotStakeCounters::new(100);
+        let mut counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
 
         let mut events = vec![];
         let mut pending_safe_to_notar = vec![];
@@ -178,7 +190,10 @@ mod tests {
 
         // 40% of stake holders voted notarize
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, Hash::default()),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::default(),
+            }),
             40,
             false,
             &mut events,
@@ -187,16 +202,23 @@ mod tests {
         );
         // First in leader window goes to events directly
         assert_eq!(events.len(), 1);
-        assert!(
-            matches!(events[0], VotorEvent::SafeToNotar((s, block_id)) if s == slot && block_id == Hash::default())
-        );
+        match &events[0] {
+            VotorEvent::SafeToNotar(block) => {
+                assert_eq!(block.slot, slot);
+                assert_eq!(block.block_id, Hash::default());
+            }
+            rest => panic!("unexpected: {rest:?}"),
+        }
         assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 1);
         events.clear();
 
         // Adding more notarizations does not trigger more events
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, Hash::default()),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::default(),
+            }),
             20,
             false,
             &mut events,
@@ -208,7 +230,7 @@ mod tests {
         assert_eq!(stats.event_safe_to_notarize, 1);
 
         // Reset counters with slot 4 (first in next leader window)
-        counters = SlotStakeCounters::new(100);
+        counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
         events.clear();
         pending_safe_to_notar.clear();
         stats = ConsensusPoolStats::default();
@@ -217,7 +239,10 @@ mod tests {
         // I voted for notarize b
         let hash_1 = Hash::new_unique();
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, hash_1),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: hash_1,
+            }),
             1,
             true,
             &mut events,
@@ -231,7 +256,10 @@ mod tests {
         // 25% of stake holders voted notarize b'
         let hash_2 = Hash::new_unique();
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, hash_2),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: hash_2,
+            }),
             25,
             false,
             &mut events,
@@ -252,16 +280,20 @@ mod tests {
             &mut stats,
         );
         assert_eq!(events.len(), 1);
-        assert!(
-            matches!(events[0], VotorEvent::SafeToNotar((s, block_id)) if s == slot && block_id == hash_2)
-        );
+        match &events[0] {
+            VotorEvent::SafeToNotar(block) => {
+                assert_eq!(block.slot, slot);
+                assert_eq!(block.block_id, hash_2);
+            }
+            rest => panic!("unexpected: {rest:?}"),
+        }
         assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 1);
     }
 
     #[test]
     fn test_safe_to_notar_intrawindow_block() {
-        let mut counters = SlotStakeCounters::new(100);
+        let mut counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
 
         let mut events = vec![];
         let mut pending_safe_to_notar = vec![];
@@ -283,7 +315,7 @@ mod tests {
         // 40% of stake holders voted notarize
         let block_id = Hash::new_unique();
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, block_id),
+            &Vote::new_notarization_vote(Block { slot, block_id }),
             40,
             false,
             &mut events,
@@ -293,14 +325,14 @@ mod tests {
         // Intrawindow block goes to pending instead of events
         assert!(events.is_empty());
         assert_eq!(pending_safe_to_notar.len(), 1);
-        assert_eq!(pending_safe_to_notar[0], (slot, block_id));
+        assert_eq!(pending_safe_to_notar[0], Block { slot, block_id });
         // Stats are not updated for pending
         assert_eq!(stats.event_safe_to_notarize, 0);
     }
 
     #[test]
     fn test_safe_to_skip() {
-        let mut counters = SlotStakeCounters::new(100);
+        let mut counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
 
         let mut events = vec![];
         let mut pending_safe_to_notar = vec![];
@@ -308,7 +340,10 @@ mod tests {
         let slot = 2;
         // I voted for notarize b
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, Hash::default()),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: Hash::default(),
+            }),
             10,
             true,
             &mut events,
@@ -345,7 +380,7 @@ mod tests {
         assert_eq!(stats.event_safe_to_skip, 1);
 
         // Reset counters
-        counters = SlotStakeCounters::new(100);
+        counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
         events.clear();
         pending_safe_to_notar.clear();
         stats = ConsensusPoolStats::default();
@@ -353,7 +388,10 @@ mod tests {
         // I voted for notarize b, 10% of stake holders voted with me
         let hash_1 = Hash::new_unique();
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, hash_1),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: hash_1,
+            }),
             10,
             true,
             &mut events,
@@ -363,7 +401,10 @@ mod tests {
         // 20% of stake holders voted a different notarization b'
         let hash_2 = Hash::new_unique();
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, hash_2),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: hash_2,
+            }),
             20,
             false,
             &mut events,
@@ -386,7 +427,10 @@ mod tests {
 
         // Adding more notarization on b does not trigger more events
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, hash_1),
+            &Vote::new_notarization_vote(Block {
+                slot,
+                block_id: hash_1,
+            }),
             10,
             false,
             &mut events,

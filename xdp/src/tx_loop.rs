@@ -10,14 +10,14 @@ use {
         },
         netlink::MacAddress,
         packet::{
-            ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE, write_eth_header,
-            write_ip_header_for_udp, write_udp_header,
+            IP_HEADER_SIZE, PACKET_HEADER_SIZE, UDP_HEADER_SIZE, VLAN_PACKET_HEADER_SIZE,
+            construct_packet, construct_vlan_packet,
         },
         route::NextHop,
-        set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
+    agave_cpu_utils::set_cpu_affinity,
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
@@ -157,16 +157,14 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         } = self;
 
         let queue_id = queue.id();
-        let (socket, tx) = match Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) {
-            Ok(socket_tx) => socket_tx,
-            Err(err) => {
+        let (socket, tx) =
+            Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size).map_err(|err| {
                 log::error!(
                     "failed to create AF_XDP TX socket for queue {queue_id:?} on CPU {cpu_id}: \
                      {err}"
                 );
-                return Err(err);
-            }
-        };
+                err
+            })?;
 
         let Tx {
             // this is where we'll queue frames
@@ -242,7 +240,7 @@ impl<U: Umem> TxLoop<U> {
         } = self;
 
         // each queue is bound to its own CPU core
-        set_cpu_affinity([cpu_id]).unwrap();
+        set_cpu_affinity(None, [agave_cpu_utils::CpuId::new(cpu_id).unwrap()]).unwrap();
 
         let umem = socket.umem();
         let umem_tx_capacity = umem.available();
@@ -393,6 +391,72 @@ impl<U: Umem> TxLoop<U> {
                             umem.release(frame.offset());
                             continue;
                         }
+                    } else if let Some(vlan) = &next_hop.vlan {
+                        // we need the MAC address to send the packet
+                        let Some(dest_mac) = next_hop.mac_addr else {
+                            log::warn!(
+                                "dropping packet: peer {addr} must be routed through {} which has \
+                                 no known MAC address",
+                                next_hop.ip_addr
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+
+                        // The 802.1Q tag is added at L2, so the L3 size compared against the MTU
+                        // is the same as the untagged path.
+                        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+                        if l3_packet_len > next_hop.mtu as usize {
+                            if !can_overflow_mtu {
+                                log::warn!(
+                                    "dropping packet: packet size {l3_packet_len} exceeds MTU \
+                                     {mtu} for {addr}",
+                                    mtu = next_hop.mtu
+                                );
+                            }
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        let packet_len = VLAN_PACKET_HEADER_SIZE + len;
+                        if packet_len > umem_frame_size {
+                            log::warn!(
+                                "dropping packet: VLAN packet size {packet_len} exceeds frame \
+                                 size {umem_frame_size} for {addr}"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        frame.set_len(packet_len);
+                        let packet = umem.map_frame_mut(&frame);
+
+                        // The route's preferred src is the IP assigned to the VLAN sub-interface,
+                        // which is the right inner src for traffic egressing this VLAN. Fall back
+                        // to the device's src IP if the route did not carry one.
+                        let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
+
+                        if !construct_vlan_packet(
+                            packet,
+                            &src_mac.0,
+                            &dest_mac.0,
+                            inner_src_ip,
+                            &dst_ip,
+                            src_port,
+                            addr.port(),
+                            vlan.vid,
+                            vlan.pcp,
+                            payload,
+                            ecn,
+                        ) {
+                            log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
                     } else {
                         // we need the MAC address to send the packet
                         let Some(dest_mac) = next_hop.mac_addr else {
@@ -420,8 +484,6 @@ impl<U: Umem> TxLoop<U> {
                             continue;
                         }
 
-                        const PACKET_HEADER_SIZE: usize =
-                            ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
                         let packet_len = PACKET_HEADER_SIZE + len;
                         if packet_len > umem_frame_size {
                             log::warn!(
@@ -436,29 +498,22 @@ impl<U: Umem> TxLoop<U> {
                         frame.set_len(packet_len);
                         let packet = umem.map_frame_mut(&frame);
 
-                        // write the payload first as it's needed for checksum calculation (if enabled)
-                        packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload);
-
-                        write_eth_header(packet, &src_mac.0, &dest_mac.0);
-
-                        write_ip_header_for_udp(
-                            &mut packet[ETH_HEADER_SIZE..],
+                        if !construct_packet(
+                            packet,
+                            &src_mac.0,
+                            &dest_mac.0,
                             src_ip,
                             &dst_ip,
-                            ecn,
-                            (UDP_HEADER_SIZE + len) as u16,
-                        );
-
-                        write_udp_header(
-                            &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
-                            src_ip,
                             src_port,
-                            &dst_ip,
                             addr.port(),
-                            len as u16,
-                            // don't do checksums
-                            false,
-                        );
+                            payload,
+                            ecn,
+                        ) {
+                            log::warn!("dropping packet: frame did not fit in UMEM slot");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
                     }
 
                     ring.write(frame, 0)

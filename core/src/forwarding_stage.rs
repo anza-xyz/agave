@@ -20,7 +20,8 @@ use {
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
+        runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+        transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
@@ -265,8 +266,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let enable_instruction_accounts_limit =
-            bank.feature_set.snapshot().limit_instruction_accounts;
+        let sanitize_config =
+            sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
         for batch in packet_batches.iter() {
             for packet in batch
                 .iter()
@@ -287,21 +288,20 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
                 // Perform basic sanitization checks and calculate priority.
                 // If any steps fail, drop the packet.
-                let Some(priority) = SanitizedTransactionView::try_new_sanitized(
-                    packet_data,
-                    enable_instruction_accounts_limit,
-                )
-                .map_err(|_| ())
-                .and_then(|transaction| {
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        transaction,
-                        MessageHash::Compute,
-                        Some(packet.meta().is_simple_vote_tx()),
-                    )
-                    .map_err(|_| ())
-                })
-                .ok()
-                .and_then(|transaction| calculate_priority(&transaction, bank)) else {
+                let Some(priority) =
+                    SanitizedTransactionView::try_new_sanitized(packet_data, &sanitize_config)
+                        .map_err(|_| ())
+                        .and_then(|transaction| {
+                            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+                                transaction,
+                                MessageHash::Compute,
+                                Some(packet.meta().is_simple_vote_tx()),
+                            )
+                            .map_err(|_| ())
+                        })
+                        .ok()
+                        .and_then(|transaction| calculate_priority(&transaction, bank))
+                else {
                     self.metrics.votes_dropped_on_receive += vote_count;
                     self.metrics.non_votes_dropped_on_receive += non_vote_count;
                     continue;
@@ -765,7 +765,7 @@ fn initial_packet_meta_filter(meta: &packet::Meta) -> bool {
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         packet::PacketFlags,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_forwarding() {
-        let (packet_batch_sender, packet_batch_receiver) = unbounded();
+        let (packet_batch_sender, packet_batch_receiver) = bounded(1024);
 
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
