@@ -283,7 +283,7 @@ dependencies = [
 name = "agave-random"
 version = "4.2.0-alpha.0"
 dependencies = [
- "rand 0.9.4",
+ "rand 0.10.1",
 ]
 
 [[package]]
@@ -329,7 +329,7 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "lz4",
- "rand 0.9.4",
+ "rand 0.10.1",
  "regex",
  "semver",
  "solana-accounts-db",
@@ -1189,7 +1189,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -1544,6 +1544,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "chacha20"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+dependencies = [
+ "cfg-if 1.0.4",
+ "cpufeatures 0.3.0",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -2759,6 +2770,7 @@ dependencies = [
  "cfg-if 1.0.4",
  "libc",
  "r-efi 6.0.0",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
 ]
@@ -4913,6 +4925,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+dependencies = [
+ "chacha20",
+ "getrandom 0.4.2",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_chacha"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4968,6 +4991,12 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rand_hc"
@@ -5921,7 +5950,7 @@ dependencies = [
  "modular-bitfield",
  "num_cpus",
  "qualifier_attr",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rayon",
  "seqlock",
  "serde",
@@ -6049,7 +6078,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "bv",
  "fnv",
- "rand 0.9.4",
+ "rand 0.10.1",
  "serde",
  "solana-sanitize",
  "solana-time-utils",
@@ -6157,7 +6186,7 @@ dependencies = [
  "memmap2 0.9.10",
  "modular-bitfield",
  "num_enum",
- "rand 0.9.4",
+ "rand 0.10.1",
  "solana-clock",
  "solana-measure",
  "solana-pubkey 4.2.0",
@@ -6434,7 +6463,7 @@ dependencies = [
  "crossbeam-channel",
  "indexmap",
  "log",
- "rand 0.9.4",
+ "rand 0.10.1",
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
@@ -6483,7 +6512,7 @@ dependencies = [
  "num_cpus",
  "num_enum",
  "qualifier_attr",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rand_chacha 0.9.0",
  "rayon",
  "rolling-file",
@@ -6953,7 +6982,7 @@ dependencies = [
  "lazy-lru",
  "log",
  "num-traits",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rand_chacha 0.9.0",
  "rayon",
  "serde",
@@ -7184,7 +7213,7 @@ dependencies = [
  "num_enum",
  "prost",
  "qualifier_attr",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rand_chacha 0.9.0",
  "rayon",
  "reed-solomon-erasure",
@@ -7363,7 +7392,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "nix",
- "rand 0.9.4",
+ "rand 0.10.1",
  "serde",
  "socket2 0.6.3",
  "solana-serde",
@@ -7469,7 +7498,7 @@ dependencies = [
  "log",
  "nix",
  "num_cpus",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rayon",
  "serde",
  "solana-clock",
@@ -7630,7 +7659,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "percentage",
- "rand 0.9.4",
+ "rand 0.10.1",
  "serde",
  "solana-account 4.3.1",
  "solana-account-info",
@@ -7996,7 +8025,7 @@ dependencies = [
  "num-traits",
  "percentage",
  "qualifier_attr",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rayon",
  "regex",
  "semver",
@@ -8484,7 +8513,7 @@ dependencies = [
  "num_cpus",
  "pem",
  "quinn",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rustls",
  "smallvec",
  "solana-keypair",
@@ -8602,7 +8631,7 @@ dependencies = [
 name = "solana-svm-type-overrides"
 version = "4.2.0-alpha.0"
 dependencies = [
- "rand 0.9.4",
+ "rand 0.10.1",
 ]
 
 [[package]]
@@ -8957,7 +8986,7 @@ dependencies = [
  "lazy-lru",
  "log",
  "lru 0.18.0",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rand_chacha 0.9.0",
  "rayon",
  "solana-clock",
@@ -9057,7 +9086,7 @@ name = "solana-version"
 version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "rand 0.9.4",
+ "rand 0.10.1",
  "semver",
  "serde",
  "solana-sanitize",
@@ -9073,7 +9102,7 @@ dependencies = [
  "bincode",
  "log",
  "qualifier_attr",
- "rand 0.9.4",
+ "rand 0.10.1",
  "serde",
  "solana-account 4.3.1",
  "solana-bincode",
