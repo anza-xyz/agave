@@ -616,7 +616,7 @@ impl TestValidatorGenesis {
         for dir in dirs {
             let matched_files = match fs::read_dir(&dir) {
                 Ok(dir) => dir,
-                Err(e) => return Err(format!("Cannot read directory {}: {}", &dir, e)),
+                Err(e) => return Err(format!("Cannot read directory {dir}: {e}")),
             }
             .flatten()
             .map(|entry| entry.path())

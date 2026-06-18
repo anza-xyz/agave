@@ -210,6 +210,7 @@ use {
         },
         time::{Duration, Instant},
     },
+    thiserror::Error,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -462,6 +463,16 @@ impl TransactionLogCollector {
             }),
         }
     }
+}
+
+#[derive(Error, Debug, Serialize, Deserialize)]
+pub enum VATHealthError {
+    #[error("vote account not found")]
+    VoteAccountNotFound,
+    #[error("missing BLS pubkey")]
+    NoBLSPubkey,
+    #[error("insufficient lamports in vote account: {0} < {1}")]
+    InsufficientFundsInVoteAccount(u64, u64),
 }
 
 /// Bank's common fields shared by all supported snapshot versions for deserialization.
@@ -1486,11 +1497,9 @@ impl Bank {
         };
 
         let (_, ancestors_time_us) = measure_us!({
-            let mut ancestors = Vec::with_capacity(1 + new.parents().len());
+            let mut ancestors = Vec::with_capacity(parent.ancestors.len() + 1);
             ancestors.push(new.slot());
-            new.parents().iter().for_each(|p| {
-                ancestors.push(p.slot());
-            });
+            ancestors.extend(new.parents_iter().map(|parent| parent.slot()));
             new.ancestors = Ancestors::from(ancestors);
         });
 
@@ -2291,17 +2300,21 @@ impl Bank {
     }
 
     pub fn status_cache_ancestors(&self) -> Vec<u64> {
-        let mut roots = self.status_cache.read().unwrap().roots().clone();
-        let min = roots.iter().min().cloned().unwrap_or(0);
-        for ancestor in self.ancestors.keys() {
-            if ancestor >= min {
-                roots.insert(ancestor);
+        let (min, mut ancestors) = {
+            let status_cache = self.status_cache.read().unwrap();
+            let roots = status_cache.roots();
+            let mut ancestors = Vec::with_capacity(roots.len() + self.ancestors.len());
+            let mut min = Slot::MAX;
+            for root in roots {
+                ancestors.push(*root);
+                min = min.min(*root);
             }
-        }
+            (if roots.is_empty() { 0 } else { min }, ancestors)
+        };
 
-        let mut ancestors: Vec<_> = roots.into_iter().collect();
-        #[expect(clippy::stable_sort_primitive)]
-        ancestors.sort();
+        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
+        ancestors.sort_unstable();
+        ancestors.dedup();
         ancestors
     }
 
@@ -2778,6 +2791,36 @@ impl Bank {
         self.current_slot_params().vat_to_burn_per_epoch()
     }
 
+    pub fn get_vat_health_for_next_epoch(
+        &self,
+        vote_account_pubkey: &Pubkey,
+    ) -> std::result::Result<(), VATHealthError> {
+        let vote_accounts = self.vote_accounts();
+
+        let Some((_, vote_account)) = vote_accounts.get(vote_account_pubkey) else {
+            return Err(VATHealthError::VoteAccountNotFound);
+        };
+
+        if vote_account
+            .vote_state_view()
+            .bls_pubkey_compressed()
+            .is_none()
+        {
+            return Err(VATHealthError::NoBLSPubkey);
+        }
+
+        let my_balance = vote_account.lamports();
+        let minimum_vote_account_balance_for_vat = self.minimum_vote_account_balance_for_vat();
+        if vote_account.lamports() < minimum_vote_account_balance_for_vat {
+            return Err(VATHealthError::InsufficientFundsInVoteAccount(
+                my_balance,
+                minimum_vote_account_balance_for_vat,
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Returns the effective slot duration for `slot`.
     pub fn ns_per_slot_at_slot(&self, slot: Slot) -> u128 {
         self.slot_params_at_slot(slot).ns_per_slot()
@@ -3041,8 +3084,9 @@ impl Bank {
         self.freeze();
 
         //this bank and all its parents are now on the rooted path
-        let mut roots = vec![self.slot()];
-        roots.append(&mut self.parents().iter().map(|p| p.slot()).collect());
+        let mut roots = Vec::with_capacity(self.ancestors.len());
+        roots.push(self.slot());
+        roots.extend(self.parents_iter().map(|parent| parent.slot()));
 
         let mut total_index_us = 0;
         let mut total_cache_us = 0;
@@ -3059,9 +3103,10 @@ impl Bank {
         *self.rc.parent.write().unwrap() = None;
 
         let mut squash_cache_time = Measure::start("squash_cache_time");
-        roots
-            .iter()
-            .for_each(|slot| self.status_cache.write().unwrap().add_root(*slot));
+        self.status_cache
+            .write()
+            .unwrap()
+            .add_roots(roots.iter().copied());
         squash_cache_time.stop();
 
         SquashTiming {
@@ -3379,13 +3424,14 @@ impl Bank {
     pub fn confirmed_last_blockhash(&self) -> Hash {
         const NUM_BLOCKHASH_CONFIRMATIONS: usize = 3;
 
-        let parents = self.parents();
-        if parents.is_empty() {
-            self.last_blockhash()
-        } else {
-            let index = NUM_BLOCKHASH_CONFIRMATIONS.min(parents.len() - 1);
-            parents[index].last_blockhash()
+        let mut last_parent = None;
+        for (index, parent) in self.parents_iter().enumerate() {
+            if index == NUM_BLOCKHASH_CONFIRMATIONS {
+                return parent.last_blockhash();
+            }
+            last_parent = Some(parent);
         }
+        last_parent.map_or_else(|| self.last_blockhash(), |parent| parent.last_blockhash())
     }
 
     /// Forget all signatures. Useful for benchmarking.
@@ -4598,19 +4644,23 @@ impl Bank {
 
     /// Compute all the parents of the bank in order
     pub fn parents(&self) -> Vec<Arc<Bank>> {
-        let mut parents = vec![];
+        self.parents_iter().collect()
+    }
+
+    pub(crate) fn parents_iter(&self) -> impl Iterator<Item = Arc<Bank>> + '_ {
         let mut bank = self.parent();
-        while let Some(parent) = bank {
-            parents.push(parent.clone());
+        core::iter::from_fn(move || {
+            let parent = bank.take()?;
             bank = parent.parent();
-        }
-        parents
+            Some(parent)
+        })
     }
 
     /// Compute all the parents of the bank including this bank itself
     pub fn parents_inclusive(self: Arc<Self>) -> Vec<Arc<Bank>> {
-        let mut parents = self.parents();
-        parents.insert(0, self);
+        let mut parents = Vec::with_capacity(self.ancestors.len());
+        parents.push(Arc::clone(&self));
+        parents.extend(self.parents_iter());
         parents
     }
 
@@ -5706,12 +5756,10 @@ impl Bank {
     }
 
     /// Verify a BLS certificate's signature using this bank's epoch stakes.
-    ///
-    /// Returns (stake present in certificate, total stake in validator set) on success.
     pub fn verify_certificate(
         &self,
         cert: &Certificate,
-    ) -> std::result::Result<(u64, NonZero<u64>), CertVerifyError> {
+    ) -> std::result::Result<(), CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
             .epoch_stakes_from_slot(slot)
@@ -5720,13 +5768,13 @@ impl Bank {
         let total_stake =
             NonZero::new(key_to_rank_map.total_stake()).expect("total stake cannot be 0");
 
-        let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
+        cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
             key_to_rank_map
                 .get_pubkey_stake_entry(rank)
                 .map(|entry| (entry.stake, entry.bls_pubkey))
         })?;
 
-        Ok((stake, total_stake))
+        Ok(())
     }
 
     pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, VersionedEpochStakes> {

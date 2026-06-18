@@ -261,7 +261,7 @@ hex = "0.4.3"
 hex-literal = "1.1.0"
 hidapi = { version = "2.6.6", default-features = false }
 histogram = "0.6.9"
-http = "1.4.1"
+http = "1.4.2"
 humantime = "2.3.0"
 hyper-util = "0.1.20"
 imbl = "7.0.0"
@@ -314,7 +314,7 @@ pretty-hex = "0.4.2"
 pretty_assertions = "1.4.1"
 proptest = "1.11"
 prost = "0.14.4"
-prost-types = "0.14.3"
+prost-types = "0.14.4"
 protobuf-src = "1.1.0"
 protosol = "=8.2.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
@@ -430,7 +430,7 @@ solana-loader-v4-interface = "3.1.0"
 solana-local-cluster = { path = "local-cluster", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-message = "4.2.1"
+solana-message = "4.2.2"
 solana-metrics = { path = "metrics", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-msg = "3.1.0"
 solana-native-token = "3.0.0"

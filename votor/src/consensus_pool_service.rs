@@ -25,7 +25,7 @@ use {
         consensus_message::{Block, ConsensusMessage},
         migration::MigrationStatus,
     },
-    crossbeam_channel::{Receiver, Sender, TrySendError, select},
+    crossbeam_channel::{Receiver, Sender, TrySendError, select_biased},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -389,19 +389,19 @@ impl ConsensusPoolService {
                 Duration::from_millis(20)
             };
 
-            let ret = select! {
-                recv(ctx.consensus_message_receiver) -> msg => {
-                    let Ok(first) = msg else {
-                        return Self::handle_channel_disconnected(&mut ctx, "consensus_message_receiver channel");
-                    };
-                    Self::handle_sig_verified_batch(&mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
-                },
+            let ret = select_biased! {
                 recv(ctx.own_message_receiver) -> msg => {
                     let Ok(first) = msg else {
                         return Self::handle_channel_disconnected(&mut ctx, "own_message_receiver channel");
                     };
                     Self::handle_own_message(&mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
                 }
+                recv(ctx.consensus_message_receiver) -> msg => {
+                    let Ok(first) = msg else {
+                        return Self::handle_channel_disconnected(&mut ctx, "consensus_message_receiver channel");
+                    };
+                    Self::handle_sig_verified_batch(&mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
+                },
                 default(wait_timeout) => continue
             };
 

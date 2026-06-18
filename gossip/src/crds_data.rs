@@ -76,7 +76,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor, StableAbi),
     frozen_abi(
-        abi_digest = "2LUBVdKAtga4V2tb58xAfGa5sN1ufP9GVG7r6nkGbwRd",
+        abi_digest = "Dqsrw64E4ALKusk5cjbckL6vNHw1ESwTzKUqKrMSQCic",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire",
     )

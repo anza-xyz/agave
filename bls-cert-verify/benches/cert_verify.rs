@@ -14,6 +14,7 @@ use {
         signature::Signature as BlsSignature,
     },
     solana_hash::Hash,
+    std::num::NonZero,
 };
 
 // Creates random BLS keypairs for bench tests
@@ -159,10 +160,11 @@ fn bench_verify_cert(c: &mut Criterion) {
             BenchmarkId::new("Base2_Notarize", size),
             &size,
             |b, &total_validators| {
+                let total_stake = NonZero::new(TEST_STAKE * total_validators as u64).unwrap();
                 b.iter(|| {
                     // The rank_map closure simulates the Bank lookup.
                     // It adds stake (we use 1000 per validator) and returns the pubkey.
-                    let _stake = verify_certificate(&cert_base2, total_validators, |rank| {
+                    verify_certificate(&cert_base2, total_validators, total_stake, |rank| {
                         pubkeys_ref
                             .get(rank)
                             .map(|bls_pubkey| (TEST_STAKE, *bls_pubkey))
@@ -182,8 +184,9 @@ fn bench_verify_cert(c: &mut Criterion) {
             BenchmarkId::new("Base3_NotarizeFallback", size),
             &size,
             |b, &total_validators| {
+                let total_stake = NonZero::new(TEST_STAKE * total_validators as u64).unwrap();
                 b.iter(|| {
-                    let _stake = verify_certificate(&cert_base3, total_validators, |rank| {
+                    verify_certificate(&cert_base3, total_validators, total_stake, |rank| {
                         pubkeys_ref
                             .get(rank)
                             .map(|bls_pubkey| (TEST_STAKE, *bls_pubkey))

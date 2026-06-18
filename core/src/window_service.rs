@@ -25,6 +25,7 @@ use {
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
+    solana_net_utils::PinnedXdpSender,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
@@ -299,6 +300,7 @@ impl WindowService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        repair_xdp_sender: Option<PinnedXdpSender>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -320,6 +322,7 @@ impl WindowService {
             repair_info.clone(),
             outstanding_repair_requests.clone(),
             repair_service_channels,
+            repair_xdp_sender,
         );
 
         let block_id_repair_service = BlockIdRepairService::new(

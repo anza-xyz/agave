@@ -390,7 +390,7 @@ impl ClusterSlots {
                     .set_support_by_pubkey(&epoch_slots.from, sender_stake)
                     .is_err()
                 {
-                    error!("Unexpected pubkey {} for slot {}!", &epoch_slots.from, slot);
+                    error!("Unexpected pubkey {} for slot {}!", epoch_slots.from, slot);
                     break;
                 }
             }

@@ -18,6 +18,7 @@ use {
         },
     },
     agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
+    bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
     rand::prelude::IndexedRandom as _,
@@ -33,6 +34,7 @@ use {
         shred,
     },
     solana_measure::measure::Measure,
+    solana_net_utils::PinnedXdpSender,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
@@ -388,66 +390,52 @@ impl RepairStats {
 
 #[derive(Default, Debug)]
 pub struct RepairTiming {
-    pub set_root_elapsed: u64,
-    pub dump_slots_elapsed: u64,
-    pub get_votes_elapsed: u64,
-    pub add_voters_elapsed: u64,
-    pub purge_outstanding_repairs: u64,
-    pub handle_popular_pruned_forks: u64,
-    pub get_best_orphans_elapsed: u64,
-    pub get_best_shreds_elapsed: u64,
-    pub get_unknown_last_index_elapsed: u64,
-    pub get_closest_completion_elapsed: u64,
-    pub send_repairs_elapsed: u64,
-    pub build_repairs_batch_elapsed: u64,
-    pub batch_send_repairs_elapsed: u64,
+    pub set_root_us: u64,
+    pub dump_slots_us: u64,
+    pub get_votes_us: u64,
+    pub add_voters_us: u64,
+    pub purge_outstanding_repairs_us: u64,
+    pub handle_popular_pruned_forks_us: u64,
+    pub get_best_orphans_us: u64,
+    pub get_best_shreds_us: u64,
+    pub get_unknown_last_index_us: u64,
+    pub get_closest_completion_us: u64,
+    pub build_batch_us: u64,
+    pub send_batch_us: u64,
 }
 
 impl RepairTiming {
     fn report(&self) {
         datapoint_info!(
             "repair_service-repair_timing",
-            ("set-root-elapsed", self.set_root_elapsed, i64),
-            ("dump-slots-elapsed", self.dump_slots_elapsed, i64),
-            ("get-votes-elapsed", self.get_votes_elapsed, i64),
-            ("add-voters-elapsed", self.add_voters_elapsed, i64),
+            ("set-root-us", self.set_root_us, i64),
+            ("dump-slots-us", self.dump_slots_us, i64),
+            ("get-votes-us", self.get_votes_us, i64),
+            ("add-voters-us", self.add_voters_us, i64),
             (
-                "purge-outstanding-repairs",
-                self.purge_outstanding_repairs,
+                "purge-outstanding-repairs-us",
+                self.purge_outstanding_repairs_us,
                 i64
             ),
             (
-                "handle-popular-pruned-forks",
-                self.handle_popular_pruned_forks,
+                "handle-popular-pruned-forks-us",
+                self.handle_popular_pruned_forks_us,
+                i64
+            ),
+            ("get-best-orphans-us", self.get_best_orphans_us, i64),
+            ("get-best-shreds-us", self.get_best_shreds_us, i64),
+            (
+                "get-unknown-last-index-us",
+                self.get_unknown_last_index_us,
                 i64
             ),
             (
-                "get-best-orphans-elapsed",
-                self.get_best_orphans_elapsed,
+                "get-closest-completion-us",
+                self.get_closest_completion_us,
                 i64
             ),
-            ("get-best-shreds-elapsed", self.get_best_shreds_elapsed, i64),
-            (
-                "get-unknown-last-index-elapsed",
-                self.get_unknown_last_index_elapsed,
-                i64
-            ),
-            (
-                "get-closest-completion-elapsed",
-                self.get_closest_completion_elapsed,
-                i64
-            ),
-            ("send-repairs-elapsed", self.send_repairs_elapsed, i64),
-            (
-                "build-repairs-batch-elapsed",
-                self.build_repairs_batch_elapsed,
-                i64
-            ),
-            (
-                "batch-send-repairs-elapsed",
-                self.batch_send_repairs_elapsed,
-                i64
-            ),
+            ("build-batch-us", self.build_batch_us, i64),
+            ("send-batch-us", self.send_batch_us, i64),
         );
     }
 }
@@ -625,6 +613,7 @@ impl RepairService {
         repair_info: RepairInfo,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
         repair_service_channels: RepairServiceChannels,
+        xdp_sender: Option<PinnedXdpSender>,
     ) -> Self {
         let t_repair = {
             let blockstore = blockstore.clone();
@@ -640,6 +629,7 @@ impl RepairService {
                         repair_service_channels.repair_channels,
                         repair_info,
                         &outstanding_requests,
+                        xdp_sender,
                     )
                 })
                 .unwrap()
@@ -669,12 +659,12 @@ impl RepairService {
         repair_metrics: &mut RepairMetrics,
     ) {
         // Purge outdated slots from the weighting heuristic
-        let mut set_root_elapsed = Measure::start("set_root_elapsed");
+        let mut set_root_us = Measure::start("set_root_us");
         repair_weight.set_root(root_bank.slot());
-        set_root_elapsed.stop();
+        set_root_us.stop();
 
         // Remove dumped slots from the weighting heuristic
-        let mut dump_slots_elapsed = Measure::start("dump_slots_elapsed");
+        let mut dump_slots_us = Measure::start("dump_slots_us");
         dumped_slots_receiver
             .try_iter()
             .for_each(|slot_hash_keys_to_dump| {
@@ -701,10 +691,10 @@ impl RepairService {
                     }
                 }
             });
-        dump_slots_elapsed.stop();
+        dump_slots_us.stop();
 
         // Add new votes to the weighting heuristic
-        let mut get_votes_elapsed = Measure::start("get_votes_elapsed");
+        let mut get_votes_us = Measure::start("get_votes_us");
         let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
         verified_voter_slots_receiver
             .try_iter()
@@ -716,21 +706,21 @@ impl RepairService {
                         .push(vote_pubkey);
                 }
             });
-        get_votes_elapsed.stop();
+        get_votes_us.stop();
 
-        let mut add_voters_elapsed = Measure::start("add_voters");
+        let mut add_voters_us = Measure::start("add_voters_us");
         repair_weight.add_voters(
             blockstore,
             slot_to_vote_pubkeys.into_iter(),
             root_bank.epoch_stakes_map(),
             root_bank.epoch_schedule(),
         );
-        add_voters_elapsed.stop();
+        add_voters_us.stop();
 
-        repair_metrics.timing.set_root_elapsed += set_root_elapsed.as_us();
-        repair_metrics.timing.dump_slots_elapsed += dump_slots_elapsed.as_us();
-        repair_metrics.timing.get_votes_elapsed += get_votes_elapsed.as_us();
-        repair_metrics.timing.add_voters_elapsed += add_voters_elapsed.as_us();
+        repair_metrics.timing.set_root_us += set_root_us.as_us();
+        repair_metrics.timing.dump_slots_us += dump_slots_us.as_us();
+        repair_metrics.timing.get_votes_us += get_votes_us.as_us();
+        repair_metrics.timing.add_voters_us += add_voters_us.as_us();
     }
 
     fn identify_repairs(
@@ -742,13 +732,13 @@ impl RepairService {
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
         repair_metrics: &mut RepairMetrics,
     ) -> Vec<ShredRepairType> {
-        let mut purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
+        let mut purge_outstanding_repairs_us = Measure::start("purge_outstanding_repairs_us");
         // Purge old entries. They've either completed or need to be retried.
         outstanding_repairs.retain(|_repair_request, time| {
             timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
         });
-        purge_outstanding_repairs.stop();
-        repair_metrics.timing.purge_outstanding_repairs = purge_outstanding_repairs.as_us();
+        purge_outstanding_repairs_us.stop();
+        repair_metrics.timing.purge_outstanding_repairs_us += purge_outstanding_repairs_us.as_us();
         repair_eligibility.set_root(root_bank.slot());
 
         repair_weight.get_best_weighted_repairs(
@@ -772,7 +762,7 @@ impl RepairService {
         popular_pruned_forks_sender: &PopularPrunedForksSender,
         repair_metrics: &mut RepairMetrics,
     ) {
-        let mut handle_popular_pruned_forks = Measure::start("handle_popular_pruned_forks");
+        let mut handle_popular_pruned_forks_us = Measure::start("handle_popular_pruned_forks_us");
         let mut popular_pruned_forks = repair_weight
             .get_popular_pruned_forks(root_bank.epoch_stakes_map(), root_bank.epoch_schedule());
         // Check if we've already sent a request along this pruned fork
@@ -793,8 +783,9 @@ impl RepairService {
                 .send(popular_pruned_forks)
                 .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
         }
-        handle_popular_pruned_forks.stop();
-        repair_metrics.timing.handle_popular_pruned_forks = handle_popular_pruned_forks.as_us();
+        handle_popular_pruned_forks_us.stop();
+        repair_metrics.timing.handle_popular_pruned_forks_us +=
+            handle_popular_pruned_forks_us.as_us();
     }
 
     fn build_and_send_repair_batch(
@@ -804,9 +795,10 @@ impl RepairService {
         repair_info: &RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
+        xdp_sender: Option<&PinnedXdpSender>,
         repair_metrics: &mut RepairMetrics,
     ) {
-        let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
+        let mut build_batch_us = Measure::start("build_batch_us");
         let batch: Vec<(Vec<u8>, SocketAddr)> = {
             let mut outstanding_requests = outstanding_requests.write().unwrap();
             repairs
@@ -825,27 +817,35 @@ impl RepairService {
                 })
                 .collect()
         };
-        build_repairs_batch_elapsed.stop();
+        build_batch_us.stop();
 
-        let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
+        let mut send_batch_us = Measure::start("send_batch_us");
         if !batch.is_empty() {
             let num_pkts = batch.len();
-            let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
-            match batch_send(repair_socket, batch) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(err, num_failed)) => {
-                    error!(
-                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error \
-                         {err:?}",
-                        repair_info.cluster_info.id()
-                    );
+            if let Some(xdp) = xdp_sender {
+                for (i, (bytes, addr)) in batch.into_iter().enumerate() {
+                    if let Err(e) = xdp.try_send(i, addr, Bytes::from(bytes)) {
+                        warn!("repair xdp send failed: {e:?}");
+                    }
+                }
+            } else {
+                let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
+                match batch_send(repair_socket, batch) {
+                    Ok(()) => (),
+                    Err(SendPktsError::IoError(err, num_failed)) => {
+                        error!(
+                            "{} batch_send failed to send {num_failed}/{num_pkts} packets first \
+                             error {err:?}",
+                            repair_info.cluster_info.id()
+                        );
+                    }
                 }
             }
         }
-        batch_send_repairs_elapsed.stop();
+        send_batch_us.stop();
 
-        repair_metrics.timing.build_repairs_batch_elapsed = build_repairs_batch_elapsed.as_us();
-        repair_metrics.timing.batch_send_repairs_elapsed = batch_send_repairs_elapsed.as_us();
+        repair_metrics.timing.build_batch_us += build_batch_us.as_us();
+        repair_metrics.timing.send_batch_us += send_batch_us.as_us();
     }
 
     fn run_repair_iteration(
@@ -855,6 +855,7 @@ impl RepairService {
         repair_tracker: &mut RepairTracker,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
+        xdp_sender: Option<&PinnedXdpSender>,
         migration_status: &MigrationStatus,
     ) {
         let RepairChannels {
@@ -911,6 +912,7 @@ impl RepairService {
             repair_info,
             outstanding_requests,
             repair_socket,
+            xdp_sender,
             repair_metrics,
         );
     }
@@ -922,6 +924,7 @@ impl RepairService {
         repair_channels: RepairChannels,
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
+        xdp_sender: Option<PinnedXdpSender>,
     ) {
         let (sharable_banks, migration_status) = {
             let bank_forks_r = repair_info.bank_forks.read().unwrap();
@@ -958,6 +961,7 @@ impl RepairService {
                 &mut repair_tracker,
                 outstanding_requests,
                 repair_socket,
+                xdp_sender.as_ref(),
                 migration_status.as_ref(),
             );
             repair_tracker.repair_metrics.maybe_report();

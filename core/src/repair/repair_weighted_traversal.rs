@@ -31,6 +31,11 @@ impl Visit {
 struct RepairWeightTraversal<'a> {
     tree: &'a HeaviestSubtreeForkChoice,
     pending: Vec<Visit>,
+    // Reusable scratch buffer for collecting and sorting a slot's
+    // children before appending them to `pending`.
+    //
+    // This allows us to avoid allocating a new vector for each slot.
+    scratch: Vec<Visit>,
 }
 
 impl<'a> RepairWeightTraversal<'a> {
@@ -38,6 +43,7 @@ impl<'a> RepairWeightTraversal<'a> {
         Self {
             tree,
             pending: vec![Visit::Unvisited(tree.tree_root().0)],
+            scratch: vec![],
         }
     }
 }
@@ -51,22 +57,22 @@ impl Iterator for RepairWeightTraversal<'_> {
                 // Add a bookmark to communicate all child
                 // slots have been visited
                 self.pending.push(Visit::Visited(slot));
-                let mut children: Vec<_> = self
-                    .tree
-                    .children(&(slot, Hash::default()))
-                    .unwrap()
-                    .map(|(child_slot, _)| Visit::Unvisited(*child_slot))
-                    .collect();
+                self.scratch.extend(
+                    self.tree
+                        .children(&(slot, Hash::default()))
+                        .unwrap()
+                        .map(|(child_slot, _)| Visit::Unvisited(*child_slot)),
+                );
 
                 // Sort children by weight to prioritize visiting the heaviest
                 // ones first
-                children.sort_by(|slot1, slot2| {
+                self.scratch.sort_by(|slot1, slot2| {
                     self.tree.max_by_weight(
                         (slot1.slot(), Hash::default()),
                         (slot2.slot(), Hash::default()),
                     )
                 });
-                self.pending.extend(children);
+                self.pending.append(&mut self.scratch);
             }
             next
         })

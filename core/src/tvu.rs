@@ -59,6 +59,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
     },
+    solana_net_utils::PinnedXdpSender,
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -155,6 +156,7 @@ pub struct TvuConfig {
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
     pub turbine_xdp_sender: Option<TurbineXdpSender>,
+    pub repair_xdp_sender: Option<PinnedXdpSender>,
 }
 
 impl Default for TvuConfig {
@@ -170,6 +172,7 @@ impl Default for TvuConfig {
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             turbine_xdp_sender: None,
+            repair_xdp_sender: None,
         }
     }
 }
@@ -479,6 +482,7 @@ impl Tvu {
                 leader_schedule_cache.clone(),
                 tvu_config.shred_version,
                 outstanding_repair_requests,
+                tvu_config.repair_xdp_sender,
             )
         };
 

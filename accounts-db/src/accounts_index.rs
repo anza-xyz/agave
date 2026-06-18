@@ -1236,6 +1236,14 @@ pub(crate) mod test_utils {
         super::{AccountIndex, secondary::AccountSecondaryIndexes},
         std::collections::HashSet,
     };
+    pub fn program_id_index_enabled() -> AccountSecondaryIndexes {
+        let mut account_indexes = HashSet::new();
+        account_indexes.insert(AccountIndex::ProgramId);
+        AccountSecondaryIndexes {
+            indexes: account_indexes,
+            keys: None,
+        }
+    }
     pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
         let mut account_indexes = HashSet::new();
         account_indexes.insert(AccountIndex::SplTokenMint);

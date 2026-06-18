@@ -16,8 +16,6 @@ use {
 #[derive(Debug)]
 pub(crate) struct RewardEpochDelegatedStakes {
     pub(crate) epoch: Epoch,
-    #[allow(dead_code)]
-    // This will be used in a follow up as part of non Tower PER calculations
     pub(crate) delegated_stakes: HashMap<Pubkey, u64>,
 }
 
@@ -143,15 +141,11 @@ pub(crate) enum AlpenglowEpochType {
         num_tower_slots: Slot,
         num_ag_slots: Slot,
         migration_epoch: Epoch,
-        #[allow(dead_code)]
-        // This will be used in a follow up as part of PER calculations for the migration epoch
         reward_epoch_delegated_stakes: RewardEpochDelegatedStakes,
     },
     /// This is a full alpenglow epoch
     Alpenglow {
         migration_epoch: Epoch,
-        #[allow(dead_code)]
-        // This will be used in a follow up as part of PER calculations for Alpenglow epochs
         reward_epoch_delegated_stakes: RewardEpochDelegatedStakes,
     },
 }

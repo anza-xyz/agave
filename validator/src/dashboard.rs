@@ -118,6 +118,10 @@ impl Dashboard {
 
             let progress_bar = new_spinner_progress_bar();
             let mut snapshot_slot_info = None;
+            let mut vat_status = None;
+            let mut admin_client = runtime
+                .block_on(admin_rpc_service::connect(&ledger_path))
+                .ok();
             for i in 0.. {
                 if exit.load(Ordering::Relaxed) {
                     break;
@@ -130,6 +134,26 @@ impl Dashboard {
                 if identity != new_identity {
                     identity = new_identity;
                     progress_bar.println(format_name_value("Identity:", &identity.to_string()));
+                }
+
+                if i % 30 == 0 {
+                    if admin_client.is_none() {
+                        admin_client = runtime
+                            .block_on(admin_rpc_service::connect(&ledger_path))
+                            .ok();
+                    }
+
+                    let vat_status_result = admin_client
+                        .as_ref()
+                        .map(|admin_client| runtime.block_on(admin_client.vat_status()));
+                    vat_status = match vat_status_result {
+                        Some(Ok(status)) => Some(status),
+                        Some(Err(_err)) => {
+                            admin_client = None;
+                            None
+                        }
+                        None => None,
+                    };
                 }
 
                 match get_validator_stats(&rpc_client, &identity) {
@@ -153,10 +177,12 @@ impl Dashboard {
                             )
                         };
 
+                        let vat_status_formatted = format_vat_status(vat_status.as_ref());
+
                         progress_bar.set_message(format!(
                             "{}{}| Processed Slot: {} | Confirmed Slot: {} | Finalized Slot: {} | \
                              Full Snapshot Slot: {} | Incremental Snapshot Slot: {} | \
-                             Transactions: {} | {}",
+                             Transactions: {} | {}\n{}",
                             uptime,
                             if health == "ok" {
                                 "".to_string()
@@ -177,7 +203,8 @@ impl Dashboard {
                                     .map(|incremental| incremental.to_string()))
                                 .unwrap_or_else(|| '-'.to_string()),
                             transaction_count,
-                            identity_balance
+                            identity_balance,
+                            vat_status_formatted,
                         ));
                         thread::sleep(refresh_interval);
                     }
@@ -188,6 +215,49 @@ impl Dashboard {
                 }
             }
         }
+    }
+}
+
+fn format_vat_status(
+    status: Option<&admin_rpc_service::AdminRpcValidatorAdmissionTicketStatus>,
+) -> String {
+    let Some(status) = status else {
+        return "VAT: failed to connect to admin RPC".to_string();
+    };
+
+    if !status.vat_active {
+        return "VAT: inactive".to_string();
+    }
+
+    format!(
+        "{}{}",
+        format_current_vat_status(status),
+        format_effective_epoch_vat_status(status)
+    )
+}
+
+fn format_current_vat_status(
+    status: &admin_rpc_service::AdminRpcValidatorAdmissionTicketStatus,
+) -> String {
+    if status.in_current_epoch_vat {
+        format!(
+            "VAT: epoch {} in (stake: {})",
+            status.current_epoch,
+            Sol(status.current_epoch_vote_account_stake)
+        )
+    } else {
+        format!("VAT: epoch {} out", status.current_epoch)
+    }
+}
+
+fn format_effective_epoch_vat_status(
+    status: &admin_rpc_service::AdminRpcValidatorAdmissionTicketStatus,
+) -> String {
+    let vat_effective_epoch = status.current_epoch.saturating_add(2);
+    if let Some(vat_failure_reason) = &status.next_epoch_vat_failure_reason {
+        format!(", epoch {vat_effective_epoch}: {vat_failure_reason}")
+    } else {
+        format!(", epoch {vat_effective_epoch}: eligible if staked")
     }
 }
 

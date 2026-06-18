@@ -109,7 +109,6 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
 
 mod dead_slots;
@@ -140,16 +139,6 @@ const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
 const REFRESH_VOTE_BLOCKHEIGHT: usize = 16;
 
 const VAT_STATUS_CHECK_INTERVAL_SECS: u64 = 30;
-
-#[derive(Error, Debug)]
-enum VATHealthError {
-    #[error("vote account not found")]
-    VoteAccountNotFound,
-    #[error("missing BLS pubkey")]
-    NoBLSPubkey,
-    #[error("insufficient lamports in vote account: {0} < {1}")]
-    InsufficientFundsInVoteAccount(u64, u64),
-}
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum HeaviestForkFailures {
@@ -1856,9 +1845,8 @@ impl ReplayStage {
                 ) {
                     if retransmit_info.reached_retransmit_threshold() {
                         info!(
-                            "Retrying retransmit: latest_leader_slot={} slot={} \
-                             retransmit_info={:?}",
-                            latest_leader_slot, slot, &retransmit_info,
+                            "Retrying retransmit: latest_leader_slot={latest_leader_slot} \
+                             slot={slot} retransmit_info={retransmit_info:?}",
                         );
                         datapoint_info!(
                             metric_name,
@@ -1870,8 +1858,7 @@ impl ReplayStage {
                         retransmit_info.increment_retry_iteration();
                     } else {
                         debug!(
-                            "Bypass retransmit of slot={} retransmit_info={:?}",
-                            slot, &retransmit_info
+                            "Bypass retransmit of slot={slot} retransmit_info={retransmit_info:?}"
                         );
                     }
                 }
@@ -3170,7 +3157,7 @@ impl ReplayStage {
         }
 
         let epoch = bank.epoch();
-        if let Err(vat_failure_reason) = Self::check_vat_health(&bank, vote_account) {
+        if let Err(vat_failure_reason) = bank.get_vat_health_for_next_epoch(vote_account) {
             warn!(
                 "VAT Health Check: Currently you will fail the VAT check at the start of epoch {} \
                  meaning that you will be unable to vote or produce blocks in epoch {}. Reason: {}",
@@ -3186,33 +3173,6 @@ impl ReplayStage {
                 epoch.saturating_add(2),
             );
         }
-    }
-
-    fn check_vat_health(bank: &Bank, vote_account_pubkey: &Pubkey) -> Result<(), VATHealthError> {
-        let vote_accounts = bank.vote_accounts();
-
-        let Some((_, vote_account)) = vote_accounts.get(vote_account_pubkey) else {
-            return Err(VATHealthError::VoteAccountNotFound);
-        };
-
-        if vote_account
-            .vote_state_view()
-            .bls_pubkey_compressed()
-            .is_none()
-        {
-            return Err(VATHealthError::NoBLSPubkey);
-        }
-
-        let my_balance = vote_account.lamports();
-        let minimum_vote_account_balance_for_vat = bank.minimum_vote_account_balance_for_vat();
-        if vote_account.lamports() < minimum_vote_account_balance_for_vat {
-            return Err(VATHealthError::InsufficientFundsInVoteAccount(
-                my_balance,
-                minimum_vote_account_balance_for_vat,
-            ));
-        }
-
-        Ok(())
     }
 
     fn generate_vote_tx(
