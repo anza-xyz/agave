@@ -5906,7 +5906,7 @@ define_accounts_db_test!(test_get_sorted_potential_ancient_slots, |db| {
             .is_empty()
     );
     let completed_slot = epoch_schedule.slots_per_epoch;
-    db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
+    db.add_root(AccountsDb::apply_offset_to_slot(
         completed_slot,
         ancient_append_vec_offset,
     ));
@@ -5918,7 +5918,7 @@ define_accounts_db_test!(test_get_sorted_potential_ancient_slots, |db| {
             .is_empty()
     );
     let completed_slot = epoch_schedule.slots_per_epoch + root1;
-    db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
+    db.add_root(AccountsDb::apply_offset_to_slot(
         completed_slot,
         ancient_append_vec_offset,
     ));
@@ -5928,7 +5928,7 @@ define_accounts_db_test!(test_get_sorted_potential_ancient_slots, |db| {
         vec![root1, root2]
     );
     let completed_slot = epoch_schedule.slots_per_epoch + root2;
-    db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
+    db.add_root(AccountsDb::apply_offset_to_slot(
         completed_slot,
         ancient_append_vec_offset,
     ));
