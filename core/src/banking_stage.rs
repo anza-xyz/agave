@@ -997,18 +997,20 @@ mod tests {
         let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
         // send 'em over
-        let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
-        packet_batches[0]
+        let mut packet_batch = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3)
+            .pop()
+            .unwrap();
+        packet_batch
             .first_mut()
             .unwrap()
             .meta_mut()
             .set_discard(true); // set discard on `tx_no_ver`
 
         // glad they all fit
-        assert_eq!(packet_batches.len(), 1);
+        assert_eq!(packet_batch.len(), 3);
 
         non_vote_sender // no_ver, anf, tx
-            .send(BankingPacketBatch::new(packet_batches))
+            .send(BankingPacketBatch::new(packet_batch))
             .unwrap();
 
         // capture the entry receiver until we've received all our entries.
@@ -1087,7 +1089,7 @@ mod tests {
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
 
-        let packet_batches = to_packet_batches(&[tx], 1);
+        let packet_batches = to_packet_batches(&[tx], 1).pop().unwrap();
         non_vote_sender
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
@@ -1095,7 +1097,7 @@ mod tests {
         // Process a second batch that uses the same from account, so conflicts with above TX
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_packet_batches(&[tx], 1);
+        let packet_batches = to_packet_batches(&[tx], 1).pop().unwrap();
         non_vote_sender
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
@@ -1342,9 +1344,13 @@ mod tests {
             })
             .collect_vec();
 
-        let non_vote_packet_batches = to_packet_batches(&txs, 10);
-        let tpu_packet_batches = to_packet_batches(&tpu_votes, 10);
-        let gossip_packet_batches = to_packet_batches(&gossip_votes, 10);
+        let non_vote_packet_batches = to_packet_batches(&txs, txs.len()).pop().unwrap();
+        let tpu_packet_batches = to_packet_batches(&tpu_votes, tpu_votes.len())
+            .pop()
+            .unwrap();
+        let gossip_packet_batches = to_packet_batches(&gossip_votes, gossip_votes.len())
+            .pop()
+            .unwrap();
 
         // Send em all
         [

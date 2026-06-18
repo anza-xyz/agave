@@ -84,9 +84,9 @@ impl VotePacketReceiver {
         let sanitize_config = sanitize_config(true);
         let mut stats = ReceiveAndBufferStats::default();
 
-        let packet_batches = self.banking_packet_receiver.recv_timeout(recv_timeout)?;
-        self.buffer_packet_batches(
-            &packet_batches,
+        let packet_batch = self.banking_packet_receiver.recv_timeout(recv_timeout)?;
+        self.buffer_packet_batch(
+            &packet_batch,
             &sanitize_config,
             vote_storage,
             vote_source,
@@ -94,9 +94,9 @@ impl VotePacketReceiver {
             &mut stats,
         );
 
-        while let Ok(packet_batches) = self.banking_packet_receiver.try_recv() {
-            self.buffer_packet_batches(
-                &packet_batches,
+        while let Ok(packet_batch) = self.banking_packet_receiver.try_recv() {
+            self.buffer_packet_batch(
+                &packet_batch,
                 &sanitize_config,
                 vote_storage,
                 vote_source,
@@ -122,52 +122,43 @@ impl VotePacketReceiver {
         Ok(())
     }
 
-    fn buffer_packet_batches(
+    fn buffer_packet_batch(
         &self,
-        packet_batches: &BankingPacketBatch,
+        packet_batch: &BankingPacketBatch,
         sanitize_config: &SanitizeConfig,
         vote_storage: &mut VoteStorage,
         vote_source: VoteSource,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
         stats: &mut ReceiveAndBufferStats,
     ) {
-        stats.num_packets_received += packet_batches
-            .iter()
-            .map(|batch| batch.len())
-            .sum::<usize>();
+        stats.num_packets_received += packet_batch.len();
 
-        for packet_batch in packet_batches.iter() {
-            for packet in packet_batch.iter() {
-                let Some(packet_data) = packet.data(..) else {
-                    continue;
-                };
+        for packet in packet_batch.iter() {
+            let Some(packet_data) = packet.data(..) else {
+                continue;
+            };
 
-                match SanitizedTransactionView::try_new_sanitized(
-                    Arc::new(packet_data.to_vec()),
-                    sanitize_config,
-                ) {
-                    Ok(packet) => {
-                        if self.should_filter_packet(&packet) {
-                            stats.packet_stats.filtered_account_key_count += 1;
-                            continue;
-                        }
-
-                        stats.num_buffered_packets += 1;
-                        let vote_insertion_metrics =
-                            vote_storage.insert_packet(vote_source, packet);
-                        slot_metrics_tracker
-                            .accumulate_vote_insertion_metrics(&vote_insertion_metrics);
-                        stats.dropped_packets_count +=
-                            vote_insertion_metrics.total_dropped_packets();
+            match SanitizedTransactionView::try_new_sanitized(
+                Arc::new(packet_data.to_vec()),
+                sanitize_config,
+            ) {
+                Ok(packet) => {
+                    if self.should_filter_packet(&packet) {
+                        stats.packet_stats.filtered_account_key_count += 1;
+                        continue;
                     }
-                    Err(err) => {
-                        stats.errors += 1;
-                        match err {
-                            TransactionViewError::AddressLookupMismatch => {}
-                            TransactionViewError::ParseError
-                            | TransactionViewError::SanitizeError => {
-                                stats.packet_stats.failed_sanitization_count += 1
-                            }
+
+                    stats.num_buffered_packets += 1;
+                    let vote_insertion_metrics = vote_storage.insert_packet(vote_source, packet);
+                    slot_metrics_tracker.accumulate_vote_insertion_metrics(&vote_insertion_metrics);
+                    stats.dropped_packets_count += vote_insertion_metrics.total_dropped_packets();
+                }
+                Err(err) => {
+                    stats.errors += 1;
+                    match err {
+                        TransactionViewError::AddressLookupMismatch => {}
+                        TransactionViewError::ParseError | TransactionViewError::SanitizeError => {
+                            stats.packet_stats.failed_sanitization_count += 1
                         }
                     }
                 }
@@ -302,7 +293,7 @@ mod tests {
         let vote_packet = packet_from_slots(vec![(1, 1)], keypairs, None);
         let (sender, receiver) = bounded(1024);
         sender
-            .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
+            .send(Arc::new(PacketBatch::from(vec![vote_packet])))
             .unwrap();
 
         let mut receiver = VotePacketReceiver::new(receiver, filter_keys);

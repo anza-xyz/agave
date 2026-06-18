@@ -262,72 +262,70 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     /// Insert received packets into the packet container.
     fn buffer_packet_batches(
         &mut self,
-        packet_batches: BankingPacketBatch,
+        packet_batch: BankingPacketBatch,
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
         let sanitize_config =
             sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
-        for batch in packet_batches.iter() {
-            for packet in batch
-                .iter()
-                .filter(|p| initial_packet_meta_filter(p.meta()))
-            {
-                let Some(packet_data) = packet.data(..) else {
-                    unreachable!(
-                        "packet.meta().discard() was already checked. If not discarded, packet \
-                         MUST have data"
-                    );
-                };
+        for packet in packet_batch
+            .iter()
+            .filter(|p| initial_packet_meta_filter(p.meta()))
+        {
+            let Some(packet_data) = packet.data(..) else {
+                unreachable!(
+                    "packet.meta().discard() was already checked. If not discarded, packet MUST \
+                     have data"
+                );
+            };
 
-                let vote_count = usize::from(is_tpu_vote_batch);
-                let non_vote_count = usize::from(!is_tpu_vote_batch);
+            let vote_count = usize::from(is_tpu_vote_batch);
+            let non_vote_count = usize::from(!is_tpu_vote_batch);
 
-                self.metrics.votes_received += vote_count;
-                self.metrics.non_votes_received += non_vote_count;
+            self.metrics.votes_received += vote_count;
+            self.metrics.non_votes_received += non_vote_count;
 
-                // Perform basic sanitization checks and calculate priority.
-                // If any steps fail, drop the packet.
-                let Some(priority) =
-                    SanitizedTransactionView::try_new_sanitized(packet_data, &sanitize_config)
+            // Perform basic sanitization checks and calculate priority.
+            // If any steps fail, drop the packet.
+            let Some(priority) =
+                SanitizedTransactionView::try_new_sanitized(packet_data, &sanitize_config)
+                    .map_err(|_| ())
+                    .and_then(|transaction| {
+                        RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+                            transaction,
+                            MessageHash::Compute,
+                            Some(packet.meta().is_simple_vote_tx()),
+                        )
                         .map_err(|_| ())
-                        .and_then(|transaction| {
-                            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                                transaction,
-                                MessageHash::Compute,
-                                Some(packet.meta().is_simple_vote_tx()),
-                            )
-                            .map_err(|_| ())
-                        })
-                        .ok()
-                        .and_then(|transaction| calculate_priority(&transaction, bank))
-                else {
-                    self.metrics.votes_dropped_on_receive += vote_count;
-                    self.metrics.non_votes_dropped_on_receive += non_vote_count;
+                    })
+                    .ok()
+                    .and_then(|transaction| calculate_priority(&transaction, bank))
+            else {
+                self.metrics.votes_dropped_on_receive += vote_count;
+                self.metrics.non_votes_dropped_on_receive += non_vote_count;
+                continue;
+            };
+
+            // If at capacity, check lowest priority item.
+            if self.packet_container.is_full() {
+                let min_priority = self.packet_container.min_priority().expect("not empty");
+                // If priority of current packet is not higher than the min
+                // drop the current packet.
+                if min_priority >= priority {
+                    self.metrics.votes_dropped_on_capacity += vote_count;
+                    self.metrics.non_votes_dropped_on_capacity += non_vote_count;
                     continue;
-                };
-
-                // If at capacity, check lowest priority item.
-                if self.packet_container.is_full() {
-                    let min_priority = self.packet_container.min_priority().expect("not empty");
-                    // If priority of current packet is not higher than the min
-                    // drop the current packet.
-                    if min_priority >= priority {
-                        self.metrics.votes_dropped_on_capacity += vote_count;
-                        self.metrics.non_votes_dropped_on_capacity += non_vote_count;
-                        continue;
-                    }
-
-                    let dropped_packet = self.packet_container.pop_min().expect("not empty");
-                    self.metrics.votes_dropped_on_capacity +=
-                        usize::from(dropped_packet.meta().is_simple_vote_tx());
-                    self.metrics.non_votes_dropped_on_capacity +=
-                        usize::from(!dropped_packet.meta().is_simple_vote_tx());
                 }
 
-                self.packet_container
-                    .insert(packet.to_bytes_packet(), priority);
+                let dropped_packet = self.packet_container.pop_min().expect("not empty");
+                self.metrics.votes_dropped_on_capacity +=
+                    usize::from(dropped_packet.meta().is_simple_vote_tx());
+                self.metrics.non_votes_dropped_on_capacity +=
+                    usize::from(!dropped_packet.meta().is_simple_vote_tx());
             }
+
+            self.packet_container
+                .insert(packet.to_bytes_packet(), priority);
         }
     }
 
@@ -859,13 +857,13 @@ mod tests {
 
         // Send packet batches.
         let non_vote_packets =
-            BankingPacketBatch::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
+            BankingPacketBatch::new(PacketBatch::from(RecycledPacketBatch::new(vec![
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
-            ]))]);
+            ])));
         let vote_packets =
-            BankingPacketBatch::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
+            BankingPacketBatch::new(PacketBatch::from(RecycledPacketBatch::new(vec![
                 simple_transfer_with_flags(
                     PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
                 ),
@@ -879,7 +877,7 @@ mod tests {
                         | PacketFlags::FROM_STAKED_NODE
                         | PacketFlags::FORWARDED,
                 ),
-            ]))]);
+            ])));
 
         packet_batch_sender
             .send((non_vote_packets.clone(), false))
@@ -902,14 +900,14 @@ mod tests {
         assert_eq!(vote_wired_txs.len(), 1);
         assert_eq!(
             vote_wired_txs[0],
-            vote_packets[0].first().unwrap().data(..).unwrap()
+            vote_packets.first().unwrap().data(..).unwrap()
         );
 
         let non_vote_wired_txs = non_vote_mock_client.get_packets();
         assert_eq!(non_vote_wired_txs.len(), 1);
         assert_eq!(
             non_vote_wired_txs[0],
-            non_vote_packets[0].first().unwrap().data(..).unwrap()
+            non_vote_packets.first().unwrap().data(..).unwrap()
         );
     }
 }
