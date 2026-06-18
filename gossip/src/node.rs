@@ -10,10 +10,10 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            SocketConfiguration as SocketConfig, bind_gossip_port_in_range_with_config,
-            bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
-            get_max_recv_buffer_size, get_max_send_buffer_size, localhost_port_range_for_tests,
-            multi_bind_in_range_with_config,
+            bind_gossip_port_in_range_with_config, bind_in_range_with_config,
+            bind_more_with_config, bind_to_with_config, get_max_udp_recv_buffer_size,
+            get_max_udp_send_buffer_size, localhost_port_range_for_tests,
+            multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
         },
     },
     solana_pubkey::Pubkey,
@@ -66,66 +66,79 @@ impl Node {
     /// sockets nor receive on primarily_write_udp sockets. Setting the unused
     /// side to 1 avoids increasing it; Linux still enforces a minimum. Note
     /// unlike Linux, MacOS and FreeBSD will not accept a buffer size of zero.
+    /// Furthermore as UDP socket sends on MacOS and FreeBSD are unbuffered,
+    /// there is no point increasing UDP socket send buffers on those platforms.
     ///
     /// NOTE: In Linux, the minimum send buffer size (SO_SNDBUF) is 2048 bytes
     /// and the minimum receive buffer size (SO_RCVBUF) is 256 bytes
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
     fn create_socket_configs() -> SocketConfigs {
-        if cfg!(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "macos"
-        )) {
-            const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
-            let recv_buffer_size = get_max_recv_buffer_size()
-                .map_err(|err| {
-                    error!(
-                        "Maximum socket receive buffer size could not be determined: {}",
-                        err
-                    )
-                })
-                .ok();
-            let send_buffer_size = get_max_send_buffer_size()
-                .map_err(|err| {
-                    error!(
-                        "Maximum socket send buffer size could not be determined: {}",
-                        err
-                    )
-                })
-                .ok();
-            if let Some(sz) = recv_buffer_size {
-                info!("Maximum socket receive buffer size is {}", sz)
-            }
-            if let Some(sz) = send_buffer_size {
-                info!("Maximum socket send buffer size is {}", sz)
-            }
-            let maybe_set_recv_buffer_size = move |c: SocketConfig| {
-                let Some(sz) = recv_buffer_size else { return c };
-                c.recv_buffer_size(sz)
+        const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+
+        let max_recv_buffer_size = get_max_udp_recv_buffer_size()
+            .map(|sz| {
+                info!("Maximum UDP socket receive buffer size is {}", sz);
+                sz
+            })
+            .map_err(|err| {
+                error!(
+                    "Maximum UDP socket receive buffer size could not be determined: {}",
+                    err
+                )
+            })
+            .ok();
+        let max_send_buffer_size = get_max_udp_send_buffer_size()
+            .map(|sz| {
+                info!("Maximum UDP socket send buffer size is {}", sz);
+                sz
+            })
+            .map_err(|err| {
+                error!(
+                    "Maximum UDP socket send buffer size could not be determined: {}",
+                    err
+                )
+            })
+            .ok();
+        let set_max_recv_send_buffer_size =
+            move |c: &mut SocketConfig, recv_size: Option<usize>, send_size: Option<usize>| {
+                let recv_size = match (recv_size, max_recv_buffer_size) {
+                    (Some(sz), Some(max_sz)) => std::cmp::min(sz, max_sz),
+                    (Some(sz), _) | (_, Some(sz)) => sz,
+                    _ => return,
+                };
+                *c = c.recv_buffer_size(recv_size);
+                // As UDP socket sends on freebsd & macos are always
+                // unbuffered, do not change the send buffer size.
+                if cfg!(not(any(target_os = "freebsd", target_os = "macos"))) {
+                    let send_size = match (send_size, max_send_buffer_size) {
+                        (Some(sz), Some(max_sz)) => std::cmp::min(sz, max_sz),
+                        (Some(sz), _) | (_, Some(sz)) => sz,
+                        _ => return,
+                    };
+                    *c = c.send_buffer_size(send_size);
+                }
             };
-            let maybe_set_send_buffer_size = move |c: SocketConfig| {
-                let Some(sz) = send_buffer_size else { return c };
-                c.send_buffer_size(sz)
-            };
-            let maybe_set_recv_and_send_buffer_sizes = move |c| {
-                let c = maybe_set_recv_buffer_size(c);
-                let c = maybe_set_send_buffer_size(c);
-                c
-            };
-            SocketConfigs {
-                read_write: maybe_set_recv_and_send_buffer_sizes(SocketConfig::default()),
-                primarily_read_quic: maybe_set_recv_buffer_size(SocketConfig::default())
-                    .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_write_quic: maybe_set_send_buffer_size(SocketConfig::default())
-                    .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-                primarily_read_udp: maybe_set_recv_buffer_size(SocketConfig::default())
-                    .send_buffer_size(1),
-                primarily_write_udp: maybe_set_send_buffer_size(SocketConfig::default())
-                    .recv_buffer_size(1),
-            }
-        } else {
-            SocketConfigs::default()
-        }
+        let mut c = SocketConfigs::default();
+        set_max_recv_send_buffer_size(&mut c.read_write, None, None);
+        set_max_recv_send_buffer_size(
+            &mut c.primarily_read_quic,
+            None,
+            Some(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
+        );
+        set_max_recv_send_buffer_size(
+            &mut c.primarily_write_quic,
+            Some(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
+            None,
+        );
+        set_max_recv_send_buffer_size(&mut c.primarily_read_udp, None, Some(1));
+        set_max_recv_send_buffer_size(&mut c.primarily_write_udp, Some(1), None);
+        c
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+    fn create_socket_configs() -> SocketConfigs {
+        SocketConfigs::default()
     }
 
     /// create localhost node for tests
