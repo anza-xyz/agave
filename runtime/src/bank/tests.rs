@@ -11367,7 +11367,7 @@ fn test_failed_simulation_compute_units() {
 
     bank.freeze();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
-    let simulation = bank.simulate_transaction(&sanitized, false);
+    let simulation = bank.simulate_transaction(&sanitized, false, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
     assert_eq!(
         expected_loaded_program_account_data_size,
@@ -11395,7 +11395,7 @@ fn test_failed_simulation_load_error() {
     bank.freeze();
     let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
-    let simulation = bank.simulate_transaction(&sanitized, false);
+    let simulation = bank.simulate_transaction(&sanitized, false, false);
     assert_eq!(
         simulation,
         TransactionSimulationResult {

@@ -145,6 +145,16 @@ pub struct TransactionProcessingConfig<'a> {
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
     pub strict_nonce_size_check: bool,
+    /// Skip precompile (ed25519/secp256k1/secp256r1) signature verification
+    /// during execution.
+    ///
+    /// This must remain `false` for committed execution (replay, banking),
+    /// where precompile verification is consensus-relevant. It may be set to
+    /// `true` only for `simulateTransaction` with `sigVerify: false`, so that
+    /// callers can simulate a transaction whose precompile instructions are not
+    /// yet signed (e.g. passkey/secp256r1 smart wallets). The `Default` value
+    /// is `false` so verification is never skipped unless explicitly requested.
+    pub skip_precompile_verification: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -1055,6 +1065,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut invoke_context,
             execute_timings,
             &mut executed_units,
+            config.skip_precompile_verification,
         );
         process_message_time.stop();
 

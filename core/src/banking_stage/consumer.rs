@@ -333,6 +333,8 @@ impl Consumer {
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
                     strict_nonce_size_check: true,
+                    // Committed execution must always verify precompiles.
+                    skip_precompile_verification: false,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;

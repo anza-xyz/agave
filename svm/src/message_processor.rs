@@ -16,6 +16,7 @@ pub(crate) fn process_message<'ix_data>(
     invoke_context: &mut InvokeContext<'_, 'ix_data>,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
+    skip_precompile_verification: bool,
 ) -> Result<(), TransactionError> {
     invoke_context
         .prepare_top_level_instructions(message)
@@ -27,11 +28,22 @@ pub(crate) fn process_message<'ix_data>(
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
             if invoke_context.is_precompile(program_id) {
-                invoke_context.process_precompile(
-                    program_id,
-                    instruction.data,
-                    message.instructions_iter().map(|ix| ix.data),
-                )
+                // Precompile signature verification runs as part of execution
+                // (SIMD-0159). Simulation may skip it so that callers can
+                // simulate a transaction whose precompile instructions are not
+                // yet signed (e.g. passkey/secp256r1 smart wallets), matching
+                // the pre-SIMD-0159 behavior of `simulateTransaction` with
+                // `sigVerify: false`. This must never be skipped for committed
+                // execution, where it is consensus-relevant.
+                if skip_precompile_verification {
+                    Ok(())
+                } else {
+                    invoke_context.process_precompile(
+                        program_id,
+                        instruction.data,
+                        message.instructions_iter().map(|ix| ix.data),
+                    )
+                }
             } else {
                 invoke_context.process_instruction(&mut compute_units_consumed, execute_timings)
             }
@@ -240,6 +252,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
         assert!(result.is_ok());
         assert_eq!(
@@ -298,6 +311,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
         assert_eq!(
             result,
@@ -345,6 +359,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
         assert_eq!(
             result,
@@ -480,6 +495,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
         assert_eq!(
             result,
@@ -523,6 +539,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
         assert!(result.is_ok());
 
@@ -562,6 +579,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
         assert!(result.is_ok());
         assert_eq!(
@@ -722,6 +740,7 @@ mod tests {
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
+            false,
         );
 
         assert_eq!(
@@ -735,5 +754,96 @@ mod tests {
             transaction_context.number_of_called_instructions_in_trace(),
             4
         );
+    }
+
+    // Regression test for issue #13252: `simulateTransaction` with
+    // `sigVerify: false` must be able to simulate a transaction whose precompile
+    // instructions are not yet signed. When `skip_precompile_verification` is
+    // set, a precompile whose signature would fail verification is treated as a
+    // no-op; otherwise it fails as usual.
+    #[test]
+    fn test_skip_precompile_verification() {
+        // A precompile callback that always reports an invalid signature,
+        // emulating an unsigned (placeholder) precompile instruction.
+        struct FailingPrecompileCallback;
+        impl InvokeContextCallback for FailingPrecompileCallback {
+            fn is_precompile(&self, program_id: &Pubkey) -> bool {
+                program_id == &solana_secp256r1_program::id()
+            }
+
+            fn process_precompile(
+                &self,
+                _program_id: &Pubkey,
+                _data: &[u8],
+                _instruction_datas: Vec<&[u8]>,
+            ) -> std::result::Result<(), PrecompileError> {
+                Err(PrecompileError::InvalidSignature)
+            }
+        }
+
+        let run = |skip_precompile_verification: bool| -> Result<(), TransactionError> {
+            let mut secp256r1_account = AccountSharedData::new(1, 0, &native_loader::id());
+            secp256r1_account.set_executable(true);
+            let fee_payer = Pubkey::new_unique();
+            let accounts_map: HashMap<Address, AccountSharedData> = HashMap::from([
+                (
+                    fee_payer,
+                    AccountSharedData::new(1, 0, &system_program::id()),
+                ),
+                (solana_secp256r1_program::id(), secp256r1_account),
+            ]);
+
+            let message = new_sanitized_message(Message::new(
+                &[secp256r1_instruction_for_test()],
+                Some(&fee_payer),
+            ));
+            let accounts = message
+                .account_keys()
+                .iter()
+                .map(|key| (*key, accounts_map.get(key).unwrap().clone()))
+                .collect();
+            let mut transaction_context =
+                TransactionContext::new(accounts, Rent::default(), 1, 1, 1);
+
+            let sysvar_cache = SysvarCache::default();
+            let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+            let feature_set = SVMFeatureSet::all_enabled();
+            let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+            let environment_config = EnvironmentConfig::new(
+                Hash::default(),
+                0,
+                false,
+                &FailingPrecompileCallback,
+                &feature_set,
+                &program_runtime_environments,
+                &sysvar_cache,
+            );
+            let mut invoke_context = InvokeContext::new(
+                &mut transaction_context,
+                &mut program_cache_for_tx_batch,
+                environment_config,
+                None,
+                SVMTransactionExecutionBudget::default(),
+                SVMTransactionExecutionCost::default(),
+            );
+            process_message(
+                &message,
+                &mut invoke_context,
+                &mut ExecuteTimings::default(),
+                &mut 0,
+                skip_precompile_verification,
+            )
+        };
+
+        // Without skipping, the invalid precompile signature fails simulation at
+        // the precompile instruction (index 0).
+        assert!(matches!(
+            run(false),
+            Err(TransactionError::InstructionError(0, _))
+        ));
+
+        // Skipping precompile verification lets the otherwise-unsigned
+        // transaction simulate cleanly.
+        assert_eq!(run(true), Ok(()));
     }
 }

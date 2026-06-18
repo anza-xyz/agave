@@ -3749,18 +3749,30 @@ impl Bank {
         &self,
         transaction: &impl TransactionWithMeta,
         enable_cpi_recording: bool,
+        skip_precompile_verification: bool,
     ) -> TransactionSimulationResult {
         assert!(self.is_frozen(), "simulation bank must be frozen");
 
-        self.simulate_transaction_unchecked(transaction, enable_cpi_recording)
+        self.simulate_transaction_unchecked(
+            transaction,
+            enable_cpi_recording,
+            skip_precompile_verification,
+        )
     }
 
     /// Run transactions against a bank without committing the results; does not check if the bank
-    /// is frozen, enabling use in single-Bank test frameworks
+    /// is frozen, enabling use in single-Bank test frameworks.
+    ///
+    /// `skip_precompile_verification` should only be set when simulating on
+    /// behalf of `simulateTransaction` with `sigVerify: false`, so that a
+    /// transaction whose precompile instructions are not yet signed can still be
+    /// simulated. It must never be set for any path that mirrors committed
+    /// execution.
     pub fn simulate_transaction_unchecked(
         &self,
         transaction: &impl TransactionWithMeta,
         enable_cpi_recording: bool,
+        skip_precompile_verification: bool,
     ) -> TransactionSimulationResult {
         let account_keys = transaction.account_keys();
         let number_of_accounts = account_keys.len();
@@ -3795,6 +3807,7 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: false,
+                skip_precompile_verification,
             },
         );
 
@@ -4531,6 +4544,8 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: false,
+                // Committed execution must always verify precompiles.
+                skip_precompile_verification: false,
             },
         );
 

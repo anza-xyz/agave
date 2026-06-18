@@ -52,7 +52,7 @@ fn test_no_panic_banks_client() {
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
     let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-    let result = bank.simulate_transaction(&sanitized_tx, false);
+    let result = bank.simulate_transaction(&sanitized_tx, false, false);
     assert!(result.result.is_ok());
 }
 
