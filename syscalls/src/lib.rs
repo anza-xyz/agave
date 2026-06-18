@@ -60,6 +60,7 @@ mod sysvar;
 
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
+#[repr(C, u64)]
 pub enum SyscallError {
     #[error("{0}: {1:?}")]
     InvalidString(Utf8Error, Vec<u8>),
