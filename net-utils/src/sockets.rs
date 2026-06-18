@@ -154,18 +154,31 @@ pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<
 /// allowable ranges for the platforms below.
 const MAX_BUF_SIZ: usize = 0x7fff_ffff;
 
+pub fn get_max_tcp_recv_buffer_size() -> io::Result<usize> {
+    get_max_recv_buffer_size(Type::STREAM)
+}
+pub fn get_max_tcp_send_buffer_size() -> io::Result<usize> {
+    get_max_send_buffer_size(Type::STREAM)
+}
+pub fn get_max_udp_recv_buffer_size() -> io::Result<usize> {
+    get_max_recv_buffer_size(Type::DGRAM)
+}
+pub fn get_max_udp_send_buffer_size() -> io::Result<usize> {
+    get_max_send_buffer_size(Type::DGRAM)
+}
+
 // Linux normally always succeeds, clamping the size to the system limit.
 // A quirk of Linux is that it doubles buffer size internally hence the
 // division by two below.
 #[cfg(target_os = "linux")]
-pub fn get_max_recv_buffer_size() -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+pub fn get_max_recv_buffer_size(sock_type: Type) -> io::Result<usize> {
+    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     sock.set_recv_buffer_size(MAX_BUF_SIZ)?;
     sock.recv_buffer_size().map(|sz| sz / 2)
 }
 #[cfg(target_os = "linux")]
-pub fn get_max_send_buffer_size() -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
+    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     sock.set_send_buffer_size(MAX_BUF_SIZ)?;
     sock.send_buffer_size().map(|sz| sz / 2)
 }
@@ -176,14 +189,14 @@ pub fn get_max_send_buffer_size() -> io::Result<usize> {
 // fail. Hence we intentionally disregard any error when requesting the
 // maximum buffer size.
 #[cfg(target_os = "macos")]
-pub fn get_max_recv_buffer_size() -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+pub fn get_max_recv_buffer_size(sock_type: Type) -> io::Result<usize> {
+    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     let _ = sock.set_recv_buffer_size(MAX_BUF_SIZ);
     sock.recv_buffer_size()
 }
 #[cfg(target_os = "macos")]
-pub fn get_max_send_buffer_size() -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
+    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     let _ = sock.set_send_buffer_size(MAX_BUF_SIZ);
     sock.send_buffer_size()
 }
@@ -192,8 +205,8 @@ pub fn get_max_send_buffer_size() -> io::Result<usize> {
 // error if the size requested exceeds the system limit. Thus a binary
 // search algorithm is employed to determine the maximum available size.
 #[cfg(target_os = "freebsd")]
-pub fn get_max_recv_buffer_size() -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+pub fn get_max_recv_buffer_size(sock_type: Type) -> io::Result<usize> {
+    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     let (mut lo, mut hi) = (1, MAX_BUF_SIZ);
     while lo <= hi {
         let mid = (lo + hi) / 2;
@@ -206,8 +219,8 @@ pub fn get_max_recv_buffer_size() -> io::Result<usize> {
     Ok(hi)
 }
 #[cfg(target_os = "freebsd")]
-pub fn get_max_send_buffer_size() -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
+    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     let (mut lo, mut hi) = (1, MAX_BUF_SIZ);
     while lo <= hi {
         let mid = (lo + hi) / 2;
