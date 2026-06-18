@@ -6526,6 +6526,10 @@ impl AccountsDb {
             self.accounts_index.add_root(storage.slot());
         }
 
+        // Roots added above bypass `add_root`, so seed `max_root` from the index's highest root.
+        self.max_root
+            .fetch_max(self.accounts_index.max_root_inclusive(), Ordering::Relaxed);
+
         self.set_storage_count_and_alive_bytes(total_accum.storage_info, &mut timings);
 
         let mut mark_obsolete_accounts_time = Measure::start("mark_obsolete_accounts_time");
