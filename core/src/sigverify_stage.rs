@@ -449,10 +449,7 @@ mod tests {
         drop(packet_s);
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_secs(30)) {
-                valid_received += verifieds
-                    .iter()
-                    .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
-                    .sum::<usize>();
+                valid_received += verifieds.iter().filter(|p| !p.meta().discard()).count();
             } else {
                 break;
             }
@@ -511,9 +508,8 @@ mod tests {
 
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
-        assert_eq!(verified_batch[0].len(), 1);
         assert_eq!(
-            !verified_batch[0].get(0).unwrap().meta().discard(),
+            !verified_batch.get(0).unwrap().meta().discard(),
             expected_valid
         );
 

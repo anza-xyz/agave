@@ -116,13 +116,8 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
                 .recv()
                 .unwrap()
                 .iter()
-                .map(|batch| {
-                    batch
-                        .iter()
-                        .filter(|packet| !packet.meta().discard())
-                        .count()
-                })
-                .sum::<usize>();
+                .filter(|packet| !packet.meta().discard())
+                .count();
         }
         trace!("received: {verified}");
     });

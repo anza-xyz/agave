@@ -545,7 +545,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{NUM_PACKETS, PacketBatch, to_packet_batches},
+        solana_perf::packet::{NUM_PACKETS, to_packet_batches},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -567,7 +567,7 @@ mod tests {
         #[allow(dead_code)]
         bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
-        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
+        banking_packet_sender: Sender<BankingPacketBatch>,
         shared_leader_state: SharedLeaderState,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
@@ -668,7 +668,7 @@ mod tests {
     }
 
     fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
+        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS).pop().unwrap())
     }
 
     // Helper function to let test receive and then schedule packets.

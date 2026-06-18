@@ -8,7 +8,7 @@ use {
     },
 };
 
-pub type BankingPacketBatch = Arc<Vec<PacketBatch>>;
+pub type BankingPacketBatch = Arc<PacketBatch>;
 pub type BankingPacketReceiver = Receiver<BankingPacketBatch>;
 
 /// Priority floor shared from the banking-stage scheduler to sigverify.

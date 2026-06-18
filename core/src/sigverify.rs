@@ -334,7 +334,7 @@ impl SigVerifyWorkerPool {
             .total_verify_time_us
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
 
-        let banking_packet_batch = BankingPacketBatch::new(vec![batch]);
+        let banking_packet_batch = BankingPacketBatch::new(batch);
         // Sample backlog before the push: measures consumer health without
         // including this batch's own contribution.
         state
