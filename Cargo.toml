@@ -396,7 +396,7 @@ solana-entry = { path = "entry", version = "=4.2.0-alpha.0", features = ["agave-
 solana-epoch-info = "3.1.0"
 solana-epoch-rewards = "3.0.2"
 solana-epoch-rewards-hasher = "3.1.0"
-solana-epoch-schedule = "3.1.0"
+solana-epoch-schedule = "3.1.1"
 solana-faucet = { path = "faucet", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
 solana-fee = { path = "fee", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
