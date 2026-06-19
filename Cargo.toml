@@ -344,7 +344,7 @@ shuttle = "0.7.1"
 signal-hook = "0.4.4"
 slab = "0.4.12"
 slotmap = "1.0.7"
-smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
+smallvec = { version = "1.15.2", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
 socket2 = "0.6.3"
 soketto = "0.8"
