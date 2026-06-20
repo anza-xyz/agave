@@ -1,6 +1,8 @@
 use {
     crate::bank::Bank,
-    agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
+    agave_bls_cert_verify::cert_verify::{
+        Error as BlsCertVerifyError, collect_signers_base2, verify_base2,
+    },
     agave_votor_messages::{
         consensus_message::Block,
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
@@ -78,10 +80,36 @@ pub struct ValidatedRewardCert {
 
 impl ValidatedRewardCert {
     /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
+    ///
+    /// The aggregate signatures on `skip` and `notar` are verified against the epoch's BLS
+    /// rank map. Use this for reward certs received from the network.
     pub fn try_new(
         bank: &Bank,
         skip: &Option<SkipRewardCertificate>,
         notar: &Option<NotarRewardCertificate>,
+    ) -> Result<Option<Self>, Error> {
+        Self::try_new_inner(bank, skip, notar, true)
+    }
+
+    /// Same as [`try_new`](Self::try_new) but **skips** verifying the aggregate signatures.
+    ///
+    /// This is only sound for reward certs the local node assembled itself (in the block
+    /// creation loop) from votes that were already individually signature-verified upstream;
+    /// re-verifying such a cert would be redundant. Never use this for certs received from
+    /// the network.
+    pub fn try_new_unverified(
+        bank: &Bank,
+        skip: &Option<SkipRewardCertificate>,
+        notar: &Option<NotarRewardCertificate>,
+    ) -> Result<Option<Self>, Error> {
+        Self::try_new_inner(bank, skip, notar, false)
+    }
+
+    fn try_new_inner(
+        bank: &Bank,
+        skip: &Option<SkipRewardCertificate>,
+        notar: &Option<NotarRewardCertificate>,
+        verify: bool,
     ) -> Result<Option<Self>, Error> {
         let Some(reward_slot) = extract_slot(bank.slot(), skip, notar)? else {
             return Ok(None);
@@ -101,31 +129,39 @@ impl ValidatedRewardCert {
         };
 
         if let Some(skip) = skip {
-            let vote = Vote::new_skip_vote(skip.slot);
-            // unwrap should be safe as we contructed the vote ourselves.
-            let payload = bincode::serialize(&vote).unwrap();
-            verify_base2(
-                &payload,
-                &skip.signature,
-                skip.to_bitmap(),
-                max_validators,
-                &mut rank_map,
-            )?
+            if verify {
+                let vote = Vote::new_skip_vote(skip.slot);
+                // unwrap should be safe as we constructed the vote ourselves.
+                let payload = bincode::serialize(&vote).unwrap();
+                verify_base2(
+                    &payload,
+                    &skip.signature,
+                    skip.to_bitmap(),
+                    max_validators,
+                    &mut rank_map,
+                )?
+            } else {
+                collect_signers_base2(skip.to_bitmap(), max_validators, &mut rank_map)?
+            }
         }
         if let Some(notar) = notar {
-            let vote = Vote::new_notarization_vote(Block {
-                slot: notar.slot,
-                block_id: notar.block_id,
-            });
-            // unwrap should be safe as we contructed the vote ourselves.
-            let payload = bincode::serialize(&vote).unwrap();
-            verify_base2(
-                &payload,
-                &notar.signature,
-                notar.bitmap(),
-                max_validators,
-                rank_map,
-            )?
+            if verify {
+                let vote = Vote::new_notarization_vote(Block {
+                    slot: notar.slot,
+                    block_id: notar.block_id,
+                });
+                // unwrap should be safe as we constructed the vote ourselves.
+                let payload = bincode::serialize(&vote).unwrap();
+                verify_base2(
+                    &payload,
+                    &notar.signature,
+                    notar.bitmap(),
+                    max_validators,
+                    rank_map,
+                )?
+            } else {
+                collect_signers_base2(notar.bitmap(), max_validators, rank_map)?
+            }
         }
         if validators.is_empty() {
             return Ok(None);
@@ -200,12 +236,15 @@ mod tests {
         )
     }
 
-    #[test]
-    fn validate_try_new() {
-        let reward_slot = 1;
+    /// Creates a bank whose parent slot is the reward slot and returns the per-rank BLS
+    /// signing keypairs, ordered so that `signing_keys[rank]` signs as the validator at
+    /// that rank.
+    fn setup(
+        reward_slot: Slot,
+        num_notar_validators: usize,
+        num_skip_validators: usize,
+    ) -> (Bank, Vec<BlsKeypair>) {
         let bank_slot = reward_slot + NUM_SLOTS_FOR_REWARD;
-        let num_skip_validators = 3;
-        let num_notar_validators = 5;
         let num_validators = num_skip_validators + num_notar_validators;
 
         let validator_keypairs = (0..num_validators)
@@ -229,18 +268,31 @@ mod tests {
             Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
         let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
 
-        let rank_map = bank
-            .epoch_stakes_from_slot(reward_slot)
-            .unwrap()
-            .bls_pubkey_to_rank_map();
-        let signing_keys = (0..num_validators)
-            .map(|index| {
-                let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
-                keypair_map
-                    .get(&BLSPubkeyCompressed::from(*pubkey_affine))
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
+        let signing_keys = {
+            let rank_map = bank
+                .epoch_stakes_from_slot(reward_slot)
+                .unwrap()
+                .bls_pubkey_to_rank_map();
+            (0..num_validators)
+                .map(|index| {
+                    let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
+                    keypair_map
+                        .get(&BLSPubkeyCompressed::from(*pubkey_affine))
+                        .unwrap()
+                        .clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        (bank, signing_keys)
+    }
+
+    #[test]
+    fn validate_try_new() {
+        let reward_slot = 1;
+        let num_skip_validators = 3;
+        let num_notar_validators = 5;
+        let num_validators = num_skip_validators + num_notar_validators;
+        let (bank, signing_keys) = setup(reward_slot, num_notar_validators, num_skip_validators);
 
         let block_id = Hash::new_unique();
         let notar_vote = Vote::new_notarization_vote(Block {
@@ -248,7 +300,7 @@ mod tests {
             block_id,
         });
         let notar_votes = (0..num_notar_validators)
-            .map(|rank| new_vote(notar_vote, rank, signing_keys[rank]))
+            .map(|rank| new_vote(notar_vote, rank, &signing_keys[rank]))
             .collect::<Vec<_>>();
         let (signature, bitmap) = build_sig_bitmap(&notar_votes);
         let notar_reward_cert =
@@ -256,7 +308,7 @@ mod tests {
 
         let skip_vote = Vote::new_skip_vote(reward_slot);
         let skip_votes = (num_notar_validators..num_validators)
-            .map(|rank| new_vote(skip_vote, rank, signing_keys[rank]))
+            .map(|rank| new_vote(skip_vote, rank, &signing_keys[rank]))
             .collect::<Vec<_>>();
         let (signature, bitmap) = build_sig_bitmap(&skip_votes);
         let skip_reward_cert =
@@ -267,5 +319,62 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!(validated_reward_cert.validators.len(), num_validators);
+    }
+
+    #[test]
+    fn validate_try_new_unverified() {
+        let reward_slot = 1;
+        let num_skip_validators = 3;
+        let num_notar_validators = 5;
+        let (bank, signing_keys) = setup(reward_slot, num_notar_validators, num_skip_validators);
+
+        let block_id = Hash::new_unique();
+        let notar_vote = Vote::new_notarization_vote(Block {
+            slot: reward_slot,
+            block_id,
+        });
+
+        // A correctly signed notar reward cert.
+        let notar_votes = (0..num_notar_validators)
+            .map(|rank| new_vote(notar_vote, rank, &signing_keys[rank]))
+            .collect::<Vec<_>>();
+        let (signature, bitmap) = build_sig_bitmap(&notar_votes);
+        let valid_cert =
+            NotarRewardCertificate::try_new(reward_slot, block_id, signature, bitmap).unwrap();
+
+        // For a valid cert, the unverified path collects exactly the same signer set and
+        // reward slot as the verified path.
+        let verified = ValidatedRewardCert::try_new(&bank, &None, &Some(valid_cert.clone()))
+            .unwrap()
+            .unwrap();
+        let unverified = ValidatedRewardCert::try_new_unverified(&bank, &None, &Some(valid_cert))
+            .unwrap()
+            .unwrap();
+        assert_eq!(unverified.reward_slot, verified.reward_slot);
+        assert_eq!(unverified.validators, verified.validators);
+        assert_eq!(unverified.validators.len(), num_notar_validators);
+
+        // A cert with the same (valid) bitmap but an aggregate signature produced by the
+        // WRONG keys: the verified path must reject it, while the unverified path must accept
+        // it and still collect the signing validators from the bitmap.
+        let wrong_keys = (0..num_notar_validators)
+            .map(|_| BlsKeypair::new())
+            .collect::<Vec<_>>();
+        let forged_votes = (0..num_notar_validators)
+            .map(|rank| new_vote(notar_vote, rank, &wrong_keys[rank]))
+            .collect::<Vec<_>>();
+        let (bad_signature, bitmap) = build_sig_bitmap(&forged_votes);
+        let forged_cert =
+            NotarRewardCertificate::try_new(reward_slot, block_id, bad_signature, bitmap).unwrap();
+
+        assert!(matches!(
+            ValidatedRewardCert::try_new(&bank, &None, &Some(forged_cert.clone())),
+            Err(Error::BlsCertVerify(_))
+        ));
+        let unverified_forged =
+            ValidatedRewardCert::try_new_unverified(&bank, &None, &Some(forged_cert))
+                .unwrap()
+                .unwrap();
+        assert_eq!(unverified_forged.validators.len(), num_notar_validators);
     }
 }

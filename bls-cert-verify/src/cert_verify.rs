@@ -174,6 +174,31 @@ pub fn verify_base2<S: AsSignatureAffine>(
     verify_single_vote_signature(payload, signature, &ranks, rank_map)
 }
 
+/// Collects the signers referenced by a base2 `ranks` bitmap **without** verifying the
+/// aggregate signature.
+///
+/// This performs the same bitmap decoding and `rank_map` traversal as [`verify_base2`], so
+/// any side effects of `rank_map` (e.g. accumulating the set of signing validators) are
+/// observed identically, but it omits the cryptographic signature check.
+///
+/// Use this only for certificates the local node assembled itself from votes that were
+/// already individually signature-verified upstream, where re-verifying the aggregate would
+/// be redundant. Certificates received from the network must always go through
+/// [`verify_base2`] or [`verify_certificate`] instead.
+pub fn collect_signers_base2(
+    ranks: &[u8],
+    max_validators: usize,
+    rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+) -> Result<(), Error> {
+    let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
+    let ranks = match ranks {
+        Decoded::Base2(ranks) => ranks,
+        Decoded::Base3(_, _) => return Err(Error::WrongEncoding),
+    };
+    collect_pubkeys(&ranks, rank_map)?;
+    Ok(())
+}
+
 fn verify_single_vote_signature<S: AsSignatureAffine>(
     payload: &[u8],
     signature: &S,
