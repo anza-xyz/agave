@@ -9,6 +9,7 @@ use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::Block,
+        finalized_slot::FinalizedSlot,
     },
     solana_bls_signatures::BlsError,
     solana_clock::Slot,
@@ -199,7 +200,7 @@ impl ValidatedBlockFinalizationCert {
     }
 
     /// Returns the slot that is finalized.
-    pub fn slot(&self) -> Slot {
+    pub fn slot(&self) -> FinalizedSlot {
         match &self.kind {
             ValidatedBlockFinalizationCertKind::Finalize {
                 finalize_cert,
@@ -209,10 +210,10 @@ impl ValidatedBlockFinalizationCert {
                     finalize_cert.cert_type.slot(),
                     notarize_cert.cert_type.slot()
                 );
-                finalize_cert.cert_type.slot()
+                FinalizedSlot::Slow(finalize_cert.cert_type.slot())
             }
             ValidatedBlockFinalizationCertKind::FastFinalize(certificate) => {
-                certificate.cert_type.slot()
+                FinalizedSlot::Fast(certificate.cert_type.slot())
             }
         }
     }
@@ -255,7 +256,7 @@ impl ValidatedBlockFinalizationCert {
 
     /// Returns the data needed to calculating and paying vote rewards.
     pub fn vote_rewards_input(&self) -> (&HashSet<Pubkey>, Slot) {
-        (&self.signers, self.slot())
+        (&self.signers, self.slot().slot())
     }
 
     /// Consumes self and returns the contained certificates and the signers.

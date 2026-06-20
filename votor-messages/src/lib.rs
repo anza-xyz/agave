@@ -11,6 +11,7 @@ use {
 
 pub mod certificate;
 pub mod consensus_message;
+pub mod finalized_slot;
 pub mod fraction;
 pub mod metric_types;
 pub mod migration;

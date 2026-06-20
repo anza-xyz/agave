@@ -357,7 +357,7 @@ impl VotingService {
         };
 
         if let Some((highest_finalized_slot, certificates)) = highest_finalized_slot_and_certs {
-            standstill_queue.prune(highest_finalized_slot);
+            standstill_queue.prune(highest_finalized_slot.slot());
 
             // Refresh the latest finalization (either Finalize + Notarize or FastFinalize)
             for certificate in certificates {

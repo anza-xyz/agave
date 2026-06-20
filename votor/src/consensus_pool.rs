@@ -17,6 +17,7 @@ use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, ConsensusMessage, VoteMessage},
+        finalized_slot::FinalizedSlot,
         fraction::Fraction,
         migration::MigrationStatus,
         vote::{Vote, VoteType},
@@ -306,7 +307,10 @@ impl ConsensusPool {
                     // It's fine to set FastFinalization to false here, because
                     // we will report correctly as long as we have FastFinalization cert.
                     events.push(VotorEvent::Finalized(block, false));
-                    if self.highest_finalized_slot().is_none_or(|s| s < block.slot) {
+                    if self
+                        .highest_finalized_slot()
+                        .is_none_or(|s| s < FinalizedSlot::Slow(block.slot))
+                    {
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
                                 Arc::unwrap_or_clone(finalize_cert.clone()),
@@ -320,7 +324,10 @@ impl ConsensusPool {
                 if let Some(notarize_cert) = self.get_notarize_cert(slot) {
                     let block = notarize_cert.cert_type.to_block().unwrap();
                     events.push(VotorEvent::Finalized(block, false));
-                    if self.highest_finalized_slot().is_none_or(|s| s < slot) {
+                    if self
+                        .highest_finalized_slot()
+                        .is_none_or(|s| s < FinalizedSlot::Slow(slot))
+                    {
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
                                 Arc::unwrap_or_clone(cert),
@@ -334,10 +341,9 @@ impl ConsensusPool {
                 events.push(VotorEvent::Finalized(block, true));
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger(block, events);
-                // Use <= for FastFinalize since it supersedes standard finalization at the same slot
                 if self
                     .highest_finalized_slot()
-                    .is_none_or(|s| s <= block.slot)
+                    .is_none_or(|s| s < FinalizedSlot::Fast(block.slot))
                 {
                     self.highest_finalized_slot_cert =
                         Some(ValidatedBlockFinalizationCert::from_validated_fast(
@@ -383,7 +389,10 @@ impl ConsensusPool {
         } else {
             None
         };
-        Ok((new_finalized_slot, new_certficates_to_send))
+        Ok((
+            new_finalized_slot.map(|s| s.slot()),
+            new_certficates_to_send,
+        ))
     }
 
     fn add_vote(
@@ -491,7 +500,7 @@ impl ConsensusPool {
     }
 
     /// Get the highest finalized slot (slow or fast)
-    pub(crate) fn highest_finalized_slot(&self) -> Option<Slot> {
+    pub(crate) fn highest_finalized_slot(&self) -> Option<FinalizedSlot> {
         self.highest_finalized_slot_cert.as_ref().map(|c| c.slot())
     }
 
@@ -629,11 +638,10 @@ impl ConsensusPool {
     }
 
     pub(crate) fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
-        let highest_slot = self
-            .highest_finalized_slot_cert
-            .as_ref()
-            .map(ValidatedBlockFinalizationCert::slot)
-            .unwrap_or(0);
+        let highest_slot = match &self.highest_finalized_slot_cert {
+            Some(c) => c.slot().slot(),
+            None => 0,
+        };
         self.completed_certificates
             .iter()
             .filter_map(|(cert_type, cert)| {
@@ -749,7 +757,7 @@ mod tests {
                 Vote::Skip(vote) => assert_eq!(self.pool.highest_skip_slot(), vote.slot),
                 Vote::SkipFallback(vote) => assert_eq!(self.pool.highest_skip_slot(), vote.slot),
                 Vote::Finalize(vote) => assert_eq!(
-                    self.pool.highest_finalized_slot().unwrap_or_default(),
+                    self.pool.highest_finalized_slot().unwrap().slot(),
                     vote.slot
                 ),
                 Vote::Genesis(_genesis_vote) => (),
@@ -1078,9 +1086,11 @@ mod tests {
         }
 
         let highest_slot_fn = match &vote {
-            Vote::Finalize(_) => {
-                |pool: &ConsensusPool| pool.highest_finalized_slot().unwrap_or_default()
-            }
+            Vote::Finalize(_) => |pool: &ConsensusPool| {
+                pool.highest_finalized_slot()
+                    .map(|s| s.slot())
+                    .unwrap_or_default()
+            },
             Vote::Notarize(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::NotarizeFallback(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::Skip(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),

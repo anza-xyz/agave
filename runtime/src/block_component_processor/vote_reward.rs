@@ -907,11 +907,11 @@ mod tests {
         .unwrap();
 
         let handle = vote_state_from_bank(&bank, &target_vote_pubkey);
-        assert_eq!(handle.root_slot(), Some(final_cert.slot()));
+        assert_eq!(handle.root_slot(), Some(final_cert.slot().slot()));
         assert_eq!(handle.votes().len(), 1);
         assert_eq!(
             handle.votes().front().unwrap().lockout.slot(),
-            final_cert.slot().max(reward_slot)
+            final_cert.slot().slot().max(reward_slot)
         );
     }
 

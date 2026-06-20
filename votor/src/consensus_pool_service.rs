@@ -357,6 +357,7 @@ impl ConsensusPoolService {
                     events.push(VotorEvent::Standstill(
                         consensus_pool
                             .highest_finalized_slot()
+                            .map(|s| s.slot())
                             .unwrap_or(ctx.sharable_banks.root().slot()),
                     ));
                 }
@@ -568,7 +569,10 @@ impl ConsensusPoolService {
             }
         }
 
-        let highest_finalized = consensus_pool.highest_finalized_slot().unwrap_or(0);
+        let highest_finalized = consensus_pool
+            .highest_finalized_slot()
+            .map(|s| s.slot())
+            .unwrap_or(0);
 
         pending_safe_to_notar.retain(|&block| {
             // Discard if slot is at or below highest finalized
