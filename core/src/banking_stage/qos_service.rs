@@ -148,6 +148,14 @@ impl QosService {
 
     /// For recorded transactions, remove units reserved by uncommitted transaction, or update
     /// units for committed transactions.
+    ///
+    /// If `transaction_committed_status` is shorter than the number of `Ok`
+    /// cost results, the unmatched tail's reservations are released as if
+    /// `NotCommitted`. A silent `.zip()` truncation here would orphan
+    /// reservations in the tracker and inflate block_cost across a slot,
+    /// eventually rejecting otherwise-valid txs before the real cap is hit.
+    /// The caller is expected to maintain this length invariant; the tail
+    /// release is defense in depth.
     fn remove_or_update_recorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         transaction_committed_status: &Vec<CommitTransactionDetails>,
@@ -155,35 +163,45 @@ impl QosService {
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
-        transaction_cost_results
-            .zip(transaction_committed_status)
-            .for_each(|(tx_cost, transaction_committed_details)| {
-                // Only transactions that the qos service included have to be
-                // checked for update
-                if let Ok(tx_cost) = tx_cost {
-                    num_included += 1;
-                    match transaction_committed_details {
-                        CommitTransactionDetails::Committed {
-                            compute_units,
-                            loaded_accounts_data_size,
-                            result: _,
-                            fee_payer_post_balance: _,
-                        } => {
-                            cost_tracker.update_execution_cost(
-                                tx_cost,
-                                *compute_units,
-                                CostModel::calculate_loaded_accounts_data_size_cost(
-                                    *loaded_accounts_data_size,
-                                    &bank.feature_set,
-                                ),
-                            );
-                        }
-                        CommitTransactionDetails::NotCommitted(_err) => {
-                            cost_tracker.remove(tx_cost);
-                        }
+        let mut status_iter = transaction_committed_status.iter();
+        transaction_cost_results.for_each(|tx_cost| {
+            // Advance the status iterator for every element so it stays
+            // index-aligned with the cost-results stream. `Err` cost results
+            // still consume a status entry — they just don't act on it.
+            let status = status_iter.next();
+            // Only transactions that the qos service included have to be
+            // checked for update
+            if let Ok(tx_cost) = tx_cost {
+                num_included += 1;
+                let Some(transaction_committed_details) = status else {
+                    warn!(
+                        "qos_service: commit_status shorter than reserved cost results — \
+                         releasing tail reservation as NotCommitted"
+                    );
+                    cost_tracker.remove(tx_cost);
+                    return;
+                };
+                match transaction_committed_details {
+                    CommitTransactionDetails::Committed {
+                        compute_units,
+                        loaded_accounts_data_size,
+                        ..
+                    } => {
+                        cost_tracker.update_execution_cost(
+                            tx_cost,
+                            *compute_units,
+                            CostModel::calculate_loaded_accounts_data_size_cost(
+                                *loaded_accounts_data_size,
+                                &bank.feature_set,
+                            ),
+                        );
+                    }
+                    CommitTransactionDetails::NotCommitted(_) => {
+                        cost_tracker.remove(tx_cost);
                     }
                 }
-            });
+            }
+        });
         cost_tracker.sub_transactions_in_flight(num_included);
     }
 
@@ -532,6 +550,66 @@ mod tests {
                 bank.read_cost_tracker().unwrap().transaction_count()
             );
         }
+    }
+
+    #[test]
+    fn test_update_and_remove_transaction_costs_shorter_commit_status() {
+        // Defense-in-depth: if the caller ever passes a `commit_status` vec
+        // shorter than the number of `Ok` cost results, the unmatched tail's
+        // reservations must still be released — otherwise phantom block_cost
+        // accumulates across the slot.
+        agave_logger::setup();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let transaction_count: u64 = 5;
+        let keypair = Keypair::new();
+        let txs: Vec<_> = (0..transaction_count)
+            .map(|_| {
+                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &keypair,
+                    &keypair.pubkey(),
+                    1,
+                    Hash::default(),
+                ))
+            })
+            .collect();
+
+        let txs_costs = QosService::compute_transaction_costs(
+            &FeatureSet::all_enabled(),
+            txs.iter(),
+            std::iter::repeat(Ok(())),
+        );
+        let (qos_cost_results, _num_included) =
+            QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+        assert!(bank.read_cost_tracker().unwrap().block_cost() > 0);
+        assert_eq!(
+            transaction_count as usize,
+            bank.read_cost_tracker()
+                .unwrap()
+                .in_flight_transaction_count()
+        );
+
+        // Supply only 3 statuses for the 5 reservations. The 2 tail entries
+        // must still be released.
+        let short_committed_status: Vec<CommitTransactionDetails> = (0..3)
+            .map(|_| CommitTransactionDetails::NotCommitted(TransactionError::AccountInUse))
+            .collect();
+
+        QosService::remove_or_update_costs(
+            qos_cost_results.iter(),
+            Some(&short_committed_status),
+            &bank,
+        );
+
+        assert_eq!(0, bank.read_cost_tracker().unwrap().block_cost());
+        assert_eq!(0, bank.read_cost_tracker().unwrap().transaction_count());
+        assert_eq!(
+            0,
+            bank.read_cost_tracker()
+                .unwrap()
+                .in_flight_transaction_count()
+        );
     }
 
     #[test]
