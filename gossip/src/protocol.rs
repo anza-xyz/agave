@@ -37,7 +37,7 @@ pub(crate) const DUPLICATE_SHRED_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 11
 pub(crate) const MAX_INCREMENTAL_SNAPSHOT_HASHES: usize = 25;
 /// Maximum number of origin nodes that a PruneData may contain, such that the
 /// serialized size of the PruneMessage stays below PACKET_DATA_SIZE.
-pub(crate) const MAX_PRUNE_DATA_NODES: usize = 32;
+pub(crate) const MAX_PRUNE_DATA_NODES: usize = 33;
 /// Prune data prefix for PruneMessage
 const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 /// Number of bytes in the randomly generated token sent with ping messages.
@@ -75,7 +75,7 @@ pub(crate) enum Protocol {
     PushMessage(Pubkey, Vec<CrdsValue>),
     // TODO: Remove the redundant outer pubkey here,
     // and use the inner PruneData.pubkey instead.
-    PruneMessage(Pubkey, PruneData),
+    PruneMessage(PruneData),
     PingMessage(Ping),
     PongMessage(Pong),
     // Update count_packets_received if new variants are added here.
@@ -143,7 +143,7 @@ impl Protocol {
             Self::PushMessage(_, data) => {
                 data.iter().all(|value| value.verify_with_cache(vk_cache))
             }
-            Self::PruneMessage(_, data) => data.verify(),
+            Self::PruneMessage(data) => data.verify(),
             Self::PingMessage(ping) => ping.verify(),
             Self::PongMessage(pong) => pong.verify(),
         }
@@ -220,13 +220,7 @@ impl Sanitize for Protocol {
                 // other nodes that have inserted it into their Crds table
                 val.sanitize()
             }
-            Protocol::PruneMessage(from, val) => {
-                if *from != val.pubkey {
-                    Err(SanitizeError::InvalidValue)
-                } else {
-                    val.sanitize()
-                }
-            }
+            Protocol::PruneMessage(val) => val.sanitize(),
             Protocol::PingMessage(ping) => ping.sanitize(),
             Protocol::PongMessage(pong) => pong.sanitize(),
         }
@@ -540,12 +534,10 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects
                     values: values.iter().map(convert_crds_value).collect(),
                 })
             }
-            Protocol::PruneMessage(pubkey, data) => {
-                gossip_msg::Msg::PruneMessage(GossipPruneMessage {
-                    pubkey: pubkey.to_bytes().to_vec(),
-                    data: Some(convert_prune_data(data)),
-                })
-            }
+            Protocol::PruneMessage(data) => gossip_msg::Msg::PruneMessage(GossipPruneMessage {
+                pubkey: data.pubkey.to_bytes().to_vec(),
+                data: Some(convert_prune_data(data)),
+            }),
         }
     }
 
@@ -707,7 +699,7 @@ pub(crate) mod tests {
             let self_keypair = Keypair::new();
             let prune_data =
                 new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES));
-            let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
+            let prune_message = Protocol::PruneMessage(prune_data);
             let socket = new_rand_socket_addr(&mut rng);
             assert!(Packet::from_data(Some(&socket), prune_message).is_ok());
         }
@@ -715,7 +707,7 @@ pub(crate) mod tests {
         let self_keypair = Keypair::new();
         let prune_data =
             new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES + 1));
-        let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
+        let prune_message = Protocol::PruneMessage(prune_data);
         let socket = new_rand_socket_addr(&mut rng);
         assert!(Packet::from_data(Some(&socket), prune_message).is_err());
     }
@@ -998,7 +990,7 @@ pub(crate) mod tests {
             wallclock: MAX_WALLCLOCK,
             ..PruneData::default()
         };
-        let msg = Protocol::PruneMessage(Pubkey::default(), pd);
+        let msg = Protocol::PruneMessage(pd);
         assert_eq!(msg.sanitize(), Err(SanitizeError::ValueOutOfBounds));
     }
 
@@ -1013,10 +1005,8 @@ pub(crate) mod tests {
             wallclock: timestamp(),
         };
         prune_data.sign(&keypair);
-        let prune_message = Protocol::PruneMessage(keypair.pubkey(), prune_data.clone());
+        let prune_message = Protocol::PruneMessage(prune_data.clone());
         assert_eq!(prune_message.sanitize(), Ok(()));
-        let prune_message = Protocol::PruneMessage(Pubkey::new_unique(), prune_data);
-        assert_eq!(prune_message.sanitize(), Err(SanitizeError::InvalidValue));
     }
 
     #[test]
@@ -1165,7 +1155,7 @@ pub(crate) mod tests {
         for _ in 0..1000 {
             let keypair = Keypair::new();
             let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
-            let protocol = Protocol::PruneMessage(keypair.pubkey(), prune_data);
+            let protocol = Protocol::PruneMessage(prune_data);
 
             let bincode_bytes = bincode::serialize(&protocol).unwrap();
             let wincode_bytes = wincode::serialize(&protocol).unwrap();
