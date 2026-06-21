@@ -30,7 +30,7 @@ pub fn process_instruction(
     unsafe {
         match instruction_data[0] {
             0 => {
-                // memcmp overlaps begining
+                // memcmp overlaps beginning
                 #[allow(clippy::manual_memcpy)]
                 for i in 0..500 {
                     buf[i] = too_early(8)[i];
@@ -39,7 +39,7 @@ pub fn process_instruction(
                 sol_memcmp(too_early(8), &buf, 500);
             }
             1 => {
-                // memcmp overlaps begining
+                // memcmp overlaps beginning
                 #[allow(clippy::manual_memcpy)]
                 for i in 0..12 {
                     buf[i] = too_early(9)[i];
@@ -48,7 +48,7 @@ pub fn process_instruction(
                 sol_memcmp(&buf, too_early(9), 12);
             }
             2 => {
-                // memcmp overlaps begining
+                // memcmp overlaps beginning
                 #[allow(clippy::manual_memcpy)]
                 for i in 0..3 {
                     buf[i] = too_early(2)[i];
