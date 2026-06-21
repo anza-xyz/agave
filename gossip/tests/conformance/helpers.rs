@@ -53,7 +53,6 @@ pub(crate) fn make_pong_bytes(from: &[u8; 32], hash: &[u8; 32], signature: &[u8;
 
 /// Build a PruneMessage (variant 3) from raw fields.
 pub(crate) fn make_prune_bytes(
-    outer_pubkey: &[u8; 32],
     pubkey: &[u8; 32],
     prunes: &[[u8; 32]],
     signature: &[u8; 64],
@@ -62,7 +61,6 @@ pub(crate) fn make_prune_bytes(
 ) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&3u32.to_le_bytes());
-    buf.extend_from_slice(outer_pubkey);
     // PruneData
     buf.extend_from_slice(pubkey);
     buf.extend_from_slice(&(prunes.len() as u64).to_le_bytes());

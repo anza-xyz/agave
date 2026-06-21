@@ -55,29 +55,29 @@ fn generate_gossip_fixtures() {
     write_fixture(
         &dir,
         "prune_valid",
-        &make_prune_bytes(&pk, &pk, &[[0x22; 32]], &sig, &[0x33; 32], 1_000_000),
+        &make_prune_bytes(&pk, &[[0x22; 32]], &sig, &[0x33; 32], 1_000_000),
     );
     write_fixture(
         &dir,
         "prune_mismatched_pubkeys",
-        &make_prune_bytes(&[0xAA; 32], &[0xBB; 32], &[], &sig, &[0u8; 32], 1_000_000),
+        &make_prune_bytes(&[0xBB; 32], &[], &sig, &[0u8; 32], 1_000_000),
     );
     write_fixture(
         &dir,
         "prune_wallclock_at_max",
-        &make_prune_bytes(&pk, &pk, &[], &sig, &[0u8; 32], super::MAX_WALLCLOCK),
+        &make_prune_bytes(&pk, &[], &sig, &[0u8; 32], super::MAX_WALLCLOCK),
     );
     write_fixture(
         &dir,
         "prune_wallclock_below_max",
-        &make_prune_bytes(&pk, &pk, &[], &sig, &[0u8; 32], super::MAX_WALLCLOCK - 1),
+        &make_prune_bytes(&pk, &[], &sig, &[0u8; 32], super::MAX_WALLCLOCK - 1),
     );
     {
-        let prunes: Vec<[u8; 32]> = (0..32u8).map(|i| [i; 32]).collect();
+        let prunes: Vec<[u8; 32]> = (0..33u8).map(|i| [i; 32]).collect();
         write_fixture(
             &dir,
             "prune_many_nodes",
-            &make_prune_bytes(&pk, &pk, &prunes, &sig, &[0u8; 32], 1_000_000),
+            &make_prune_bytes(&pk, &prunes, &sig, &[0u8; 32], 1_000_000),
         );
     }
 

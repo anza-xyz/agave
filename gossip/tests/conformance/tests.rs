@@ -91,7 +91,7 @@ fn test_conformance_prune_valid() {
     let sig = [0u8; 64];
     let dest = [0x33; 32];
     let wc = 1_000_000u64;
-    let data = make_prune_bytes(&pk, &pk, &[prune_node], &sig, &dest, wc);
+    let data = make_prune_bytes(&pk, &[prune_node], &sig, &dest, wc);
     check(&data, true);
 
     let effects = get_effects(&data);
@@ -112,37 +112,24 @@ fn test_conformance_prune_valid() {
 }
 
 #[test]
-fn test_conformance_prune_mismatched_pubkeys() {
-    let data = make_prune_bytes(
-        &[0xAA; 32], // outer pubkey
-        &[0xBB; 32], // PruneData.pubkey (mismatch)
-        &[],
-        &[0u8; 64],
-        &[0u8; 32],
-        1_000_000,
-    );
-    check(&data, false);
-}
-
-#[test]
 fn test_conformance_prune_wallclock_at_max() {
     let pk = [0x11; 32];
-    let data = make_prune_bytes(&pk, &pk, &[], &[0u8; 64], &[0u8; 32], MAX_WALLCLOCK);
+    let data = make_prune_bytes(&pk, &[], &[0u8; 64], &[0u8; 32], MAX_WALLCLOCK);
     check(&data, false);
 }
 
 #[test]
 fn test_conformance_prune_wallclock_below_max() {
     let pk = [0x11; 32];
-    let data = make_prune_bytes(&pk, &pk, &[], &[0u8; 64], &[0u8; 32], MAX_WALLCLOCK - 1);
+    let data = make_prune_bytes(&pk, &[], &[0u8; 64], &[0u8; 32], MAX_WALLCLOCK - 1);
     check(&data, true);
 }
 
 #[test]
 fn test_conformance_prune_many_nodes() {
     let pk = [0x11; 32];
-    let prunes: Vec<[u8; 32]> = (0..32u8).map(|i| [i; 32]).collect();
-    let data = make_prune_bytes(&pk, &pk, &prunes, &[0u8; 64], &[0u8; 32], 1_000_000);
+    let prunes: Vec<[u8; 32]> = (0..33u8).map(|i| [i; 32]).collect();
+    let data = make_prune_bytes(&pk, &prunes, &[0u8; 64], &[0u8; 32], 1_000_000);
     check(&data, true);
 
     let effects = get_effects(&data);
@@ -150,7 +137,7 @@ fn test_conformance_prune_many_nodes() {
     match msg {
         gossip_msg::Msg::PruneMessage(pm) => {
             let pd = pm.data.as_ref().unwrap();
-            assert_eq!(pd.prunes.len(), 32);
+            assert_eq!(pd.prunes.len(), 33);
             for (i, proto_prune) in pd.prunes.iter().enumerate() {
                 assert_eq!(proto_prune.as_slice(), &[i as u8; 32]);
             }
@@ -583,7 +570,7 @@ fn test_conformance_encode_prune() {
     let sig = [0u8; 64];
     let dest = [0x33; 32];
     let wc = 1_000_000u64;
-    let input = make_prune_bytes(&pk, &pk, &[prune_node], &sig, &dest, wc);
+    let input = make_prune_bytes(&pk, &[prune_node], &sig, &dest, wc);
     let encoded = encode_effects(&input);
 
     use prost::Message;
