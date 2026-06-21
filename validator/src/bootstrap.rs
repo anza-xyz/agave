@@ -1,7 +1,7 @@
 use {
     agave_snapshots::{
         SnapshotArchiveKind, paths as snapshot_paths,
-        snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
     },
     itertools::Itertools,
     log::*,
@@ -22,10 +22,12 @@ use {
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_ledger::use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     solana_metrics::datapoint_info,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
+    solana_runtime::snapshot_utils,
     solana_signer::Signer,
     solana_vote_program::vote_state::VoteStateV4,
     std::{
@@ -1116,10 +1118,10 @@ fn download_snapshots(
         .snapshot_config
         .incremental_snapshot_archives_dir;
 
-    // If the local snapshots are new enough, then use 'em; no need to download new snapshots
+    // If the local snapshots or fastboot archives are new enough, then use 'em; no need to download new snapshots
     if should_use_local_snapshot(
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
+        &validator_config.snapshot_config,
+        validator_config.use_snapshot_archives_at_startup,
         maximum_local_snapshot_age,
         full_snapshot_hash,
         incremental_snapshot_hash,
@@ -1280,9 +1282,12 @@ fn download_snapshot(
 
 /// Check to see if bootstrap should load from its local snapshots or not.  If not, then snapshots
 /// will be downloaded.
+///
+/// Local state that can satisfy startup without a download comes from two places: snapshot archives
+/// on disk, and a fastboot bank snapshot (when the startup config allows loading it).
 fn should_use_local_snapshot(
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
+    snapshot_config: &SnapshotConfig,
+    use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     maximum_local_snapshot_age: Slot,
     full_snapshot_hash: (Slot, Hash),
     incremental_snapshot_hash: Option<(Slot, Hash)>,
@@ -1292,11 +1297,29 @@ fn should_use_local_snapshot(
         .map(|(slot, _)| slot)
         .unwrap_or(full_snapshot_hash.0);
 
-    match get_highest_local_snapshot_hash(
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
+    let highest_local_archive_slot = get_highest_local_snapshot_hash(
+        &snapshot_config.full_snapshot_archives_dir,
+        &snapshot_config.incremental_snapshot_archives_dir,
         incremental_snapshot_fetch,
-    ) {
+    )
+    .map(|(slot, _hash)| slot);
+
+    // TODO: A fastboot bank snapshot still requires a full snapshot.
+    // The loader (`try_load_bank_forks_from_snapshot`) bails to genesis when no full snapshot archive is present,
+    // even when it would have been possible to fastboot.
+    // So only count a fastboot snapshot when a full snapshot is also on disk.
+    let highest_fastboot_slot = (highest_local_archive_slot.is_some()
+        && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always)
+        .then(|| snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config))
+        .flatten()
+        .map(|bank_snapshot| bank_snapshot.slot);
+
+    let highest_local_snapshot_slot = highest_local_archive_slot
+        .into_iter()
+        .chain(highest_fastboot_slot)
+        .max();
+
+    match highest_local_snapshot_slot {
         None => {
             info!(
                 "Downloading a snapshot for slot {cluster_snapshot_slot} since there is not a \
@@ -1304,7 +1327,7 @@ fn should_use_local_snapshot(
             );
             false
         }
-        Some((local_snapshot_slot, _)) => {
+        Some(local_snapshot_slot) => {
             if local_snapshot_slot
                 >= cluster_snapshot_slot.saturating_sub(maximum_local_snapshot_age)
             {
