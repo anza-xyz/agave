@@ -670,7 +670,10 @@ mod tests {
     use {
         super::*,
         crate::tests::get_cluster_info,
-        agave_votor_messages::consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+        agave_votor_messages::{
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            wire::get_vote_payload_to_sign,
+        },
         bitvec::vec::BitVec,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature, VerifiableSignature,
@@ -745,7 +748,12 @@ mod tests {
 
         fn add_certificate(&mut self, vote: Vote) {
             for rank in 0..=6 {
-                self.add_message(dummy_vote_message(&self.validators, &vote, rank));
+                self.add_message(dummy_vote_message(
+                    &self.validators,
+                    self.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    rank,
+                ));
             }
             match vote {
                 Vote::Notarize(vote) => {
@@ -767,15 +775,15 @@ mod tests {
 
     fn dummy_vote_message(
         keypairs: &[ValidatorVoteKeypairs],
+        shred_version: u16,
         vote: &Vote,
         rank: usize,
     ) -> ConsensusMessage {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypairs[rank].vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
-        let signature: BLSSignature = bls_keypair
-            .sign(wincode::serialize(vote).unwrap().as_slice())
-            .into();
+        let payload = get_vote_payload_to_sign(vote, shred_version);
+        let signature: BLSSignature = bls_keypair.sign(&payload).into();
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
 
@@ -806,7 +814,7 @@ mod tests {
             pool.add_message(
                 root_bank,
                 &Pubkey::new_unique(),
-                dummy_vote_message(keypairs, &vote, rank),
+                dummy_vote_message(keypairs, pool.cluster_info.my_shred_version(), &vote, rank),
                 &mut vec![],
             )
             .unwrap();
@@ -1097,19 +1105,38 @@ mod tests {
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::Genesis(_genesis_vote) => |_pool: &ConsensusPool| 0,
         };
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, my_validator_ix));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            my_validator_ix,
+        ));
         let slot = vote.slot();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         // Same key voting again shouldn't make a certificate
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, my_validator_ix));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            my_validator_ix,
+        ));
         assert!(highest_slot_fn(&ctx.pool) < slot);
         for rank in 0..4 {
-            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, rank));
+            ctx.add_message(dummy_vote_message(
+                &ctx.validators,
+                ctx.pool.cluster_info.my_shred_version(),
+                &vote,
+                rank,
+            ));
         }
         assert!(highest_slot_fn(&ctx.pool) < slot);
         let new_validator_ix = 6;
-        let (new_finalized_slot, certs_to_send) =
-            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, new_validator_ix));
+        let (new_finalized_slot, certs_to_send) = ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            new_validator_ix,
+        ));
         if vote.is_finalize() {
             assert_eq!(new_finalized_slot, Some(slot));
         } else {
@@ -1206,7 +1233,12 @@ mod tests {
                 .add_message(
                     &root_bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut vec![],
                 )
                 .unwrap();
@@ -1258,7 +1290,12 @@ mod tests {
             let slot = (i as u64).saturating_add(16);
             let vote = Vote::new_skip_vote(slot);
             // These should not extend the skip range
-            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, i));
+            ctx.add_message(dummy_vote_message(
+                &ctx.validators,
+                ctx.pool.cluster_info.my_shred_version(),
+                &vote,
+                i,
+            ));
         }
 
         assert_single_certificate_range(&ctx.pool, 15, 15);
@@ -1370,20 +1407,35 @@ mod tests {
         }
         // 10% vote for skip 2
         let vote = Vote::new_skip_vote(2);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            6,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 2);
 
         assert_single_certificate_range(&ctx.pool, 2, 2);
         // 10% vote for skip 4
         let vote = Vote::new_skip_vote(4);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 7));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            7,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 4);
 
         assert_single_certificate_range(&ctx.pool, 2, 2);
         assert_single_certificate_range(&ctx.pool, 4, 4);
         // 10% vote for skip 3
         let vote = Vote::new_skip_vote(3);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 8));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            8,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 4);
         assert_single_certificate_range(&ctx.pool, 2, 4);
         assert!(ctx.pool.skip_certified(3));
@@ -1417,7 +1469,12 @@ mod tests {
         }
         // Range expansion on a singleton vote should be ok
         let vote = Vote::new_skip_vote(1);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            6,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 1);
         add_skip_vote_range(
             &mut ctx.pool,
@@ -1446,7 +1503,12 @@ mod tests {
 
         // AlreadyExists, silently fail
         let vote = Vote::new_skip_vote(20);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            6,
+        ));
     }
 
     #[test]
@@ -1529,7 +1591,12 @@ mod tests {
             .add_message(
                 &bank,
                 &my_vote_key,
-                dummy_vote_message(&ctx.validators, &vote, 0),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    0,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1542,7 +1609,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1566,7 +1638,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1582,7 +1659,12 @@ mod tests {
             .add_message(
                 &bank,
                 &my_vote_key,
-                dummy_vote_message(&ctx.validators, &vote, 0),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    0,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1596,7 +1678,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1626,7 +1713,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1661,7 +1753,12 @@ mod tests {
             .add_message(
                 &bank,
                 &my_vote_key,
-                dummy_vote_message(&ctx.validators, &vote, 0),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    0,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1674,7 +1771,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1692,7 +1794,12 @@ mod tests {
             .add_message(
                 &bank,
                 &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 6),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    6,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1732,14 +1839,14 @@ mod tests {
         pool.add_message(
             bank,
             &Pubkey::new_unique(),
-            dummy_vote_message(validators, &vote_1, 0),
+            dummy_vote_message(validators, pool.cluster_info.my_shred_version(), &vote_1, 0),
             &mut vec![],
         )
         .unwrap();
         pool.add_message(
             bank,
             &Pubkey::new_unique(),
-            dummy_vote_message(validators, &vote_2, 0),
+            dummy_vote_message(validators, pool.cluster_info.my_shred_version(), &vote_2, 0),
             &mut vec![],
         )
         .unwrap_err();
@@ -1826,7 +1933,12 @@ mod tests {
                 .add_message(
                     &new_bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, 0),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        0
+                    ),
                     &mut vec![]
                 )
                 .is_err()
@@ -2109,7 +2221,12 @@ mod tests {
             block_id: Hash::new_unique(),
         });
 
-        let consensus_message = dummy_vote_message(&ctx.validators, &vote, rank_to_test);
+        let consensus_message = dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            rank_to_test,
+        );
         let ConsensusMessage::Vote(vote_message) = consensus_message else {
             panic!("Expected Vote message")
         };
@@ -2119,10 +2236,10 @@ mod tests {
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
 
-        let signed_message = wincode::serialize(&vote).unwrap();
+        let payload = get_vote_payload_to_sign(&vote, ctx.pool.cluster_info.my_shred_version());
         vote_message
             .signature
-            .verify(&bls_keypair.public, &signed_message)
+            .verify(&bls_keypair.public, &payload)
             .expect("vote message signature should verify");
     }
 

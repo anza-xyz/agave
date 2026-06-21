@@ -20,12 +20,14 @@ pod_wrapper! {
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
+#[cfg(feature = "frozen-abi")]
+fn sample_hash(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> Hash {
+    use solana_frozen_abi::stable_abi::StableAbi;
+    Hash::new_from_array(<[u8; solana_hash::HASH_BYTES] as StableAbi>::random(rng))
+}
+
 /// An alpenglow block
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "xCqtGMfgy9TMmCDZP9o4BidVTPKfMWrLmqxpRDLYwtR")
-)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(
     Clone,
     Copy,
@@ -45,15 +47,11 @@ pub struct Block {
     /// The slot in the block.
     pub slot: Slot,
     /// The block_id of the block.
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "sample_hash(rng)"))]
     pub block_id: Hash,
 }
 
 /// A consensus vote.
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "CTiXEk2aQbpf6TS6PNKcaTsGkLruDvAYsTLFhHKW2vsm")
-)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
     /// The type of the vote.
@@ -66,11 +64,6 @@ pub struct VoteMessage {
 }
 
 /// A consensus message sent between validators.
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CbPatwRWz8NyUAj3HeAxAAWAWTxJnHGAfekLspUQpMHN")
-)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {

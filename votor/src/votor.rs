@@ -195,6 +195,7 @@ impl Votor {
         };
 
         let voting_context = VotingContext {
+            cluster_info: cluster_info.clone(),
             vote_history,
             vote_account_pubkey: vote_account,
             identity_keypair,

@@ -4,8 +4,8 @@ use {
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
     agave_votor_messages::{
-        certificate::Certificate,
-        consensus_message::{ConsensusMessage, VoteMessage},
+        certificate::Certificate, consensus_message::VoteMessage,
+        wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_client::connection_cache::ConnectionCache,
@@ -75,7 +75,7 @@ pub enum BLSOp {
 /// When we are not in standstill the queue will be cleared as it's prune by the highest
 /// finalized slot.
 struct StandstillRefreshQueue {
-    messages: BTreeMap<Slot, HashSet<ConsensusMessage>>,
+    messages: BTreeMap<Slot, HashSet<VersionedWireConsensusMessage>>,
     last_refresh: Instant,
     cursor: Slot,
 }
@@ -91,7 +91,7 @@ impl Default for StandstillRefreshQueue {
 }
 
 impl StandstillRefreshQueue {
-    fn insert(&mut self, message: ConsensusMessage) {
+    fn insert(&mut self, message: VersionedWireConsensusMessage) {
         let slot = message.slot();
         self.messages.entry(slot).or_default().insert(message);
     }
@@ -114,7 +114,7 @@ impl StandstillRefreshQueue {
     fn for_next_n_messages(
         &mut self,
         limit: usize,
-        mut handle_message: impl FnMut(&ConsensusMessage),
+        mut handle_message: impl FnMut(&VersionedWireConsensusMessage),
     ) -> usize {
         if limit == 0 || self.is_empty() {
             return 0;
@@ -180,7 +180,7 @@ impl StandstillRefreshQueue {
     }
 
     #[cfg(test)]
-    fn next_messages(&mut self, limit: usize) -> Vec<(Slot, ConsensusMessage)> {
+    fn next_messages(&mut self, limit: usize) -> Vec<(Slot, VersionedWireConsensusMessage)> {
         let mut messages = Vec::new();
         self.for_next_n_messages(limit, |message| {
             messages.push((message.slot(), message.clone()));
@@ -361,7 +361,10 @@ impl VotingService {
 
             // Refresh the latest finalization (either Finalize + Notarize or FastFinalize)
             for certificate in certificates {
-                let message = ConsensusMessage::Certificate(certificate);
+                let message = VersionedWireConsensusMessage::new_from_cert(
+                    certificate,
+                    cluster_info.my_shred_version(),
+                );
                 Self::broadcast_consensus_message(
                     cluster_info,
                     &message,
@@ -390,7 +393,7 @@ impl VotingService {
 
     fn broadcast_consensus_message(
         cluster_info: &ClusterInfo,
-        message: &ConsensusMessage,
+        message: &VersionedWireConsensusMessage,
         connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
@@ -440,7 +443,10 @@ impl VotingService {
                 }
                 measure.stop();
                 trace!("{measure}");
-                let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
+                let msg = VersionedWireConsensusMessage::new_from_vote(
+                    Arc::unwrap_or_clone(vote),
+                    cluster_info.my_shred_version(),
+                );
                 Self::broadcast_consensus_message(
                     cluster_info,
                     &msg,
@@ -451,10 +457,13 @@ impl VotingService {
             }
             BLSOp::PushCertificates { certificates } => {
                 for certificate in certificates {
-                    let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
+                    let msg = VersionedWireConsensusMessage::new_from_cert(
+                        Arc::unwrap_or_clone(certificate),
+                        cluster_info.my_shred_version(),
+                    );
                     Self::broadcast_consensus_message(
                         cluster_info,
-                        &message,
+                        &msg,
                         connection_cache,
                         additional_listeners,
                         staked_validators_cache,
@@ -463,13 +472,19 @@ impl VotingService {
             }
             BLSOp::RefreshVotes { votes } => {
                 for vote in votes {
-                    let msg = ConsensusMessage::Vote(Arc::unwrap_or_clone(vote));
+                    let msg = VersionedWireConsensusMessage::new_from_vote(
+                        Arc::unwrap_or_clone(vote),
+                        cluster_info.my_shred_version(),
+                    );
                     standstill_queue.insert(msg);
                 }
             }
             BLSOp::RefreshCertificates { certificates } => {
                 for certificate in certificates {
-                    let message = ConsensusMessage::Certificate(Arc::unwrap_or_clone(certificate));
+                    let message = VersionedWireConsensusMessage::new_from_cert(
+                        Arc::unwrap_or_clone(certificate),
+                        cluster_info.my_shred_version(),
+                    );
                     standstill_queue.insert(message);
                 }
             }
@@ -494,10 +509,12 @@ mod tests {
             vote::Vote,
         },
         crossbeam_channel::bounded,
+        rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+        solana_perf::packet::packet_config,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -519,28 +536,42 @@ mod tests {
         tokio_util::sync::CancellationToken,
     };
 
-    fn test_vote_message(vote: Vote, rank: u16) -> ConsensusMessage {
-        ConsensusMessage::Vote(VoteMessage {
-            vote,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank,
-        })
+    fn test_vote_message(
+        vote: Vote,
+        rank: u16,
+        shred_verion: u16,
+    ) -> VersionedWireConsensusMessage {
+        VersionedWireConsensusMessage::new_from_vote(
+            VoteMessage {
+                vote,
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                rank,
+            },
+            shred_verion,
+        )
     }
 
-    fn test_certificate_message(cert_type: CertificateType) -> ConsensusMessage {
-        ConsensusMessage::Certificate(Certificate {
-            cert_type,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: Vec::new(),
-        })
+    fn test_certificate_message(
+        cert_type: CertificateType,
+        my_shred_version: u16,
+    ) -> VersionedWireConsensusMessage {
+        VersionedWireConsensusMessage::new_from_cert(
+            Certificate {
+                cert_type,
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: Vec::new(),
+            },
+            my_shred_version,
+        )
     }
 
     #[test]
     fn test_standstill_refresh_queue_cycles_by_slot() {
+        let shred_verion = rand::rng().random();
         let mut queue = StandstillRefreshQueue::default();
-        let vote_5 = test_vote_message(Vote::new_skip_vote(5), 1);
-        let vote_6 = test_vote_message(Vote::new_skip_vote(6), 1);
-        let cert_6 = test_certificate_message(CertificateType::Finalize(6));
+        let vote_5 = test_vote_message(Vote::new_skip_vote(5), 1, shred_verion);
+        let vote_6 = test_vote_message(Vote::new_skip_vote(6), 1, shred_verion);
+        let cert_6 = test_certificate_message(CertificateType::Finalize(6), shred_verion);
 
         queue.insert(vote_6.clone());
         queue.insert(cert_6.clone());
@@ -556,8 +587,9 @@ mod tests {
 
     #[test]
     fn test_standstill_refresh_queue_deduplicates_identical_messages() {
+        let shred_verion = rand::rng().random();
         let mut queue = StandstillRefreshQueue::default();
-        let message = test_vote_message(Vote::new_skip_vote(8), 1);
+        let message = test_vote_message(Vote::new_skip_vote(8), 1, shred_verion);
 
         queue.insert(message.clone());
         queue.insert(message.clone());
@@ -568,9 +600,10 @@ mod tests {
     #[test]
     fn test_standstill_refresh_queue_wraps_to_fill_budget() {
         let mut queue = StandstillRefreshQueue::default();
-        let vote_3 = test_vote_message(Vote::new_skip_vote(3), 1);
-        let vote_4 = test_vote_message(Vote::new_skip_vote(4), 1);
-        let vote_6 = test_vote_message(Vote::new_skip_vote(6), 1);
+        let shred_verion = rand::rng().random();
+        let vote_3 = test_vote_message(Vote::new_skip_vote(3), 1, shred_verion);
+        let vote_4 = test_vote_message(Vote::new_skip_vote(4), 1, shred_verion);
+        let vote_6 = test_vote_message(Vote::new_skip_vote(6), 1, shred_verion);
 
         queue.insert(vote_3.clone());
         queue.insert(vote_4.clone());
@@ -585,11 +618,12 @@ mod tests {
 
     #[test]
     fn test_standstill_refresh_queue_prunes_finalized_messages() {
+        let shred_verion = rand::rng().random();
         let mut queue = StandstillRefreshQueue::default();
-        let vote_5 = test_vote_message(Vote::new_skip_vote(5), 1);
-        let cert_6 = test_certificate_message(CertificateType::Finalize(6));
-        let vote_6 = test_vote_message(Vote::new_skip_vote(6), 1);
-        let vote_7 = test_vote_message(Vote::new_skip_vote(7), 1);
+        let vote_5 = test_vote_message(Vote::new_skip_vote(5), 1, shred_verion);
+        let cert_6 = test_certificate_message(CertificateType::Finalize(6), shred_verion);
+        let vote_6 = test_vote_message(Vote::new_skip_vote(6), 1, shred_verion);
+        let vote_7 = test_vote_message(Vote::new_skip_vote(7), 1, shred_verion);
 
         queue.insert(vote_5);
         queue.insert(cert_6);
@@ -603,7 +637,7 @@ mod tests {
     fn create_voting_service(
         bls_receiver: Receiver<BLSOp>,
         listener: SocketAddr,
-    ) -> (VotingService, Vec<ValidatorVoteKeypairs>) {
+    ) -> (VotingService, Vec<ValidatorVoteKeypairs>, Arc<ClusterInfo>) {
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -617,16 +651,16 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank0);
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(
+        let cluster_info = Arc::new(ClusterInfo::new(
             contact_info,
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
-        );
+        ));
 
         (
             VotingService::new(
                 bls_receiver,
-                Arc::new(cluster_info),
+                cluster_info.clone(),
                 Arc::new(NullVoteHistoryStorage::default()),
                 Arc::new(ConnectionCache::new_quic(
                     "TestAlpenglowConnectionCache",
@@ -640,6 +674,7 @@ mod tests {
                 }),
             ),
             validator_keypairs,
+            cluster_info,
         )
     }
 
@@ -687,7 +722,8 @@ mod tests {
         let listener_addr = socket.local_addr().unwrap();
 
         // Create VotingService with the listener address
-        let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
+        let (_, validator_keypairs, cluster_info) =
+            create_voting_service(bls_receiver, listener_addr);
 
         // Send a BLS message via the VotingService
         assert!(bls_sender.send(bls_op).is_ok());
@@ -722,15 +758,12 @@ mod tests {
 
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
-        let received_message = wincode::deserialize::<ConsensusMessage>(packet.data(..).unwrap())
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to deserialize BLSMessage: {:?} {:?}",
-                    size_of::<ConsensusMessage>(),
-                    err
-                )
-            });
-        assert_eq!(received_message, expected_message);
+        let received_message =
+            wincode::config::deserialize_exact(packet.data(..).unwrap(), packet_config()).unwrap();
+        assert_eq!(
+            VersionedWireConsensusMessage::new(expected_message, cluster_info.my_shred_version()),
+            received_message
+        );
         cancel.cancel();
         quic_server_thread.join().unwrap();
     }

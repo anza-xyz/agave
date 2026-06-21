@@ -120,7 +120,8 @@ impl Entry {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::consensus_message::Block,
+        agave_votor_messages::{consensus_message::Block, wire::get_vote_payload_to_sign},
+        rand::Rng,
         solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -142,8 +143,13 @@ mod tests {
         }
     }
 
-    pub(crate) fn new_vote(vote: Vote, rank: usize, keypairs: &[BlsKeypair]) -> VoteMessage {
-        let serialized = wincode::serialize(&vote).unwrap();
+    pub(crate) fn new_vote(
+        vote: Vote,
+        rank: usize,
+        keypairs: &[BlsKeypair],
+        shred_version: u16,
+    ) -> VoteMessage {
+        let serialized = get_vote_payload_to_sign(&vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
         VoteMessage {
             vote,
@@ -201,13 +207,14 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let shred_version = rand::rng().random();
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();
         assert_eq!(resp.skip, None);
         assert_eq!(resp.notar, None);
 
         let skip = Vote::new_skip_vote(7);
-        let vote = new_vote(skip, 0, &keypairs);
+        let vote = new_vote(skip, 0, &keypairs, shred_version);
         entry.add_vote(&rank_map, &vote).unwrap();
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.notar, None);
@@ -220,6 +227,7 @@ mod tests {
     fn validate_build_notar_cert() {
         let slot = 123;
         let max_validators = 5;
+        let shred_version = rand::rng().random();
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
 
         let mut entry = Entry::new(max_validators);
@@ -235,7 +243,7 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs);
+            let vote = new_vote(notar, rank, &keypairs, shred_version);
             entry.add_vote(&rank_map, &vote).unwrap();
         }
         for rank in 2..5 {
@@ -243,7 +251,7 @@ mod tests {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs);
+            let vote = new_vote(notar, rank, &keypairs, shred_version);
             entry.add_vote(&rank_map, &vote).unwrap();
         }
         let resp = entry.build_certs(slot).unwrap();

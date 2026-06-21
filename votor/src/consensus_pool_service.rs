@@ -678,6 +678,7 @@ mod tests {
             certificate::CertificateType,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{bounded, unbounded},
         solana_bls_signatures::{
@@ -812,7 +813,8 @@ mod tests {
             let vote_keypair = &ctx.validator_keypairs[my_rank].vote_keypair;
             let bls_keypair =
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-            let vote_serialized = wincode::serialize(&notarize_vote).unwrap();
+            let vote_serialized =
+                get_vote_payload_to_sign(&notarize_vote, ctx.ctx.cluster_info.my_shred_version());
             let message = ConsensusMessage::Vote(VoteMessage {
                 vote: notarize_vote,
                 signature: bls_keypair.sign(&vote_serialized).into(),

@@ -72,6 +72,7 @@ dependencies = [
  "bitvec",
  "criterion",
  "qualifier_attr",
+ "rand 0.9.4",
  "rayon",
  "solana-bls-signatures",
  "solana-hash 4.4.0",

@@ -1,7 +1,5 @@
 use {
-    agave_votor_messages::{
-        consensus_message::VoteMessage, reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote,
-    },
+    agave_votor_messages::{reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
@@ -13,16 +11,16 @@ pub fn rewards_wants_vote(
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
     root_slot: Slot,
-    vote: &VoteMessage,
+    vote: &Vote,
 ) -> bool {
-    match vote.vote {
+    match vote {
         Vote::Notarize(_) | Vote::Skip(_) => (),
         Vote::Finalize(_)
         | Vote::NotarizeFallback(_)
         | Vote::SkipFallback(_)
         | Vote::Genesis(_) => return false,
     }
-    let vote_slot = vote.vote.slot();
+    let vote_slot = vote.slot();
     if vote_slot.saturating_add(NUM_SLOTS_FOR_REWARD) <= root_slot {
         return false;
     }

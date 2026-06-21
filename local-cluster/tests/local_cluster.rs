@@ -81,6 +81,7 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
+    solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_stake_interface as stake,
     solana_system_interface::program as system_program,
@@ -2250,6 +2251,7 @@ fn create_snapshot_to_hard_fork(
     blockstore_processor::process_blockstore_from_root(
         blockstore,
         &bank_forks,
+        compute_shred_version(&genesis_config.hash(), None),
         &leader_schedule_cache,
         &process_options,
         None,

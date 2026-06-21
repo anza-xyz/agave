@@ -138,6 +138,7 @@ pub struct BlockCreationLoopConfig {
 
 struct LeaderContext {
     exit: Arc<AtomicBool>,
+    my_shred_version: u16,
     my_pubkey: Pubkey,
     /// Finalized leader-window notifications from Votor.
     leader_window_info_receiver: Receiver<LeaderWindowInfo>,
@@ -272,6 +273,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
 
     let mut ctx = LeaderContext {
         exit,
+        my_shred_version: cluster_info.my_shred_version(),
         my_pubkey,
         highest_parent_ready,
         leader_window_info_receiver,
@@ -763,7 +765,7 @@ fn record_and_complete_block(
             notar,
             validators: _,
         } = reward_certs;
-        let reward_cert = ValidatedRewardCert::try_new(&bank, &skip, &notar)?;
+        let reward_cert = ValidatedRewardCert::try_new(&bank, ctx.my_shred_version, &skip, &notar)?;
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
@@ -1321,6 +1323,7 @@ fn maybe_include_genesis_certificate(
     processor
         .on_genesis_cert_block_marker(
             bank.clone(),
+            ctx.my_shred_version,
             ctx.genesis_cert_block_marker.clone(),
             &ctx.bank_forks.read().unwrap().migration_status(),
         )
@@ -1344,9 +1347,11 @@ mod tests {
         crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
+        solana_gossip::node::Node,
         solana_keypair::Keypair,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
+        solana_net_utils::SocketAddrSpace,
         solana_poh::{
             poh_recorder::{PohRecorder, Record, WorkingBankEntryOrMarker},
             record_channels::record_channels,
@@ -1356,6 +1361,7 @@ mod tests {
             bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader,
             installed_scheduler_pool::BankWithScheduler,
         },
+        solana_signer::Signer,
         solana_system_transaction as system_transaction,
         std::num::NonZeroUsize,
     };
@@ -1390,6 +1396,20 @@ mod tests {
             leader_schedule: Arc::new(schedule),
         }));
         Arc::new(leader_schedule_cache)
+    }
+
+    fn test_cluster_info() -> (Pubkey, Arc<ClusterInfo>) {
+        let keypair = Arc::new(Keypair::new());
+        let my_pubkey = keypair.pubkey();
+        let contact_info = Node::new_localhost_with_pubkey(&my_pubkey).info;
+        (
+            my_pubkey,
+            Arc::new(ClusterInfo::new(
+                contact_info,
+                keypair,
+                SocketAddrSpace::Unspecified,
+            )),
+        )
     }
 
     struct TestBankForksController {
@@ -1510,7 +1530,7 @@ mod tests {
     fn test_abort_failed_working_bank() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let my_pubkey = Pubkey::new_unique();
+        let (my_pubkey, cluster_info) = test_cluster_info();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
         root_bank.freeze();
@@ -1542,6 +1562,7 @@ mod tests {
 
         let mut ctx = LeaderContext {
             exit,
+            my_shred_version: cluster_info.my_shred_version(),
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
@@ -1614,7 +1635,7 @@ mod tests {
     fn test_marker_send_clears_bank() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let my_pubkey = Pubkey::new_unique();
+        let (my_pubkey, cluster_info) = test_cluster_info();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
         root_bank.freeze();
@@ -1660,6 +1681,7 @@ mod tests {
 
         let mut ctx = LeaderContext {
             exit,
+            my_shred_version: cluster_info.my_shred_version(),
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
@@ -1703,7 +1725,7 @@ mod tests {
     fn test_moved_on_aborts() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let my_pubkey = Pubkey::new_unique();
+        let (my_pubkey, cluster_info) = test_cluster_info();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
         root_bank.freeze();
@@ -1735,6 +1757,7 @@ mod tests {
 
         let mut ctx = LeaderContext {
             exit,
+            my_shred_version: cluster_info.my_shred_version(),
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
@@ -1788,7 +1811,7 @@ mod tests {
     fn test_sad_leader_handover() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let my_pubkey = Pubkey::new_unique();
+        let (my_pubkey, cluster_info) = test_cluster_info();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
         root_bank.set_block_id(Some(Hash::new_unique()));
@@ -1844,6 +1867,7 @@ mod tests {
 
         let mut ctx = LeaderContext {
             exit,
+            my_shred_version: cluster_info.my_shred_version(),
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,

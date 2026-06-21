@@ -81,7 +81,10 @@ use {
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
-    agave_votor_messages::{certificate::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT},
+    agave_votor_messages::{
+        certificate::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
+        unverified_vote_message::UnverifiedCertificate,
+    },
     ahash::AHashSet,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
@@ -5758,8 +5761,8 @@ impl Bank {
     /// Verify a BLS certificate's signature using this bank's epoch stakes.
     pub fn verify_certificate(
         &self,
-        cert: &Certificate,
-    ) -> std::result::Result<(), CertVerifyError> {
+        cert: UnverifiedCertificate,
+    ) -> std::result::Result<Certificate, CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
             .epoch_stakes_from_slot(slot)
@@ -5768,13 +5771,14 @@ impl Bank {
         let total_stake =
             NonZero::new(key_to_rank_map.total_stake()).expect("total stake cannot be 0");
 
-        cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
-            key_to_rank_map
-                .get_pubkey_stake_entry(rank)
-                .map(|entry| (entry.stake, entry.bls_pubkey))
-        })?;
+        let cert =
+            cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
+                key_to_rank_map
+                    .get_pubkey_stake_entry(rank)
+                    .map(|entry| (entry.stake, entry.bls_pubkey))
+            })?;
 
-        Ok(())
+        Ok(cert)
     }
 
     pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, VersionedEpochStakes> {
