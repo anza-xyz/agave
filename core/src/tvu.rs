@@ -29,7 +29,6 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
-        sig_verified_messages::SigVerifiedBatch,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -110,13 +109,6 @@ pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// of votes / certificate need to be refreshed.
 const MAX_BLS_MESSAGES_TO_SEND: usize = 1000;
 
-enum BlsSigVerifyThreadsOrChannel {
-    /// Alpenglow is active so handlers to the threads related to the bls sigverify.
-    Threads(JoinHandle<()>, JoinHandle<()>),
-    /// Alpenglow is not active so hold on to the send side to prevent the channel from disconnecting.
-    Channel { _sender: Sender<SigVerifiedBatch> },
-}
-
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
     shred_sigverify: JoinHandle<()>,
@@ -131,7 +123,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads_or_channel: BlsSigVerifyThreadsOrChannel,
+    bls_sigverify_threads: (JoinHandle<()>, JoinHandle<()>),
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -141,7 +133,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
-    pub alpenglow: Option<UdpSocket>,
+    pub alpenglow: UdpSocket,
     pub block_id_repair: UdpSocket,
 }
 
@@ -295,9 +287,7 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
-        // The BLS socket is currently only available on Testnet and Development clusters.
-        // Closer to release we will enable this for all clusters.
-        let bls_sigverify_threads_or_channel = if let Some(bls_socket) = bls_socket {
+        let bls_sigverify_threads = {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
             let (
@@ -357,11 +347,7 @@ impl Tvu {
 
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
-            BlsSigVerifyThreadsOrChannel::Threads(bls_streamer_t, bls_sigverifier_t)
-        } else {
-            BlsSigVerifyThreadsOrChannel::Channel {
-                _sender: consensus_message_sender,
-            }
+            (bls_streamer_t, bls_sigverifier_t)
         };
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -670,7 +656,7 @@ impl Tvu {
             warm_quic_cache_service,
             drop_bank_service,
             duplicate_shred_listener,
-            bls_sigverify_threads_or_channel,
+            bls_sigverify_threads,
             votor,
             commitment_service,
         })
@@ -692,12 +678,9 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let BlsSigVerifyThreadsOrChannel::Threads(streamer, sigverifier) =
-            self.bls_sigverify_threads_or_channel
-        {
-            streamer.join()?;
-            sigverifier.join()?;
-        }
+        let (streamer, sigverifier) = self.bls_sigverify_threads;
+        streamer.join()?;
+        sigverifier.join()?;
         self.votor.join()?;
         self.commitment_service.join()?;
         Ok(())
@@ -867,7 +850,7 @@ pub mod tests {
                 retransmit: target1.sockets.retransmit_sockets,
                 fetch: target1.sockets.tvu,
                 ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
-                alpenglow: Some(target1.sockets.alpenglow),
+                alpenglow: target1.sockets.alpenglow,
                 block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,
