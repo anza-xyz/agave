@@ -65,15 +65,13 @@ impl NotarEntry {
         self,
         reward_slot: Slot,
     ) -> Result<Option<(NotarRewardCertificate, Vec<Pubkey>)>, BuildRewardCertsRespError> {
-        // we can only submit one notar rewards certificate but different validators may vote for different blocks and we cannot combine notar votes for different blocks together in one cert.
-        // ideally we should pick the block_id with the most stake to maximum leader rewards.
-        // we expect this to be rare enough that picking the block_id with the most votes should be fine in most cases.
-
-        let res = self
+        // We can only submit one notar rewards certificate, but different validators may vote for
+        // different block ids. Pick the block id with the most stake to maximize leader rewards.
+        let selected = self
             .partials
             .into_iter()
-            .max_by_key(|(_block_id, partial)| partial.votes_seen());
-        let Some((block_id, partial)) = res else {
+            .max_by_key(|(_block_id, partial)| partial.stake());
+        let Some((block_id, partial)) = selected else {
             return Ok(None);
         };
         match partial.build_sig_bitmap() {
@@ -95,7 +93,7 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_rank_map_keypairs, new_vote, validate_bitmap,
+            get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_vote, validate_bitmap,
         },
         agave_votor_messages::{
             consensus_message::{Block, VoteMessage},
@@ -161,7 +159,8 @@ mod tests {
     fn validate_build_cert() {
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs) =
+            get_rank_map_keypairs_with_stakes(vec![1_000, 900, 10, 10, 10], slot);
         let shred_version = rand::rng().random();
 
         let mut entry = NotarEntry::new(max_validators);
@@ -204,7 +203,8 @@ mod tests {
         }
         let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();
         assert_eq!(notar_cert.slot, slot);
-        assert_eq!(notar_cert.block_id, blockid1);
-        validate_bitmap(notar_cert.bitmap(), 3, 5);
+        // We should pick the block id with the most stake (not the most votes)
+        assert_eq!(notar_cert.block_id, blockid0);
+        validate_bitmap(notar_cert.bitmap(), 2, 5);
     }
 }
