@@ -84,6 +84,7 @@ use {
 };
 #[cfg(target_os = "linux")]
 use {
+    crate::commands::run::xdp_config_file::parse_xdp_config_file,
     agave_cpu_utils::cpu_affinity,
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
@@ -1399,17 +1400,35 @@ fn build_xdp_config(
             "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
         );
     }
-    if let Some(xdp_config_file) = matches.value_of("xdp_config_file") {
-        info!("--xdp-config-file specified ({xdp_config_file}); contents are currently ignored");
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+
+    // A config file fully specifies the XDP setup, so it takes precedence over
+    // the individual --xdp-* flags (clap marks them mutually exclusive with it).
+    if let Some(path) = matches.value_of("xdp_config_file") {
+        let config = parse_xdp_config_file(Path::new(path))
+            .map_err(|e| format!("invalid XDP config file `{path}`: {e}"))?;
+        if let Some(poh_core) = poh_pinned_cpu_core {
+            if config.queues.iter().any(|binding| binding.cpu == poh_core) {
+                return Err(format!(
+                    "XDP config file maps a worker to PoH core {poh_core}; XDP and PoH must not \
+                     share a CPU core"
+                ));
+            }
+        }
+        info!(
+            "XDP enabled from config file `{path}` on CPU cores: {:?}",
+            config.queues.iter().map(|b| b.cpu).collect::<Vec<_>>()
+        );
+        return Ok(Some(config));
     }
+
     let xdp_interface = matches
         .value_of("xdp_interface")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
     let xdp_zero_copy = matches.is_present("xdp_zero_copy")
         || matches.is_present("experimental_retransmit_xdp_zero_copy");
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
     let xdp_cpu_cores = matches
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
@@ -1531,6 +1550,79 @@ mod xdp_tests {
         assert!(
             result.unwrap_err().contains("PoH core"),
             "XDP core overlapping PoH core must produce an error"
+        );
+    }
+
+    fn write_config(contents: &str) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn test_config_file_builds_xdp_config() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\n\
+             queue_to_cpu_mapping = [\"0-1:3\", \"2:5\"]\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("config file must enable XDP");
+        assert_eq!(config.interface.as_deref(), Some("eth0"));
+        assert!(config.zero_copy);
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 3 },
+                QueueCpuBinding { queue: 1, cpu: 3 },
+                QueueCpuBinding { queue: 2, cpu: 5 },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_config_file_conflicting_with_poh_core_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE.unwrap_or(0);
+        let file = write_config(&format!(
+            "version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0:{poh_core}\"\n"
+        ));
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("PoH core"),
+            "config file mapping a worker to the PoH core must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_config_file_invalid_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config("version = 2\n[xdp]\nqueue_to_cpu_mapping = \"0:1\"\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("invalid XDP config file"),
+            "a malformed config file must surface a parse error"
         );
     }
 }
