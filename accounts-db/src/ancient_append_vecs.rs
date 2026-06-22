@@ -732,6 +732,15 @@ impl AccountsDb {
         for shrink_collect in accounts_to_combine.accounts_to_combine {
             let slot = shrink_collect.slot;
 
+            // Ancient squash only runs on slots far older than the latest full snapshot, where
+            // tombstones are purgeable and `shrink_collect` drops them rather than carrying them
+            // forward. The squash write path has no tombstone handling, so a non-empty list here
+            // would be silently lost; assert the invariant at the point that loss would occur.
+            debug_assert!(
+                shrink_collect.tombstones_to_carry_forward.is_empty(),
+                "ancient squash reached a carry-forward tombstone at slot {slot}",
+            );
+
             let shrink_in_progress = write_ancient_accounts.shrinks_in_progress.remove(&slot);
 
             let mut reopen = false;
@@ -3790,6 +3799,8 @@ mod tests {
                     many_refs_this_is_newest_alive: AliveAccounts::default(),
                     many_refs_old_alive: AliveAccounts::default(),
                 },
+                tombstones_to_carry_forward: Vec::new(),
+                tombstones_total_bytes: 0,
                 alive_total_bytes: 0,
                 total_starting_accounts: 0,
                 all_are_zero_lamports: false,

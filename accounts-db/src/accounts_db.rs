@@ -259,6 +259,10 @@ pub(crate) struct ShrinkCollect<'a, T: ShrinkCollectRefs<'a>> {
     pub(crate) pubkeys_to_unref: Vec<&'a Pubkey>,
     pub(crate) zero_lamport_single_ref_pubkeys: Vec<&'a Pubkey>,
     pub(crate) alive_accounts: T,
+    /// Zero-lamport accounts written to the new storage as tombstones rather than live accounts.
+    pub(crate) tombstones_to_carry_forward: Vec<AccountFromStorage>,
+    /// total size in storage of all accounts in `tombstones_to_carry_forward`
+    pub(crate) tombstones_total_bytes: usize,
     /// total size in storage of all alive accounts
     pub(crate) alive_total_bytes: usize,
     pub(crate) total_starting_accounts: usize,
@@ -274,6 +278,8 @@ struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     pubkeys_to_unref: Vec<&'a Pubkey>,
     /// pubkeys that are the last remaining zero lamport instance of an account
     zero_lamport_single_ref_pubkeys: Vec<&'a Pubkey>,
+    /// accounts that are zero lamport but not indexed
+    zero_lamport_tombstones: Vec<AccountFromStorage>,
     /// true if all alive accounts are zero lamport accounts
     all_are_zero_lamports: bool,
 }
@@ -2432,6 +2438,7 @@ impl AccountsDb {
         let mut alive_accounts = T::with_capacity(count, slot_to_shrink);
         let mut pubkeys_to_unref = Vec::with_capacity(count);
         let mut zero_lamport_single_ref_pubkeys = Vec::with_capacity(count);
+        let mut zero_lamport_tombstones = Vec::new();
 
         let mut alive = 0;
         let mut dead = 0;
@@ -2444,17 +2451,16 @@ impl AccountsDb {
             |pubkey, slots_refs| {
                 let stored_account = &accounts[index];
                 let mut do_populate_accounts_for_shrink = |ref_count, slot_list| {
-                    if stored_account.is_zero_lamport()
-                        && ref_count == 1
-                        && can_purge_zero_lamport_single_ref
-                    {
-                        // only do this if our slot is prior to the latest full snapshot
-                        // we found a zero lamport account that is the only instance of this account. We can delete it completely.
+                    if stored_account.is_zero_lamport() && ref_count == 1 {
+                        // The lone instance of a zero-lamport account. A load of a zero-lamport
+                        // account already reports "not found", so dropping its index entry is safe.
                         zero_lamport_single_ref_pubkeys.push(pubkey);
-                        self.add_uncleaned_pubkeys_after_shrink(
-                            slot_to_shrink,
-                            [*pubkey].into_iter(),
-                        );
+                        if !can_purge_zero_lamport_single_ref {
+                            // Newer than the latest full snapshot: keep the bytes in storage as a
+                            // tombstone so an incremental snapshot can still propagate the deletion,
+                            // rather than dropping it.
+                            zero_lamport_tombstones.push(*stored_account);
+                        }
                     } else {
                         all_are_zero_lamports &= stored_account.is_zero_lamport();
                         alive_accounts.add(ref_count, stored_account, slot_list);
@@ -2509,6 +2515,7 @@ impl AccountsDb {
             alive_accounts,
             pubkeys_to_unref,
             zero_lamport_single_ref_pubkeys,
+            zero_lamport_tombstones,
             all_are_zero_lamports,
         }
     }
@@ -2592,6 +2599,27 @@ impl AccountsDb {
         // Filter all the accounts that are marked obsolete
         let total_starting_accounts = stored_accounts.len();
         stored_accounts.retain(|account| !obsolete_offsets.contains(&account.index_info.offset()));
+        let num_obsolete_filtered = total_starting_accounts - stored_accounts.len();
+
+        // Filter and collect tombstones
+        let can_purge_zero_lamport_single_ref =
+            self.can_purge_zero_lamport_single_ref_after_shrink(slot);
+        let mut tombstones_to_carry_forward: Vec<AccountFromStorage> = Vec::new();
+        let tombstone_offsets = store.tombstone_offsets_read_lock();
+        if !tombstone_offsets.is_empty() {
+            stored_accounts.retain(|account| {
+                if tombstone_offsets.contains(&account.index_info.offset()) {
+                    // If we can't purge zero lamport accounts, they need to be rewritten after shrink
+                    if !can_purge_zero_lamport_single_ref {
+                        tombstones_to_carry_forward.push(*account);
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        drop(tombstone_offsets);
 
         let len = stored_accounts.len();
         let shrink_collect = Mutex::new(ShrinkCollect {
@@ -2600,6 +2628,8 @@ impl AccountsDb {
             pubkeys_to_unref: Vec::with_capacity(len),
             zero_lamport_single_ref_pubkeys: Vec::new(),
             alive_accounts: T::with_capacity(len, slot),
+            tombstones_to_carry_forward,
+            tombstones_total_bytes: 0, // will be updated after the tombstone list is populated
             total_starting_accounts,
             all_are_zero_lamports: true,
             alive_total_bytes: 0, // will be updated after `alive_accounts` is populated
@@ -2610,7 +2640,7 @@ impl AccountsDb {
             .fetch_add(len as u64, Ordering::Relaxed);
         stats
             .obsolete_accounts_filtered
-            .fetch_add((total_starting_accounts - len) as u64, Ordering::Relaxed);
+            .fetch_add(num_obsolete_filtered as u64, Ordering::Relaxed);
         self.thread_pool_background.install(|| {
             stored_accounts
                 .par_chunks(SHRINK_COLLECT_CHUNK_SIZE)
@@ -2620,6 +2650,7 @@ impl AccountsDb {
                         mut pubkeys_to_unref,
                         all_are_zero_lamports,
                         mut zero_lamport_single_ref_pubkeys,
+                        mut zero_lamport_tombstones,
                     } = self.load_accounts_index_for_shrink(stored_accounts, stats, slot);
 
                     // collect
@@ -2631,6 +2662,9 @@ impl AccountsDb {
                     shrink_collect
                         .zero_lamport_single_ref_pubkeys
                         .append(&mut zero_lamport_single_ref_pubkeys);
+                    shrink_collect
+                        .tombstones_to_carry_forward
+                        .append(&mut zero_lamport_tombstones);
                     if !all_are_zero_lamports {
                         shrink_collect.all_are_zero_lamports = false;
                     }
@@ -2642,17 +2676,28 @@ impl AccountsDb {
         let mut shrink_collect = shrink_collect.into_inner().unwrap();
         let alive_total_bytes = shrink_collect.alive_accounts.alive_bytes();
         shrink_collect.alive_total_bytes = alive_total_bytes;
+        shrink_collect.tombstones_total_bytes = shrink_collect
+            .tombstones_to_carry_forward
+            .iter()
+            .map(|account| account.stored_size())
+            .sum();
 
         stats
             .index_read_elapsed
             .fetch_add(index_read_elapsed.as_us(), Ordering::Relaxed);
 
+        // Tombstones carried forward are rewritten into the new storage, not reclaimed, so exclude
+        // them from the "removed" totals (which measure what shrink actually freed).
         stats.accounts_removed.fetch_add(
-            total_starting_accounts - shrink_collect.alive_accounts.len(),
+            total_starting_accounts
+                - shrink_collect.alive_accounts.len()
+                - shrink_collect.tombstones_to_carry_forward.len(),
             Ordering::Relaxed,
         );
         stats.bytes_removed.fetch_add(
-            capacity.saturating_sub(alive_total_bytes as u64),
+            capacity
+                .saturating_sub(alive_total_bytes as u64)
+                .saturating_sub(shrink_collect.tombstones_total_bytes as u64),
             Ordering::Relaxed,
         );
         stats
@@ -2872,14 +2917,15 @@ impl AccountsDb {
             &self.shrink_stats,
         );
 
+        let total_rewrite_bytes =
+            shrink_collect.alive_total_bytes + shrink_collect.tombstones_total_bytes;
+
         // This shouldn't happen if alive_bytes is accurate.
         // However, it is possible that the remaining alive bytes could be 0. In that case, the whole slot should be marked dead by clean.
-        if Self::should_not_shrink(
-            shrink_collect.alive_total_bytes as u64,
-            shrink_collect.capacity,
-        ) || shrink_collect.alive_total_bytes == 0
+        if Self::should_not_shrink(total_rewrite_bytes as u64, shrink_collect.capacity)
+            || total_rewrite_bytes == 0
         {
-            if shrink_collect.alive_total_bytes == 0 {
+            if total_rewrite_bytes == 0 {
                 // clean needs to take care of this dead slot
                 self.dirty_stores.insert(slot, store.clone());
             }
@@ -2916,7 +2962,7 @@ impl AccountsDb {
         let (shrink_in_progress, time_us) = measure_us!(self.get_store_for_shrink(
             slot,
             Arc::clone(&store),
-            shrink_collect.alive_total_bytes as u64
+            total_rewrite_bytes as u64
         ));
         stats_sub.create_and_insert_store_elapsed_us = Saturating(time_us);
 
@@ -2930,6 +2976,17 @@ impl AccountsDb {
             shrink_in_progress.new_storage(),
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
+
+        let tombstone_refs: Vec<&AccountFromStorage> =
+            shrink_collect.tombstones_to_carry_forward.iter().collect();
+        let tombstone_accounts = [(slot, &tombstone_refs[..])];
+        let storable_tombstones = StorableAccountsBySlot::new(slot, &tombstone_accounts, self);
+        let (num_tombstones_carried_forward, tombstone_carry_forward_us) = measure_us!(
+            self.store_tombstones(shrink_in_progress.new_storage(), storable_tombstones)
+        );
+        stats_sub.tombstone_carry_forward_us = Saturating(tombstone_carry_forward_us);
+        stats_sub.num_tombstones_carried_forward =
+            Saturating(num_tombstones_carried_forward as u64);
 
         rewrite_elapsed.stop();
         stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
@@ -5388,10 +5445,15 @@ impl AccountsDb {
                             .obsolete_accounts_read_lock()
                             .filter_obsolete_accounts(None)
                             .collect();
+                        // Tombstones have already been removed from the index, so they must not be
+                        // unref'd here (a revived pubkey could otherwise be wrongly unref'd).
+                        let tombstone_offsets = store.tombstone_offsets_read_lock();
                         store
                             .accounts
                             .scan_accounts_without_data(|offset, account| {
-                                if !obsolete_accounts.contains(&(offset, account.data_len)) {
+                                if !obsolete_accounts.contains(&(offset, account.data_len))
+                                    && !tombstone_offsets.contains(&offset)
+                                {
                                     pubkeys.push((slot, *account.pubkey));
                                 }
                             })
@@ -5540,11 +5602,6 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
-        let mark_zero_lamport_single_ref_time = Measure::start("mark_zero_lamport_single_ref");
-        let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts_for_shrink(&infos, &accounts, storage);
-        let mark_zero_lamport_single_ref_us = mark_zero_lamport_single_ref_time.end_as_us();
-
         let update_index_time = Measure::start("update_index");
         self.update_index_for_shrink(
             &infos,
@@ -5556,11 +5613,27 @@ impl AccountsDb {
 
         StoreAccountsForShrinkStats {
             write_accounts_us,
-            mark_zero_lamport_single_ref_accounts_us: mark_zero_lamport_single_ref_us,
             update_index_us,
             num_accounts_stored: num_accounts_stored as u64,
-            num_zero_lamport_single_ref_accounts_marked,
         }
+    }
+
+    /// Write tombstones into new_storage and store the new offsets on its tombstone_offsets
+    /// Note: They are not added to the index
+    fn store_tombstones<'a>(
+        &self,
+        new_storage: &AccountStorageEntry,
+        tombstones: impl StorableAccounts<'a>,
+    ) -> usize {
+        if tombstones.is_empty() {
+            return 0;
+        }
+        let tombstone_infos =
+            self.write_accounts_to_storage(tombstones.target_slot(), new_storage, &tombstones);
+        let tombstone_offsets: Vec<Offset> =
+            tombstone_infos.iter().map(|info| info.offset()).collect();
+        new_storage.batch_insert_tombstone_offsets(&tombstone_offsets);
+        tombstone_offsets.len()
     }
 
     /// Stores accounts in the storage and updates the index.
@@ -5791,38 +5864,6 @@ impl AccountsDb {
             }
         }
 
-        num_marked
-    }
-
-    /// Marks zero lamport single reference accounts in the storage during store_accounts_for_shrink
-    ///
-    /// Returns the number of accounts marked.
-    fn mark_zero_lamport_single_ref_accounts_for_shrink<'a>(
-        &self,
-        account_infos: &[AccountInfo],
-        accounts: &impl StorableAccounts<'a>,
-        storage: &AccountStorageEntry,
-    ) -> u64 {
-        debug_assert_eq!(account_infos.len(), accounts.len());
-        let mut num_marked = 0;
-        for (i, account_info) in account_infos.iter().enumerate() {
-            if account_info.is_zero_lamport() {
-                let pubkey = accounts.pubkey(i);
-                let is_single_ref = self.accounts_index.get_and_then(pubkey, |entry| {
-                    let is_single_ref = entry.is_some_and(|entry| {
-                        entry.ref_count() == 1 && entry.slot_list_lock_read_len() == 1
-                    });
-                    (false, is_single_ref)
-                });
-                if is_single_ref {
-                    debug_assert_eq!(account_info.store_id(), storage.id());
-                    if storage.insert_zero_lamport_single_ref_account_offset(account_info.offset())
-                    {
-                        num_marked += 1;
-                    }
-                }
-            }
-        }
         num_marked
     }
 
