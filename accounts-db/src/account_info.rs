@@ -6,7 +6,7 @@ use {
     crate::{
         accounts_db::AccountsFileId,
         accounts_file::ALIGN_BOUNDARY_OFFSET,
-        accounts_index::{DiskIndexValue, IndexValue, IsCached},
+        accounts_index::{DiskIndexValue, IndexValue},
         is_zero_lamport::IsZeroLamport,
     },
     modular_bitfield::prelude::*,
@@ -69,12 +69,6 @@ const _: () = assert!(size_of::<AccountInfo>() == 8);
 impl IsZeroLamport for AccountInfo {
     fn is_zero_lamport(&self) -> bool {
         self.account_offset_and_flags.is_zero_lamport()
-    }
-}
-
-impl IsCached for AccountInfo {
-    fn is_cached(&self) -> bool {
-        false
     }
 }
 

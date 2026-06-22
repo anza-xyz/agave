@@ -101,6 +101,7 @@ mod tests {
             consensus_message::{Block, VoteMessage},
             vote::Vote,
         },
+        rand::Rng,
         solana_bls_signatures::signature::BLS_SIGNATURE_AFFINE_SIZE,
         solana_hash::Hash,
     };
@@ -109,6 +110,7 @@ mod tests {
     fn validator_add_vote() {
         let slot = 123;
         let max_validators = 5;
+        let shred_version = rand::rng().random();
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
         let rank = 0;
         let mut entry = NotarEntry::new(max_validators);
@@ -133,7 +135,7 @@ mod tests {
             )
             .unwrap_err();
 
-        let vote = new_vote(notar, rank as usize, &keypairs);
+        let vote = new_vote(notar, rank as usize, &keypairs, shred_version);
         entry
             .add_vote(
                 &rank_map,
@@ -160,6 +162,7 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let shred_version = rand::rng().random();
 
         let mut entry = NotarEntry::new(max_validators);
         assert_eq!(entry.clone().build_cert(slot).unwrap(), None);
@@ -172,7 +175,7 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs);
+            let vote = new_vote(notar, rank, &keypairs, shred_version);
             entry
                 .add_vote(
                     &rank_map,
@@ -188,7 +191,7 @@ mod tests {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs);
+            let vote = new_vote(notar, rank, &keypairs, shred_version);
             entry
                 .add_vote(
                     &rank_map,

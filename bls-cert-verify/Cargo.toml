@@ -29,6 +29,7 @@ agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-con
 # See order-crates-for-publishing.py for using this unusual `path`
 agave-votor = { path = "../votor", features = ["agave-unstable-api"] }
 criterion = { workspace = true }
+rand = { workspace = true }
 solana-hash = { workspace = true }
 
 [[bench]]

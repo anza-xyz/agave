@@ -25,10 +25,18 @@ use {
 /// Distributing rewards to stake accounts begins AFTER this many blocks.
 const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
 
+/// Total reward for a stake account, currently just inflation rewards.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartitionedStakeReward {
     /// Stake account address
     pub stake_pubkey: Pubkey,
+    /// Inflation reward information
+    pub inflation: InflationReward,
+}
+
+/// Just the inflation portion of a partitioned stake reward
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InflationReward {
     /// `Stake` state to be stored in account
     pub stake: Stake,
     /// Stake reward for recording in the Bank on distribution
@@ -450,9 +458,11 @@ mod tests {
             {
                 Some(Self {
                     stake_pubkey: stake_reward.stake_pubkey,
-                    stake,
-                    stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    commission_bps: stake_reward.stake_reward_info.commission_bps,
+                    inflation: InflationReward {
+                        stake,
+                        stake_reward: stake_reward.stake_reward_info.lamports as u64,
+                        commission_bps: stake_reward.stake_reward_info.commission_bps,
+                    },
                 })
             } else {
                 None

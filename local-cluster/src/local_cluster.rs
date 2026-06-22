@@ -42,6 +42,7 @@ use {
         GenesisConfigInfo, ValidatorVoteKeypairs,
         create_genesis_config_with_vote_accounts_and_cluster_type,
     },
+    solana_shred_version::compute_shred_version,
     solana_signer::{Signer, signers::Signers},
     solana_stake_interface::{
         instruction as stake_instruction,
@@ -921,6 +922,7 @@ impl LocalCluster {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
+            compute_shred_version(&self.genesis_config.hash(), None),
             num_new_notarized_votes,
             &alive_node_contact_infos,
             test_name,

@@ -11,7 +11,10 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
-        certificate::Certificate, consensus_message::ConsensusMessage, migration::MigrationStatus,
+        certificate::{Certificate, CertificateType},
+        consensus_message::{Block, ConsensusMessage},
+        migration::MigrationStatus,
+        unverified_vote_message::UnverifiedCertificate,
     },
     crossbeam_channel::Sender,
     log::*,
@@ -176,6 +179,7 @@ impl BlockComponentProcessor {
         &mut self,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
+        shred_version: u16,
         marker: VersionedBlockMarker,
         allow_initial_update_parent: bool,
         finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
@@ -199,6 +203,7 @@ impl BlockComponentProcessor {
             {
                 self.on_genesis_cert_block_marker(
                     bank,
+                    shred_version,
                     genesis_cert_block_marker.into_inner(),
                     migration_status,
                 )
@@ -208,6 +213,7 @@ impl BlockComponentProcessor {
             BlockMarkerV1::BlockFooter(footer) if markers_fully_enabled => self.on_footer(
                 bank,
                 parent_bank,
+                shred_version,
                 footer.into_inner(),
                 finalization_cert_sender,
             ),
@@ -224,6 +230,7 @@ impl BlockComponentProcessor {
     pub fn on_genesis_cert_block_marker(
         &self,
         bank: Arc<Bank>,
+        shred_version: u16,
         genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
@@ -245,8 +252,16 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated);
         }
 
-        let genesis_cert = Certificate::from(genesis_block_marker);
-        Self::verify_genesis_certificate(&bank, &genesis_cert)?;
+        let unverified_genesis_cert = UnverifiedCertificate {
+            cert_type: CertificateType::Genesis(Block {
+                slot: genesis_block_marker.slot,
+                block_id: genesis_block_marker.block_id,
+            }),
+            signature: genesis_block_marker.bls_signature,
+            bitmap: genesis_block_marker.bitmap,
+            shred_version,
+        };
+        let genesis_cert = Self::verify_genesis_certificate(&bank, unverified_genesis_cert)?;
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
         bank.set_hashes_per_tick(None);
 
@@ -280,12 +295,12 @@ impl BlockComponentProcessor {
 
     fn verify_genesis_certificate(
         bank: &Bank,
-        cert: &Certificate,
-    ) -> Result<(), BlockComponentProcessorError> {
+        cert: UnverifiedCertificate,
+    ) -> Result<Certificate, BlockComponentProcessorError> {
         debug_assert!(cert.cert_type.is_genesis());
 
         let cert_slot = cert.cert_type.slot();
-        bank.verify_certificate(cert).map_err(|_| {
+        let cert = bank.verify_certificate(cert).map_err(|_| {
             warn!(
                 "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
                 bank.slot()
@@ -293,13 +308,14 @@ impl BlockComponentProcessor {
             BlockComponentProcessorError::GenesisCertificateFailedVerification
         })?;
 
-        Ok(())
+        Ok(cert)
     }
 
     fn on_footer(
         &mut self,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
+        shred_version: u16,
         footer: VersionedBlockFooter,
         finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
     ) -> Result<(), BlockComponentProcessorError> {
@@ -324,13 +340,17 @@ impl BlockComponentProcessor {
             notar_reward_cert,
         } = footer;
 
-        let reward_cert =
-            ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert)?;
+        let reward_cert = ValidatedRewardCert::try_new(
+            &bank,
+            shred_version,
+            &skip_reward_cert,
+            &notar_reward_cert,
+        )?;
         let block_producer_time_nanos =
             Self::block_producer_time_nanos_as_i64(block_producer_time_nanos)?;
         let final_cert = block_final_cert
             .map(|final_cert| {
-                ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)
+                ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank, shred_version)
                     .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
             })
             .transpose()?;
@@ -536,6 +556,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
+        rand::Rng,
         solana_clock::DEFAULT_MS_PER_SLOT,
         solana_entry::block_component::{
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
@@ -627,6 +648,7 @@ mod tests {
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -642,17 +664,23 @@ mod tests {
         });
 
         // First footer should succeed
-        assert!(
-            processor
-                .on_footer(bank.clone(), parent.clone(), footer.clone(), None)
-                .is_ok()
-        );
+        processor
+            .on_footer(
+                bank.clone(),
+                parent.clone(),
+                shred_version,
+                footer.clone(),
+                None,
+            )
+            .unwrap();
 
         // Second footer should fail
-        let result = processor.on_footer(bank, parent, footer, None);
+        let err = processor
+            .on_footer(bank, parent, shred_version, footer, None)
+            .unwrap_err();
         assert!(matches!(
-            result,
-            Err(BlockComponentProcessorError::MultipleBlockFooters)
+            err,
+            BlockComponentProcessorError::MultipleBlockFooters
         ));
     }
 
@@ -665,6 +693,7 @@ mod tests {
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -681,7 +710,7 @@ mod tests {
         });
 
         processor
-            .on_footer(bank.clone(), parent, footer, None)
+            .on_footer(bank.clone(), parent, shred_version, footer, None)
             .unwrap();
 
         assert!(processor.has_footer);
@@ -730,9 +759,18 @@ mod tests {
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         processor
-            .on_marker(bank, parent, marker, false, None, &migration_status)
+            .on_marker(
+                bank,
+                parent,
+                shred_version,
+                marker,
+                false,
+                None,
+                &migration_status,
+            )
             .unwrap();
         assert!(processor.has_header);
     }
@@ -748,9 +786,18 @@ mod tests {
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         assert!(matches!(
-            processor.on_marker(bank, parent, marker, false, None, &migration_status),
+            processor.on_marker(
+                bank,
+                parent,
+                shred_version,
+                marker,
+                false,
+                None,
+                &migration_status
+            ),
             Err(BlockComponentProcessorError::HeaderParentSlotMismatch {
                 header_parent_slot: 7,
                 bank_parent_slot: 0,
@@ -768,6 +815,7 @@ mod tests {
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -784,7 +832,15 @@ mod tests {
         });
 
         processor
-            .on_marker(bank.clone(), parent, marker, false, None, &migration_status)
+            .on_marker(
+                bank.clone(),
+                parent,
+                shred_version,
+                marker,
+                false,
+                None,
+                &migration_status,
+            )
             .unwrap();
         assert!(processor.has_footer);
 
@@ -798,6 +854,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -824,7 +881,7 @@ mod tests {
             notar_reward_cert: None,
         });
         processor
-            .on_footer(bank.clone(), parent.clone(), footer, None)
+            .on_footer(bank.clone(), parent.clone(), shred_version, footer, None)
             .unwrap();
 
         // Verify clock sysvar was updated
@@ -841,6 +898,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Try to process a block header marker pre-migration - should fail
         let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
@@ -848,10 +906,20 @@ mod tests {
             parent_block_id: Hash::default(),
         });
 
-        let result = processor.on_marker(bank, parent, marker, false, None, &migration_status);
+        let err = processor
+            .on_marker(
+                bank,
+                parent,
+                shred_version,
+                marker,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap_err();
         assert!(matches!(
-            result,
-            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+            err,
+            BlockComponentProcessorError::BlockComponentPreMigration
         ));
     }
 
@@ -860,6 +928,7 @@ mod tests {
         let migration_status = MigrationStatus::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let footer_marker = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
@@ -873,15 +942,18 @@ mod tests {
 
         let mut processor = BlockComponentProcessor::default();
         assert!(matches!(
-            processor.on_marker(
-                bank.clone(),
-                parent.clone(),
-                footer_marker,
-                false,
-                None,
-                &migration_status
-            ),
-            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+            processor
+                .on_marker(
+                    bank.clone(),
+                    parent.clone(),
+                    shred_version,
+                    footer_marker,
+                    false,
+                    None,
+                    &migration_status
+                )
+                .unwrap_err(),
+            BlockComponentProcessorError::BlockComponentPreMigration
         ));
 
         let update_parent_marker = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
@@ -891,15 +963,18 @@ mod tests {
 
         let mut processor = BlockComponentProcessor::default();
         assert!(matches!(
-            processor.on_marker(
-                bank,
-                parent,
-                update_parent_marker,
-                false,
-                None,
-                &migration_status
-            ),
-            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+            processor
+                .on_marker(
+                    bank,
+                    parent,
+                    shred_version,
+                    update_parent_marker,
+                    false,
+                    None,
+                    &migration_status
+                )
+                .unwrap_err(),
+            BlockComponentProcessorError::BlockComponentPreMigration
         ));
     }
 
@@ -923,6 +998,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Process header marker
         let header_marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
@@ -933,6 +1009,7 @@ mod tests {
             .on_marker(
                 bank.clone(),
                 parent.clone(),
+                shred_version,
                 header_marker,
                 false,
                 None,
@@ -961,6 +1038,7 @@ mod tests {
             .on_marker(
                 bank.clone(),
                 parent,
+                shred_version,
                 footer_marker,
                 false,
                 None,
@@ -981,6 +1059,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
@@ -992,10 +1071,12 @@ mod tests {
         });
 
         // Try to process footer without header - should fail
-        let result = processor.on_footer(bank, parent, footer, None);
+        let err = processor
+            .on_footer(bank, parent, shred_version, footer, None)
+            .unwrap_err();
         assert!(matches!(
-            result,
-            Err(BlockComponentProcessorError::MissingParentMarker)
+            err,
+            BlockComponentProcessorError::MissingParentMarker
         ));
     }
 
@@ -1005,6 +1086,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
 
         // Process header first
         processor.has_header = true;
@@ -1025,15 +1107,17 @@ mod tests {
         });
 
         // Should succeed - footer is processed
-        let result = processor.on_marker(
-            bank.clone(),
-            parent,
-            footer_marker,
-            false,
-            None,
-            &migration_status,
-        );
-        assert!(result.is_ok());
+        processor
+            .on_marker(
+                bank.clone(),
+                parent,
+                shred_version,
+                footer_marker,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap();
         assert!(processor.has_footer);
 
         // Verify clock sysvar was updated
@@ -1059,6 +1143,7 @@ mod tests {
             has_header: true,
             ..Default::default()
         };
+        let shred_version = rand::rng().random();
 
         // Create genesis bank
         let genesis_config_info = create_genesis_config(10_000);
@@ -1106,7 +1191,7 @@ mod tests {
         });
 
         processor
-            .on_footer(bank.clone(), parent, footer, None)
+            .on_footer(bank.clone(), parent, shred_version, footer, None)
             .unwrap();
 
         // Verify clock sysvar was updated
@@ -1126,6 +1211,7 @@ mod tests {
             has_header: true,
             ..Default::default()
         };
+        let shred_version = rand::rng().random();
 
         let (parent, bank_forks) = create_test_bank_alpenglow();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -1152,13 +1238,13 @@ mod tests {
             notar_reward_cert: None,
         });
 
-        let result = processor.on_footer(bank, parent, footer, None);
+        let result = processor.on_footer(bank, parent, shred_version, footer, None);
         if should_pass {
-            assert!(result.is_ok());
+            result.unwrap();
         } else {
             assert!(matches!(
-                result,
-                Err(BlockComponentProcessorError::NanosecondClockOutOfBounds)
+                result.unwrap_err(),
+                BlockComponentProcessorError::NanosecondClockOutOfBounds
             ));
         }
     }
@@ -1208,6 +1294,7 @@ mod tests {
             has_header: true,
             ..Default::default()
         };
+        let shred_version = rand::rng().random();
 
         let (parent, bank_forks) = create_test_bank_alpenglow();
         assert_eq!(parent.get_nanosecond_clock(), None);
@@ -1231,8 +1318,10 @@ mod tests {
         });
 
         assert!(matches!(
-            processor.on_footer(bank, parent, footer, None),
-            Err(BlockComponentProcessorError::NanosecondClockOutOfBounds)
+            processor
+                .on_footer(bank, parent, shred_version, footer, None)
+                .unwrap_err(),
+            BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
     }
 
@@ -1242,6 +1331,7 @@ mod tests {
             has_header: true,
             ..Default::default()
         };
+        let shred_version = rand::rng().random();
 
         let (parent, bank_forks) = create_test_bank_alpenglow();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -1258,8 +1348,10 @@ mod tests {
         });
 
         assert!(matches!(
-            processor.on_footer(bank, parent, footer, None),
-            Err(BlockComponentProcessorError::NanosecondClockOutOfBounds)
+            processor
+                .on_footer(bank, parent, shred_version, footer, None)
+                .unwrap_err(),
+            BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
     }
 
@@ -1435,6 +1527,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 4);
+        let shred_version = rand::rng().random();
 
         processor
             .on_update_parent(
@@ -1458,7 +1551,9 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
-        processor.on_footer(bank, parent, footer, None).unwrap();
+        processor
+            .on_footer(bank, parent, shred_version, footer, None)
+            .unwrap();
 
         assert!(processor.on_final(&migration_status, 1).is_ok());
     }

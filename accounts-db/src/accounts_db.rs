@@ -47,8 +47,8 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
-            AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
-            SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
+            AccountsIndexScanResult, IndexKey, ReclaimsSlotList, RefCount, ScanFilter, SlotList,
+            Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -651,15 +651,13 @@ pub enum PopulateReadCache {
 }
 
 #[derive(Debug)]
-pub enum LoadedAccountAccessor<'a> {
+pub enum LoadedAccountAccessor {
     // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
     Stored(Option<(Arc<AccountStorageEntry>, usize)>),
-    // None value in Cached variant means the cache was flushed
-    Cached(Option<Cow<'a, Arc<CachedAccount>>>),
 }
 
-impl LoadedAccountAccessor<'_> {
+impl LoadedAccountAccessor {
     fn check_and_get_loaded_account_shared_data(&mut self) -> AccountSharedData {
         // all of these following .expect() and .unwrap() are like serious logic errors,
         // ideal for representing this as rust type system....
@@ -691,16 +689,11 @@ impl LoadedAccountAccessor<'_> {
         // ideal for representing this as rust type system....
 
         match self {
-            LoadedAccountAccessor::Cached(None) | LoadedAccountAccessor::Stored(None) => {
+            LoadedAccountAccessor::Stored(None) => {
                 panic!(
                     "Should have already been taken care of when creating this \
                      LoadedAccountAccessor"
                 );
-            }
-            LoadedAccountAccessor::Cached(Some(_cached_account)) => {
-                // Cached(Some(x)) variant always produces `Some` for get_loaded_account() since
-                // it just returns the inner `x` without additional fetches
-                self.get_loaded_account(callback).unwrap()
             }
             LoadedAccountAccessor::Stored(Some(_maybe_storage_entry)) => {
                 // If we do find the storage entry, we can guarantee that the storage entry is
@@ -721,12 +714,6 @@ impl LoadedAccountAccessor<'_> {
         mut callback: impl for<'local> FnMut(LoadedAccount<'local>) -> T,
     ) -> Option<T> {
         match self {
-            LoadedAccountAccessor::Cached(cached_account) => {
-                let cached_account = cached_account.take().expect(
-                    "Cache flushed/purged should be handled before trying to fetch account",
-                );
-                Some(callback(LoadedAccount::Cached(cached_account)))
-            }
             LoadedAccountAccessor::Stored(maybe_storage_entry) => {
                 // storage entry may not be present if slot was cleaned up in
                 // between reading the accounts index and calling this function to
@@ -2008,13 +1995,6 @@ impl AccountsDb {
                     } else {
                         let mut key_set = HashSet::new();
                         key_set.insert(*pubkey);
-                        assert!(
-                            !account_info.is_cached(),
-                            "The Accounts Cache must be flushed first for this account info. \
-                             pubkey: {}, slot: {}",
-                            *pubkey,
-                            *slot
-                        );
                         let count = self
                             .storage
                             .get_account_storage_entry(*slot, account_info.store_id())
@@ -2793,7 +2773,7 @@ impl AccountsDb {
                         // Let's handle the special case - after unref, the result is a single ref zero lamport account.
                         if slot_list.len() == 1 && ref_count == 2 {
                             if let Some((slot_alive, acct_info)) = slot_list.first() {
-                                if acct_info.is_zero_lamport() && !acct_info.is_cached() {
+                                if acct_info.is_zero_lamport() {
                                     self.zero_lamport_single_ref_found(
                                         *slot_alive,
                                         acct_info.offset(),
@@ -3501,12 +3481,9 @@ impl AccountsDb {
                 let mut account_accessor =
                     self.get_account_accessor(slot, &account_info.storage_location());
 
-                let account_slot = match account_accessor {
-                    LoadedAccountAccessor::Cached(None) => None,
-                    _ => account_accessor.get_loaded_account(|loaded_account| {
-                        (pubkey, loaded_account.take_account(), slot)
-                    }),
-                };
+                let account_slot = account_accessor.get_loaded_account(|loaded_account| {
+                    (pubkey, loaded_account.take_account(), slot)
+                });
                 scan_func(account_slot)
             },
             config,
@@ -3712,7 +3689,7 @@ impl AccountsDb {
         ancestors: &Ancestors,
         pubkey: &'a Pubkey,
         clone_in_lock: bool,
-    ) -> Option<(Slot, StorageLocation, Option<LoadedAccountAccessor<'a>>)> {
+    ) -> Option<(Slot, StorageLocation, Option<LoadedAccountAccessor>)> {
         self.accounts_index
             .get_with_and_then(pubkey, ancestors, true, |(slot, account_info)| {
                 let storage_location = account_info.storage_location();
@@ -3729,26 +3706,26 @@ impl AccountsDb {
         ancestors: &'a Ancestors,
         pubkey: &'a Pubkey,
         load_hint: LoadHint,
-    ) -> Option<(LoadedAccountAccessor<'a>, Slot)> {
+    ) -> Option<(LoadedAccountAccessor, Slot)> {
         // Happy drawing time! :)
         //
-        // Reader                               | Accessed data source for cached/stored
+        // Reader                               | Accessed data source for stored
         // -------------------------------------+----------------------------------
-        // R1 read_index_for_accessor_or_load_slow()| cached/stored: index
+        // R1 read_index_for_accessor_or_load_slow()| stored: index
         //          |                           |
         //        <(store_id, offset, ..)>      |
         //          V                           |
-        // R2 retry_to_get_account_accessor()/  | cached: map of caches & entry for (slot, pubkey)
-        //        get_account_accessor()        | stored: map of stores
+        // R2 retry_to_get_account_accessor()/  | stored: map of stores
+        //        get_account_accessor()        |
         //          |                           |
         //        <Accessor>                    |
         //          V                           |
-        // R3 check_and_get_loaded_account()/   | cached: N/A (note: basically noop unwrap)
-        //        get_loaded_account()          | stored: store's entry for slot
+        // R3 check_and_get_loaded_account()/   | stored: store's entry for slot
+        //        get_loaded_account()          |
         //          |                           |
         //        <LoadedAccount>               |
         //          V                           |
-        // R4 take_account()                    | cached/stored: entry of cache/storage for (slot, pubkey)
+        // R4 take_account()                    | stored: entry of storage for (slot, pubkey)
         //          |                           |
         //        <AccountSharedData>           |
         //          V                           |
@@ -3831,42 +3808,6 @@ impl AccountsDb {
         // Remarks for purger: So, for any reading operations, it's a race condition
         // where P2 happens between R1 and R2. In that case, retrying from R1 is safu.
         // In that case, we may bail at index read retry when P3 hasn't been run
-        //
-        // Remover                                | Accessed data source for cached
-        // ---------------------------------------+----------------------------------
-        // M1 purge_slots_from_cache_and_store()  | index
-        //        (via remove_unrooted_slots())   | (removes old entries for slot)
-        //          |                             |
-        //          V                             |
-        // M2 purge_slots_from_cache_and_store()  | map of caches
-        //        (via remove_unrooted_slots())   | (removes old slot cache)
-        //          |                             |
-        //          V                             |
-        // M3 store_accounts_cached()             | map of caches (creates new Cached entry)
-        //          |                             |
-        //          V                             |
-        // M4 update index                        | index (writes fresh Cached entry)
-        //                                        V
-        //
-        // Remarks for remover: This scenario arises when remove_unrooted_slots()
-        // purges a cached slot (e.g. duplicate-block detection abandoning a fork)
-        // and the same slot is subsequently re-stored (e.g. re-processed by banking
-        // stage on a fresh fork).
-        //
-        // M1 removes the index entries before M2 removes the cache (see
-        // purge_slots_from_cache_and_store). M3 writes the fresh cache entry
-        // before M4 writes the fresh index entry, so any reader who observes M4's
-        // index entry is guaranteed to find M3's cache entry too.
-        //
-        // The observable race is M2 happening between R1 and R2, with M3+M4
-        // completing before the subsequent index re-read:
-        //   R1  → (slot, Cached)   [old index entry, before M1]
-        //   M1/M2 remove old index and cache entries
-        //   M3/M4 write fresh cache and index entries
-        //   get_account_accessor() → Cached(None)  [old entry removed by M2]
-        //   re-read index         → (slot, Cached) [fresh M4 entry, same store_id]
-        // In that case, retrying from R1 is safe: the next get_account_accessor()
-        // on the fresh (slot, Cached) entry is guaranteed to return Cached(Some(_)).
 
         #[cfg(test)]
         {
@@ -3879,46 +3820,9 @@ impl AccountsDb {
         loop {
             let account_accessor = self.get_account_accessor(slot, &storage_location);
             match account_accessor {
-                LoadedAccountAccessor::Cached(Some(_)) | LoadedAccountAccessor::Stored(Some(_)) => {
+                LoadedAccountAccessor::Stored(Some(_)) => {
                     // Great! There was no race, just return :) This is the most usual situation
                     return Some((account_accessor, slot));
-                }
-                LoadedAccountAccessor::Cached(None) => {
-                    num_acceptable_failed_iterations += 1;
-                    // Cache was flushed in between checking the index and retrieving from the cache,
-                    // so retry. This works because in accounts cache flush, an account is written to
-                    // storage *before* it is removed from the cache
-                    match load_hint {
-                        LoadHint::FixedMaxRoot => {
-                            // Under FixedMaxRoot, Cached(None) can occur at most once per load.
-                            // There are two ways the initial cache miss can happen:
-                            //
-                            // 1) The write-cache entry for the located slot was being concurrently
-                            //    flushed to storage.  After re-reading the index the entry will
-                            //    have moved to Stored, so the next get_account_accessor() call
-                            //    succeeds via Stored(Some(_)).  With a fixed root the index
-                            //    references a single ancestor slot for a given account; that
-                            //    slot is flushed exactly once, so this race cannot repeat.
-                            //
-                            // 2) A parent slot was removed by remove_unrooted_slots() and
-                            //    concurrently re-stored (the M1-M4 "Remover" sequence above).
-                            //    We read the stale index entry (R1, before M1 ran), found the
-                            //    old cache entry already removed (M2), and got Cached(None).
-                            //    After re-reading the index we see the fresh M4 entry, and the
-                            //    next get_account_accessor() call is guaranteed to find M3's
-                            //    cache entry.  For a second Cached(None) to occur here the
-                            //    same parent slot would have to complete the full
-                            //    remove-replay-confirm-duplicate cycle a second time between
-                            //    consecutive loop iterations — a far stricter requirement than
-                            //    the first miss, which only needed a single remove + re-store.
-                            assert!(num_acceptable_failed_iterations <= 1);
-                        }
-                        LoadHint::Unspecified => {
-                            // Because newer root can be added to the index (= not fixed),
-                            // multiple flush race conditions can be observed under very rare
-                            // condition, at least theoretically
-                        }
-                    }
                 }
                 LoadedAccountAccessor::Stored(None) => {
                     match load_hint {
@@ -4113,11 +4017,11 @@ impl AccountsDb {
     }
 
     #[cfg_attr(test, qualifiers(pub(crate)))]
-    fn get_account_accessor<'a>(
-        &'a self,
+    fn get_account_accessor(
+        &self,
         slot: Slot,
         storage_location: &StorageLocation,
-    ) -> LoadedAccountAccessor<'a> {
+    ) -> LoadedAccountAccessor {
         match storage_location {
             StorageLocation::AppendVec(store_id, offset) => {
                 let maybe_storage_entry = self
@@ -5175,7 +5079,6 @@ impl AccountsDb {
 
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
-                debug_assert!(!info.is_cached());
                 let old_slot = accounts.slot(i);
                 let pubkey = accounts.pubkey(i);
                 self.accounts_index.upsert(
@@ -5251,7 +5154,6 @@ impl AccountsDb {
         let update = |start, end| {
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
-                debug_assert!(!info.is_cached());
                 let old_slot = accounts.slot(i);
                 let pubkey = accounts.pubkey(i);
                 self.accounts_index
@@ -5355,8 +5257,6 @@ impl AccountsDb {
         let mut new_shrink_candidates = ShrinkCandidates::default();
         let mut measure = Measure::start("remove");
         for (slot, account_info) in reclaims {
-            // No cached accounts should make it here
-            assert!(!account_info.is_cached());
             reclaimed_offsets
                 .entry(*slot)
                 .or_default()
@@ -5499,7 +5399,7 @@ impl AccountsDb {
                             // Let's handle the special case - after unref, the result is a single ref zero lamport account.
                             if slot_list.len() == 1 && ref_count == 2 {
                                 if let Some((slot_alive, acct_info)) = slot_list.first() {
-                                    if acct_info.is_zero_lamport() && !acct_info.is_cached() {
+                                    if acct_info.is_zero_lamport() {
                                         self.zero_lamport_single_ref_found(
                                             *slot_alive,
                                             acct_info.offset(),
@@ -6021,7 +5921,6 @@ impl AccountsDb {
                     (false, is_single_ref)
                 });
                 if is_single_ref {
-                    debug_assert!(!account_info.is_cached());
                     debug_assert_eq!(account_info.store_id(), storage.id());
                     if storage.insert_zero_lamport_single_ref_account_offset(account_info.offset())
                     {

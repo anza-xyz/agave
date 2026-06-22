@@ -229,7 +229,6 @@ console = "0.16.3"
 const_format = "0.2.36"
 criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
-crossbeam-queue = "0.3.12"
 crossbeam-utils = "0.8.21"
 csv = "1.4.0"
 ctrlc = "3.5.2"
@@ -242,7 +241,7 @@ digest = "0.10.7"
 dirs-next = "2.0.0"
 dyn-clone = "1.0.20"
 eager = "0.1.0"
-ed25519-dalek = "=1.0.1"
+ed25519-dalek = "2.2"
 enum-iterator = "2.3.0"
 env_logger = "0.11.10"
 fast-math = "0.1"
@@ -323,7 +322,7 @@ rand = "0.9.4"
 rand_chacha = "0.9.0"
 rayon = "1.12.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.12.3"
+regex = "1.12.4"
 reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
@@ -397,7 +396,7 @@ solana-entry = { path = "entry", version = "=4.2.0-alpha.0", features = ["agave-
 solana-epoch-info = "3.1.0"
 solana-epoch-rewards = "3.0.2"
 solana-epoch-rewards-hasher = "3.1.0"
-solana-epoch-schedule = "3.1.0"
+solana-epoch-schedule = "3.1.1"
 solana-faucet = { path = "faucet", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
 solana-fee = { path = "fee", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -411,10 +410,10 @@ solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hard-forks = "3.1.0"
+solana-hard-forks = "3.1.1"
 solana-hash = "4.4.0"
 solana-hash-512 = "1.1.0"
-solana-inflation = "3.1.0"
+solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.3.0"
 solana-instructions-sysvar = "3.0.0"
@@ -526,7 +525,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "vote", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-vote-interface = "6.0.0"
+solana-vote-interface = "6.0.1"
 solana-vote-program = { path = "programs/vote", version = "=4.2.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-wincode-varint = "1.0.0"
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

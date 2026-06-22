@@ -11,11 +11,14 @@ use {
 
 pub mod certificate;
 pub mod consensus_message;
+pub mod finalized_slot;
 pub mod fraction;
 pub mod metric_types;
 pub mod migration;
 pub mod reward_certificate;
+pub mod unverified_vote_message;
 pub mod vote;
+pub mod wire;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

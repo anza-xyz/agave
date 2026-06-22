@@ -6,14 +6,14 @@
 use {
     agave_bls_sigverify::{
         bls_vote_sigverify::{
-            VotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
+            UnverifiedVotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
             verify_individual_votes, verify_votes_optimistic,
         },
         stats::SigVerifyVoteStats,
     },
     agave_votor_messages::{
-        consensus_message::{Block, VoteMessage},
-        vote::Vote,
+        consensus_message::Block, unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
+        wire::get_vote_payload_to_sign,
     },
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -47,41 +47,46 @@ fn get_matrix_params() -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
-fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<VotePayload> {
+fn generate_test_data(
+    shred_version: u16,
+    num_distinct_messages: usize,
+    batch_size: usize,
+) -> Vec<UnverifiedVotePayload> {
     assert!(
         batch_size >= num_distinct_messages,
         "Batch size must be >= distinct messages"
     );
 
     // Pre-calculate the payloads to ensure exact distinctness
-    let base_payloads: Vec<Arc<Vec<u8>>> = (0..num_distinct_messages)
+    let base_payloads = (0..num_distinct_messages)
         .map(|i| {
             let slot = (i as u64).saturating_add(100);
             let vote = Vote::new_notarization_vote(Block {
                 slot,
                 block_id: Hash::new_unique(),
             });
-            Arc::new(bincode::serialize(&vote).unwrap())
+            let payload = get_vote_payload_to_sign(&vote, shred_version);
+            (vote, Arc::new(payload))
         })
-        .collect();
+        .collect::<Vec<_>>();
 
     let mut votes_to_verify = Vec::with_capacity(batch_size);
 
     for i in 0..batch_size {
-        let payload = &base_payloads[i.rem_euclid(num_distinct_messages)];
+        let (vote, payload) = &base_payloads[i.rem_euclid(num_distinct_messages)];
 
         let bls_keypair = BLSKeypair::new();
-        let vote: Vote = bincode::deserialize(payload).unwrap();
 
         let signature = bls_keypair.sign(payload);
 
-        let vote_message = VoteMessage {
-            vote,
+        let vote_message = UnverifiedVoteMessage {
+            vote: *vote,
             signature: signature.into(),
             rank: 0,
+            shred_version,
         };
 
-        votes_to_verify.push(VotePayload {
+        votes_to_verify.push(UnverifiedVotePayload {
             vote_message,
             sender_bls_pubkey: bls_keypair.public,
             sender_vote_account_pubkey: Keypair::new().pubkey(),
@@ -135,12 +140,13 @@ fn bench_verify_single_signature_with_prepared_message(c: &mut Criterion) {
 // Optimistic Verification - aggregates the public keys and signatures first before verifying.
 // Depends on both batch size and message distinctness due to pairing checks.
 fn bench_verify_votes_optimistic(c: &mut Criterion) {
+    let shred_version = 1234;
     let mut group = c.benchmark_group("verify_votes_optimistic");
     let mut stats = SigVerifyVoteStats::default();
     let thread_pool = get_thread_pool();
 
     for (batch_size, num_distinct) in get_matrix_params() {
-        let votes = generate_test_data(num_distinct, batch_size);
+        let votes = generate_test_data(shred_version, num_distinct, batch_size);
         let label = format!("msgs_{num_distinct}/batch_{batch_size}");
 
         group.bench_function(&label, |b| {
@@ -157,11 +163,12 @@ fn bench_verify_votes_optimistic(c: &mut Criterion) {
 // Public Key Aggregation
 // Depends on message distinctness because keys are grouped by messages.
 fn bench_aggregate_pubkeys(c: &mut Criterion) {
+    let shred_version = 1234;
     let mut group = c.benchmark_group("aggregate_pubkeys");
     let mut stats = SigVerifyVoteStats::default();
 
     for (batch_size, num_distinct) in get_matrix_params() {
-        let votes = generate_test_data(num_distinct, batch_size);
+        let votes = generate_test_data(shred_version, num_distinct, batch_size);
         let label = format!("msgs_{num_distinct}/batch_{batch_size}");
 
         group.bench_function(&label, |b| {
@@ -178,12 +185,13 @@ fn bench_aggregate_pubkeys(c: &mut Criterion) {
 // Signature Aggregation
 // Pure G1 addition - message distinctness is irrelevant.
 fn bench_aggregate_signatures(c: &mut Criterion) {
+    let shred_version = 1234;
     let mut group = c.benchmark_group("aggregate_signatures");
 
     for &batch_size in BATCH_SIZES {
         // Use 1 distinct message just to generate valid data cheaply.
         // It doesn't affect signature aggregation performance.
-        let votes = generate_test_data(1, batch_size);
+        let votes = generate_test_data(shred_version, 1, batch_size);
         let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {
@@ -199,12 +207,13 @@ fn bench_aggregate_signatures(c: &mut Criterion) {
 // Individual Verification - verifies each signatures in parallel threads
 // Message distinctness is irrelevant.
 fn bench_verify_individual_votes(c: &mut Criterion) {
+    let shred_version = 134;
     let mut group = c.benchmark_group("verify_votes_fallback");
     let thread_pool = get_thread_pool();
 
     for &batch_size in BATCH_SIZES {
         // Distinctness doesn't affect the cost of N individual verifications.
-        let votes = generate_test_data(1, batch_size);
+        let votes = generate_test_data(shred_version, 1, batch_size);
         let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {

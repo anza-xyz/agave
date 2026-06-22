@@ -1134,6 +1134,7 @@ impl Validator {
             blockstore_root_scan,
             &snapshot_controller,
             config,
+            cluster_info.my_shred_version(),
         );
 
         maybe_warp_slot(
@@ -2485,6 +2486,7 @@ pub struct ProcessBlockStore<'a> {
     config: &'a ValidatorConfig,
     tower: Option<Tower>,
     vote_history: Option<VoteHistory>,
+    my_shred_version: u16,
 }
 
 impl<'a> ProcessBlockStore<'a> {
@@ -2503,6 +2505,7 @@ impl<'a> ProcessBlockStore<'a> {
         blockstore_root_scan: BlockstoreRootScan,
         snapshot_controller: &'a SnapshotController,
         config: &'a ValidatorConfig,
+        my_shred_version: u16,
     ) -> Self {
         Self {
             id,
@@ -2520,6 +2523,7 @@ impl<'a> ProcessBlockStore<'a> {
             config,
             tower: None,
             vote_history: None,
+            my_shred_version,
         }
     }
 
@@ -2555,6 +2559,7 @@ impl<'a> ProcessBlockStore<'a> {
         blockstore_processor::process_blockstore_from_root(
             self.blockstore,
             self.bank_forks,
+            self.my_shred_version,
             self.leader_schedule_cache,
             self.process_options,
             self.transaction_status_sender,

@@ -7,7 +7,10 @@ use {
         utils::send_certs_to_pool,
     },
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
-    agave_votor_messages::certificate::{Certificate, CertificateType},
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        unverified_vote_message::UnverifiedCertificate,
+    },
     crossbeam_channel::Sender,
     log::info,
     rayon::{
@@ -23,9 +26,8 @@ use {
     thiserror::Error,
 };
 
-#[derive(Clone, Debug)]
 pub(super) struct CertPayload {
-    pub(super) cert: Certificate,
+    pub(super) cert: UnverifiedCertificate,
     pub(super) sender_identity_pubkey: Pubkey,
 }
 
@@ -98,17 +100,16 @@ fn verify_certs(
         certs
             .into_par_iter()
             .map(|cert_payload| {
-                let res = verify_cert(&cert_payload.cert, root_bank);
-                (cert_payload, res)
+                let res = verify_cert(cert_payload.cert, root_bank);
+                (res, cert_payload.sender_identity_pubkey)
             })
             .collect::<Vec<_>>()
     });
 
     let certs = verified
         .into_iter()
-        .filter_map(|(cert_payload, res)| match res {
-            Ok(()) => {
-                let cert = cert_payload.cert;
+        .filter_map(|(res, sender_identity_pubkey)| match res {
+            Ok(cert) => {
                 if !verified_certs_set.insert(cert.cert_type) {
                     stats.unnecessary_certs_verified += 1;
                 }
@@ -117,12 +118,12 @@ fn verify_certs(
             Err(e) => {
                 match &e {
                     CertVerifyError::CertVerifyFailed(_) => {
-                        if banlist.ban(cert_payload.sender_identity_pubkey, BAN_TIMEOUT) {
+                        if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
                             stats.already_banned += 1;
                         } else {
                             info!(
-                                "bls_cert_sigverify: banned sender={} due to error {e}",
-                                cert_payload.sender_identity_pubkey
+                                "bls_cert_sigverify: banned sender={sender_identity_pubkey} due \
+                                 to error {e}"
                             );
                         }
                     }
@@ -144,7 +145,10 @@ fn verify_certs(
     SigVerifiedBatch::Certificates(certs)
 }
 
-fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyError> {
+fn verify_cert(
+    cert: UnverifiedCertificate,
+    root_bank: &Bank,
+) -> Result<Certificate, CertVerifyError> {
     let cert_slot = cert.cert_type.slot();
     let root_slot = root_bank.slot();
     if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
@@ -153,6 +157,6 @@ fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyErr
             root_slot,
         });
     }
-    root_bank.verify_certificate(cert)?;
-    Ok(())
+    let cert = root_bank.verify_certificate(cert)?;
+    Ok(cert)
 }

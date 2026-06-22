@@ -1,10 +1,11 @@
 use {
     super::{
         Bank, CachedVoteAccounts, CalculateValidatorRewardsResult, EpochRewardCalculateParamInfo,
-        PartitionedRewardsCalculation, PartitionedStakeReward, PartitionedStakeRewards,
-        REWARD_CALCULATION_NUM_BLOCKS, RewardCommission, RewardCommissionAccounts,
-        RewardCommissionAccountsStorable, RewardCommissionLamportAmounts, RewardCommissions,
-        StakeRewardCalculation, epoch_rewards_hasher::hash_rewards_into_partitions,
+        InflationReward, PartitionedRewardsCalculation, PartitionedStakeReward,
+        PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS, RewardCommission,
+        RewardCommissionAccounts, RewardCommissionAccountsStorable, RewardCommissionLamportAmounts,
+        RewardCommissions, StakeRewardCalculation,
+        epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
         alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
@@ -42,8 +43,8 @@ use {
 };
 
 #[derive(Debug)]
-struct DelegationRewards {
-    stake_reward: PartitionedStakeReward,
+struct InflationRewardWithCommission {
+    inflation: InflationReward,
     commission_pubkey: Pubkey,
     reward_commission: RewardCommission,
 }
@@ -535,7 +536,7 @@ impl Bank {
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
         use_fixed_point_stake_math: bool,
-    ) -> Option<DelegationRewards> {
+    ) -> Option<InflationRewardWithCommission> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
             // inner
@@ -550,7 +551,6 @@ impl Bank {
             distribution_epoch_vote_accounts,
         } = cached_vote_accounts;
 
-        let stake_pubkey = *stake_pubkey;
         let vote_pubkey = stake_account.delegation().voter_pubkey;
 
         let current_lamports = stake_account.lamports();
@@ -575,8 +575,7 @@ impl Bank {
                 );
                 if stake_was_adjusted {
                     debug!("delegation for stake {stake_pubkey} was adjusted");
-                    let stake_reward = PartitionedStakeReward {
-                        stake_pubkey,
+                    let inflation = InflationReward {
                         stake,
                         stake_reward: 0,
                         commission_bps: (!custom_commission_collector).then_some(0),
@@ -590,8 +589,8 @@ impl Bank {
                         burned_lamports: 0,
                         is_vote_account: false,
                     };
-                    return Some(DelegationRewards {
-                        stake_reward,
+                    return Some(InflationRewardWithCommission {
+                        inflation,
                         commission_pubkey: vote_pubkey,
                         reward_commission,
                     });
@@ -647,8 +646,7 @@ impl Bank {
             minimum_lamports,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
-                let stake_reward = PartitionedStakeReward {
-                    stake_pubkey,
+                let inflation = InflationReward {
                     stake,
                     stake_reward,
                     commission_bps: (!custom_commission_collector).then_some(commission_bps),
@@ -667,8 +665,8 @@ impl Bank {
                     burned_lamports: 0,
                     is_vote_account,
                 };
-                Some(DelegationRewards {
-                    stake_reward,
+                Some(InflationRewardWithCommission {
+                    inflation,
                     commission_pubkey,
                     reward_commission,
                 })
@@ -741,14 +739,17 @@ impl Bank {
 
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
                         Some(res) => {
-                            let DelegationRewards {
-                                stake_reward,
+                            let InflationRewardWithCommission {
+                                inflation,
                                 commission_pubkey,
                                 reward_commission,
                             } = res;
-                            let stakers_reward = stake_reward.stake_reward;
+                            let stakers_reward = inflation.stake_reward;
                             (
-                                Some(stake_reward),
+                                Some(PartitionedStakeReward {
+                                    stake_pubkey: **stake_pubkey,
+                                    inflation,
+                                }),
                                 Some((stakers_reward, commission_pubkey, reward_commission)),
                             )
                         }
@@ -2074,10 +2075,12 @@ mod tests {
             stake.credits_observed = vote_state.credits();
             stake.delegation.stake += stake_reward;
             PartitionedStakeReward {
-                stake,
                 stake_pubkey,
-                stake_reward,
-                commission_bps: None,
+                inflation: InflationReward {
+                    stake,
+                    stake_reward,
+                    commission_bps: None,
+                },
             }
         };
         assert_eq!(
@@ -2443,8 +2446,8 @@ mod tests {
         assert_eq!(original_rewards.len(), 2);
         let (paid_index, paid_reward) = original_rewards[0];
         let (unpaid_index, unpaid_reward) = original_rewards[1];
-        assert!(paid_reward.stake_reward > 0);
-        assert!(unpaid_reward.stake_reward > 0);
+        assert!(paid_reward.inflation.stake_reward > 0);
+        assert!(unpaid_reward.inflation.stake_reward > 0);
 
         // Force exactly one stake reward to be distributed before simulating
         // snapshot restore. That write updates StakesCache with a larger
@@ -2468,7 +2471,7 @@ mod tests {
             .expect("unpaid stake reward must still be pending after recalculation");
 
         assert_eq!(
-            unpaid_reward.stake_reward, recalculated_unpaid_reward.stake_reward,
+            unpaid_reward.inflation.stake_reward, recalculated_unpaid_reward.inflation.stake_reward,
             "recalculation after partial distribution must use the same AG delegated stake \
              denominator as the original epoch-boundary calculation"
         );

@@ -49,6 +49,7 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
+    solana_shred_version::compute_shred_version,
     solana_signature::Signature,
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
@@ -918,6 +919,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         None,
     );
     let bank0_slot = bank0.slot();
+    let hard_forks = bank0.hard_forks();
     let bank_forks = BankForks::new_rw_arc(bank0);
 
     info!("Processing ledger for slot 0...");
@@ -928,6 +930,7 @@ pub(crate) fn process_blockstore_for_bank_0(
             .unwrap()
             .get_with_scheduler(bank0_slot)
             .unwrap(),
+        compute_shred_version(&genesis_config.hash(), Some(&hard_forks)),
         blockstore,
         &replay_tx_thread_pool,
         opts,
@@ -944,6 +947,7 @@ pub(crate) fn process_blockstore_for_bank_0(
 pub fn process_blockstore_from_root(
     blockstore: &Blockstore,
     bank_forks: &RwLock<BankForks>,
+    shred_version: u16,
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -1001,6 +1005,7 @@ pub fn process_blockstore_from_root(
         let replay_tx_thread_pool = create_thread_pool(num_cpus::get());
         load_frozen_forks(
             bank_forks,
+            shred_version,
             &start_slot_meta,
             blockstore,
             &replay_tx_thread_pool,
@@ -1118,6 +1123,7 @@ fn verify_ticks(
 fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
+    shred_version: u16,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
@@ -1143,6 +1149,7 @@ fn confirm_full_slot(
     confirm_slot(
         blockstore,
         bank,
+        shred_version,
         replay_tx_thread_pool,
         &mut confirmation_timing,
         progress,
@@ -1668,6 +1675,7 @@ impl AsyncVerificationProgress {
 pub fn confirm_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
+    shred_version: u16,
     replay_tx_thread_pool: &ThreadPool,
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
@@ -1688,6 +1696,7 @@ pub fn confirm_slot(
         true => confirm_slot_with_components(
             blockstore,
             bank,
+            shred_version,
             replay_tx_thread_pool,
             timing,
             progress,
@@ -1771,6 +1780,7 @@ fn confirm_slot_with_entries(
 fn confirm_slot_with_components(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
+    shred_version: u16,
     replay_tx_thread_pool: &ThreadPool,
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
@@ -1887,6 +1897,7 @@ fn confirm_slot_with_components(
                         .on_marker(
                             bank.clone_without_scheduler(),
                             parent_bank,
+                            shred_version,
                             marker,
                             allow_initial_update_parent,
                             finalization_cert_sender,
@@ -2173,6 +2184,7 @@ fn confirm_slot_entries(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn process_bank_0(
     bank0: &BankWithScheduler,
+    shred_version: u16,
     blockstore: &Blockstore,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
@@ -2185,6 +2197,7 @@ fn process_bank_0(
     confirm_full_slot(
         blockstore,
         bank0,
+        shred_version,
         replay_tx_thread_pool,
         opts,
         &mut progress,
@@ -2390,6 +2403,7 @@ pub fn set_alpenglow_ticks(bank: &Bank, migration_status: &MigrationStatus) {
 #[allow(clippy::too_many_arguments)]
 fn load_frozen_forks(
     bank_forks: &RwLock<BankForks>,
+    shred_version: u16,
     start_slot_meta: &SlotMeta,
     blockstore: &Blockstore,
     replay_tx_thread_pool: &ThreadPool,
@@ -2487,6 +2501,7 @@ fn load_frozen_forks(
             if let Err(error) = process_single_slot(
                 blockstore,
                 &bank,
+                shred_version,
                 replay_tx_thread_pool,
                 opts,
                 &mut progress,
@@ -2804,6 +2819,7 @@ fn reset_dead_if_primary_access(blockstore: &Blockstore, slot: Slot) {
 pub fn process_single_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
+    shred_version: u16,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
@@ -2835,6 +2851,7 @@ pub fn process_single_slot(
     confirm_full_slot(
         blockstore,
         bank,
+        shred_version,
         replay_tx_thread_pool,
         opts,
         progress,
@@ -3001,6 +3018,7 @@ pub mod tests {
             consensus_message::Block,
         },
         assert_matches::assert_matches,
+        crossbeam_channel::bounded,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
@@ -3126,6 +3144,7 @@ pub mod tests {
         process_blockstore_from_root(
             blockstore,
             &bank_forks,
+            compute_shred_version(&genesis_config.hash(), None),
             &leader_schedule_cache,
             opts,
             None,
@@ -4932,6 +4951,7 @@ pub mod tests {
         let replay_tx_thread_pool = create_thread_pool(1);
         process_bank_0(
             &bank0,
+            compute_shred_version(&genesis_config.hash(), None),
             &blockstore,
             &replay_tx_thread_pool,
             &opts,
@@ -4947,6 +4967,7 @@ pub mod tests {
         confirm_full_slot(
             &blockstore,
             &bank1,
+            compute_shred_version(&genesis_config.hash(), None),
             &replay_tx_thread_pool,
             &opts,
             &mut ConfirmationProgress::new(bank0_last_blockhash),
@@ -4965,6 +4986,7 @@ pub mod tests {
         process_blockstore_from_root(
             &blockstore,
             &bank_forks,
+            compute_shred_version(&genesis_config.hash(), None),
             &leader_schedule_cache,
             &opts,
             None,
@@ -5245,7 +5267,7 @@ pub mod tests {
             })
             .collect();
         let entry = next_entry(&bank_1_blockhash, 1, vote_txs);
-        let (replay_vote_sender, replay_vote_receiver) = crossbeam_channel::unbounded();
+        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
         let _ = process_entries_for_tests(
             &BankWithScheduler::new_without_scheduler(bank1),
             vec![entry],
@@ -5618,8 +5640,7 @@ pub mod tests {
         bank.transfer(LAMPORTS_PER_SOL, &mint_keypair, &keypair2.pubkey())
             .unwrap();
 
-        let (transaction_status_sender, transaction_status_receiver) =
-            crossbeam_channel::unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let transaction_status_sender = TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,
@@ -5940,7 +5961,7 @@ pub mod tests {
             transaction_indexes: vec![],
         };
         let mut timing = ExecuteTimings::default();
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = bounded(1024);
 
         assert_eq!(bank.transaction_count(), 0);
         assert_eq!(bank.transaction_error_count(), 0);
@@ -6242,25 +6263,24 @@ pub mod tests {
         );
         let bank1 = bank_forks.write().unwrap().insert(bank1);
 
-        assert!(
-            confirm_slot(
-                &blockstore,
-                &bank1,
-                &replay_tx_thread_pool,
-                &mut ConfirmationTiming::default(),
-                &mut ConfirmationProgress::new(bank0.last_blockhash()),
-                false,
-                None,
-                None,
-                None,
-                None,
-                false,
-                None,
-                None,
-                &MigrationStatus::default(),
-            )
-            .is_err()
-        );
+        confirm_slot(
+            &blockstore,
+            &bank1,
+            compute_shred_version(&genesis_config.hash(), None),
+            &replay_tx_thread_pool,
+            &mut ConfirmationTiming::default(),
+            &mut ConfirmationProgress::new(bank0.last_blockhash()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            &MigrationStatus::default(),
+        )
+        .unwrap_err();
     }
 
     #[test]
@@ -6279,25 +6299,24 @@ pub mod tests {
         );
         let bank1 = bank_forks.write().unwrap().insert(bank1);
 
-        assert!(
-            confirm_slot(
-                &blockstore,
-                &bank1,
-                &replay_tx_thread_pool,
-                &mut ConfirmationTiming::default(),
-                &mut ConfirmationProgress::new(bank0.last_blockhash()),
-                true,
-                None,
-                None,
-                None,
-                None,
-                false,
-                None,
-                None,
-                &MigrationStatus::post_migration_status(),
-            )
-            .is_ok()
-        );
+        confirm_slot(
+            &blockstore,
+            &bank1,
+            compute_shred_version(&genesis_config.hash(), None),
+            &replay_tx_thread_pool,
+            &mut ConfirmationTiming::default(),
+            &mut ConfirmationProgress::new(bank0.last_blockhash()),
+            true,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            &MigrationStatus::post_migration_status(),
+        )
+        .unwrap();
     }
 
     #[test]

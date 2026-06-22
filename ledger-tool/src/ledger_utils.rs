@@ -43,6 +43,7 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_utils,
     },
+    solana_shred_version::compute_shred_version,
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
@@ -460,10 +461,15 @@ pub fn load_and_process_ledger(
     };
     let accounts_background_service =
         AccountsBackgroundService::new(bank_forks.clone(), exit.clone(), abs_request_handler);
+    let shred_version = {
+        let hard_forks = bank_forks.read().unwrap().root_bank().hard_forks();
+        compute_shred_version(&genesis_config.hash(), Some(&hard_forks))
+    };
 
     let result = blockstore_processor::process_blockstore_from_root(
         blockstore.as_ref(),
         &bank_forks,
+        shred_version,
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),

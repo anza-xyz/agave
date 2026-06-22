@@ -12,8 +12,9 @@ edition = { workspace = true }
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "solana-runtime/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
+    "solana-perf/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
 ]
 
 [dependencies]

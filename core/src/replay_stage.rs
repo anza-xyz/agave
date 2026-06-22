@@ -995,6 +995,7 @@ impl ReplayStage {
                     (r_bank_forks.ancestors(), r_bank_forks.descendants())
                 };
                 let new_frozen_slots = Self::process_active_banks(
+                    cluster_info.my_shred_version(),
                     &process_active_banks_context,
                     &mut progress,
                     &mut async_verification_freelist,
@@ -1213,6 +1214,7 @@ impl ReplayStage {
                     if last_genesis_vote_refresh_time.elapsed() > GENESIS_VOTE_REFRESH
                         && migration_status.is_in_migration()
                         && Self::maybe_send_genesis_vote(
+                            cluster_info.my_shred_version(),
                             migration_status.as_ref(),
                             bank_forks.as_ref(),
                             vote_account,
@@ -1736,6 +1738,7 @@ impl ReplayStage {
     /// If we have an eligible genesis block, send out a genesis vote
     /// Returns false if no eligible block was found
     fn maybe_send_genesis_vote(
+        my_shred_version: u16,
         migration_status: &MigrationStatus,
         bank_forks: &RwLock<BankForks>,
         vote_account: Pubkey,
@@ -1754,6 +1757,7 @@ impl ReplayStage {
             vote,
             bank_forks.read().unwrap().root_bank().as_ref(),
             vote_account,
+            my_shred_version,
             identity_keypair,
             authorized_voter_keypairs,
             None,
@@ -2974,6 +2978,7 @@ impl ReplayStage {
     }
 
     fn replay_blockstore_into_bank(
+        my_shred_version: u16,
         process_active_banks_context: &ProcessActiveBanksContext,
         bank: &BankWithScheduler,
         replay_stats: &RwLock<ReplaySlotStats>,
@@ -2989,6 +2994,7 @@ impl ReplayStage {
         blockstore_processor::confirm_slot(
             &process_active_banks_context.blockstore,
             bank,
+            my_shred_version,
             &process_active_banks_context.replay_tx_thread_pool,
             &mut w_replay_stats,
             &mut w_replay_progress,
@@ -3654,6 +3660,7 @@ impl ReplayStage {
     }
 
     fn replay_active_bank(
+        my_shred_version: u16,
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_tracker: BankReplayResultTracker,
         my_pubkey: &Pubkey,
@@ -3706,6 +3713,7 @@ impl ReplayStage {
 
         let mut replay_blockstore_time = Measure::start("replay_blockstore_into_bank");
         let blockstore_result = Self::replay_blockstore_into_bank(
+            my_shred_version,
             process_active_banks_context,
             &bank,
             &replay_stats,
@@ -3727,6 +3735,7 @@ impl ReplayStage {
     }
 
     fn replay_active_banks(
+        my_shred_version: u16,
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_trackers: Vec<BankReplayResultTracker>,
         replay_timing: &mut ReplayLoopTiming,
@@ -3750,6 +3759,7 @@ impl ReplayStage {
                                 );
                                 let (replay_result, replay_blockstore_us) =
                                     Self::replay_active_bank(
+                                        my_shred_version,
                                         process_active_banks_context,
                                         bank_replay_result_tracker,
                                         my_pubkey,
@@ -3778,6 +3788,7 @@ impl ReplayStage {
                         bank_replay_result_tracker.replay_result.bank_slot
                     );
                     let (replay_result, replay_blockstore_us) = Self::replay_active_bank(
+                        my_shred_version,
                         process_active_banks_context,
                         bank_replay_result_tracker,
                         my_pubkey,
@@ -4207,6 +4218,7 @@ impl ReplayStage {
 
     #[allow(clippy::too_many_arguments)]
     fn process_active_banks(
+        my_shred_version: u16,
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
@@ -4232,6 +4244,7 @@ impl ReplayStage {
 
         // Perform replay execution.
         let replay_result_vec = Self::replay_active_banks(
+            my_shred_version,
             process_active_banks_context,
             bank_replay_result_trackers,
             replay_timing,

@@ -3,7 +3,7 @@
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
-        bls_vote_sigverify::{VotePayload, verify_and_send_votes},
+        bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         rewards::rewards_wants_vote,
@@ -13,10 +13,11 @@ use {
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         certificate::CertificateType,
-        consensus_message::{ConsensusMessage, VoteMessage},
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
+        unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedVoteMessage},
+        wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     log::error,
@@ -210,18 +211,20 @@ impl SigVerifier {
         &mut self,
         batches: Vec<PacketBatch>,
         root_bank: &Bank,
-    ) -> (Vec<CertPayload>, Vec<VotePayload>) {
+    ) -> (Vec<CertPayload>, Vec<UnverifiedVotePayload>) {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes = Vec::new();
         let mut num_pkts = 0u64;
+        let my_shred_version = self.cluster_info.my_shred_version();
         for packet in batches.iter().flatten() {
             num_pkts = num_pkts.saturating_add(1);
             if packet.meta().discard() {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
-            let Ok(msg) = wincode::config::deserialize_exact(
+            // TODO(#13227): Enforce shred_version matching during deserialization
+            let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
                 packet.data(..).unwrap_or_default(),
                 packet_config(),
             ) else {
@@ -233,12 +236,18 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            match msg {
-                ConsensusMessage::Vote(vote) => {
+            let Some(decoded_msg) = DecodedWireConsensusMessage::try_new(msg, my_shred_version)
+            else {
+                self.stats.num_malformed_pkts += 1;
+                continue;
+            };
+
+            match decoded_msg {
+                DecodedWireConsensusMessage::Vote(vote) => {
                     if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
                         self.keep_vote(&vote, root_bank)
                     {
-                        votes.push(VotePayload {
+                        votes.push(UnverifiedVotePayload {
                             vote_message: vote,
                             sender_bls_pubkey,
                             sender_vote_account_pubkey,
@@ -247,7 +256,7 @@ impl SigVerifier {
                         });
                     }
                 }
-                ConsensusMessage::Certificate(cert) => {
+                DecodedWireConsensusMessage::Certificate(cert) => {
                     if cert.cert_type.slot() < root_slot {
                         self.stats.num_old_certs_received += 1;
                         continue;
@@ -274,25 +283,30 @@ impl SigVerifier {
     /// If this vote should be verified, then returns the sender's Pubkey and BlsPubkey.
     fn keep_vote(
         &mut self,
-        vote: &VoteMessage,
+        msg: &UnverifiedVoteMessage,
         root_bank: &Bank,
     ) -> Option<(Pubkey, PopVerified<BlsPubkeyAffine>)> {
         let root_slot = root_bank.slot();
-        let Some(rank_map) = root_bank.get_rank_map(vote.vote.slot()) else {
+        let Some(rank_map) = root_bank.get_rank_map(msg.vote.slot()) else {
             self.stats.discard_vote_no_epoch_stakes += 1;
             return None;
         };
         let entry = rank_map
-            .get_pubkey_stake_entry(vote.rank.into())
+            .get_pubkey_stake_entry(msg.rank.into())
             .or_else(|| {
                 self.stats.discard_vote_invalid_rank += 1;
                 None
             })?;
         let ret = Some((entry.vote_account_pubkey, entry.bls_pubkey));
-        if vote.vote.slot() > root_slot {
+        if msg.vote.slot() > root_slot {
             return ret;
         }
-        if rewards_wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
+        if rewards_wants_vote(
+            &self.cluster_info,
+            &self.leader_schedule,
+            root_slot,
+            &msg.vote,
+        ) {
             return ret;
         }
         self.stats.num_old_votes_received += 1;
@@ -345,6 +359,7 @@ mod tests {
             consensus_message::{Block, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
+            wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
         },
         bitvec::prelude::{BitVec, Lsb0},
         crossbeam_channel::{Receiver, TryRecvError, bounded},
@@ -354,7 +369,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{Packet, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacket, BytesPacketBatch, Packet, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -462,11 +477,12 @@ mod tests {
 
     fn create_signed_vote_message(
         validator_keypairs: &[ValidatorVoteKeypairs],
+        shred_version: u16,
         vote: Vote,
         rank: usize,
     ) -> VoteMessage {
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
-        let payload = wincode::serialize(&vote).expect("Failed to serialize vote");
+        let payload = get_vote_payload_to_sign(&vote, shred_version);
         let signature: Signature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
@@ -476,6 +492,7 @@ mod tests {
     }
 
     fn create_signed_certificate_message(
+        shred_version: u16,
         validator_keypairs: &[ValidatorVoteKeypairs],
         cert_type: CertificateType,
         ranks: &[usize],
@@ -485,7 +502,7 @@ mod tests {
         let vote = cert_type.to_source_vote();
         let vote_messages: Vec<VoteMessage> = ranks
             .iter()
-            .map(|&rank| create_signed_vote_message(validator_keypairs, vote, rank))
+            .map(|&rank| create_signed_vote_message(validator_keypairs, shred_version, vote, rank))
             .collect();
 
         builder
@@ -503,9 +520,13 @@ mod tests {
         }
     }
 
-    fn message_to_packet(message: &ConsensusMessage, remote_pubkey: Pubkey) -> Packet {
-        let mut packet = Packet::default();
-        packet.populate_packet(None, message).unwrap();
+    fn message_to_packet(
+        message: &ConsensusMessage,
+        shred_version: u16,
+        remote_pubkey: Pubkey,
+    ) -> BytesPacket {
+        let msg = VersionedWireConsensusMessage::new(message.clone(), shred_version);
+        let mut packet = BytesPacket::from_data(&msg).unwrap();
         packet.meta_mut().set_remote_pubkey(remote_pubkey);
         packet
     }
@@ -519,18 +540,26 @@ mod tests {
         let cert_type = CertificateType::Finalize(4);
         let vote_message1 = create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_finalization_vote(5),
             vote_rank1,
         );
-        let cert =
-            create_signed_certificate_message(&ctx.validator_keypairs, cert_type, &cert_ranks);
+        let cert = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
+            &ctx.validator_keypairs,
+            cert_type,
+            &cert_ranks,
+        );
         let messages1 = vec![
             ConsensusMessage::Vote(vote_message1),
             ConsensusMessage::Certificate(cert),
         ];
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages1))
+            .verify_and_send_batches(messages_to_batches(
+                &messages1,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
@@ -547,6 +576,7 @@ mod tests {
         let vote_rank2 = 3;
         let vote_message2 = create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_notarization_vote(Block {
                 slot: 6,
                 block_id: Hash::new_unique(),
@@ -556,7 +586,10 @@ mod tests {
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages2))
+            .verify_and_send_batches(messages_to_batches(
+                &messages2,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
@@ -574,6 +607,7 @@ mod tests {
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_notarization_fallback_vote(Block {
                 slot: 7,
                 block_id: Hash::new_unique(),
@@ -583,7 +617,10 @@ mod tests {
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages3))
+            .verify_and_send_batches(messages_to_batches(
+                &messages3,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
@@ -617,13 +654,17 @@ mod tests {
         // Send a packet with no epoch stakes
         let vote_message_no_stakes = create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_finalization_vote(5_000_000_000), // very high slot
             0,
         );
         let messages_no_stakes = vec![ConsensusMessage::Vote(vote_message_no_stakes)];
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages_no_stakes))
+            .verify_and_send_batches(messages_to_batches(
+                &messages_no_stakes,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
 
         assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes.0, 1);
@@ -638,7 +679,10 @@ mod tests {
             rank: 1000, // Invalid rank
         })];
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(&messages_invalid_rank))
+            .verify_and_send_batches(messages_to_batches(
+                &messages_invalid_rank,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
         assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank.0, 1);
 
@@ -647,15 +691,37 @@ mod tests {
     }
 
     #[test]
+    fn test_shred_version_mismatch() {
+        let mut ctx = TestContext::new();
+        let msgs = [ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version() + 1,
+            Vote::new_finalization_vote(5),
+            0,
+        ))];
+        // creating a packet with the wrong shred version
+        let packets = messages_to_batches(&msgs, ctx.verifier.cluster_info.my_shred_version() + 1);
+        ctx.verifier.verify_and_send_batches(packets).unwrap();
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.num_malformed_pkts.0, 1);
+    }
+
+    #[test]
     fn test_blssigverifier_send_packets_channel_full() {
         agave_logger::setup();
         let (channel_to_pool, pool_receiver) = crossbeam_channel::bounded(1);
         let mut ctx = TestContext::new_with_pool_channel(channel_to_pool, pool_receiver);
 
-        let msg1 =
-            create_signed_vote_message(&ctx.validator_keypairs, Vote::new_finalization_vote(5), 0);
+        let msg1 = create_signed_vote_message(
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_finalization_vote(5),
+            0,
+        );
         let msg2 = create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_notarization_fallback_vote(Block {
                 slot: 6,
                 block_id: Hash::new_unique(),
@@ -663,9 +729,10 @@ mod tests {
             2,
         );
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(
-                &ConsensusMessage::Vote(msg1.clone()),
-            )))
+            .verify_and_send_batches(messages_to_batches(
+                std::slice::from_ref(&ConsensusMessage::Vote(msg1.clone())),
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
 
         // The cap-1 channel is now full.  The second send hits Full and falls
@@ -684,9 +751,10 @@ mod tests {
         });
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(std::slice::from_ref(
-                &ConsensusMessage::Vote(msg2.clone()),
-            )))
+            .verify_and_send_batches(messages_to_batches(
+                std::slice::from_ref(&ConsensusMessage::Vote(msg2.clone())),
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
 
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
@@ -707,13 +775,15 @@ mod tests {
 
         let msg = ConsensusMessage::Vote(create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_finalization_vote(5),
             0,
         ));
         let messages = vec![msg];
-        let result = ctx
-            .verifier
-            .verify_and_send_batches(messages_to_batches(&messages));
+        let result = ctx.verifier.verify_and_send_batches(messages_to_batches(
+            &messages,
+            ctx.verifier.cluster_info.my_shred_version(),
+        ));
         assert!(result.is_err());
     }
 
@@ -723,14 +793,18 @@ mod tests {
 
         let message = ConsensusMessage::Vote(create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_finalization_vote(5),
             0,
         ));
-        let mut packet = message_to_packet(&message, Pubkey::new_unique());
+        let mut packet = message_to_packet(
+            &message,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Pubkey::new_unique(),
+        );
         packet.meta_mut().set_discard(true); // Manually discard
 
-        let packets = vec![packet];
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
+        let packet_batches = vec![BytesPacketBatch::from(vec![packet]).into()];
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -747,7 +821,8 @@ mod tests {
         let num_votes = 5;
         let mut packets = Vec::with_capacity(num_votes);
         let vote = Vote::new_skip_vote(42);
-        let vote_payload = wincode::serialize(&vote).expect("Failed to serialize vote");
+        let vote_payload =
+            get_vote_payload_to_sign(&vote, ctx.verifier.cluster_info.my_shred_version());
 
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
@@ -758,10 +833,14 @@ mod tests {
                 signature,
                 rank,
             });
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_packet(
+                &consensus_message,
+                ctx.verifier.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
+        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -785,12 +864,10 @@ mod tests {
         let mut packets = Vec::with_capacity(num_votes);
 
         let vote1 = Vote::new_skip_vote(42);
-        let _vote1_payload = wincode::serialize(&vote1).expect("Failed to serialize vote");
         let vote2 = Vote::new_notarization_vote(Block {
             slot: 43,
             block_id: Hash::new_unique(),
         });
-        let _vote2_payload = wincode::serialize(&vote2).expect("Failed to serialize vote");
 
         // Group 1 votes
         for (i, _) in ctx
@@ -801,10 +878,15 @@ mod tests {
         {
             let msg = ConsensusMessage::Vote(create_signed_vote_message(
                 &ctx.validator_keypairs,
+                ctx.verifier.cluster_info.my_shred_version(),
                 vote1,
                 i,
             ));
-            packets.push(message_to_packet(&msg, Pubkey::new_unique()));
+            packets.push(message_to_packet(
+                &msg,
+                ctx.verifier.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
         }
 
         // Group 2 votes
@@ -817,13 +899,18 @@ mod tests {
         {
             let msg = ConsensusMessage::Vote(create_signed_vote_message(
                 &ctx.validator_keypairs,
+                ctx.verifier.cluster_info.my_shred_version(),
                 vote2,
                 i,
             ));
-            packets.push(message_to_packet(&msg, Pubkey::new_unique()));
+            packets.push(message_to_packet(
+                &msg,
+                ctx.verifier.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
+        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -859,11 +946,15 @@ mod tests {
         let mut packets = Vec::with_capacity(num_votes);
 
         let vote1 = Vote::new_skip_vote(42);
-        let vote1_payload = wincode::serialize(&vote1).expect("Failed to serialize vote");
+        let vote1_payload =
+            get_vote_payload_to_sign(&vote1, ctx.verifier.cluster_info.my_shred_version());
         let vote2 = Vote::new_skip_vote(43);
-        let vote2_payload = wincode::serialize(&vote2).expect("Failed to serialize vote");
-        let invalid_payload =
-            wincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
+        let vote2_payload =
+            get_vote_payload_to_sign(&vote2, ctx.verifier.cluster_info.my_shred_version());
+        let invalid_payload = get_vote_payload_to_sign(
+            &Vote::new_skip_vote(99),
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
@@ -887,10 +978,14 @@ mod tests {
                 signature,
                 rank,
             });
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_packet(
+                &consensus_message,
+                ctx.verifier.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
+        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -928,9 +1023,12 @@ mod tests {
         let mut consensus_messages = Vec::with_capacity(num_votes); // ADDED: To hold messages for later comparison.
 
         let vote = Vote::new_skip_vote(42);
-        let valid_vote_payload = wincode::serialize(&vote).expect("Failed to serialize vote");
-        let invalid_vote_payload =
-            wincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
+        let valid_vote_payload =
+            get_vote_payload_to_sign(&vote, ctx.verifier.cluster_info.my_shred_version());
+        let invalid_vote_payload = get_vote_payload_to_sign(
+            &Vote::new_skip_vote(99),
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
@@ -950,10 +1048,14 @@ mod tests {
 
             consensus_messages.push(consensus_message.clone());
 
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_packet(
+                &consensus_message,
+                ctx.verifier.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
         }
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
+        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -993,12 +1095,16 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         let cert = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
             &ctx.validator_keypairs,
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -1021,12 +1127,16 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         let cert = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
             &ctx.validator_keypairs,
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -1054,6 +1164,7 @@ mod tests {
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
                 &ctx.validator_keypairs,
+                ctx.verifier.cluster_info.my_shred_version(),
                 notarize_vote,
                 i,
             ))
@@ -1061,6 +1172,7 @@ mod tests {
         (4..7).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
                 &ctx.validator_keypairs,
+                ctx.verifier.cluster_info.my_shred_version(),
                 notarize_fallback_vote,
                 i,
             ))
@@ -1072,7 +1184,10 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -1100,6 +1215,7 @@ mod tests {
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
                 &ctx.validator_keypairs,
+                ctx.verifier.cluster_info.my_shred_version(),
                 notarize_vote,
                 i,
             ))
@@ -1107,6 +1223,7 @@ mod tests {
         (4..6).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
                 &ctx.validator_keypairs,
+                ctx.verifier.cluster_info.my_shred_version(),
                 notarize_fallback_vote,
                 i,
             ))
@@ -1118,7 +1235,10 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -1155,7 +1275,10 @@ mod tests {
             bitmap: encoded_bitmap,
         };
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -1179,7 +1302,8 @@ mod tests {
         let num_votes = 2;
 
         let vote = Vote::new_skip_vote(42);
-        let vote_payload = wincode::serialize(&vote).unwrap();
+        let vote_payload =
+            get_vote_payload_to_sign(&vote, ctx.verifier.cluster_info.my_shred_version());
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
@@ -1189,7 +1313,11 @@ mod tests {
                 signature,
                 rank,
             });
-            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
+            packets.push(message_to_packet(
+                &consensus_message,
+                ctx.verifier.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
         }
 
         // 70% of validators sign.
@@ -1199,7 +1327,10 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         let cert_original_vote = Vote::new_notarization_vote(cert_type.to_block().unwrap());
-        let cert_payload = wincode::serialize(&cert_original_vote).unwrap();
+        let cert_payload = get_vote_payload_to_sign(
+            &cert_original_vote,
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         let cert_vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
@@ -1219,10 +1350,11 @@ mod tests {
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
         packets.push(message_to_packet(
             &consensus_message_cert,
+            ctx.verifier.cluster_info.my_shred_version(),
             Pubkey::new_unique(),
         ));
 
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
+        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -1260,7 +1392,8 @@ mod tests {
 
         let invalid_rank = 999;
         let vote = Vote::new_skip_vote(42);
-        let vote_payload = wincode::serialize(&vote).unwrap();
+        let vote_payload =
+            get_vote_payload_to_sign(&vote, ctx.verifier.cluster_info.my_shred_version());
         let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
         let signature: Signature = bls_keypair.sign(&vote_payload).into();
 
@@ -1270,7 +1403,10 @@ mod tests {
             rank: invalid_rank,
         });
 
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -1332,7 +1468,8 @@ mod tests {
         );
 
         let vote = Vote::new_skip_vote(2);
-        let vote_payload = wincode::serialize(&vote).unwrap();
+        let vote_payload =
+            get_vote_payload_to_sign(&vote, sig_verifier.cluster_info.my_shred_version());
         let bls_keypair = &validator_keypairs[0].bls_keypair;
         let signature: Signature = bls_keypair.sign(&vote_payload).into();
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
@@ -1340,7 +1477,10 @@ mod tests {
             signature,
             rank: 0,
         });
-        let packet_batches_vote = messages_to_batches(&[consensus_message_vote]);
+        let packet_batches_vote = messages_to_batches(
+            &[consensus_message_vote],
+            sig_verifier.cluster_info.my_shred_version(),
+        );
 
         sig_verifier
             .verify_and_send_batches(packet_batches_vote)
@@ -1349,12 +1489,16 @@ mod tests {
         assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
 
         let cert = create_signed_certificate_message(
+            sig_verifier.cluster_info.my_shred_version(),
             &validator_keypairs,
             CertificateType::Finalize(3),
             &[0], // Signer rank 0
         );
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
-        let packet_batches_cert = messages_to_batches(&[consensus_message_cert]);
+        let packet_batches_cert = messages_to_batches(
+            &[consensus_message_cert],
+            sig_verifier.cluster_info.my_shred_version(),
+        );
 
         sig_verifier
             .verify_and_send_batches(packet_batches_cert)
@@ -1378,7 +1522,8 @@ mod tests {
         };
         let cert_type = CertificateType::Notarize(block);
         let original_vote = Vote::new_notarization_vote(block);
-        let signed_payload = wincode::serialize(&original_vote).unwrap();
+        let signed_payload =
+            get_vote_payload_to_sign(&original_vote, ctx.verifier.cluster_info.my_shred_version());
         let mut vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
                 let signature = ctx.validator_keypairs[i].bls_keypair.sign(&signed_payload);
@@ -1396,7 +1541,10 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert1 = builder1.build().expect("Failed to build certificate");
         let consensus_message1 = ConsensusMessage::Certificate(cert1);
-        let packet_batches1 = messages_to_batches(&[consensus_message1]);
+        let packet_batches1 = messages_to_batches(
+            &[consensus_message1],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches1)
@@ -1413,7 +1561,10 @@ mod tests {
             .expect("Failed to aggregate votes");
         let cert2 = builder2.build().expect("Failed to build certificate");
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
-        let packet_batches2 = messages_to_batches(&[consensus_message2]);
+        let packet_batches2 = messages_to_batches(
+            &[consensus_message2],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
@@ -1430,10 +1581,12 @@ mod tests {
 
         let vote_message = ConsensusMessage::Vote(create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_skip_vote(42),
             0,
         ));
         let cert_message = ConsensusMessage::Certificate(create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
             &ctx.validator_keypairs,
             CertificateType::Notarize(Block {
                 slot: 43,
@@ -1443,10 +1596,10 @@ mod tests {
         ));
         let vote_sender = Pubkey::new_unique();
         let cert_sender = Pubkey::new_unique();
-        let packet_batches = messages_to_batches_with_remote_pubkeys(&[
-            (vote_message, vote_sender),
-            (cert_message, cert_sender),
-        ]);
+        let packet_batches = messages_to_batches_with_remote_pubkeys(
+            &[(vote_message, vote_sender), (cert_message, cert_sender)],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
 
         ctx.verifier
             .verify_and_send_batches(packet_batches)
@@ -1461,8 +1614,12 @@ mod tests {
         let mut ctx = TestContext::new();
 
         let vote = Vote::new_skip_vote(42);
-        let valid_payload = wincode::serialize(&vote).unwrap();
-        let invalid_payload = wincode::serialize(&Vote::new_skip_vote(999)).unwrap();
+        let valid_payload =
+            get_vote_payload_to_sign(&vote, ctx.verifier.cluster_info.my_shred_version());
+        let invalid_payload = get_vote_payload_to_sign(
+            &Vote::new_skip_vote(999),
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
         let invalid_indexes = [1usize, 3usize];
         let messages: Vec<_> = ctx
             .validator_keypairs
@@ -1485,7 +1642,10 @@ mod tests {
             .collect();
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
+            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(
+                &messages,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
@@ -1524,6 +1684,7 @@ mod tests {
                     block_id: Hash::new_unique(),
                 });
                 let mut cert = create_signed_certificate_message(
+                    ctx.verifier.cluster_info.my_shred_version(),
                     &ctx.validator_keypairs,
                     cert_type,
                     &(0..7).collect::<Vec<_>>(),
@@ -1536,7 +1697,10 @@ mod tests {
             .collect();
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
+            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(
+                &messages,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ))
             .unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
@@ -1569,12 +1733,16 @@ mod tests {
         let cert_type = CertificateType::Skip(slot);
         ctx.generated_cert_types.insert_cert(cert_type);
         let cert = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
             &ctx.validator_keypairs,
             cert_type,
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(&[consensus_message]);
+        let packet_batches = messages_to_batches(
+            &[consensus_message],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -1587,6 +1755,7 @@ mod tests {
         let slot = ctx.verifier.sharable_banks.root().slot() + NUM_SLOTS_FOR_VERIFY + 1;
         let cert_type = CertificateType::Skip(slot);
         let cert = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
             &ctx.validator_keypairs,
             cert_type,
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
@@ -1594,10 +1763,12 @@ mod tests {
         let cert = ConsensusMessage::Certificate(cert);
         let vote = ConsensusMessage::Vote(create_signed_vote_message(
             &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_skip_vote(slot),
             0,
         ));
-        let packet_batches = messages_to_batches(&[cert, vote]);
+        let packet_batches =
+            messages_to_batches(&[cert, vote], ctx.verifier.cluster_info.my_shred_version());
         ctx.verifier
             .verify_and_send_batches(packet_batches)
             .unwrap();
@@ -1605,22 +1776,25 @@ mod tests {
         assert_eq!(ctx.verifier.stats.vote_stats.too_far_in_future.0, 1);
     }
 
-    fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {
+    fn messages_to_batches(messages: &[ConsensusMessage], shred_version: u16) -> Vec<PacketBatch> {
         let messages_with_remote_pubkeys: Vec<_> = messages
             .iter()
             .cloned()
             .map(|message| (message, Pubkey::new_unique()))
             .collect();
-        messages_to_batches_with_remote_pubkeys(&messages_with_remote_pubkeys)
+        messages_to_batches_with_remote_pubkeys(&messages_with_remote_pubkeys, shred_version)
     }
 
     fn messages_to_batches_with_remote_pubkeys(
         messages: &[(ConsensusMessage, Pubkey)],
+        shred_version: u16,
     ) -> Vec<PacketBatch> {
         let packets: Vec<_> = messages
             .iter()
-            .map(|(message, remote_pubkey)| message_to_packet(message, *remote_pubkey))
+            .map(|(message, remote_pubkey)| {
+                message_to_packet(message, shred_version, *remote_pubkey)
+            })
             .collect();
-        vec![RecycledPacketBatch::new(packets).into()]
+        vec![BytesPacketBatch::from(packets).into()]
     }
 }

@@ -4,6 +4,7 @@ use {
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
+        verifying_key_cache::VerifyingKeyCache,
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -104,6 +105,30 @@ impl CrdsValueLabel {
 }
 
 impl CrdsValue {
+    /// Verify the signature, reusing a cached decompressed verifying key.
+    /// Inserts only after `verify_strict` succeeds, so the cache can't be
+    /// seeded with arbitrary pubkeys to evict useful entries.
+    pub(crate) fn verify_with_cache(&self, cache: &VerifyingKeyCache) -> bool {
+        let pubkey = self.pubkey();
+        let signable_data = self.signable_data();
+        let message = signable_data.borrow();
+        let sig_bytes: [u8; 64] = self.signature.into();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        match cache.get(&pubkey) {
+            Some(vk) => vk.verify_strict(message, &signature).is_ok(),
+            None => {
+                let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+                    return false;
+                };
+                if vk.verify_strict(message, &signature).is_err() {
+                    return false;
+                }
+                cache.insert(pubkey, vk);
+                true
+            }
+        }
+    }
+
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let serialized_data = wincode::serialize(&data).unwrap();
         let signature = keypair.sign_message(&serialized_data);
@@ -289,6 +314,55 @@ mod test {
     };
 
     #[test]
+    fn test_verify_with_cache() {
+        let keypair = Keypair::new();
+        let wrong_keypair = Keypair::new();
+        let mut value = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &keypair.pubkey(),
+            0,
+        )));
+        let cache = VerifyingKeyCache::new();
+
+        assert!(
+            !value.verify_with_cache(&cache),
+            "unsigned value must not verify"
+        );
+        assert!(
+            cache.get(&value.pubkey()).is_none(),
+            "failed verification must not populate the cache"
+        );
+
+        // Wrong signature: rejected, and nothing cached. Checked before any valid
+        // insert so we know the rejection itself didn't seed the cache.
+        value.sign(&wrong_keypair);
+        assert!(
+            !value.verify_with_cache(&cache),
+            "value signed by the wrong key must not verify"
+        );
+        assert!(
+            cache.get(&value.pubkey()).is_none(),
+            "failed verification must not populate the cache"
+        );
+
+        // Cold miss: a valid signature verifies and populates the cache.
+        value.sign(&keypair);
+        assert!(
+            value.verify_with_cache(&cache),
+            "validly signed value must verify"
+        );
+        assert!(
+            cache.get(&value.pubkey()).is_some(),
+            "successful verification must populate the cache"
+        );
+
+        // Warm hit: verifies again, now served from the cached key.
+        assert!(
+            value.verify_with_cache(&cache),
+            "validly signed value must verify on a cache hit"
+        );
+    }
+
+    #[test]
     fn test_keys_and_values() {
         let mut rng = rand::rng();
         let v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
@@ -337,7 +411,11 @@ mod test {
         verify_signatures(&mut v, &keypair, &wrong_keypair);
     }
 
-    fn serialize_deserialize_value(value: &mut CrdsValue, keypair: &Keypair) {
+    fn serialize_deserialize_value(
+        value: &mut CrdsValue,
+        keypair: &Keypair,
+        cache: &VerifyingKeyCache,
+    ) {
         let num_tries = 10;
         value.sign(keypair);
         let original_signature = value.get_signature();
@@ -355,7 +433,7 @@ mod test {
             assert_eq!(original_signature, deserialized_signature);
 
             // After deserializing, check that the signature is still the same
-            assert!(deserialized_value.verify());
+            assert!(deserialized_value.verify_with_cache(cache));
         }
     }
 
@@ -364,12 +442,13 @@ mod test {
         correct_keypair: &Keypair,
         wrong_keypair: &Keypair,
     ) {
-        assert!(!value.verify());
+        let cache = VerifyingKeyCache::new();
+        assert!(!value.verify_with_cache(&cache));
         value.sign(correct_keypair);
-        assert!(value.verify());
+        assert!(value.verify_with_cache(&cache));
         value.sign(wrong_keypair);
-        assert!(!value.verify());
-        serialize_deserialize_value(value, correct_keypair);
+        assert!(!value.verify_with_cache(&cache));
+        serialize_deserialize_value(value, correct_keypair, &cache);
     }
 
     #[test]

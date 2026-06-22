@@ -964,6 +964,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
@@ -1138,6 +1139,7 @@ mod tests {
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
         let voting_context = VotingContext {
+            cluster_info: cluster_info.clone(),
             identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
             vote_history,
@@ -1388,16 +1390,16 @@ mod tests {
                         found |= votes.len() != previous_len;
                         !votes.is_empty()
                     }
-                    BLSOp::PushCertificates { .. } => true,
+                    BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
                 });
                 assert!(found, "Did not find expected vote: {expected_message:?}");
             }
         }
 
         fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
-            let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
-            let signature: BLSSignature =
-                self.my_bls_keypair.sign(&expected_vote_serialized).into();
+            let payload =
+                get_vote_payload_to_sign(expected_vote, self.cluster_info.my_shred_version());
+            let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote: *expected_vote,
                 rank: 0,
@@ -1420,7 +1422,7 @@ mod tests {
                     found |= votes.len() != previous_len;
                     !votes.is_empty()
                 }
-                BLSOp::PushCertificates { .. } => true,
+                BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
