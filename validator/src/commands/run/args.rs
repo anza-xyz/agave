@@ -1248,6 +1248,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .conflicts_with("no_xdp")
             .help("Enable XDP zero copy mode. Requires hardware and driver support"),
     )
+    .arg(
+        Arg::with_name("xdp_config_file")
+            .long("xdp-config-file")
+            .takes_value(true)
+            .value_name("PATH")
+            .conflicts_with("no_xdp")
+            .help("Path to an XDP configuration file. The file contents are currently ignored"),
+    )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
