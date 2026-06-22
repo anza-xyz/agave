@@ -106,10 +106,6 @@ pub struct CostTracker {
     transaction_signature_count: Saturating<u64>,
     secp256k1_instruction_signature_count: Saturating<u64>,
     ed25519_instruction_signature_count: Saturating<u64>,
-    /// The number of transactions that have had their estimated cost added to
-    /// the tracker, but are still waiting for an update with actual usage or
-    /// removal if the transaction does not end up getting committed.
-    in_flight_transaction_count: Saturating<usize>,
     secp256r1_instruction_signature_count: Saturating<u64>,
 }
 
@@ -127,7 +123,6 @@ impl Default for CostTracker {
             transaction_signature_count: Saturating(0),
             secp256k1_instruction_signature_count: Saturating(0),
             ed25519_instruction_signature_count: Saturating(0),
-            in_flight_transaction_count: Saturating(0),
             secp256r1_instruction_signature_count: Saturating(0),
         }
     }
@@ -167,18 +162,6 @@ impl CostTracker {
 
     pub fn set_limits_max(&mut self) {
         self.set_limits(CostTrackerLimits::MAX);
-    }
-
-    pub fn in_flight_transaction_count(&self) -> usize {
-        self.in_flight_transaction_count.0
-    }
-
-    pub fn add_transactions_in_flight(&mut self, in_flight_transaction_count: usize) {
-        self.in_flight_transaction_count += in_flight_transaction_count;
-    }
-
-    pub fn sub_transactions_in_flight(&mut self, in_flight_transaction_count: usize) {
-        self.in_flight_transaction_count -= in_flight_transaction_count
     }
 
     pub fn try_add(
@@ -279,11 +262,6 @@ impl CostTracker {
             (
                 "ed25519_instruction_signature_count",
                 self.ed25519_instruction_signature_count.0,
-                i64
-            ),
-            (
-                "inflight_transaction_count",
-                self.in_flight_transaction_count.0,
                 i64
             ),
             (
