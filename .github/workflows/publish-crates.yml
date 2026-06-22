@@ -69,14 +69,16 @@ jobs:
       - name: Package crates
         env:
           DOCKER_IMAGE: ${{ steps.docker.outputs.image }}
+          LAYERS: ${{ steps.layers.outputs.layers }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p target/crate-staging
-          docker run --rm \
-            -v "${PWD}:/solana" -w /solana \
-            "${DOCKER_IMAGE}" \
-            cargo package --workspace
+          jq -r '.[][].name | "-p", .' <<<"${LAYERS}" \
+            | xargs -r docker run --rm \
+              -v "${PWD}:/solana" -w /solana \
+              "${DOCKER_IMAGE}" \
+              cargo package
           cp -v target/package/*.crate target/crate-staging/
 
       - name: Upload crate artifacts
