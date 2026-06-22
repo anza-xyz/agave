@@ -80,6 +80,10 @@ pub struct ProcessTransactionBatchOutput {
 }
 
 pub struct ExecuteAndCommitTransactionsOutput {
+    // The number of transactions filtered out by the cost model
+    pub(crate) cost_model_throttled_transactions_count: u64,
+    // Amount of time spent running the cost model
+    pub(crate) cost_model_us: u64,
     // Transactions counts reported to `ConsumeWorkerMetrics` and then
     // accumulated later for `LeaderSlotMetrics`
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
@@ -197,18 +201,12 @@ impl Consumer {
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
         flags: ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
-        let cost_model_throttled_transactions_count = 0;
-        let cost_model_us = 0;
-
         // Only lock accounts for transactions that passed pre-lock checks;
         // Once accounts are locked, other threads cannot encode transactions that will modify the
         // same account state
         let (batch, lock_us) =
             measure_us!(bank.prepare_sanitized_batch_with_results(txs, pre_results));
 
-        // retryable_txs includes AccountInUse, WouldExceedMaxBlockCostLimit
-        // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
-        // and WouldExceedMaxAccountDataCostLimit
         let execute_and_commit_transactions_output =
             self.execute_and_commit_transactions_locked(bank, &batch, flags);
 
@@ -224,8 +222,9 @@ impl Consumer {
         );
 
         ProcessTransactionBatchOutput {
-            cost_model_throttled_transactions_count,
-            cost_model_us,
+            cost_model_throttled_transactions_count: execute_and_commit_transactions_output
+                .cost_model_throttled_transactions_count,
+            cost_model_us: execute_and_commit_transactions_output.cost_model_us,
             execute_and_commit_transactions_output,
         }
     }
@@ -245,41 +244,13 @@ impl Consumer {
             .iter()
             .enumerate()
             .filter_map(|(index, res)| match res {
-                // following are retryable errors
+                // Account lock conflicts are immediately retryable.
                 Err(TransactionError::AccountInUse) => {
                     error_counters.account_in_use += 1;
                     // locking failure due to vote conflict or jito - immediately retry.
                     Some(RetryableIndex {
                         index,
                         immediately_retryable: true,
-                    })
-                }
-                Err(TransactionError::WouldExceedMaxBlockCostLimit) => {
-                    error_counters.would_exceed_max_block_cost_limit += 1;
-                    Some(RetryableIndex {
-                        index,
-                        immediately_retryable: false,
-                    })
-                }
-                Err(TransactionError::WouldExceedMaxVoteCostLimit) => {
-                    error_counters.would_exceed_max_vote_cost_limit += 1;
-                    Some(RetryableIndex {
-                        index,
-                        immediately_retryable: false,
-                    })
-                }
-                Err(TransactionError::WouldExceedMaxAccountCostLimit) => {
-                    error_counters.would_exceed_max_account_cost_limit += 1;
-                    Some(RetryableIndex {
-                        index,
-                        immediately_retryable: false,
-                    })
-                }
-                Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
-                    error_counters.would_exceed_account_data_block_limit += 1;
-                    Some(RetryableIndex {
-                        index,
-                        immediately_retryable: false,
                     })
                 }
                 // following are non-retryable errors
@@ -319,15 +290,17 @@ impl Consumer {
             balance_collector,
         } = load_and_execute_transactions_output;
 
-        let (transaction_costs, mut actual_cost_retryable_transaction_indexes) =
-            Self::try_add_processed_transaction_costs(
+        let ((transaction_costs, mut actual_cost_retryable_transaction_indexes), cost_model_us) =
+            measure_us!(Self::try_add_processed_transaction_costs(
                 bank,
                 batch.sanitized_transactions(),
                 &mut processing_results,
                 &mut processed_counts,
                 &mut error_counters,
                 flags.all_or_nothing,
-            );
+            ));
+        let cost_model_throttled_transactions_count =
+            actual_cost_retryable_transaction_indexes.len() as u64;
         retryable_transaction_indexes.append(&mut actual_cost_retryable_transaction_indexes);
         retryable_transaction_indexes.sort_unstable();
 
@@ -400,6 +373,8 @@ impl Consumer {
             retryable_transaction_indexes.sort_unstable();
 
             return ExecuteAndCommitTransactionsOutput {
+                cost_model_throttled_transactions_count,
+                cost_model_us,
                 transaction_counts,
                 retryable_transaction_indexes,
                 commit_transactions_result: Err(recorder_err),
@@ -454,6 +429,8 @@ impl Consumer {
         );
 
         ExecuteAndCommitTransactionsOutput {
+            cost_model_throttled_transactions_count,
+            cost_model_us,
             transaction_counts,
             retryable_transaction_indexes,
             commit_transactions_result: Ok(commit_transaction_statuses),
@@ -1201,9 +1178,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(cost_model_throttled_transactions_count, 0);
         assert!(committed_count > 0);
         assert!(!late_cost_rejected_indexes.is_empty());
+        assert_eq!(
+            cost_model_throttled_transactions_count,
+            late_cost_rejected_indexes.len() as u64
+        );
         assert_eq!(
             transaction_counts.attempted_processing_count,
             TRANSACTION_COUNT as u64
@@ -1294,7 +1274,7 @@ mod tests {
 
         assert_eq!(
             process_transactions_batch_output.cost_model_throttled_transactions_count,
-            0
+            TRANSACTION_COUNT as u64
         );
         assert_eq!(
             transaction_counts.attempted_processing_count,
