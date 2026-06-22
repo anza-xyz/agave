@@ -73,8 +73,6 @@ pub(crate) enum Protocol {
     PullRequest(CrdsFilter, CrdsValue),
     PullResponse(Pubkey, Vec<CrdsValue>),
     PushMessage(Pubkey, Vec<CrdsValue>),
-    // TODO: Remove the redundant outer pubkey here,
-    // and use the inner PruneData.pubkey instead.
     PruneMessage(PruneData),
     PingMessage(Ping),
     PongMessage(Pong),
