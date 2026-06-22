@@ -78,7 +78,7 @@ impl Bank {
 
         let lock_results = self.check_age_and_compute_budget_limits(
             sanitized_txs,
-            &lock_results,
+            lock_results,
             max_age,
             strict_nonce_size_check,
             error_counters,
@@ -91,32 +91,31 @@ impl Bank {
         )
     }
 
-    fn filter_v1_transactions<Tx: TransactionWithMeta>(
+    fn filter_v1_transactions<'a, Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
-        lock_results: &[TransactionResult<()>],
-    ) -> Vec<TransactionResult<()>> {
+        sanitized_txs: &'a [impl core::borrow::Borrow<Tx>],
+        lock_results: &'a [TransactionResult<()>],
+    ) -> impl Iterator<Item = TransactionResult<()>> + 'a {
+        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
         // Discard v1 transactions until feature gate is activated.
         sanitized_txs
             .iter()
             .zip(lock_results)
-            .map(|(tx, lock_result)| match lock_result {
+            .map(move |(tx, lock_result)| match lock_result {
                 Err(err) => Err(err.clone()),
                 Ok(())
-                    if !self.feature_set.snapshot().enable_tx_v1
-                        && tx.borrow().version() == TransactionVersion::Number(1) =>
+                    if !enable_tx_v1 && tx.borrow().version() == TransactionVersion::Number(1) =>
                 {
                     Err(TransactionError::UnsupportedVersion)
                 }
                 Ok(()) => Ok(()),
             })
-            .collect()
     }
 
     fn check_age_and_compute_budget_limits<Tx: TransactionWithMeta>(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
-        lock_results: &[TransactionResult<()>],
+        lock_results: impl IntoIterator<Item = TransactionResult<()>>,
         max_age: usize,
         strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
@@ -182,7 +181,7 @@ impl Bank {
                         strict_nonce_size_check,
                     )
                 }
-                Err(e) => Err(e.clone()),
+                Err(e) => Err(e),
             })
             .collect()
     }
@@ -255,12 +254,11 @@ impl Bank {
     fn check_status_cache<Tx: TransactionWithMeta>(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
-        lock_results: Vec<TransactionCheckResult>,
+        mut lock_results: Vec<TransactionCheckResult>,
         collect_processed_slots: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
         // Do allocation before acquiring the lock on the status cache.
-        let mut check_results = Vec::with_capacity(sanitized_txs.len());
         let mut processed_slots = if collect_processed_slots {
             Some(Vec::with_capacity(sanitized_txs.len()))
         } else {
@@ -268,27 +266,24 @@ impl Bank {
         };
         let rcache = self.status_cache.read().unwrap();
 
-        for (sanitized_tx_ref, lock_result) in sanitized_txs.iter().zip(lock_results) {
-            let sanitized_tx = sanitized_tx_ref.borrow();
-
-            let (result, processed_slot) = if lock_result.is_ok() {
-                if let Some(slot) = self.get_processed_slot(sanitized_tx, &rcache) {
-                    error_counters.already_processed += 1;
-                    (Err(TransactionError::AlreadyProcessed), Some(slot))
-                } else {
-                    (lock_result, None)
-                }
+        for (sanitized_tx_ref, lock_result) in sanitized_txs.iter().zip(lock_results.iter_mut()) {
+            let processed_slot = if lock_result.is_ok() {
+                self.get_processed_slot(sanitized_tx_ref.borrow(), &rcache)
             } else {
-                (lock_result, None)
+                None
             };
 
-            check_results.push(result);
+            if processed_slot.is_some() {
+                error_counters.already_processed += 1;
+                *lock_result = Err(TransactionError::AlreadyProcessed);
+            }
+
             if let Some(processed_slots) = processed_slots.as_mut() {
                 processed_slots.push(processed_slot)
             }
         }
 
-        (check_results, processed_slots)
+        (lock_results, processed_slots)
     }
 
     fn get_processed_slot(
@@ -578,15 +573,7 @@ mod tests {
 
         let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
 
-        assert!(matches!(filtered[0], Err(TransactionError::AccountInUse)));
-        assert!(matches!(
-            filtered[1],
-            Err(TransactionError::TooManyAccountLocks)
-        ));
-        assert!(matches!(
-            filtered[2],
-            Err(TransactionError::WouldExceedMaxBlockCostLimit)
-        ));
+        assert!(filtered.eq(lock_results.iter().cloned()));
     }
 
     #[test]
@@ -596,11 +583,7 @@ mod tests {
 
         let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
 
-        assert_eq!(filtered.len(), 1);
-        assert!(matches!(
-            filtered[0],
-            Err(TransactionError::UnsupportedVersion)
-        ));
+        assert!(filtered.eq([Err(TransactionError::UnsupportedVersion)]));
     }
 
     #[test]
@@ -612,7 +595,7 @@ mod tests {
 
         let filtered = bank.filter_v1_transactions(&txs, &lock_results);
 
-        assert_eq!(filtered, vec![Ok(())]);
+        assert!(filtered.eq([Ok(())]));
     }
 
     #[test]
@@ -625,7 +608,7 @@ mod tests {
 
         let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
 
-        assert_eq!(filtered, vec![Ok(()), Ok(())]);
+        assert!(filtered.eq([Ok(()), Ok(())]));
     }
 
     #[test]
@@ -645,15 +628,11 @@ mod tests {
 
         let filtered = Bank::default_for_tests().filter_v1_transactions(&txs, &lock_results);
 
-        assert!(matches!(filtered[0], Ok(())));
-        assert!(matches!(
-            filtered[1],
-            Err(TransactionError::UnsupportedVersion)
-        ));
-        assert!(matches!(filtered[2], Err(TransactionError::AccountInUse)));
-        assert!(matches!(
-            filtered[3],
-            Err(TransactionError::TooManyAccountLocks)
-        ));
+        assert!(filtered.eq([
+            Ok(()),
+            Err(TransactionError::UnsupportedVersion),
+            Err(TransactionError::AccountInUse),
+            Err(TransactionError::TooManyAccountLocks),
+        ]));
     }
 }
