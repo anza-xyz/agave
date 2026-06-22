@@ -1399,6 +1399,9 @@ fn build_xdp_config(
             "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
         );
     }
+    if let Some(xdp_config_file) = matches.value_of("xdp_config_file") {
+        info!("--xdp-config-file specified ({xdp_config_file}); contents are currently ignored");
+    }
     let xdp_interface = matches
         .value_of("xdp_interface")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
