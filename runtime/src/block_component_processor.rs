@@ -214,13 +214,12 @@ impl BlockComponentProcessor {
                 finalization_cert_sender,
             ),
 
-            BlockMarkerV1::UpdateParent(update_parent)
-                if markers_fully_enabled && fast_leader_handover_active =>
-            {
-                self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
-            }
-            BlockMarkerV1::UpdateParent(_) if markers_fully_enabled => {
-                Err(BlockComponentProcessorError::SpuriousUpdateParent)
+            BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
+                if fast_leader_handover_active {
+                    self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
+                } else {
+                    Err(BlockComponentProcessorError::SpuriousUpdateParent)
+                }
             }
 
             // Any other combination means we saw a marker too early

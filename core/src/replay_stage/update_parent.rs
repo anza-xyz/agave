@@ -64,13 +64,6 @@ pub(super) fn child_bank_replay_start(
     if !migration_status.should_allow_block_markers(child_slot) {
         return ChildBankReplayStart::FromStart;
     }
-    if !parent_bank
-        .feature_set
-        .snapshot()
-        .alpenglow_fast_leader_handover
-    {
-        return ChildBankReplayStart::FromStart;
-    }
 
     let Some(slot_meta) = blockstore
         .meta(child_slot)
@@ -142,10 +135,10 @@ fn try_restart_slot_from_update_parent(
     if bank.is_none() && !progress.contains_key(&slot) {
         return false;
     }
-    if bank
-        .as_ref()
-        .is_some_and(|bank| ReplayStage::leader_is_me(bank.leader_id(), my_pubkey))
-    {
+    if bank.as_ref().is_some_and(|bank| {
+        ReplayStage::leader_is_me(bank.leader_id(), my_pubkey)
+            || !bank.feature_set.snapshot().alpenglow_fast_leader_handover
+    }) {
         return false;
     }
     if progress.get(&slot).is_some_and(|progress| {
