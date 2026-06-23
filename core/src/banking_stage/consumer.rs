@@ -441,6 +441,13 @@ impl Consumer {
         }
     }
 
+    /// Returns `(transaction_costs, retryable_indexes)`.
+    ///
+    /// `transaction_costs` has one entry per input transaction. `Some(cost)` means
+    /// the processed transaction's actual cost was added to the cost tracker.
+    /// `None` means no cost added for that transaction due to: the transaction was
+    /// not processed, its cost was rejected by the cost tracker, or an
+    /// all-or-nothing cost failure rolled back the batch.
     fn try_add_processed_transaction_costs<'a, Tx: TransactionWithMeta>(
         bank: &Bank,
         transactions: &'a [Tx],
