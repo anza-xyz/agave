@@ -25,13 +25,6 @@ use {
     solana_pubkey::Pubkey,
 };
 
-use {
-    crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccount,
-            vm_slice::VmSlice},
-    solana_pubkey::Pubkey,
-};
-
-
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 #[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 pub type InstructionTrace<'ix_data> = (
@@ -543,6 +536,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 // whatever is writing will trigger an EbpfError::AccessViolation like
                 // if the region was readonly, and the transaction will fail gracefully.
                 let Ok(mut account) = accounts.try_borrow_mut(index_in_transaction) else {
+                    debug_assert!(false);
+                    return;
+                };
+
+                let Ok(()) = accounts.touch(index_in_transaction) else {
                     debug_assert!(false);
                     return;
                 };
