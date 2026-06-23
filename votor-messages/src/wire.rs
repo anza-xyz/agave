@@ -103,14 +103,17 @@ pub(crate) struct WireSlotVoteMessage {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
-pub(crate) struct WireCertSignature {
+/// Signature on a wire cert message
+pub struct WireCertSignature {
     #[cfg_attr(
         feature = "frozen-abi",
         stable_abi_sample(with = "sample_bls_signature(rng)")
     )]
     #[wincode(with = "PodBLSSignature")]
-    pub(crate) signature: BLSSignature,
-    pub(crate) bitmap: Vec<u8>,
+    /// the aggregate signature
+    pub signature: BLSSignature,
+    /// bitmap of ranks of validators included in the aggregate.
+    pub bitmap: Vec<u8>,
 }
 
 impl From<Certificate> for WireCertSignature {
@@ -131,9 +134,12 @@ pub(crate) struct WireSlotCertMessage {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
-pub(crate) struct WireBlockCertMessage {
-    pub(crate) block: Block,
-    pub(crate) signature: WireCertSignature,
+/// A wire cert message that holds a block.
+pub struct WireBlockCertMessage {
+    /// the block the cert is certifying.
+    pub block: Block,
+    /// the signature of the cert message.
+    pub signature: WireCertSignature,
 }
 
 #[cfg_attr(

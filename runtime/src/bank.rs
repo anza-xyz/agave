@@ -82,8 +82,10 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_votor_messages::{
-        certificate::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
+        certificate::{Certificate, CertificateType},
+        migration::GENESIS_CERTIFICATE_ACCOUNT,
         unverified_vote_message::UnverifiedCertificate,
+        wire::{WireBlockCertMessage, WireCertSignature},
     },
     ahash::AHashSet,
     log::*,
@@ -3345,14 +3347,28 @@ impl Bank {
             // The address is known in advance, so the account could already exist if it was prefunded.
             // However this account cannot be written to except by us in `set_alpenglow_genesis_certificate`,
             // so this deserialize is safe if the account is non-empty
-            wincode::deserialize(acct.data())
-                .expect("Programmer error deserializing genesis certificate")
+            let cert: WireBlockCertMessage = wincode::deserialize(acct.data())
+                .expect("Programmer error deserializing genesis certificate");
+            Certificate {
+                cert_type: CertificateType::Genesis(cert.block),
+                signature: cert.signature.signature,
+                bitmap: cert.signature.bitmap,
+            }
         })
     }
 
     /// For use in the first Alpenglow block, set the genesis certificate.
     pub fn set_alpenglow_genesis_certificate(&self, cert: &Certificate) {
-        let data = wincode::serialize(cert).unwrap();
+        debug_assert!(cert.cert_type.is_genesis());
+        let block = cert.cert_type.to_block().unwrap();
+        let cert = WireBlockCertMessage {
+            block,
+            signature: WireCertSignature {
+                signature: cert.signature,
+                bitmap: cert.bitmap.clone(),
+            },
+        };
+        let data = wincode::serialize(&cert).unwrap();
         let lamports = Rent::default().minimum_balance(data.len());
         let mut cert_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
         cert_acct.set_data_from_slice(&data);

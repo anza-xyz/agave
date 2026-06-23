@@ -789,6 +789,7 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::Block,
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
+            wire::{WireBlockCertMessage, WireCertSignature},
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, Sender, bounded},
@@ -992,8 +993,15 @@ mod tests {
         } = create_genesis_config(10_000);
         genesis_config.epoch_schedule = EpochSchedule::new(32);
 
-        if let Some(genesis_cert) = genesis_cert.as_ref() {
-            let cert_data = wincode::serialize(genesis_cert).unwrap();
+        if let Some(genesis_cert) = genesis_cert {
+            let cert = WireBlockCertMessage {
+                block: genesis_cert.cert_type.to_block().unwrap(),
+                signature: WireCertSignature {
+                    signature: genesis_cert.signature,
+                    bitmap: genesis_cert.bitmap,
+                },
+            };
+            let cert_data = wincode::serialize(&cert).unwrap();
             let lamports = Rent::default().minimum_balance(cert_data.len());
             let mut cert_account = Account::new(lamports, cert_data.len(), &system_program::ID);
             cert_account.data = cert_data;
@@ -1112,7 +1120,10 @@ mod tests {
         // Migration can still succeed
         let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
         let genesis_cert = Certificate {
-            cert_type: CertificateType::Finalize(1),
+            cert_type: CertificateType::Genesis(Block {
+                slot: 1,
+                block_id: Hash::new_unique(),
+            }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
