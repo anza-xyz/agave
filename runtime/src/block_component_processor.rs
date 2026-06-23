@@ -227,12 +227,40 @@ impl BlockComponentProcessor {
         }
     }
 
+    /// Processes the genesis block marker with full verification
     pub fn on_genesis_cert_block_marker(
         &self,
         bank: Arc<Bank>,
         shred_version: u16,
         genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
+    ) -> Result<(), BlockComponentProcessorError> {
+        self.process_genesis_cert_block_marker(
+            bank,
+            genesis_block_marker,
+            migration_status,
+            Some(shred_version),
+        )
+    }
+
+    /// Processes a locally produced genesis certificate marker without
+    /// re-verifying the certificate signature.
+    pub fn on_genesis_cert_block_marker_leader(
+        &self,
+        bank: Arc<Bank>,
+        genesis_block_marker: GenesisCertBlockMarker,
+        migration_status: &MigrationStatus,
+    ) -> Result<(), BlockComponentProcessorError> {
+        self.process_genesis_cert_block_marker(bank, genesis_block_marker, migration_status, None)
+    }
+
+    /// Performs verification if `shred_version` is specified
+    fn process_genesis_cert_block_marker(
+        &self,
+        bank: Arc<Bank>,
+        genesis_block_marker: GenesisCertBlockMarker,
+        migration_status: &MigrationStatus,
+        shred_version: Option<u16>,
     ) -> Result<(), BlockComponentProcessorError> {
         // Genesis Certificate is only allowed for direct child of genesis
         if bank.parent_slot() == 0 {
@@ -252,16 +280,26 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated);
         }
 
-        let unverified_genesis_cert = UnverifiedCertificate {
-            cert_type: CertificateType::Genesis(Block {
-                slot: genesis_block_marker.slot,
-                block_id: genesis_block_marker.block_id,
-            }),
-            signature: genesis_block_marker.bls_signature,
-            bitmap: genesis_block_marker.bitmap,
-            shred_version,
+        let genesis_cert_type = CertificateType::Genesis(Block {
+            slot: genesis_block_marker.slot,
+            block_id: genesis_block_marker.block_id,
+        });
+        let genesis_cert = match shred_version {
+            Some(shred_version) => {
+                let unverified_genesis_cert = UnverifiedCertificate {
+                    cert_type: genesis_cert_type,
+                    signature: genesis_block_marker.bls_signature,
+                    bitmap: genesis_block_marker.bitmap,
+                    shred_version,
+                };
+                Self::verify_genesis_certificate(&bank, unverified_genesis_cert)?
+            }
+            None => Certificate {
+                cert_type: genesis_cert_type,
+                signature: genesis_block_marker.bls_signature,
+                bitmap: genesis_block_marker.bitmap,
+            },
         };
-        let genesis_cert = Self::verify_genesis_certificate(&bank, unverified_genesis_cert)?;
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
         bank.set_hashes_per_tick(None);
 

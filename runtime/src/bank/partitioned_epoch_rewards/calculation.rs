@@ -14,7 +14,7 @@ use {
             fee_distribution::ExternalCollectorType, null_tracer,
         },
         inflation_rewards::{
-            adjust_delegation_for_rent,
+            delegation_may_need_adjustment,
             points::{
                 CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points_for_tower,
             },
@@ -558,23 +558,23 @@ impl Bank {
             .rent_collector
             .rent
             .minimum_balance(stake_account.data_len());
-        let mut stake = *stake_account.stake();
+        let stake = *stake_account.stake();
 
         let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey) else {
             debug!("could not find vote account {vote_pubkey} in cache");
             // Even if the vote account doesn't exist, there might still be a
             // need to adjust the stake delegation
             if adjust_delegations_for_rent {
-                let delegation = stake.delegation.stake;
-                let stake_was_adjusted = adjust_delegation_for_rent(
-                    &mut stake.delegation,
-                    rewarded_epoch,
-                    delegation,
+                if delegation_may_need_adjustment(
+                    stake.delegation.stake,
+                    stake.delegation.stake,
                     current_lamports,
                     minimum_lamports,
-                );
-                if stake_was_adjusted {
-                    debug!("delegation for stake {stake_pubkey} was adjusted");
+                ) {
+                    debug!(
+                        "delegation for stake {stake_pubkey} may be adjusted at distribution, \
+                         unless lamports are transferred before distribution block"
+                    );
                     let inflation = InflationReward {
                         stake,
                         stake_reward: 0,
@@ -595,7 +595,7 @@ impl Bank {
                         reward_commission,
                     });
                 } else {
-                    debug!("delegation for stake {stake_pubkey} was not adjusted");
+                    debug!("delegation for stake {stake_pubkey} will not be adjusted");
                     return None;
                 }
             } else {

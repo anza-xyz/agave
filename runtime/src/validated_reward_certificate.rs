@@ -136,6 +136,31 @@ impl ValidatedRewardCert {
         }))
     }
 
+    /// Constructs a [`ValidatedRewardCert`] for a block produced locally.
+    ///
+    /// The leader-side reward certificate builder receives verified votes and
+    /// tracks the validator set while aggregating them, so block production
+    /// only needs the reward slot and validator set for bank reward
+    /// calculation.
+    pub fn try_new_for_leader(
+        current_slot: Slot,
+        skip: &Option<SkipRewardCertificate>,
+        notar: &Option<NotarRewardCertificate>,
+        validators: impl IntoIterator<Item = Pubkey>,
+    ) -> Result<Option<Self>, Error> {
+        let Some(reward_slot) = extract_slot(current_slot, skip, notar)? else {
+            return Ok(None);
+        };
+        let validators: HashSet<_> = validators.into_iter().collect();
+        if validators.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            validators,
+            reward_slot,
+        }))
+    }
+
     pub(crate) fn slot(&self) -> Slot {
         self.reward_slot
     }

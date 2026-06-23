@@ -190,12 +190,11 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(true)
             .value_name("CPU_LIST")
             .conflicts_with("xdp_cpu_cores")
+            .conflicts_with("no_xdp")
             .validator(|value| {
                 validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
             })
-            .help(
-                "Enable XDP retransmit on the specified CPU cores. Use --xdp-cpu-cores instead",
-            ),
+            .help("CPU cores to reserve for XDP. Use --xdp-cpu-cores instead"),
         replaced_by: "xdp-cpu-cores",
     );
     add_arg!(
@@ -205,8 +204,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(true)
             .value_name("INTERFACE")
             .conflicts_with("xdp_interface")
-            .requires("experimental_retransmit_xdp_cpu_cores")
-            .help("Network interface to use for XDP retransmit. Use --xdp-interface instead"),
+            .conflicts_with("no_xdp")
+            .help("Network interface to use for XDP. Use --xdp-interface instead"),
         replaced_by: "xdp-interface",
     );
     add_arg!(
@@ -215,7 +214,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("experimental-retransmit-xdp-zero-copy")
             .takes_value(false)
             .conflicts_with("xdp_zero_copy")
-            .requires("experimental_retransmit_xdp_cpu_cores")
+            .conflicts_with("no_xdp")
             .help("Enable XDP zero copy. Use --xdp-zero-copy instead"),
         replaced_by: "xdp-zero-copy",
     );

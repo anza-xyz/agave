@@ -115,6 +115,7 @@ pub struct AdminRpcRepairWhitelist {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AdminRpcValidatorAdmissionTicketStatus {
     pub vote_account: Pubkey,
+    pub voting_enabled: bool,
     pub current_epoch: Epoch,
     pub vat_active: bool,
     pub in_current_epoch_vat: bool,
@@ -659,8 +660,10 @@ impl AdminRpc for AdminRpcImpl {
                 .get_vat_health_for_next_epoch(&post_init.vote_account)
                 .err();
 
+            let voting_enabled = !meta.authorized_voter_keypairs.read().unwrap().is_empty();
             Ok(AdminRpcValidatorAdmissionTicketStatus {
                 vote_account: post_init.vote_account,
+                voting_enabled,
                 current_epoch,
                 vat_active,
                 in_current_epoch_vat: vat_active && in_current_epoch_vote_accounts,
@@ -1358,6 +1361,7 @@ mod tests {
             serde_json::from_value(result["result"].clone()).unwrap();
 
         assert_eq!(status.vote_account, post_init.vote_account);
+        assert!(status.voting_enabled);
         assert_eq!(status.current_epoch, current_epoch);
         assert_eq!(status.vat_active, expected_vat_active);
         assert_eq!(status.in_current_epoch_vat, expected_in_vat);

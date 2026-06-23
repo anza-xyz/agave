@@ -71,12 +71,9 @@ impl Dashboard {
             let progress_bar = new_spinner_progress_bar();
             progress_bar.set_message("Connecting...");
 
-            let Some((rpc_addr, start_time)) = runtime.block_on(wait_for_validator_startup(
-                &ledger_path,
-                &exit,
-                progress_bar,
-                refresh_interval,
-            )) else {
+            let Some((rpc_addr, start_time, mut vat_status)) = runtime.block_on(
+                wait_for_validator_startup(&ledger_path, &exit, progress_bar, refresh_interval),
+            ) else {
                 continue;
             };
 
@@ -89,6 +86,11 @@ impl Dashboard {
                 }
             };
             println_name_value("Identity:", &identity.to_string());
+            if let Some(status) = vat_status.as_ref()
+                && status.voting_enabled
+            {
+                println_name_value("Vote Account:", &status.vote_account.to_string());
+            }
 
             if let Ok(genesis_hash) = rpc_client.get_genesis_hash() {
                 println_name_value("Genesis Hash:", &genesis_hash.to_string());
@@ -118,10 +120,7 @@ impl Dashboard {
 
             let progress_bar = new_spinner_progress_bar();
             let mut snapshot_slot_info = None;
-            let mut vat_status = None;
-            let mut admin_client = runtime
-                .block_on(admin_rpc_service::connect(&ledger_path))
-                .ok();
+            let mut admin_client = None;
             for i in 0.. {
                 if exit.load(Ordering::Relaxed) {
                     break;
@@ -134,9 +133,17 @@ impl Dashboard {
                 if identity != new_identity {
                     identity = new_identity;
                     progress_bar.println(format_name_value("Identity:", &identity.to_string()));
+                    if let Some(status) = vat_status.as_ref()
+                        && status.voting_enabled
+                    {
+                        progress_bar.println(format_name_value(
+                            "Vote Account:",
+                            &status.vote_account.to_string(),
+                        ));
+                    }
                 }
 
-                if i % 30 == 0 {
+                if i > 0 && i % 30 == 0 {
                     if admin_client.is_none() {
                         admin_client = runtime
                             .block_on(admin_rpc_service::connect(&ledger_path))
@@ -266,7 +273,11 @@ async fn wait_for_validator_startup(
     exit: &AtomicBool,
     progress_bar: ProgressBar,
     refresh_interval: Duration,
-) -> Option<(SocketAddr, SystemTime)> {
+) -> Option<(
+    SocketAddr,
+    SystemTime,
+    Option<admin_rpc_service::AdminRpcValidatorAdmissionTicketStatus>,
+)> {
     let mut admin_client = None;
     loop {
         if exit.load(Ordering::Relaxed) {
@@ -292,12 +303,19 @@ async fn wait_for_validator_startup(
                     let validator_info = async move {
                         let rpc_addr = admin_client.rpc_addr().await?;
                         let start_time = admin_client.start_time().await?;
-                        Ok::<_, jsonrpc_core_client::RpcError>((rpc_addr, start_time))
+                        let vat_status = if rpc_addr.is_some() {
+                            admin_client.vat_status().await.ok()
+                        } else {
+                            None
+                        };
+                        Ok::<_, jsonrpc_core_client::RpcError>((rpc_addr, start_time, vat_status))
                     }
                     .await;
                     match validator_info {
-                        Ok((None, _)) => progress_bar.set_message("RPC service not available"),
-                        Ok((Some(rpc_addr), start_time)) => return Some((rpc_addr, start_time)),
+                        Ok((None, _, _)) => progress_bar.set_message("RPC service not available"),
+                        Ok((Some(rpc_addr), start_time, vat_status)) => {
+                            return Some((rpc_addr, start_time, vat_status));
+                        }
                         Err(err) => {
                             progress_bar
                                 .set_message(format!("Failed to get validator info: {err}"));

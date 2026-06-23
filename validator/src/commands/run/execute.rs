@@ -83,7 +83,10 @@ use {
     },
 };
 #[cfg(target_os = "linux")]
-use {agave_xdp::transmitter::XdpConfig, solana_clap_utils::input_parsers::parse_cpu_ranges};
+use {
+    agave_cpu_utils::cpu_affinity, agave_xdp::transmitter::XdpConfig,
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -164,30 +167,11 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    // XDP is not needed for init — it only initializes the ledger and exits.
+    // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-    {
-        let xdp_interface = matches
-            .value_of("xdp_interface")
-            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-        let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-            || matches.is_present("experimental_retransmit_xdp_zero_copy");
-        let config = XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
-            xdp_zero_copy,
-        );
-        if bind_addresses.len() > 1 {
-            Err(String::from(
-                "--xdp-cpu-cores cannot be used in a multihoming context",
-            ))?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let xdp_transmit_config: Option<XdpConfig> =
+        build_xdp_config(matches, &operation, &bind_addresses)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -1398,4 +1382,142 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
+}
+
+#[cfg(target_os = "linux")]
+fn build_xdp_config(
+    matches: &ArgMatches,
+    operation: &Operation,
+    bind_addresses: &BindIpAddrs,
+) -> Result<Option<XdpConfig>, String> {
+    if matches.is_present("no_xdp") || *operation == Operation::Initialize {
+        return Ok(None);
+    }
+    if bind_addresses.len() > 1 {
+        return Err(
+            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
+        );
+    }
+    let xdp_interface = matches
+        .value_of("xdp_interface")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let xdp_cpu_cores = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
+        let parsed =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if let Some(poh_core) = poh_pinned_cpu_core {
+            if parsed.contains(&poh_core) {
+                return Err(format!(
+                    "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a \
+                     CPU core"
+                ));
+            }
+        }
+        Some(parsed)
+    } else {
+        // Auto-select a single core, avoiding the PoH core.
+        match cpu_affinity(None) {
+            Ok(allowed) => {
+                match allowed
+                    .iter()
+                    .rev()
+                    .map(|cpu| **cpu)
+                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+                {
+                    Some(cpu) => Some(vec![cpu]),
+                    None => {
+                        return Err(format!(
+                            "XDP requires a dedicated CPU core separate from PoH (core \
+                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
+                             disable XDP."
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+                     --xdp-cpu-cores explicitly."
+                ));
+            }
+        }
+    };
+    Ok(cpus.map(|cpus| {
+        info!("XDP enabled on CPU cores: {cpus:?}");
+        XdpConfig::new(xdp_interface, cpus, xdp_zero_copy)
+    }))
+}
+
+#[cfg(all(target_os = "linux", test))]
+mod xdp_tests {
+    use {
+        super::*,
+        crate::{cli::DefaultArgs, commands::run::args::add_args},
+        solana_net_utils::multihomed_sockets::BindIpAddrs,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    fn single_ip_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap()
+    }
+
+    fn multihoming_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn test_no_xdp_flag_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_init_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Initialize, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "init operation must disable XDP");
+    }
+
+    #[test]
+    fn test_multihoming_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &multihoming_bind());
+        assert!(
+            result.unwrap_err().contains("multihoming"),
+            "multihoming context must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_explicit_xdp_core_conflicts_with_poh_core_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE
+            .unwrap_or(0)
+            .to_string();
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("PoH core"),
+            "XDP core overlapping PoH core must produce an error"
+        );
+    }
 }

@@ -162,6 +162,14 @@ mod tests {
         max_validators: usize,
         slot: Slot,
     ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
+        get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot)
+    }
+
+    pub(crate) fn get_rank_map_keypairs_with_stakes(
+        stakes: Vec<u64>,
+        slot: Slot,
+    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
+        let max_validators = stakes.len();
         let validator_keypairs = (0..max_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -177,7 +185,7 @@ mod tests {
         let mut genesis_config = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
-            vec![100; validator_keypairs.len()],
+            stakes,
         )
         .genesis_config;
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
