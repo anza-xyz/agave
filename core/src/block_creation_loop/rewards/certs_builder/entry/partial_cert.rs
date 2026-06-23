@@ -69,7 +69,7 @@ impl PartialCert {
                     .ok_or(AddVoteError::InvalidRank)?;
                 self.signature.aggregate_with(std::iter::once(signature))?;
                 self.validators.push(entry.vote_account_pubkey);
-                self.stake = self.stake.saturating_add(entry.stake);
+                self.stake = self.stake.saturating_add(entry.stake.get());
                 *ind = true;
             }
         }

@@ -74,13 +74,8 @@ fn get_key_and_stakes(
     };
     Ok((
         entry.vote_account_pubkey,
-        NonZero::new(entry.stake).unwrap_or_else(|| {
-            panic!(
-                "Validator stake is zero for pubkey: {}",
-                entry.vote_account_pubkey,
-            )
-        }),
-        NonZero::new(rank_map.total_stake()).expect("expect rank-map total stake to not be 0"),
+        entry.stake,
+        rank_map.total_stake(),
     ))
 }
 

@@ -71,14 +71,14 @@ pub fn verify_certificate(
     cert: UnverifiedCertificate,
     max_validators: usize,
     total_stake: NonZero<u64>,
-    mut rank_map: impl FnMut(usize) -> Option<(u64, PopVerified<BlsPubkeyAffine>)>,
+    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
 ) -> Result<Certificate, Error> {
     let mut aggregate_stake = 0u64;
 
     // Wrap the `rank_map` to accumulate stake as a side-effect
     let accumulating_rank_map = |ind: usize| {
         rank_map(ind).map(|(stake, pubkey)| {
-            aggregate_stake = aggregate_stake.saturating_add(stake);
+            aggregate_stake = aggregate_stake.saturating_add(stake.get());
             pubkey
         })
     };
@@ -347,7 +347,9 @@ mod test {
             &(0..6).collect::<Vec<_>>(),
         );
         verify_certificate(cert, 10, NonZero::new(600).unwrap(), |rank| {
-            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
         })
         .unwrap();
     }
@@ -372,7 +374,9 @@ mod test {
             &(0..6).collect::<Vec<_>>(),
         );
         verify_certificate(cert, 10, total_stake, |rank| {
-            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
         })
         .unwrap();
 
@@ -384,7 +388,9 @@ mod test {
             &(0..5).collect::<Vec<_>>(),
         );
         let Err(err) = verify_certificate(cert, 10, total_stake, |rank| {
-            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
         }) else {
             panic!("should fail");
         };
@@ -442,7 +448,9 @@ mod test {
         };
 
         verify_certificate(cert, 10, NonZero::new(700).unwrap(), |rank| {
-            bls_keypairs.get(rank).map(|kp| (100, kp.public))
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
         })
         .unwrap();
     }
@@ -473,7 +481,9 @@ mod test {
         };
         assert_eq!(
             verify_certificate(cert, 10, NonZero::new(1000).unwrap(), |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public))
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
             })
             .unwrap_err(),
             Error::VerifySig(BlsError::PointConversion)
@@ -511,7 +521,7 @@ mod test {
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (per_validator_stake, kp.public))
+                    .map(|kp| (NonZero::new(per_validator_stake).unwrap(), kp.public))
             },
         )
         .unwrap();
@@ -555,7 +565,7 @@ mod test {
     // verification contract.
     // ----------------------------------------------------------------------------
 
-    const STAKE_PER_VALIDATOR: u64 = 100;
+    const STAKE_PER_VALIDATOR: NonZero<u64> = NonZero::new(100).unwrap();
 
     /// A `Block` for `slot` with a fresh, unique block id.
     fn fresh_block(slot: u64) -> Block {
@@ -594,7 +604,7 @@ mod test {
     /// Uniform `rank_map` over `keypairs`, each with `STAKE_PER_VALIDATOR` stake.
     fn rank_map(
         keypairs: &[BLSKeypair],
-    ) -> impl FnMut(usize) -> Option<(u64, PopVerified<BlsPubkeyAffine>)> + '_ {
+    ) -> impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)> + '_ {
         move |rank| {
             keypairs
                 .get(rank)

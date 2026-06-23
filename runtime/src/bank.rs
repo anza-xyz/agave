@@ -199,7 +199,6 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
-        num::NonZero,
         ops::AddAssign,
         path::PathBuf,
         slice,
@@ -5768,8 +5767,7 @@ impl Bank {
             .epoch_stakes_from_slot(slot)
             .ok_or(CertVerifyError::MissingRankMap)?;
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        let total_stake =
-            NonZero::new(key_to_rank_map.total_stake()).expect("total stake cannot be 0");
+        let total_stake = key_to_rank_map.total_stake();
 
         let cert =
             cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
