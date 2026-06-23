@@ -115,11 +115,10 @@ impl SlotStakeCounters {
         // White paper v1.1 page 22: The event is only issued if the node voted in slot s already,
         // but not to notarize b. Moreover:
         // notar(b) >= 40% or (skip(s) + notar(b) >= 60% and notar(b) >= 20%)
-        if let Some(Vote::Notarize(my_vote)) = self.my_first_vote.as_ref() {
-            if &my_vote.block.block_id == block_id {
+        if let Some(Vote::Notarize(my_vote)) = self.my_first_vote.as_ref()
+            && &my_vote.block.block_id == block_id {
                 return false; // I voted for the same block, no need to send NotarizeFallback
             }
-        }
         trace!(
             "safe_to_notar {block_id:?} skip_ratio={} notarized_ratio={}",
             self.skip_total as f64 / self.total_stake.get() as f64,

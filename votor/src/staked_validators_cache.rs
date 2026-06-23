@@ -156,8 +156,8 @@ impl StakedValidatorsCache {
     ) -> (&[SocketAddr], bool) {
         // Check if self.alpenglow_port_override has a different last_modified.
         // Immediately refresh the cache if it does.
-        if let Some(alpenglow_port_override) = &self.alpenglow_port_override {
-            if alpenglow_port_override.has_new_override(self.alpenglow_port_override_last_modified)
+        if let Some(alpenglow_port_override) = &self.alpenglow_port_override
+            && alpenglow_port_override.has_new_override(self.alpenglow_port_override_last_modified)
             {
                 self.alpenglow_port_override_last_modified =
                     alpenglow_port_override.last_modified();
@@ -168,7 +168,6 @@ impl StakedValidatorsCache {
                 );
                 self.refresh_cache_entry(self.cur_epoch(slot), cluster_info, access_time);
             }
-        }
 
         self.get_staked_validators_by_epoch(self.cur_epoch(slot), cluster_info, access_time)
     }

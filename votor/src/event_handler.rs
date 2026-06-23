@@ -450,8 +450,8 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = *standstill_slot {
-                    if block.slot > slot {
+                if let Some(slot) = *standstill_slot
+                    && block.slot > slot {
                         *standstill_slot = None;
                         info!(
                             "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
@@ -459,7 +459,6 @@ impl EventHandler {
                             block.slot
                         );
                     }
-                }
 
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
