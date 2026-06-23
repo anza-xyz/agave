@@ -5207,9 +5207,16 @@ fn test_update_completed_data_indexes() {
 
     for i in 0..10 {
         shred_index.insert(i as u64);
+        let received = u64::from(i) + 1;
         assert!(
-            update_completed_data_indexes(true, i, &shred_index, &mut completed_data_indexes)
-                .eq(std::iter::once(i..i + 1))
+            update_completed_data_indexes(
+                true,
+                i,
+                received,
+                &shred_index,
+                &mut completed_data_indexes
+            )
+            .eq(std::iter::once(i..i + 1))
         );
         assert!(completed_data_indexes.iter().eq(0..=i));
     }
@@ -5220,21 +5227,39 @@ fn test_update_completed_data_indexes_out_of_order() {
     let mut completed_data_indexes = CompletedDataIndexes::default();
     let mut shred_index = ShredIndex::default();
 
+    // Shred 4 is received first, so `received` stays at 5 throughout.
+    let received = 5;
+
     shred_index.insert(4);
     assert!(
-        update_completed_data_indexes(false, 4, &shred_index, &mut completed_data_indexes).eq([])
+        update_completed_data_indexes(
+            false,
+            4,
+            received,
+            &shred_index,
+            &mut completed_data_indexes
+        )
+        .eq([])
     );
     assert!(completed_data_indexes.is_empty());
 
     shred_index.insert(2);
     assert!(
-        update_completed_data_indexes(false, 2, &shred_index, &mut completed_data_indexes).eq([])
+        update_completed_data_indexes(
+            false,
+            2,
+            received,
+            &shred_index,
+            &mut completed_data_indexes
+        )
+        .eq([])
     );
     assert!(completed_data_indexes.is_empty());
 
     shred_index.insert(3);
     assert!(
-        update_completed_data_indexes(true, 3, &shred_index, &mut completed_data_indexes).eq([])
+        update_completed_data_indexes(true, 3, received, &shred_index, &mut completed_data_indexes)
+            .eq([])
     );
     assert!(completed_data_indexes.clone().iter().eq([3]));
 
@@ -5242,7 +5267,7 @@ fn test_update_completed_data_indexes_out_of_order() {
     // is part of the same data set
     shred_index.insert(1);
     assert!(
-        update_completed_data_indexes(true, 1, &shred_index, &mut completed_data_indexes)
+        update_completed_data_indexes(true, 1, received, &shred_index, &mut completed_data_indexes)
             .eq(std::iter::once(2..4))
     );
     assert!(completed_data_indexes.clone().iter().eq([1, 3]));
@@ -5251,10 +5276,110 @@ fn test_update_completed_data_indexes_out_of_order() {
     // is part of the same data set
     shred_index.insert(0);
     assert!(
-        update_completed_data_indexes(true, 0, &shred_index, &mut completed_data_indexes)
+        update_completed_data_indexes(true, 0, received, &shred_index, &mut completed_data_indexes)
             .eq([0..1, 1..2])
     );
     assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
+}
+
+// Differential test: `update_completed_data_indexes` bounds its forward scan
+// with `received`, relying on the invariant that no completed data index can
+// exist at or above `received`. Check output and state-equivalence against an
+// unbounded reference implementation across randomized insertion orders.
+#[test]
+fn test_update_completed_data_indexes_differential() {
+    use {
+        crate::shred::MAX_DATA_SHREDS_PER_SLOT,
+        rand::Rng,
+        rand_chacha::{ChaChaRng, rand_core::SeedableRng},
+    };
+
+    // The original implementation, with an unbounded forward scan.
+    fn reference(
+        is_last_in_data: bool,
+        new_shred_index: u32,
+        received_data_shreds: &ShredIndex,
+        completed_data_indexes: &mut CompletedDataIndexes,
+    ) -> Vec<Range<u32>> {
+        if is_last_in_data {
+            completed_data_indexes.insert(new_shred_index);
+        }
+        [
+            completed_data_indexes
+                .range(..new_shred_index)
+                .next_back()
+                .map(|index| index + 1)
+                .or(Some(0u32)),
+            is_last_in_data.then_some(new_shred_index + 1),
+            completed_data_indexes
+                .range(new_shred_index + 1..)
+                .next()
+                .map(|index| index + 1),
+        ]
+        .into_iter()
+        .flatten()
+        .tuple_windows()
+        .filter(|&(start, end)| {
+            let bounds = u64::from(start)..u64::from(end);
+            received_data_shreds.range(bounds.clone()).eq(bounds)
+        })
+        .map(|(start, end)| start..end)
+        .collect()
+    }
+
+    const WINDOW: u32 = 512;
+    let max_index = u32::try_from(MAX_DATA_SHREDS_PER_SLOT).unwrap();
+    for seed in 0..200u64 {
+        let mut rng = ChaChaRng::seed_from_u64(seed);
+        // Draw distinct shred indexes from a window of the index space; pin
+        // some windows to the tail to exercise clamping at capacity.
+        let window_start = if seed & 3 == 0 {
+            max_index - WINDOW
+        } else {
+            rng.random_range(0..max_index - WINDOW)
+        };
+        let mut indexes: Vec<u32> = (window_start..window_start + WINDOW).collect();
+        indexes.shuffle(&mut rng);
+        indexes.truncate(rng.random_range(1..=256));
+        // Cover the in-order arrival, reverse order, and
+        // random permutations.
+        match seed % 5 {
+            0 => indexes.sort_unstable(),
+            1 => indexes.sort_unstable_by(|a, b| b.cmp(a)),
+            _ => (),
+        }
+
+        let mut shred_index = ShredIndex::default();
+        let mut received = 0u64;
+        let mut completed_data_indexes = CompletedDataIndexes::default();
+        let mut completed_data_indexes_ref = CompletedDataIndexes::default();
+
+        for &index in &indexes {
+            let is_last_in_data = rng.random_bool(0.25);
+            shred_index.insert(u64::from(index));
+            received = received.max(u64::from(index) + 1);
+
+            let ranges: Vec<_> = update_completed_data_indexes(
+                is_last_in_data,
+                index,
+                received,
+                &shred_index,
+                &mut completed_data_indexes,
+            )
+            .collect();
+            let expected = reference(
+                is_last_in_data,
+                index,
+                &shred_index,
+                &mut completed_data_indexes_ref,
+            );
+            assert_eq!(ranges, expected, "seed {seed}, index {index}");
+            assert_eq!(
+                completed_data_indexes, completed_data_indexes_ref,
+                "seed {seed}, index {index}"
+            );
+        }
+    }
 }
 
 fn make_large_tx_entry(num_txs: usize) -> Entry {
