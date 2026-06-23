@@ -633,9 +633,10 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
     }
     let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
     if let Some(idx) = if_index
-        && nd_msg.ndm_ifindex != idx as i32 {
-            return None;
-        }
+        && nd_msg.ndm_ifindex != idx as i32
+    {
+        return None;
+    }
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ndmsg>()..]) else {
         return None;
     };
@@ -649,11 +650,12 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
         neighbor.destination = parse_ip_address(dst_attr.data, nd_msg.ndm_family);
     }
     if let Some(lladdr_attr) = attrs.get(&NDA_LLADDR)
-        && lladdr_attr.data.len() >= 6 {
-            let mut mac = [0u8; 6];
-            mac.copy_from_slice(&lladdr_attr.data[0..6]);
-            neighbor.lladdr = Some(MacAddress(mac));
-        }
+        && lladdr_attr.data.len() >= 6
+    {
+        let mut mac = [0u8; 6];
+        mac.copy_from_slice(&lladdr_attr.data[0..6]);
+        neighbor.lladdr = Some(MacAddress(mac));
+    }
     Some(neighbor)
 }
 
