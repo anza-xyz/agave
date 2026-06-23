@@ -84,7 +84,8 @@ use {
 };
 #[cfg(target_os = "linux")]
 use {
-    agave_cpu_utils::cpu_affinity, agave_xdp::transmitter::XdpConfig,
+    agave_cpu_utils::cpu_affinity,
+    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
 };
 
@@ -1451,7 +1452,16 @@ fn build_xdp_config(
     };
     Ok(cpus.map(|cpus| {
         info!("XDP enabled on CPU cores: {cpus:?}");
-        XdpConfig::new(xdp_interface, cpus, xdp_zero_copy)
+        // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
+        let queues = cpus
+            .into_iter()
+            .enumerate()
+            .map(|(queue, cpu)| QueueCpuBinding {
+                queue: queue as u32,
+                cpu,
+            })
+            .collect();
+        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
     }))
 }
 
