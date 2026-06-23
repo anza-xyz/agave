@@ -288,11 +288,6 @@ impl MigrationPhase {
     fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
     }
-
-    /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
-    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
-        self.is_alpenglow_block(slot)
-    }
 }
 
 /// Keeps track of the current migration status
@@ -459,7 +454,6 @@ impl MigrationStatus {
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
-    dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.

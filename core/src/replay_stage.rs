@@ -1605,8 +1605,11 @@ impl ReplayStage {
             let bank_forks_r = bank_forks.read().unwrap();
             new_frozen_slots
                 .iter()
-                .filter(|slot| migration_status.should_allow_fast_leader_handover(**slot))
                 .filter_map(|slot| bank_forks_r.get(*slot))
+                .filter(|bank| {
+                    bank.feature_set.snapshot().alpenglow_fast_leader_handover
+                        && migration_status.should_allow_block_markers(bank.slot())
+                })
                 .collect_vec()
         };
         for bank in flh_candidate_banks {

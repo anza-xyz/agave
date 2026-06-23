@@ -64,6 +64,13 @@ pub(super) fn child_bank_replay_start(
     if !migration_status.should_allow_block_markers(child_slot) {
         return ChildBankReplayStart::FromStart;
     }
+    if !parent_bank
+        .feature_set
+        .snapshot()
+        .alpenglow_fast_leader_handover
+    {
+        return ChildBankReplayStart::FromStart;
+    }
 
     let Some(slot_meta) = blockstore
         .meta(child_slot)
@@ -113,7 +120,7 @@ fn try_restart_slot_from_update_parent(
     migration_status: &MigrationStatus,
     source: &str,
 ) -> bool {
-    if !migration_status.should_allow_fast_leader_handover(slot) {
+    if !migration_status.should_allow_block_markers(slot) {
         return false;
     }
     if blockstore.is_dead(slot) {
