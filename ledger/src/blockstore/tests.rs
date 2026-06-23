@@ -3,6 +3,7 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
+            MAX_DATA_SHREDS_PER_SLOT,
             ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, verify_merkle_proof},
@@ -10,7 +11,8 @@ use {
     },
     agave_feature_set::discard_unexpected_data_complete_shreds,
     assert_matches::assert_matches,
-    rand::{rng, seq::SliceRandom},
+    rand::{rng, seq::SliceRandom, Rng},
+    rand_chacha::{ChaChaRng, rand_core::SeedableRng},
     solana_entry::entry::next_entry_mut,
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
@@ -5282,18 +5284,15 @@ fn test_update_completed_data_indexes_out_of_order() {
     assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
 }
 
-// Differential test: `update_completed_data_indexes` bounds its forward scan
-// with `received`, relying on the invariant that no completed data index can
-// exist at or above `received`. Check output and state-equivalence against an
-// unbounded reference implementation across randomized insertion orders.
+// Differential regression test for the `received` bounded scan in
+// `update_completed_data_indexes`.
+//
+// The bounded scan is correct only if no completed data index exists at or
+// above `received`. Check both returned ranges and mutated state against the
+// original unbounded implementation across randomized insertion orders.
 #[test]
 fn test_update_completed_data_indexes_differential() {
-    use {
-        crate::shred::MAX_DATA_SHREDS_PER_SLOT,
-        rand::Rng,
-        rand_chacha::{ChaChaRng, rand_core::SeedableRng},
-    };
-
+    
     // The original implementation, with an unbounded forward scan.
     fn reference(
         is_last_in_data: bool,
