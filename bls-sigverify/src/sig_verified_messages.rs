@@ -1,7 +1,10 @@
 use std::num::NonZero;
 
 use agave_votor_messages::{
-    certificate::Certificate, unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
+    certificate::Certificate,
+    consensus_message::{ConsensusMessage, VoteMessage},
+    unverified_vote_message::UnverifiedVoteMessage,
+    vote::Vote,
     wire::VotePayloadToSign,
 };
 use bitvec::vec::BitVec;
@@ -19,6 +22,15 @@ pub enum SigVerifiedBatch {
 }
 
 impl SigVerifiedBatch {
+    pub fn new_from_consensus_message(bank: &Bank, msg: ConsensusMessage) -> Self {
+        match msg {
+            ConsensusMessage::Certificate(cert) => Self::Certificates(vec![cert]),
+            ConsensusMessage::Vote(msg) => {
+                Self::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)])
+            }
+        }
+    }
+
     /// Returns the length of the batch
     pub fn len(&self) -> usize {
         match self {
@@ -53,6 +65,27 @@ pub struct SigVerifiedVoteBatch {
 }
 
 impl SigVerifiedVoteBatch {
+    fn new_from_vote_msg(bank: &Bank, msg: VoteMessage) -> Self {
+        let rank_map = bank
+            .epoch_stakes_from_slot(msg.vote.slot())
+            .unwrap()
+            .bls_pubkey_to_rank_map();
+        let stake = rank_map
+            .get_pubkey_stake_entry(msg.rank as usize)
+            .unwrap()
+            .stake;
+        let max_validators = rank_map.len();
+        assert!((msg.rank as usize) < max_validators);
+        let mut ranks = BitVec::repeat(false, max_validators);
+        ranks.set(msg.rank as usize, true);
+        Self {
+            vote: msg.vote,
+            signature: msg.signature.try_as_projective().unwrap(),
+            stake,
+            ranks,
+        }
+    }
+
     pub(crate) fn new_from_unverified_vote(
         bank: &Bank,
         msg: UnverifiedVoteMessage,
@@ -67,7 +100,6 @@ impl SigVerifiedVoteBatch {
         }
         let mut ranks = BitVec::repeat(false, max_validators);
         ranks.set(msg.rank as usize, true);
-
         Some(Self {
             vote: msg.vote,
             signature: msg.signature.try_as_projective().ok()?,
@@ -100,12 +132,27 @@ impl SigVerifiedVoteBatch {
             ranks.set(rank as usize, true);
         }
         let vote = Vote::from(vote_payload_to_sign);
-
         Some(Self {
             vote,
             signature: aggregate_signature,
             stake: total_stake?,
             ranks,
         })
+    }
+
+    pub fn vote(&self) -> &Vote {
+        &self.vote
+    }
+
+    pub fn ranks(&self) -> &BitVec<u8> {
+        &self.ranks
+    }
+
+    pub fn signature(&self) -> &SignatureProjective {
+        &self.signature
+    }
+
+    pub fn stake(&self) -> NonZero<u64> {
+        self.stake
     }
 }
