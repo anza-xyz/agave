@@ -1404,87 +1404,86 @@ fn build_xdp_config(
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
 
-    // A config file fully specifies the XDP setup, so it takes precedence over
-    // the individual --xdp-* flags (clap marks them mutually exclusive with it).
-    if let Some(path) = matches.value_of("xdp_config_file") {
-        let config = parse_xdp_config_file(Path::new(path))
-            .map_err(|e| format!("invalid XDP config file `{path}`: {e}"))?;
-        if let Some(poh_core) = poh_pinned_cpu_core {
-            if config.queues.iter().any(|binding| binding.cpu == poh_core) {
-                return Err(format!(
-                    "XDP config file maps a worker to PoH core {poh_core}; XDP and PoH must not \
-                     share a CPU core"
-                ));
-            }
-        }
-        info!(
-            "XDP enabled from config file `{path}` on CPU cores: {:?}",
-            config.queues.iter().map(|b| b.cpu).collect::<Vec<_>>()
-        );
-        return Ok(Some(config));
-    }
+    // Configuration is layered with precedence cli > config > env. There is no
+    // env tier yet, so the base is the optional config file, which the CLI flags
+    // below override field by field.
+    let config = match matches.value_of("xdp_config_file") {
+        Some(path) => Some(
+            parse_xdp_config_file(Path::new(path))
+                .map_err(|e| format!("invalid XDP config file `{path}`: {e}"))?,
+        ),
+        None => None,
+    };
 
-    let xdp_interface = matches
+    let cli_interface = matches
         .value_of("xdp_interface")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+    let cli_zero_copy = matches.is_present("xdp_zero_copy")
         || matches.is_present("experimental_retransmit_xdp_zero_copy");
-    let xdp_cpu_cores = matches
+    let cli_cpu_cores = matches
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
-    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
-        let parsed =
-            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
-        if let Some(poh_core) = poh_pinned_cpu_core {
-            if parsed.contains(&poh_core) {
-                return Err(format!(
-                    "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a \
-                     CPU core"
-                ));
-            }
-        }
-        Some(parsed)
-    } else {
-        // Auto-select a single core, avoiding the PoH core.
-        match cpu_affinity(None) {
-            Ok(allowed) => {
-                match allowed
-                    .iter()
-                    .rev()
-                    .map(|cpu| **cpu)
-                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
-                {
-                    Some(cpu) => Some(vec![cpu]),
-                    None => {
-                        return Err(format!(
-                            "XDP requires a dedicated CPU core separate from PoH (core \
-                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
-                             disable XDP."
-                        ));
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(format!(
-                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
-                     --xdp-cpu-cores explicitly."
-                ));
-            }
-        }
-    };
-    Ok(cpus.map(|cpus| {
-        info!("XDP enabled on CPU cores: {cpus:?}");
-        // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
-        let queues = cpus
+
+    // Interface: the CLI flag wins, else the config file's value, else auto-detect.
+    let interface = cli_interface
+        .map(str::to_string)
+        .or_else(|| config.as_ref().and_then(|c| c.interface.clone()));
+
+    // Zero-copy: a CLI flag can only turn it on; otherwise inherit the config file.
+    let zero_copy = cli_zero_copy || config.as_ref().is_some_and(|c| c.zero_copy);
+
+    // Queue -> CPU bindings: --xdp-cpu-cores overrides the config file, which
+    // overrides a single auto-selected core.
+    let queues: Vec<QueueCpuBinding> = if let Some(cpu_str) = cli_cpu_cores {
+        // The CLI only expresses a CPU list; map it onto queues sequentially
+        // (queue i -> cpus[i]).
+        parse_cpu_ranges(cpu_str)
+            .expect("clap validator already accepted this CPU list")
             .into_iter()
             .enumerate()
             .map(|(queue, cpu)| QueueCpuBinding {
                 queue: queue as u32,
                 cpu,
             })
-            .collect();
-        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
-    }))
+            .collect()
+    } else if let Some(config) = &config {
+        config.queues.clone()
+    } else {
+        // Auto-select a single core, avoiding the PoH core.
+        let allowed = cpu_affinity(None).map_err(|e| {
+            format!(
+                "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+                 --xdp-cpu-cores explicitly."
+            )
+        })?;
+        let cpu = allowed
+            .iter()
+            .rev()
+            .map(|cpu| **cpu)
+            .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+            .ok_or_else(|| {
+                format!(
+                    "XDP requires a dedicated CPU core separate from PoH (core \
+                     {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable XDP."
+                )
+            })?;
+        vec![QueueCpuBinding { queue: 0, cpu }]
+    };
+
+    // No XDP worker may share the PoH pinned core, whatever the mapping's source.
+    if let Some(poh_core) = poh_pinned_cpu_core {
+        if queues.iter().any(|binding| binding.cpu == poh_core) {
+            return Err(format!(
+                "XDP maps a worker to PoH core {poh_core}; XDP and PoH must not share a CPU core"
+            ));
+        }
+    }
+
+    info!(
+        "XDP enabled on CPU cores: {:?}",
+        queues.iter().map(|b| b.cpu).collect::<Vec<_>>()
+    );
+    Ok(Some(XdpConfig::new(interface, queues, zero_copy)))
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -1624,5 +1623,59 @@ mod xdp_tests {
             result.unwrap_err().contains("invalid XDP config file"),
             "a malformed config file must surface a parse error"
         );
+    }
+
+    #[test]
+    fn test_cli_flags_override_config_file() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // Config sets interface eth0, no zero-copy, queues on cores 3/4.
+        let file = write_config(
+            "version = 1\n[xdp]\ninterface = \"eth0\"\nqueue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n",
+        );
+        // CLI overrides the interface, the CPU mapping, and turns on zero-copy.
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-config-file",
+            file.path().to_str().unwrap(),
+            "--xdp-interface",
+            "eth1",
+            "--xdp-cpu-cores",
+            "5,7",
+            "--xdp-zero-copy",
+        ]);
+        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("config file must enable XDP");
+        assert_eq!(config.interface.as_deref(), Some("eth1"));
+        assert!(config.zero_copy);
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 5 },
+                QueueCpuBinding { queue: 1, cpu: 7 },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_config_file_values_used_without_cli_overrides() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // No interface or CPU flags: those come from the file; --xdp-zero-copy
+        // only adds zero-copy on top.
+        let file = write_config("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"2:5\"\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-config-file",
+            file.path().to_str().unwrap(),
+            "--xdp-zero-copy",
+        ]);
+        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("config file must enable XDP");
+        assert_eq!(config.interface, None);
+        assert!(config.zero_copy);
+        assert_eq!(config.queues, vec![QueueCpuBinding { queue: 2, cpu: 5 }]);
     }
 }

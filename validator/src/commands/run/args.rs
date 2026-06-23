@@ -1253,10 +1253,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("xdp-config-file")
             .takes_value(true)
             .value_name("PATH")
-            .conflicts_with_all(&["no_xdp", "xdp_interface", "xdp_cpu_cores", "xdp_zero_copy"])
+            .conflicts_with("no_xdp")
             .help(
                 "Path to a TOML file describing the XDP setup (interface, zero-copy, and the \
-                 NIC-queue to CPU-core mapping). Mutually exclusive with the other --xdp-* flags",
+                 NIC-queue to CPU-core mapping). The individual --xdp-* flags, if also given, \
+                 override the corresponding values from the file",
             ),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
