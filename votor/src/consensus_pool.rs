@@ -777,7 +777,7 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypairs[rank].vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
-        let payload = get_vote_payload_to_sign(vote, shred_version);
+        let payload = get_vote_payload_to_sign(*vote, shred_version);
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
@@ -2231,7 +2231,7 @@ mod tests {
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
 
-        let payload = get_vote_payload_to_sign(&vote, ctx.pool.cluster_info.my_shred_version());
+        let payload = get_vote_payload_to_sign(vote, ctx.pool.cluster_info.my_shred_version());
         vote_message
             .signature
             .verify(&bls_keypair.public, &payload)

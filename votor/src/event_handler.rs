@@ -1398,7 +1398,7 @@ mod tests {
 
         fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
             let payload =
-                get_vote_payload_to_sign(expected_vote, self.cluster_info.my_shred_version());
+                get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
             let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote: *expected_vote,

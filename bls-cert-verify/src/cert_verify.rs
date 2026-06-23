@@ -297,7 +297,7 @@ mod test {
         rank: usize,
     ) -> VoteMessage {
         let bls_keypair = &bls_keypairs[rank];
-        let payload = get_vote_payload_to_sign(&vote, shred_version);
+        let payload = get_vote_payload_to_sign(vote, shred_version);
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,

@@ -104,7 +104,7 @@ impl ValidatedRewardCert {
 
         if let Some(skip) = skip {
             let vote = Vote::new_skip_vote(skip.slot);
-            let payload = get_vote_payload_to_sign(&vote, shred_version);
+            let payload = get_vote_payload_to_sign(vote, shred_version);
             verify_base2(
                 &payload,
                 &skip.signature,
@@ -118,7 +118,7 @@ impl ValidatedRewardCert {
                 slot: notar.slot,
                 block_id: notar.block_id,
             });
-            let payload = get_vote_payload_to_sign(&vote, shred_version);
+            let payload = get_vote_payload_to_sign(vote, shred_version);
             verify_base2(
                 &payload,
                 &notar.signature,
@@ -201,7 +201,7 @@ mod tests {
     };
 
     fn new_vote(vote: Vote, rank: usize, keypair: &BlsKeypair, shred_version: u16) -> VoteMessage {
-        let payload = get_vote_payload_to_sign(&vote, shred_version);
+        let payload = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypair.sign(&payload).into();
         VoteMessage {
             vote,

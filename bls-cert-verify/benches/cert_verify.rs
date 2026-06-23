@@ -32,7 +32,7 @@ fn create_signed_vote_message(
     vote: Vote,
     rank: usize,
 ) -> VoteMessage {
-    let payload = get_vote_payload_to_sign(&vote, shred_version);
+    let payload = get_vote_payload_to_sign(vote, shred_version);
     let signature: BlsSignature = bls_keypair.sign(&payload).into();
     VoteMessage {
         vote,
