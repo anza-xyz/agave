@@ -5898,8 +5898,10 @@ define_accounts_db_test!(test_get_sorted_potential_ancient_slots, |db| {
     );
     let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
     db.add_root(root1);
+    db.create_and_insert_store(root1, 4096, "test");
     let root2 = root1 + 1;
     db.add_root(root2);
+    db.create_and_insert_store(root2, 4096, "test");
     let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
     assert!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
@@ -5937,12 +5939,7 @@ define_accounts_db_test!(test_get_sorted_potential_ancient_slots, |db| {
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
         vec![root1, root2]
     );
-    db.accounts_index
-        .roots_tracker
-        .write()
-        .unwrap()
-        .alive_roots
-        .remove(&root1);
+    db.storage.remove(&root1, false);
     let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
     assert_eq!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),

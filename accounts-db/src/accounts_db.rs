@@ -3165,20 +3165,13 @@ impl AccountsDb {
         (shrink_slots, shrink_slots_next_batch)
     }
 
-    fn get_roots_less_than(&self, slot: Slot) -> Vec<Slot> {
-        self.accounts_index
-            .roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .get_all_less_than(slot)
-    }
-
     /// return all slots that are more than one epoch old and thus could already be an ancient append vec
     /// or which could need to be combined into a new or existing ancient append vec
     /// offset is used to combine newer slots than we normally would. This is designed to be used for testing.
     fn get_sorted_potential_ancient_slots(&self, oldest_non_ancient_slot: Slot) -> Vec<Slot> {
-        let mut ancient_slots = self.get_roots_less_than(oldest_non_ancient_slot);
+        // Only storages can be combined into ancient append vecs, so the storage map is the
+        // source of truth here.
+        let mut ancient_slots = self.storage.slots_less_than(oldest_non_ancient_slot);
         ancient_slots.sort_unstable();
         ancient_slots
     }
@@ -3192,7 +3185,11 @@ impl AccountsDb {
 
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let can_randomly_shrink = true;
-        let sorted_slots = self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot);
+        let (sorted_slots, select_slots_us) =
+            measure_us!(self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot));
+        self.shrink_ancient_stats
+            .select_slots_us
+            .fetch_add(select_slots_us, Ordering::Relaxed);
         self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
     }
 
