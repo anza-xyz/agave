@@ -1033,6 +1033,7 @@ impl PohRecorder {
         &mut self,
         slot_max_tick_height: u64,
         footer: BlockFooterV1,
+        block_completion_started_at: Instant,
     ) -> Result<()> {
         let (poh_entry, tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
@@ -1062,10 +1063,24 @@ impl PohRecorder {
                     .load(Ordering::Acquire),
             ));
 
+            let bank_slot = self
+                .working_bank
+                .as_ref()
+                .map(|working_bank| working_bank.bank.slot())
+                .ok_or(PohRecorderError::MaxHeightReached)?;
             let (flush_res, flush_cache_and_tick_us) =
                 measure_us!(self.flush_cache(true, Some(footer)));
             self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
             flush_res?;
+            datapoint_info!(
+                "block-completion-us",
+                ("slot", bank_slot, i64),
+                (
+                    "block_completion_elapsed_us",
+                    block_completion_started_at.elapsed().as_micros(),
+                    i64
+                ),
+            );
         }
         Ok(())
     }
@@ -1455,7 +1470,7 @@ mod tests {
         });
 
         let err = poh_recorder
-            .tick_alpenglow(bank.max_tick_height(), test_footer())
+            .tick_alpenglow(bank.max_tick_height(), test_footer(), Instant::now())
             .unwrap_err();
         freezer.join().unwrap();
 
@@ -1476,7 +1491,7 @@ mod tests {
             new_alpenglow_recorder_for_bank(bank.clone(), blockstore);
 
         let err = poh_recorder
-            .tick_alpenglow(bank.max_tick_height(), test_footer())
+            .tick_alpenglow(bank.max_tick_height(), test_footer(), Instant::now())
             .unwrap_err();
 
         assert!(matches!(
@@ -1539,7 +1554,7 @@ mod tests {
             bank_to_freeze.freeze();
         });
         poh_recorder
-            .tick_alpenglow(child.max_tick_height(), test_footer())
+            .tick_alpenglow(child.max_tick_height(), test_footer(), Instant::now())
             .unwrap();
         freezer.join().unwrap();
         assert!(!poh_recorder.has_bank());

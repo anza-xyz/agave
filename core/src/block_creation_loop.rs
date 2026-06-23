@@ -60,6 +60,12 @@ use {
 pub(crate) mod rewards;
 mod stats;
 
+// Imperically derived value estimating the time to drain and record the final batch of
+// transactions, produce the block footer, produce the 'alpentick', freeze the bank, shred the final
+// batches of the block, and broadcast. Recording stops this much before the slot timeout so
+// block completion has time to finish before the leader window deadline.
+const TIME_TO_COMPLETE_BLOCK_BROADCAST: Duration = Duration::from_millis(6);
+
 /// Source of a leader-window notification consumed by BCL.
 enum ParentSource {
     /// Parent from ParentReady event for this leader window is already known.
@@ -422,6 +428,7 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 fn block_timeout(bank: &Bank, slot: Slot) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot_at_slot(slot))
         .saturating_mul((leader_slot_index(slot) as u32).saturating_add(1))
+        .saturating_sub(TIME_TO_COMPLETE_BLOCK_BROADCAST)
 }
 
 /// Select the freshest leader-window notification within one source.
@@ -724,6 +731,8 @@ fn record_and_complete_block(
         return Err(PohRecorderError::WindowMovedOn(bank_slot));
     }
 
+    let block_completion_started_at = Instant::now();
+
     // Shutdown and clear any inflight records
     if !records_shutdown {
         shutdown_and_drain_record_receiver(&ctx.poh_recorder, &mut ctx.record_receiver, None)?;
@@ -786,7 +795,7 @@ fn record_and_complete_block(
 
     drop(bank);
     // Write the single tick for this slot
-    w_poh_recorder.tick_alpenglow(max_tick_height, footer)?;
+    w_poh_recorder.tick_alpenglow(max_tick_height, footer, block_completion_started_at)?;
     Ok(())
 }
 
