@@ -731,8 +731,6 @@ fn record_and_complete_block(
         return Err(PohRecorderError::WindowMovedOn(bank_slot));
     }
 
-    let block_completion_started_at = Instant::now();
-
     // Shutdown and clear any inflight records
     if !records_shutdown {
         shutdown_and_drain_record_receiver(&ctx.poh_recorder, &mut ctx.record_receiver, None)?;
@@ -795,7 +793,7 @@ fn record_and_complete_block(
 
     drop(bank);
     // Write the single tick for this slot
-    w_poh_recorder.tick_alpenglow(max_tick_height, footer, block_completion_started_at)?;
+    w_poh_recorder.tick_alpenglow(max_tick_height, footer)?;
     Ok(())
 }
 
