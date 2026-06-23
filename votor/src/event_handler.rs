@@ -876,8 +876,10 @@ impl EventHandler {
                     panic!(
                         "{my_pubkey}: Block {block:?} has been finalized, however we have a bank \
                          hash mismatch. The cluster bank hash is {expected_hash} however we \
-                         computed {}. At this point we will be unable to recover. Please save a \
-                         copy of your ledger to share on discord and restart from a snapshot > {}.",
+                         computed {}. At this point we will be unable to recover. Ensure that you \
+                         are running a supported Agave version for this cluster. If this is not \
+                         operator error,please save a copy of your ledger to share on discord and \
+                         restart from a snapshot > {}.",
                         bank.hash(),
                         block.slot
                     );
