@@ -1250,15 +1250,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Enable XDP zero copy mode. Requires hardware and driver support"),
     )
     .arg(
-        Arg::with_name("xdp_config_file")
-            .long("xdp-config-file")
+        Arg::with_name("config")
+            .long("config")
             .takes_value(true)
             .value_name("PATH")
             .conflicts_with("no_xdp")
             .help(
-                "Path to a TOML file describing the XDP setup (interface, zero-copy, and the \
-                 NIC-queue to CPU-core mapping). The individual --xdp-* flags, if also given, \
-                 override the corresponding values from the file",
+                "Path to a TOML configuration file. Its [xdp] section configures XDP \
+                 (interface, zero-copy, and the NIC-queue to CPU-core mapping) and its \
+                 [threads.poh] section pins the PoH thread; the corresponding CLI flags, if \
+                 also given, override the values from the file",
             ),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
