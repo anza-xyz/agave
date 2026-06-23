@@ -5570,6 +5570,37 @@ impl AccountsDb {
         self.report_store_timings();
     }
 
+    /// Store `accounts` into `storage`.
+    ///
+    /// This fn is to only be called by ancient squash.
+    pub(crate) fn store_accounts_for_squash<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        storage: &AccountStorageEntry,
+    ) -> StoreAccountsTiming {
+        let slot = accounts.target_slot();
+        // Flush the read cache if necessary
+        if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
+            let flush_read_cache_time = Measure::start("flush_read_cache");
+            (0..accounts.len()).for_each(|index| {
+                // Based on the patterns of how a validator writes accounts, it is almost always
+                // the case that there is no read only cache entry for this pubkey and slot.
+                // So, we can give that hint to the `remove` for performance.
+                self.read_only_accounts_cache
+                    .remove_assume_not_present(accounts.pubkey(index));
+            });
+            self.store_accounts_for_shrink_stats
+                .flush_read_cache_us
+                .fetch_add(flush_read_cache_time.end_as_us(), Ordering::Relaxed);
+        }
+
+        self.store_accounts_for_shrink(
+            accounts,
+            storage,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        )
+    }
+
     /// Stores accounts in the storage and updates the index.
     /// This function is intended for accounts that are being shrunk (moving from one store to another)
     /// - `UpsertReclaims` is set to `IgnoreReclaims`. If the slot in `accounts` differs from the new slot,
@@ -5586,18 +5617,6 @@ impl AccountsDb {
         let stats = &self.store_accounts_for_shrink_stats;
 
         debug_assert!(self.accounts_index.is_alive_root(slot));
-
-        // Flush the read cache if necessary
-        let flush_read_cache_time = Measure::start("flush_read_cache");
-        if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
-            (0..accounts.len()).for_each(|index| {
-                // based on the patterns of how a validator writes accounts, it is almost always the case that there is no read only cache entry
-                // for this pubkey and slot. So, we can give that hint to the `remove` for performance.
-                self.read_only_accounts_cache
-                    .remove_assume_not_present(accounts.pubkey(index));
-            });
-        }
-        let flush_read_cache_us = flush_read_cache_time.end_as_us();
 
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
@@ -5618,9 +5637,6 @@ impl AccountsDb {
         );
         let update_index_us = update_index_time.end_as_us();
 
-        stats
-            .flush_read_cache_us
-            .fetch_add(flush_read_cache_us, Ordering::Relaxed);
         stats
             .write_to_storage_us
             .fetch_add(write_accounts_us, Ordering::Relaxed);
