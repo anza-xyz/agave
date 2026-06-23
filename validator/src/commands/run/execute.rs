@@ -169,7 +169,7 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
-    // Parse the optional --config file once; both XDP and PoH read from it.
+    // Parse the optional --config file once, shared by the consumers below.
     #[cfg(target_os = "linux")]
     let file_config = match matches.value_of("config") {
         Some(path) => parse_config_file(Path::new(path))
