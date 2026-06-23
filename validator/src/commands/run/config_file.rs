@@ -173,9 +173,8 @@ fn build_thread(raw: &RawThread) -> Result<ThreadConfig, ConfigFileError> {
         match spec {
             CpuSpec::Index(cpu) => cpus.push(*cpu),
             CpuSpec::Set(set) => {
-                let parsed = parse_cpu_ranges(set).map_err(|_| ConfigFileError::CpuSet {
-                    input: set.clone(),
-                })?;
+                let parsed = parse_cpu_ranges(set)
+                    .map_err(|_| ConfigFileError::CpuSet { input: set.clone() })?;
                 cpus.extend(parsed);
             }
         }
@@ -224,9 +223,7 @@ pub fn parse_config_file(path: &Path) -> Result<FileConfig, ConfigFileError> {
 fn parse_str(text: &str) -> Result<FileConfig, ConfigFileError> {
     let raw: RawFile = toml::from_str(text)?;
     if raw.version != 1 {
-        return Err(ConfigFileError::Version {
-            found: raw.version,
-        });
+        return Err(ConfigFileError::Version { found: raw.version });
     }
 
     let xdp = raw.xdp.map(build_xdp).transpose()?;
@@ -300,15 +297,13 @@ mod tests {
 
     #[test]
     fn full_fields() {
-        let c = xdp(
-            r#"
+        let c = xdp(r#"
 version = 1
 [xdp]
 interface = "ens1f0"
 zero_copy = true
 queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
-"#,
-        );
+"#);
         assert_eq!(c.interface.as_deref(), Some("ens1f0"));
         assert!(c.zero_copy);
         assert_eq!(
@@ -345,9 +340,8 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     #[test]
     fn parses_multiple_threads() {
         // The parser keeps every declared thread; the server queries by name.
-        let c =
-            parse("version = 1\n[threads.poh]\ncpus = [2]\n[threads.replay]\ncpus = [8, 9]\n")
-                .unwrap();
+        let c = parse("version = 1\n[threads.poh]\ncpus = [2]\n[threads.replay]\ncpus = [8, 9]\n")
+            .unwrap();
         assert_eq!(c.thread("poh"), Some(&ThreadConfig { cpus: vec![2] }));
         assert_eq!(c.thread("replay"), Some(&ThreadConfig { cpus: vec![8, 9] }));
     }
@@ -413,9 +407,7 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
         let one = ThreadConfig { cpus: vec![2] };
         assert_eq!(PohConfig::try_from(&one).unwrap(), PohConfig { cpu: 2 });
 
-        let many = ThreadConfig {
-            cpus: vec![2, 3],
-        };
+        let many = ThreadConfig { cpus: vec![2, 3] };
         assert!(matches!(
             PohConfig::try_from(&many),
             Err(ConfigFileError::SingleCpuRequired { count: 2 })

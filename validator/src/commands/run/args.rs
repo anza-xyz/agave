@@ -1256,10 +1256,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("PATH")
             .conflicts_with("no_xdp")
             .help(
-                "Path to a TOML configuration file. Its [xdp] section configures XDP \
-                 (interface, zero-copy, and the NIC-queue to CPU-core mapping) and its \
-                 [threads.poh] section pins the PoH thread; the corresponding CLI flags, if \
-                 also given, override the values from the file",
+                "Path to a TOML configuration file. Its [xdp] section configures XDP (interface, \
+                 zero-copy, and the NIC-queue to CPU-core mapping) and its [threads.poh] section \
+                 pins the PoH thread; the corresponding CLI flags, if also given, override the \
+                 values from the file",
             ),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
