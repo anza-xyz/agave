@@ -81,6 +81,7 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
+    solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_stake_interface as stake,
     solana_system_interface::program as system_program,
@@ -163,7 +164,7 @@ fn test_spend_and_verify_all_nodes() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -327,7 +328,7 @@ fn test_forwarding() {
     cluster_tests::send_many_transactions(
         validator_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         20,
     );
@@ -372,7 +373,7 @@ fn test_restart_node() {
     cluster_tests::send_many_transactions(
         &cluster.entry_point_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         1,
     );
@@ -1281,7 +1282,7 @@ fn test_snapshot_restart_tower() {
         2,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -1432,6 +1433,7 @@ fn test_snapshots_restart_validity() {
     let num_runs = 3;
     let mut expected_balances = HashMap::new();
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let tpu_sender = cluster_tests::TpuSender::new();
     for i in 1..num_runs {
         info!("run {i}");
         // Push transactions to one of the nodes and confirm that transactions were
@@ -1440,7 +1442,7 @@ fn test_snapshots_restart_validity() {
         let new_balances = cluster_tests::send_many_transactions(
             &cluster.entry_point_info,
             &cluster.funding_keypair,
-            &cluster.connection_cache,
+            &tpu_sender,
             10,
             10,
         );
@@ -1480,7 +1482,7 @@ fn test_snapshots_restart_validity() {
             1,
             HashSet::new(),
             SocketAddrSpace::Unspecified,
-            &cluster.connection_cache,
+            &tpu_sender,
         );
     }
 }
@@ -2249,6 +2251,7 @@ fn create_snapshot_to_hard_fork(
     blockstore_processor::process_blockstore_from_root(
         blockstore,
         &bank_forks,
+        compute_shred_version(&genesis_config.hash(), None),
         &leader_schedule_cache,
         &process_options,
         None,
@@ -2715,10 +2718,7 @@ fn test_oc_bad_signatures() {
     );
 
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        format!(
-            "ws://{}",
-            &cluster.entry_point_info.rpc_pubsub().unwrap().to_string()
-        ),
+        format!("ws://{}", cluster.entry_point_info.rpc_pubsub().unwrap()),
         RpcBlockSubscribeFilter::All,
         Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig::confirmed()),
@@ -4334,7 +4334,7 @@ fn test_leader_failure_4() {
             .config
             .validator_exit,
         &local.funding_keypair,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
         num_nodes,
         config.ticks_per_slot * config.poh_config.target_tick_duration.as_millis() as u64,
         SocketAddrSpace::Unspecified,
@@ -5224,11 +5224,16 @@ fn test_duplicate_shreds_switch_failure() {
         // Ensure all the slots <= dup_slot are also full so we know we can replay up to dup_slot
         // on restart
         info!("Waiting to receive and replay entire duplicate fork with tip {dup_slot}");
+        let start = Instant::now();
         loop {
             let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
             if let Some(frozen_hash) = duplicate_fork_validator_blockstore.get_bank_hash(dup_slot) {
                 return frozen_hash;
             }
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "Timed out waiting to receive and replay duplicate fork with tip {dup_slot}",
+            );
             sleep(Duration::from_millis(1000));
         }
     }
@@ -5660,7 +5665,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -5694,7 +5699,7 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &local.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 }
 
@@ -5892,7 +5897,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 
     if num_offline_nodes > 0 {
@@ -5978,7 +5983,7 @@ fn test_restart_node_alpenglow() {
     cluster_tests::send_many_transactions(
         &cluster.entry_point_info,
         &cluster.funding_keypair,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
         10,
         1,
     );

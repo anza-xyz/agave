@@ -1,0 +1,65 @@
+[package]
+name = "agave-bls-sigverify"
+description = "Logic to process incoming alpenglow consensus messages"
+readme = "../README.md"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+    "agave-votor-messages/dev-context-only-utils",
+    "solana-perf/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
+]
+
+[dependencies]
+agave-bls-cert-verify = { workspace = true }
+agave-math-utils = { workspace = true }
+agave-votor-messages = { workspace = true }
+bitvec = { workspace = true }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+qualifier_attr = { workspace = true }
+rayon = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["parallel"] }
+solana-clock = { workspace = true }
+solana-gossip = { workspace = true }
+solana-ledger = { workspace = true }
+solana-measure = { workspace = true }
+solana-metrics = { workspace = true }
+solana-packet = { workspace = true }
+solana-perf = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-runtime = { workspace = true }
+solana-signer-store = { workspace = true }
+solana-streamer = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[dev-dependencies]
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+agave-bls-sigverify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+agave-logger = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path`
+agave-votor = { path = "../votor", features = ["agave-unstable-api"] }
+bincode = { workspace = true }
+criterion = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-perf = { workspace = true }
+solana-signer = { workspace = true }
+
+[[bench]]
+name = "bls_vote_sigverify"
+harness = false
+
+[lints]
+workspace = true

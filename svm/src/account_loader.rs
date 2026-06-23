@@ -142,6 +142,9 @@ pub(crate) struct LoadedTransactionAccount {
 )]
 pub struct LoadedTransaction {
     pub accounts: Vec<KeyedAccountSharedData>,
+    /// Parallel to `accounts`: whether each account must be written back. Empty
+    /// until execution.
+    pub touched_flags: Box<[bool]>,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
@@ -290,10 +293,16 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         &mut self,
         message: &impl SVMMessage,
         transaction_accounts: &[KeyedAccountSharedData],
+        touched_flags: &[bool],
         current_slot: Slot,
     ) {
         for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
             if !message.is_writable(i) {
+                continue;
+            }
+
+            // Skip write-locked accounts the transaction left unmodified.
+            if !touched_flags[i] {
                 continue;
             }
 
@@ -419,6 +428,8 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
             match load_result {
                 Ok(accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
                     accounts,
+                    // Populated after execution by execute_loaded_transaction.
+                    touched_flags: Box::default(),
                     fee_details: tx_details.fee_details,
                     rollback_accounts: tx_details.rollback_accounts,
                     compute_budget: tx_details.compute_budget,
@@ -794,6 +805,62 @@ mod tests {
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
         SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
+    }
+
+    #[test]
+    fn test_update_accounts_for_successful_tx_skips_untouched() {
+        let fee_payer = Keypair::new();
+        let (touched_key, untouched_key) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let program = Pubkey::new_unique();
+
+        // Writable accounts at indices 0, 1, 2; readonly program at index 3.
+        let instructions = vec![CompiledInstruction::new(3, &(), vec![1, 2])];
+        let message = new_unchecked_sanitized_message(Message::new_with_compiled_instructions(
+            1, // num_required_signatures
+            0, // num_readonly_signed_accounts
+            1, // num_readonly_unsigned_accounts -> only the program is readonly
+            vec![fee_payer.pubkey(), touched_key, untouched_key, program],
+            Hash::default(),
+            instructions,
+        ));
+        let transaction_accounts = [
+            (
+                fee_payer.pubkey(),
+                AccountSharedData::new(100, 0, &Pubkey::default()),
+            ),
+            (
+                touched_key,
+                AccountSharedData::new(1, 0, &Pubkey::default()),
+            ),
+            (
+                untouched_key,
+                AccountSharedData::new(2, 0, &Pubkey::default()),
+            ),
+            (program, AccountSharedData::new(3, 0, &Pubkey::default())),
+        ];
+
+        // Fee payer (index 0) and the VM-modified account (index 1) are marked;
+        // the writable account at index 2 is left untouched.
+        let touched_flags: Box<[bool]> = [true, true, false, false].into();
+
+        let callbacks = TestCallbacks::default();
+        let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();
+        account_loader.update_accounts_for_successful_tx(
+            &message,
+            &transaction_accounts,
+            &touched_flags,
+            5,
+        );
+
+        // Only touched writable accounts propagate to the in-batch loader cache.
+        assert!(
+            account_loader
+                .loaded_accounts
+                .contains_key(&fee_payer.pubkey())
+        );
+        assert!(account_loader.loaded_accounts.contains_key(&touched_key));
+        assert!(!account_loader.loaded_accounts.contains_key(&untouched_key));
+        assert!(!account_loader.loaded_accounts.contains_key(&program));
     }
 
     #[test]
@@ -2139,6 +2206,7 @@ mod tests {
                     ),
                     (key3.pubkey(), account_data),
                 ],
+                touched_flags: Box::default(),
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
                 compute_budget: SVMTransactionExecutionBudget::default(),

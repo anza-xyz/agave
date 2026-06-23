@@ -11,6 +11,8 @@
 
 use std::marker::PhantomData;
 
+/// VmSlice serves as a stable layout for slices shared between the guest and the host.
+/// It is also the layout for SolSignerSeedC and SolSignerSeedsC.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VmSlice<T> {

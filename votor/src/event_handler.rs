@@ -4,7 +4,6 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
-        consensus_metrics::ConsensusMetricsEvent,
         event::{
             CompletedBlock, LatestSwitchRequest, RepairEvent, RepairEventSender, SwitchBankEvent,
             VotorEvent, VotorEventReceiver,
@@ -15,12 +14,15 @@ use {
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
         voting_utils::{
-            VoteError, VotingContext, generate_refresh_vote_message,
-            insert_vote_and_create_bls_message,
+            VoteError, VotingContext, create_and_send_own_vote_message,
+            generate_refresh_vote_message, insert_vote_and_create_bls_message,
         },
         votor::SharedContext,
     },
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
+    agave_votor_messages::{
+        consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
+        vote::Vote,
+    },
     crossbeam_channel::{RecvError, SendError, TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
@@ -155,6 +157,7 @@ impl EventHandler {
             );
             return Err(EventLoopError::SetIdentityError(e));
         }
+        Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, &mut vctx)?;
 
         while !exit.load(Ordering::Relaxed) {
             let mut receive_event_time = Measure::start("receive_event");
@@ -390,7 +393,6 @@ impl EventHandler {
             }
 
             // We have observed the safe to notar condition, and can send a notar fallback vote
-            // TODO: update cert pool to check parent block id for intra window slots
             VotorEvent::SafeToNotar(block) => {
                 info!("{my_pubkey}: SafeToNotar {block:?}");
                 Self::try_skip_window(my_pubkey, block.slot, vctx, &mut votes)?;
@@ -519,6 +521,7 @@ impl EventHandler {
                     );
                     return Err(EventLoopError::SetIdentityError(e));
                 }
+                Self::send_vote_history_to_consensus_pool(my_pubkey, vctx)?;
             }
         }
         Ok(votes)
@@ -612,6 +615,23 @@ impl EventHandler {
             vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
+        Ok(())
+    }
+
+    fn send_vote_history_to_consensus_pool(
+        my_pubkey: &Pubkey,
+        vctx: &mut VotingContext,
+    ) -> Result<(), VoteError> {
+        let root = vctx
+            .vote_history
+            .root()
+            .max(vctx.sharable_banks.root().slot());
+        let votes = vctx.vote_history.votes_cast_since(root.saturating_sub(1));
+        for vote in votes {
+            info!("{my_pubkey}: Initializing consensus pool with restored vote {vote:?}");
+            create_and_send_own_vote_message(vote, vctx, /* respect_wait_to_vote */ false)?;
+        }
+
         Ok(())
     }
 
@@ -933,7 +953,6 @@ mod tests {
         super::*,
         crate::{
             commitment::CommitmentAggregationData,
-            consensus_metrics::ConsensusMetricsEventReceiver,
             event::{LeaderWindowInfo, RepairEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
@@ -942,8 +961,10 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+            metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
@@ -973,12 +994,13 @@ mod tests {
             sync::{Arc, RwLock},
             time::Instant,
         },
+        tempfile::TempDir,
     };
 
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<SigVerifiedBatch>,
+        own_vote_receiver: Receiver<ConsensusMessage>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1117,6 +1139,7 @@ mod tests {
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
         let voting_context = VotingContext {
+            cluster_info: cluster_info.clone(),
             identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
             vote_history,
@@ -1353,14 +1376,7 @@ mod tests {
 
         fn check_for_votes(&mut self, expected_votes: &[Vote]) {
             for v in expected_votes {
-                let expected_vote_serialized = wincode::serialize(v).unwrap();
-                let signature: BLSSignature =
-                    self.my_bls_keypair.sign(&expected_vote_serialized).into();
-                let expected_message = VoteMessage {
-                    vote: *v,
-                    rank: 0,
-                    signature,
-                };
+                let expected_message = self.expected_vote_message(v);
                 let mut found = false;
                 self.bls_ops.retain_mut(|bls_op| match bls_op {
                     BLSOp::PushVote { vote, .. } => {
@@ -1374,21 +1390,25 @@ mod tests {
                         found |= votes.len() != previous_len;
                         !votes.is_empty()
                     }
-                    BLSOp::PushCertificates { .. } => true,
+                    BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
                 });
                 assert!(found, "Did not find expected vote: {expected_message:?}");
             }
         }
 
-        fn check_for_vote(&mut self, expected_vote: &Vote) {
-            let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
-            let signature: BLSSignature =
-                self.my_bls_keypair.sign(&expected_vote_serialized).into();
-            let expected_message = VoteMessage {
+        fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
+            let payload =
+                get_vote_payload_to_sign(expected_vote, self.cluster_info.my_shred_version());
+            let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
+            VoteMessage {
                 vote: *expected_vote,
                 rank: 0,
                 signature,
-            };
+            }
+        }
+
+        fn check_for_vote(&mut self, expected_vote: &Vote) {
+            let expected_message = self.expected_vote_message(expected_vote);
             let mut found = false;
             self.bls_ops.retain_mut(|bls_op| match bls_op {
                 BLSOp::PushVote { vote, .. } => {
@@ -1402,12 +1422,46 @@ mod tests {
                     found |= votes.len() != previous_len;
                     !votes.is_empty()
                 }
-                BLSOp::PushCertificates { .. } => true,
+                BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
+        }
+
+        fn check_for_own_vote(&self, expected_vote: &Vote) {
+            let expected_message = self.expected_vote_message(expected_vote);
+            let own_vote = self.own_vote_receiver.try_recv().unwrap();
+            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
+        }
+
+        fn check_for_own_votes(&self, expected_votes: &[Vote]) {
+            let mut received_messages = Vec::with_capacity(expected_votes.len());
+            for _ in expected_votes {
+                let ConsensusMessage::Vote(vote) = self.own_vote_receiver.try_recv().unwrap()
+                else {
+                    panic!("expected own vote");
+                };
+                received_messages.push(vote);
+            }
+
+            for expected_vote in expected_votes {
+                let expected_message = self.expected_vote_message(expected_vote);
+                let index = received_messages
+                    .iter()
+                    .position(|message| *message == expected_message)
+                    .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
+                received_messages.remove(index);
+            }
+            assert!(received_messages.is_empty());
+        }
+
+        fn check_no_own_vote(&self) {
+            assert_eq!(
+                self.own_vote_receiver.try_recv().err(),
+                Some(TryRecvError::Empty)
+            );
         }
 
         fn check_for_commitment(&mut self, expected_type: CommitmentType, expected_slot: Slot) {
@@ -2077,6 +2131,40 @@ mod tests {
     }
 
     #[test]
+    fn test_startup_replays_vote_history_to_consensus_pool() {
+        let mut test_context = setup();
+        let notarize_vote = Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        });
+        let skip_vote = Vote::new_skip_vote(2);
+        let fallback_vote = Vote::new_skip_fallback_vote(2);
+        test_context
+            .voting_context
+            .vote_history
+            .add_vote(notarize_vote);
+        test_context.voting_context.vote_history.add_vote(skip_vote);
+        test_context
+            .voting_context
+            .vote_history
+            .add_vote(fallback_vote);
+
+        EventHandler::send_vote_history_to_consensus_pool(
+            &test_context.local_context.my_pubkey,
+            &mut test_context.voting_context,
+        )
+        .unwrap();
+
+        test_context.check_for_own_votes(&[notarize_vote, skip_vote, fallback_vote]);
+        test_context.check_no_own_vote();
+        assert!(test_context.bls_ops.is_empty());
+        assert_eq!(
+            test_context.bls_receiver.try_recv().err(),
+            Some(TryRecvError::Empty)
+        );
+    }
+
+    #[test]
     fn test_received_set_identity() {
         let mut test_context = setup();
         let old_identity = test_context.cluster_info.keypair().insecure_clone();
@@ -2134,6 +2222,50 @@ mod tests {
         for file in files_to_remove {
             let _ = remove_file(file);
         }
+    }
+
+    #[test]
+    fn test_set_identity_replays_restored_vote_history_to_consensus_pool() {
+        let mut test_context = setup();
+        let old_identity = test_context.cluster_info.keypair().insecure_clone();
+        let new_identity = Keypair::new();
+        let temp_dir = TempDir::new().unwrap();
+        let vote_history_storage =
+            Arc::new(FileVoteHistoryStorage::new(temp_dir.path().to_path_buf()));
+        test_context.shared_context.vote_history_storage = vote_history_storage.clone();
+
+        let new_vote_history = VoteHistory::new(new_identity.pubkey(), 0);
+        let saved_vote_history = SavedVoteHistory::new(&new_vote_history, &new_identity).unwrap();
+        vote_history_storage
+            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .unwrap();
+
+        let restored_vote = Vote::new_notarization_vote(Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        });
+        let mut old_vote_history = VoteHistory::new(old_identity.pubkey(), 0);
+        old_vote_history.add_vote(restored_vote);
+        let saved_vote_history = SavedVoteHistory::new(&old_vote_history, &old_identity).unwrap();
+        vote_history_storage
+            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .unwrap();
+
+        test_context
+            .cluster_info
+            .set_keypair(Arc::new(new_identity.insecure_clone()));
+        test_context.send_set_identity_event();
+        test_context.check_no_own_vote();
+
+        test_context
+            .cluster_info
+            .set_keypair(Arc::new(old_identity.insecure_clone()));
+        test_context.send_set_identity_event();
+
+        assert_eq!(test_context.voting_context.vote_history, old_vote_history);
+        test_context.check_for_own_vote(&restored_vote);
+        test_context.check_no_own_vote();
+        assert!(test_context.bls_ops.is_empty());
     }
 
     #[test]

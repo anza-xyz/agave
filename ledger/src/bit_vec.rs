@@ -12,6 +12,10 @@ use {
 type Word = u8;
 const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
 
+const fn num_words<const NUM_BITS: usize>() -> usize {
+    NUM_BITS.div_ceil(BITS_PER_WORD)
+}
+
 /// A bit vector implementation optimized for efficient bidirectional range
 /// scanning and iteration.
 ///
@@ -36,6 +40,34 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
             words: vec![0; Self::NUM_WORDS].into_boxed_slice(),
         }
     }
+}
+
+#[inline]
+fn location_of(idx: usize) -> (usize, usize) {
+    let word_idx = idx / BITS_PER_WORD;
+    let bit_idx = idx & (BITS_PER_WORD - 1);
+    (word_idx, bit_idx)
+}
+
+#[inline]
+fn check_bounds<const NUM_BITS: usize>(idx: usize) -> Result<(), BitVecError> {
+    if idx >= NUM_BITS {
+        return Err(BitVecError::OutOfBounds {
+            index: idx,
+            num_bits: NUM_BITS,
+        });
+    }
+    Ok(())
+}
+
+#[inline]
+fn contains<const NUM_BITS: usize>(words: &[Word], idx: usize) -> bool {
+    if check_bounds::<NUM_BITS>(idx).is_err() {
+        return false;
+    }
+
+    let (word_idx, bit_idx) = location_of(idx);
+    (words[word_idx] & (1 << bit_idx)) != 0
 }
 
 // Note: bincode/wincode would construct a variable-length buffer,
@@ -66,7 +98,7 @@ pub enum BitVecError {
 }
 
 impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
-    const NUM_WORDS: usize = NUM_BITS.div_ceil(BITS_PER_WORD);
+    const NUM_WORDS: usize = num_words::<NUM_BITS>();
 
     /// Get the word and bit offset for the given index.
     ///
@@ -78,20 +110,14 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// assert_eq!(word_idx, 7);
     /// assert_eq!(bit_idx, 7);
     /// ```
+    #[inline]
     pub fn location_of(idx: usize) -> (usize, usize) {
-        let word_idx = idx / BITS_PER_WORD;
-        let bit_idx = idx & (BITS_PER_WORD - 1);
-        (word_idx, bit_idx)
+        location_of(idx)
     }
 
+    #[inline]
     fn check_bounds(&self, idx: usize) -> Result<(), BitVecError> {
-        if idx >= NUM_BITS {
-            return Err(BitVecError::OutOfBounds {
-                index: idx,
-                num_bits: NUM_BITS,
-            });
-        }
-        Ok(())
+        check_bounds::<NUM_BITS>(idx)
     }
 
     /// Remove a bit at the given index.
@@ -228,13 +254,9 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// bit_vec.insert(63);
     /// assert!(bit_vec.contains(63));
     /// ```
+    #[inline]
     pub fn contains(&self, idx: usize) -> bool {
-        if self.check_bounds(idx).is_err() {
-            return false;
-        }
-
-        let (word_idx, bit_idx) = Self::location_of(idx);
-        (self.words[word_idx] & (1 << bit_idx)) != 0
+        contains::<NUM_BITS>(&self.words, idx)
     }
 
     /// Get an iterator over the bits in the array within the given range.
@@ -253,7 +275,7 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
     /// ```
     pub fn range(&self, bounds: impl RangeBounds<usize>) -> BitVecSlice<'_, NUM_BITS> {
-        BitVecSlice::from_range_bounds(self, bounds)
+        BitVecSlice::from_range_bounds(&self.words, bounds)
     }
 
     /// Get an iterator over the positions of the set bits in the array.
@@ -310,6 +332,47 @@ impl<const NUM_BITS: usize> FromIterator<usize> for BitVec<NUM_BITS> {
     }
 }
 
+/// A reference to a [`BitVec`] that does not own the underlying data.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BitVecRef<'a, const NUM_BITS: usize> {
+    words: &'a [Word],
+}
+
+impl<const NUM_BITS: usize> BitVecRef<'_, NUM_BITS> {
+    const NUM_WORDS: usize = num_words::<NUM_BITS>();
+
+    /// Check if a bit is set at the given index.
+    ///
+    /// See [`BitVec::contains`].
+    #[inline]
+    pub fn contains(&self, idx: usize) -> bool {
+        contains::<NUM_BITS>(self.words, idx)
+    }
+
+    /// Get an iterator over the bits in the array within the given range.
+    ///
+    /// See [`BitVec::range`].
+    pub fn range(&self, bounds: impl RangeBounds<usize>) -> BitVecSlice<'_, NUM_BITS> {
+        BitVecSlice::from_range_bounds(self.words, bounds)
+    }
+}
+
+unsafe impl<'de, const NUM_BITS: usize, C: Config> SchemaRead<'de, C> for BitVecRef<'de, NUM_BITS> {
+    type Dst = Self;
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        use wincode::ReadError;
+
+        let words = <&'de [Word] as SchemaRead<C>>::get(reader)?;
+        if words.len() != Self::NUM_WORDS {
+            return Err(ReadError::Custom("Invalid BitVec length"));
+        }
+        dst.write(Self { words });
+        Ok(())
+    }
+}
+
 /// A slice of a [`BitVec`] that provides efficient bit-level iteration.
 pub struct BitVecSlice<'a, const NUM_BITS: usize> {
     mask_iter: BitVecMaskIter<'a, NUM_BITS>,
@@ -319,7 +382,7 @@ impl<'a, const NUM_BITS: usize> BitVecSlice<'a, NUM_BITS> {
     /// Construct a new [`BitVecSlice`] from a [`BitVec`] and a range.
     ///
     /// Internal function -- use [`BitVec::range`].
-    fn from_range_bounds(bit_vec: &'a BitVec<NUM_BITS>, bounds: impl RangeBounds<usize>) -> Self {
+    fn from_range_bounds(bit_vec: &'a [u8], bounds: impl RangeBounds<usize>) -> Self {
         let start = match bounds.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n + 1,
@@ -340,7 +403,7 @@ impl<'a, const NUM_BITS: usize> BitVecSlice<'a, NUM_BITS> {
                 start,
                 end,
                 start_word,
-                iter: bit_vec.words[start_word..end_word].iter().enumerate(),
+                iter: bit_vec[start_word..end_word].iter().enumerate(),
             },
         }
     }

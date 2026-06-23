@@ -33,15 +33,5 @@ impl SerializableAccountStorageEntry {
     }
 }
 
-pub(crate) trait SerializableStorage {
-    fn current_len(&self) -> usize;
-}
-
-impl SerializableStorage for SerializableAccountStorageEntry {
-    fn current_len(&self) -> usize {
-        self.accounts_current_len
-    }
-}
-
 #[cfg(feature = "frozen-abi")]
 impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountStorageEntry {}

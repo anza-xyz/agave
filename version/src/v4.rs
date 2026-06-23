@@ -156,6 +156,7 @@ impl PackedMinor {
     }
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     major: u16,
@@ -422,28 +423,44 @@ impl<'de> Deserialize<'de> for Version {
     }
 }
 
+// Generates a random, always-serializable `Version`. `Version` has a packed
+// wire format with cross-field invariants (`minor` fits in 14 bits, non-stable
+// prereleases force `patch == 0`; see `PackedMinor::try_pack`), so the fields
+// cannot be sampled independently. Used by tests and as the `StableAbi` sampler.
+#[cfg(any(test, feature = "frozen-abi"))]
+fn random_version<R: Rng + ?Sized>(rng: &mut R) -> Version {
+    let minor = rng.random::<u16>() & PackedMinor::PRERELEASE_MINOR_MAX;
+    let (prerelease, patch) = match rng.random::<u8>() % 4 {
+        0 => (Prerelease::Stable, rng.random::<u16>()),
+        1 => (Prerelease::ReleaseCandidate(rng.random()), 0),
+        2 => (Prerelease::Beta(rng.random()), 0),
+        _ => (Prerelease::Alpha(rng.random()), 0),
+    };
+    Version::new_from_parts(
+        rng.random(),
+        minor,
+        patch,
+        rng.random(),
+        rng.random(),
+        ClientId::from(rng.random::<u16>()),
+        prerelease,
+    )
+}
+
+// `StableAbiSample` cannot be derived here because it samples fields
+// independently; `random_version` upholds the cross-field invariants instead.
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<Version>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Version {
+        random_version(rng)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::v3, rand::Rng};
-
-    fn random_version(rng: &mut impl Rng) -> Version {
-        let minor = rng.random::<u16>() & PackedMinor::PRERELEASE_MINOR_MAX;
-        let (prerelease, patch) = match rng.random::<u8>() % 4 {
-            0 => (Prerelease::Stable, rng.random::<u16>()),
-            1 => (Prerelease::ReleaseCandidate(rng.random()), 0),
-            2 => (Prerelease::Beta(rng.random()), 0),
-            _ => (Prerelease::Alpha(rng.random()), 0),
-        };
-        Version::new_from_parts(
-            rng.random(),
-            minor,
-            patch,
-            rng.random(),
-            rng.random(),
-            ClientId::from(rng.random::<u16>()),
-            prerelease,
-        )
-    }
+    use {super::*, crate::v3};
 
     #[test]
     fn test_wincode_compatibility() {

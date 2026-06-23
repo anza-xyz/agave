@@ -27,8 +27,6 @@ const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(2);
 /// Stores state for rebuilding snapshot storages
 #[derive(Debug)]
 pub(crate) struct SnapshotStorageRebuilder {
-    /// Snapshot storage lengths - from the snapshot file
-    snapshot_storage_lengths: HashMap<Slot, usize>,
     /// Container for storing rebuilt snapshot storages
     storage: AccountStorageMap,
     /// Tracks next append_vec_id
@@ -46,15 +44,13 @@ pub(crate) struct SnapshotStorageRebuilder {
 impl SnapshotStorageRebuilder {
     /// Rebuild snapshot storages on the current thread by consuming `files`.
     pub(crate) fn rebuild_storages(
-        snapshot_storage_lengths: HashMap<Slot, usize>,
         files: impl IntoIterator<Item = FileInfo>,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
         snapshot_from: SnapshotFrom,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
     ) -> Result<AccountStorageMap, SnapshotError> {
         let mut rebuilder = Self {
-            storage: AccountStorageMap::with_capacity(snapshot_storage_lengths.len()),
-            snapshot_storage_lengths,
+            storage: AccountStorageMap::default(),
             next_append_vec_id,
             num_collisions: 0,
             processed_slot_count: 0,
@@ -80,10 +76,8 @@ impl SnapshotStorageRebuilder {
 
     fn log_progress(&self) {
         info!(
-            "rebuilt storages for {}/{} slots with {} collisions",
-            self.processed_slot_count,
-            self.snapshot_storage_lengths.len(),
-            self.num_collisions,
+            "rebuilt storages for {} slots with {} collisions",
+            self.processed_slot_count, self.num_collisions,
         );
     }
 
@@ -112,17 +106,11 @@ impl SnapshotStorageRebuilder {
     ) -> Result<(), SnapshotError> {
         let filename = file_info.path.file_name().unwrap().to_str().unwrap();
         let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
-        let Some(&current_len) = self.snapshot_storage_lengths.get(&slot) else {
-            return Err(SnapshotError::RebuildStorages(format!(
-                "account storage file '{filename}' for slot outside of expected range in snapshot"
-            )));
-        };
 
         let storage_entry = match &self.snapshot_from {
             SnapshotFrom::Archive => remap_and_reconstruct_single_storage(
                 slot,
                 old_append_vec_id,
-                current_len,
                 file_info,
                 &self.next_append_vec_id,
                 &mut self.num_collisions,
@@ -130,7 +118,6 @@ impl SnapshotStorageRebuilder {
             SnapshotFrom::Dir => reconstruct_single_storage(
                 &slot,
                 file_info,
-                current_len,
                 old_append_vec_id as AccountsFileId,
                 self.obsolete_accounts
                     .remove(&slot)

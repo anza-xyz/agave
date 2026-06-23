@@ -252,7 +252,7 @@ pub(super) fn set_block_id_and_send(
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_entry::entry_or_marker::EntryOrMarker,
         solana_genesis_config::GenesisConfig,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -309,7 +309,7 @@ mod tests {
             SlotLeader::default(),
             1,
         );
-        let (s, r) = unbounded();
+        let (s, r) = bounded(1024);
         let mut last_hash = genesis_config.hash();
 
         assert!(bank1.max_tick_height() > 1);
@@ -342,7 +342,7 @@ mod tests {
     fn test_recv_slot_components_does_not_pre_drain_queue() {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
         let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
-        let (s, r) = unbounded();
+        let (s, r) = bounded(1024);
         let mut last_hash = genesis_config.hash();
         let entries: Vec<_> = (1..=3)
             .map(|tick_height| {
@@ -384,7 +384,7 @@ mod tests {
             SlotLeader::default(),
             2,
         );
-        let (s, r) = unbounded();
+        let (s, r) = bounded(1024);
 
         let mut last_hash = genesis_config.hash();
         assert!(bank1.max_tick_height() > 1);
@@ -433,7 +433,7 @@ mod tests {
     fn test_marker_carryover_does_not_advance_last_tick_height() {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
         let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
-        let (s, r) = unbounded();
+        let (s, r) = bounded(1024);
         let max_tick = bank1.max_tick_height();
 
         let mut last_hash = genesis_config.hash();
@@ -471,7 +471,7 @@ mod tests {
     fn test_marker_preserves_entry_ordering() {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
         let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
-        let (s, r) = unbounded();
+        let (s, r) = bounded(1024);
 
         let mut last_hash = genesis_config.hash();
 
@@ -533,7 +533,7 @@ mod tests {
             SlotLeader::default(),
             2,
         ));
-        let (s, r) = unbounded();
+        let (s, r) = bounded(1024);
 
         let mut last_hash = genesis_config.hash();
 

@@ -9,10 +9,8 @@ clientToRun="$3"
 if [[ -n $4 ]]; then
   export RUST_LOG="$4"
 fi
-benchTpsExtraArgs="$5"
-clientIndex="$6"
-clientType="${7:-tpu-client}"
-maybeUseUnstakedConnection="$8"
+clientExtraArgs="$5"
+maybeUseUnstakedConnection="$6"
 
 missing() {
   echo "Error: $1 not specified"
@@ -25,11 +23,6 @@ missing() {
 source net/common.sh
 loadConfigFile
 
-threadCount=$(nproc)
-if [[ $threadCount -gt 4 ]]; then
-  threadCount=4
-fi
-
 case $deployMethod in
 local|tar)
   PATH="$HOME"/.cargo/bin:"$PATH"
@@ -41,20 +34,6 @@ skip)
 *)
   echo "Unknown deployment method: $deployMethod"
   exit 1
-esac
-
-RPC_CLIENT=false
-case "$clientType" in
-  tpu-client)
-    RPC_CLIENT=false
-    ;;
-  rpc-client)
-    RPC_CLIENT=true
-    ;;
-  *)
-    echo "Unexpected clientType: \"$clientType\""
-    exit 1
-    ;;
 esac
 
 # Does "$@" (beyond the first arg, which is the name to look for) contain $name,
@@ -110,19 +89,14 @@ solana-transaction-bench)
   ensureTransactionBench
 
   # transaction-bench creates and funds ephemeral payer accounts from the
-  # faucet (the genesis mint) at runtime, so unlike bench-tps it needs no
-  # pre-generated client account keys. We only need the faucet keypair as the
-  # funding authority and, for a staked QUIC connection, a staked validator
+  # faucet (the genesis mint) at runtime. We only need the faucet keypair as
+  # the funding authority and, for a staked QUIC connection, a staked validator
   # identity.
   net/scripts/rsync-retry.sh -vPrc \
     "$entrypointIp":~/solana/config/faucet.json ./faucet.json
 
   net/scripts/rsync-retry.sh -vPrc \
     "$entrypointIp":~/solana/config/validator-identity-1.json ./validator-identity.json
-
-  if [[ $clientType = rpc-client ]]; then
-    echo "Note: clientType=rpc-client is ignored by solana-transaction-bench; it always sends over QUIC to the TPU."
-  fi
 
   # solana-transaction-bench expects its arguments in positional buckets:
   #   <global args> run <run args> <leader-tracker subcommand>
@@ -133,7 +107,7 @@ solana-transaction-bench)
   leaderTrackerArgs=()
 
   # shellcheck disable=SC2206 # Intentional word-splitting of the extra args string
-  extraArgs=($benchTpsExtraArgs)
+  extraArgs=($clientExtraArgs)
   argIndex=0
   while [[ $argIndex -lt ${#extraArgs[@]} ]]; do
     arg="${extraArgs[$argIndex]}"
@@ -195,35 +169,6 @@ solana-transaction-bench)
       run \
       ${runArgs[*]} \
       ${leaderTrackerArgs[*]} \
-  "
-  ;;
-solana-bench-tps)
-  net/scripts/rsync-retry.sh -vPrc \
-    "$entrypointIp":~/solana/config/bench-tps"$clientIndex".yml ./client-accounts.yml
-
-  net/scripts/rsync-retry.sh -vPrc \
-    "$entrypointIp":~/solana/config/validator-identity-1.json ./validator-identity.json
-
-  args=()
-
-  if ${RPC_CLIENT}; then
-    args+=(--use-rpc-client)
-  fi
-
-  if [[ -z "$maybeUseUnstakedConnection" ]]; then
-    args+=(--bind-address "$entrypointIp")
-    args+=(--client-node-id ./validator-identity.json)
-  fi
-
-  clientCommand="\
-    solana-bench-tps \
-      --duration 7500 \
-      --sustained \
-      --threads $threadCount \
-      $benchTpsExtraArgs \
-      --read-client-keys ./client-accounts.yml \
-      --url "http://$entrypointIp:8899" \
-      ${args[*]} \
   "
   ;;
 idle)

@@ -17,6 +17,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, response::RpcVoteAccountStatus},
+    solana_vote_interface::state::VoteStateV4,
     std::{
         collections::HashMap,
         error,
@@ -24,6 +25,8 @@ use {
         time::{Duration, Instant},
     },
 };
+
+const LEGACY_VAT_TO_BURN_PER_EPOCH: u64 = 1_600_000_000;
 
 struct Config {
     address_labels: HashMap<String, String>,
@@ -284,6 +287,88 @@ struct EndpointData {
     last_recent_blockhash: Hash,
 }
 
+fn slot_time_reduction_vat_burns() -> [(Pubkey, u64); 4] {
+    [
+        (
+            agave_feature_set::reduce_slot_time_to_200ms::id(),
+            800_000_000,
+        ),
+        (
+            agave_feature_set::reduce_slot_time_to_250ms::id(),
+            1_000_000_000,
+        ),
+        (
+            agave_feature_set::reduce_slot_time_to_300ms::id(),
+            1_200_000_000,
+        ),
+        (
+            agave_feature_set::reduce_slot_time_to_350ms::id(),
+            1_400_000_000,
+        ),
+    ]
+}
+
+fn is_feature_active_at_slot(
+    rpc_client: &RpcClient,
+    feature_id: &Pubkey,
+    slot: u64,
+) -> client_error::Result<bool> {
+    Ok(matches!(
+        rpc_client.get_feature_activation_slot(feature_id)?,
+        Some(activation_slot) if activation_slot <= slot
+    ))
+}
+
+fn vat_to_burn_per_epoch(rpc_client: &RpcClient, slot: u64) -> client_error::Result<u64> {
+    let epoch_schedule = rpc_client.get_epoch_schedule()?;
+
+    // Keep this table in sync with runtime/src/slot_params.rs. Slot-time
+    // feature gates take effect at the first slot of the epoch after activation.
+    for (feature_id, vat_to_burn_per_epoch) in slot_time_reduction_vat_burns() {
+        let Some(activation_slot) = rpc_client.get_feature_activation_slot(&feature_id)? else {
+            continue;
+        };
+        if activation_slot > slot {
+            continue;
+        }
+
+        let activation_epoch = epoch_schedule.get_epoch(activation_slot);
+        let effective_slot =
+            epoch_schedule.get_first_slot_in_epoch(activation_epoch.saturating_add(1));
+        if effective_slot <= slot {
+            return Ok(vat_to_burn_per_epoch);
+        }
+    }
+
+    Ok(LEGACY_VAT_TO_BURN_PER_EPOCH)
+}
+
+fn get_minimum_vat_vote_account_balance(
+    rpc_client: &RpcClient,
+) -> client_error::Result<Option<u64>> {
+    let slot = rpc_client.get_slot()?;
+    if !is_feature_active_at_slot(
+        rpc_client,
+        &agave_feature_set::validator_admission_ticket::id(),
+        slot,
+    )? {
+        return Ok(None);
+    }
+
+    let vote_account_rent_exempt_minimum =
+        rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?;
+    let vat_to_burn_per_epoch =
+        if is_feature_active_at_slot(rpc_client, &agave_feature_set::alpenglow::id(), slot)? {
+            vat_to_burn_per_epoch(rpc_client, slot)?
+        } else {
+            0
+        };
+
+    Ok(Some(
+        vote_account_rent_exempt_minimum + vat_to_burn_per_epoch,
+    ))
+}
+
 fn query_endpoint(
     config: &Config,
     endpoint: &mut EndpointData,
@@ -354,19 +439,25 @@ fn query_endpoint(
             }
 
             let mut validator_errors = vec![];
+            let minimum_vat_vote_account_balance = if config.validator_identity_pubkeys.is_empty() {
+                None
+            } else {
+                get_minimum_vat_vote_account_balance(&endpoint.rpc_client)?
+            };
             for validator_identity in config.validator_identity_pubkeys.iter() {
+                let validator_identity_string = validator_identity.to_string();
                 let formatted_validator_identity =
-                    format_labeled_address(&validator_identity.to_string(), &config.address_labels);
+                    format_labeled_address(&validator_identity_string, &config.address_labels);
                 if vote_accounts
                     .delinquent
                     .iter()
-                    .any(|vai| vai.node_pubkey == *validator_identity.to_string())
+                    .any(|vai| vai.node_pubkey == validator_identity_string.as_str())
                 {
                     validator_errors.push(format!("{formatted_validator_identity} delinquent"));
                 } else if !vote_accounts
                     .current
                     .iter()
-                    .any(|vai| vai.node_pubkey == *validator_identity.to_string())
+                    .any(|vai| vai.node_pubkey == validator_identity_string.as_str())
                 {
                     validator_errors.push(format!("{formatted_validator_identity} missing"));
                 }
@@ -377,6 +468,41 @@ fn query_endpoint(
                             "balance",
                             format!("{} has {}", formatted_validator_identity, Sol(*balance)),
                         ));
+                    }
+                }
+
+                if let Some(minimum_vat_vote_account_balance) = minimum_vat_vote_account_balance {
+                    for vote_account in vote_accounts
+                        .current
+                        .iter()
+                        .chain(vote_accounts.delinquent.iter())
+                        .filter(|vai| vai.node_pubkey == validator_identity_string.as_str())
+                    {
+                        let Ok(vote_pubkey) = vote_account.vote_pubkey.parse::<Pubkey>() else {
+                            failures.push((
+                                "vat-vote-account-balance",
+                                format!(
+                                    "{} vote account {} is not a valid pubkey",
+                                    formatted_validator_identity, vote_account.vote_pubkey
+                                ),
+                            ));
+                            continue;
+                        };
+
+                        let balance = endpoint.rpc_client.get_balance(&vote_pubkey)?;
+                        if balance < minimum_vat_vote_account_balance {
+                            failures.push((
+                                "vat-vote-account-balance",
+                                format!(
+                                    "{} vote account {} has {}, below required VAT balance \
+                                     threshold of {}",
+                                    formatted_validator_identity,
+                                    vote_pubkey,
+                                    Sol(balance),
+                                    Sol(minimum_vat_vote_account_balance)
+                                ),
+                            ));
+                        }
                     }
                 }
             }

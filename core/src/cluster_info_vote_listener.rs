@@ -8,7 +8,7 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{VerifiedVoterSlotsSender, migration::MigrationStatus},
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
@@ -56,11 +56,6 @@ use {
 pub type ThresholdConfirmedSlots = Vec<(Slot, Hash)>;
 pub type VerifiedVoteTransactionsSender = Sender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = Receiver<Vec<Transaction>>;
-// Send side of verified voter channel.
-// Each message contains the Pubkey of the voter and the slots in last verified vote.
-pub type VerifiedVoterSlotsSender = Sender<(Pubkey, Vec<Slot>)>;
-// Receive side of verified voter channel.
-pub type VerifiedVoterSlotsReceiver = Receiver<(Pubkey, Vec<Slot>)>;
 pub type GossipVerifiedVoteHashSender = Sender<(Pubkey, Slot, Hash)>;
 pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
 pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;
@@ -997,6 +992,7 @@ mod tests {
     use {
         super::*,
         crate::sigverify::GossipVerifiedVoteBatch,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -1053,8 +1049,8 @@ mod tests {
         votes: Vec<Transaction>,
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
-        let (worker_sender, _worker_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let (worker_sender, _worker_receiver) = bounded(1024);
+        let (verified_vote_sender, verified_vote_receiver) = bounded(1024);
         let mut gossip_sigverify_handle =
             GossipSigVerifyHandle::new_for_tests(worker_sender, verified_vote_receiver);
 
@@ -1160,10 +1156,10 @@ mod tests {
             subscriptions,
             ..
         } = setup();
-        let (votes_sender, votes_receiver) = unbounded();
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
-        let (replay_votes_sender, replay_votes_receiver) = unbounded();
+        let (votes_sender, votes_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let GenesisConfigInfo { genesis_config, .. } =
@@ -1288,10 +1284,10 @@ mod tests {
             bank: bank0,
             ..
         } = setup();
-        let (votes_txs_sender, votes_txs_receiver) = unbounded();
-        let (replay_votes_sender, replay_votes_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
+        let (votes_txs_sender, votes_txs_receiver) = bounded(1024);
+        let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let gossip_vote_slots = vec![1, 2];
@@ -1437,10 +1433,10 @@ mod tests {
         } = setup();
 
         // Send some votes to process
-        let (votes_txs_sender, votes_txs_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
-        let (_replay_votes_sender, replay_votes_receiver) = unbounded();
+        let (votes_txs_sender, votes_txs_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (_replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let mut expected_voter_slots = vec![];
@@ -1530,11 +1526,11 @@ mod tests {
     }
 
     fn run_test_process_votes3(switch_proof_hash: Option<Hash>) {
-        let (votes_sender, votes_receiver) = unbounded();
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
+        let (votes_sender, votes_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver): (ReplayVoteSender, ReplayVoteReceiver) =
-            unbounded();
+            bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let vote_slot = 1;
@@ -1933,8 +1929,8 @@ mod tests {
             None,
         )];
 
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
@@ -2183,8 +2179,8 @@ mod tests {
         ));
         let mut latest_vote_slot_per_validator = HashMap::new();
 
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let mut diff = HashMap::default();
         let mut new_optimistic_confirmed_slots = vec![];
 
