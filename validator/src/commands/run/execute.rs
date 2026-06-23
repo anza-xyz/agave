@@ -1,3 +1,10 @@
+#[cfg(target_os = "linux")]
+use {
+    crate::commands::run::config_file::{FileConfig, PohConfig, parse_config_file},
+    agave_cpu_utils::cpu_affinity,
+    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
+};
 use {
     crate::{
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
@@ -81,13 +88,6 @@ use {
         str::{self, FromStr},
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
-};
-#[cfg(target_os = "linux")]
-use {
-    crate::commands::run::config_file::{FileConfig, PohConfig, parse_config_file},
-    agave_cpu_utils::cpu_affinity,
-    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
-    solana_clap_utils::input_parsers::parse_cpu_ranges,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1487,7 +1487,8 @@ fn build_xdp_config(
             .ok_or_else(|| {
                 format!(
                     "XDP requires a dedicated CPU core separate from PoH (core \
-                     {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable XDP."
+                     {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable \
+                     XDP."
                 )
             })?;
         vec![QueueCpuBinding { queue: 0, cpu }]
@@ -1630,8 +1631,8 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file_config = parse_file(
-            "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\n\
-             queue_to_cpu_mapping = [\"0:3\", \"1:4\", \"2:5\"]\n",
+            "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = \
+             [\"0:3\", \"1:4\", \"2:5\"]\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), &file_config)
@@ -1730,8 +1731,7 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file_config = parse_file("version = 1\n[threads.poh]\ncpus = [6]\n");
-        let matches =
-            app.get_matches_from(vec!["agave-validator", "--poh-pinned-cpu-core", "9"]);
+        let matches = app.get_matches_from(vec!["agave-validator", "--poh-pinned-cpu-core", "9"]);
         assert_eq!(
             resolve_poh_pinned_cpu_core(&matches, &file_config).unwrap(),
             Some(9),
