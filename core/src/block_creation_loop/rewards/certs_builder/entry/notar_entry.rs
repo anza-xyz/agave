@@ -3,20 +3,21 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
+    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
-    solana_bls_signatures::Signature as BLSSignature,
+    bitvec::vec::BitVec,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
-    std::collections::{HashMap, HashSet},
+    std::collections::HashMap,
 };
 
 /// Struct to manage per slot state for notar votes used to build a [`NotarRewardCertificate`].
 #[derive(Clone)]
 pub(super) struct NotarEntry {
     /// Stores which validators have already voted.
-    voted: HashSet<u16>,
+    voted: BitVec<u8>,
     /// Different validators may vote for different block ids.
     /// This stores a [`PartialCert`] per block id observed.
     partials: HashMap<Hash, PartialCert>,
@@ -26,36 +27,36 @@ impl NotarEntry {
     /// Returns a new instance of [`NotarEntry`].
     pub(super) fn new(max_validators: usize) -> Self {
         Self {
-            voted: HashSet::with_capacity(max_validators),
+            voted: BitVec::repeat(false, max_validators),
             // under normal operations, all validators should vote for a single block id, still allocate space for a few more to hopefully avoid allocations.
             partials: HashMap::with_capacity(5),
         }
     }
 
     /// Returns true if the [`NotarEntry`] needs the vote else false.
-    pub(super) fn wants_vote(&self, rank: u16) -> bool {
-        !self.voted.contains(&rank)
+    pub(super) fn wants_vote(&self, ranks: &BitVec<u8>) -> bool {
+        ranks
+            .iter()
+            .by_vals()
+            .zip(self.voted.iter().by_vals())
+            .any(|(x, y)| x && y)
     }
 
     /// Adds a new observed vote to the aggregate.
     pub(super) fn add_vote(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        rank: u16,
-        signature: &BLSSignature,
-        block_id: Hash,
         max_validators: usize,
+        block_id: Hash,
+        vote: &SigVerifiedVoteBatch,
     ) -> Result<(), AddVoteError> {
-        if !self.voted.insert(rank) {
-            return Err(AddVoteError::Duplicate);
-        }
         let partial = self
             .partials
             .entry(block_id)
             .or_insert(PartialCert::new(max_validators));
-        let res = partial.add_vote(rank_map, rank, signature);
-        if res.is_err() {
-            self.voted.remove(&rank);
+        let res = partial.add_vote(rank_map, vote);
+        if res.is_ok() {
+            self.voted |= vote.ranks();
         }
         res
     }

@@ -1,9 +1,8 @@
 use {
     super::BuildRewardCertsRespError,
     crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
-    agave_votor_messages::{
-        consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate, vote::Vote,
-    },
+    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
+    agave_votor_messages::{reward_certificate::SkipRewardCertificate, vote::Vote},
     notar_entry::NotarEntry,
     partial_cert::{BuildSigBitmapError, PartialCert},
     solana_bls_signatures::BlsError,
@@ -20,8 +19,6 @@ mod partial_cert;
 pub(super) enum AddVoteError {
     #[error("rank on vote is invalid")]
     InvalidRank,
-    #[error("duplicate vote")]
-    Duplicate,
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
 }
@@ -48,10 +45,10 @@ impl Entry {
     }
 
     /// Returns true if the [`Entry`] needs the vote else false.
-    pub(super) fn wants_vote(&self, vote: &VoteMessage) -> bool {
-        match vote.vote {
-            Vote::Skip(_) => self.skip.wants_vote(vote.rank),
-            Vote::Notarize(_) => self.notar.wants_vote(vote.rank),
+    pub(super) fn wants_vote(&self, vote: &SigVerifiedVoteBatch) -> bool {
+        match vote.vote() {
+            Vote::Skip(_) => self.skip.wants_vote(vote.ranks()),
+            Vote::Notarize(_) => self.notar.wants_vote(vote.ranks()),
             Vote::Finalize(_)
             | Vote::NotarizeFallback(_)
             | Vote::SkipFallback(_)
@@ -63,17 +60,14 @@ impl Entry {
     pub(super) fn add_vote(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        vote: &VoteMessage,
+        vote: &SigVerifiedVoteBatch,
     ) -> Result<(), AddVoteError> {
-        match vote.vote {
-            Vote::Notarize(notar) => self.notar.add_vote(
-                rank_map,
-                vote.rank,
-                &vote.signature,
-                notar.block.block_id,
-                self.max_validators,
-            ),
-            Vote::Skip(_) => self.skip.add_vote(rank_map, vote.rank, &vote.signature),
+        match vote.vote() {
+            Vote::Notarize(notar) => {
+                self.notar
+                    .add_vote(rank_map, self.max_validators, notar.block.block_id, vote)
+            }
+            Vote::Skip(_) => self.skip.add_vote(rank_map, vote),
             _ => Ok(()),
         }
     }

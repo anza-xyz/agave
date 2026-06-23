@@ -5,7 +5,7 @@ use {
         },
         tvu::MAX_ALPENGLOW_PACKET_NUM,
     },
-    agave_votor_messages::reward_certificate::AddVoteMessage,
+    agave_bls_sigverify::rewards::AddVoteMessage,
     crossbeam_channel::{Receiver, Sender, bounded, select_biased},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
@@ -99,7 +99,7 @@ impl Context {
                         Ok(msg) => {
                             let bank = self.sharable_banks.root();
                             for vote in msg.votes {
-                                self.builder.add_vote(&bank, &vote);
+                                self.builder.add_vote(&bank, vote);
                             }
                         }
                         Err(_) => {

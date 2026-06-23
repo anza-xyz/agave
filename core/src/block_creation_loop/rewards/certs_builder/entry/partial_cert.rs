@@ -1,5 +1,6 @@
 use {
     super::AddVoteError,
+    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
     bitvec::{order::Lsb0, vec::BitVec},
     solana_bls_signatures::{
         Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
@@ -44,35 +45,32 @@ impl PartialCert {
     }
 
     /// Returns true if the [`PartialCert`] needs the vote else false.
-    pub(super) fn wants_vote(&self, rank: u16) -> bool {
-        match self.bitvec.get(rank as usize) {
-            None => false,
-            Some(ind) => !*ind,
-        }
+    pub(super) fn wants_vote(&self, ranks: &BitVec<u8>) -> bool {
+        ranks
+            .iter()
+            .by_vals()
+            .zip(self.bitvec.iter().by_vals())
+            .any(|(x, y)| x && y)
     }
 
     /// Adds a new observed vote to the aggregate.
     pub(super) fn add_vote(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        rank: u16,
-        signature: &BLSSignature,
+        vote: &SigVerifiedVoteBatch,
     ) -> Result<(), AddVoteError> {
-        match self.bitvec.get_mut(rank as usize) {
-            None => return Err(AddVoteError::InvalidRank),
-            Some(mut ind) => {
-                if *ind {
-                    return Err(AddVoteError::Duplicate);
-                }
-                let entry = rank_map
-                    .get_pubkey_stake_entry(rank.into())
-                    .ok_or(AddVoteError::InvalidRank)?;
-                self.signature.aggregate_with(std::iter::once(signature))?;
-                self.validators.push(entry.vote_account_pubkey);
-                self.stake = self.stake.saturating_add(entry.stake.get());
-                *ind = true;
-            }
+        let mut signature = self.signature;
+        signature.aggregate_with(std::iter::once(vote.signature()))?;
+        let mut validators = vec![];
+        for rank in vote.ranks().iter_ones() {
+            let entry = rank_map
+                .get_pubkey_stake_entry(rank)
+                .ok_or(AddVoteError::InvalidRank)?;
+            validators.push(entry.vote_account_pubkey);
         }
+        self.validators.append(&mut validators);
+        self.stake += vote.stake().get();
+        self.signature = signature;
         Ok(())
     }
 
