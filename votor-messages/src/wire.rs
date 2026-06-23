@@ -441,6 +441,21 @@ impl VotePayloadToSign {
     }
 }
 
+impl From<VotePayloadToSign> for Vote {
+    fn from(vote: VotePayloadToSign) -> Self {
+        match vote {
+            VotePayloadToSign::Notar { block, .. } => Self::new_notarization_vote(block),
+            VotePayloadToSign::NotarFallback { block, .. } => {
+                Self::new_notarization_fallback_vote(block)
+            }
+            VotePayloadToSign::Finalize { slot, .. } => Self::new_finalization_vote(slot),
+            VotePayloadToSign::Genesis { block, .. } => Self::new_genesis_vote(block),
+            VotePayloadToSign::Skip { slot, .. } => Self::new_skip_vote(slot),
+            VotePayloadToSign::SkipFallback { slot, .. } => Self::new_skip_fallback_vote(slot),
+        }
+    }
+}
+
 /// Returns the appropriate vote payload to sign.
 pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
     let vote_to_sign = VotePayloadToSign::new_from_vote(vote, shred_version);

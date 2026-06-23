@@ -1,4 +1,5 @@
 use {
+    crate::sig_verified_messages::SigVerifiedVoteBatch,
     agave_votor_messages::{reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -34,4 +35,10 @@ pub fn rewards_wants_vote(
         return false;
     }
     true
+}
+
+/// Message to add votes to the rewards container.
+#[derive(Debug)]
+pub struct AddVoteMessage {
+    pub votes: Vec<SigVerifiedVoteBatch>,
 }
