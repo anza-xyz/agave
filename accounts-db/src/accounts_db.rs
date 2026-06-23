@@ -6247,6 +6247,11 @@ impl AccountsDb {
         }
         let num_storages = storages.len();
 
+        // `storages` is sorted by slot, so the last one is the highest root.
+        if let Some(storage) = storages.last() {
+            self.max_root.fetch_max(storage.slot(), Ordering::Relaxed);
+        }
+
         self.accounts_index.set_startup(Startup::Startup);
 
         let mut total_accum = IndexGenerationAccumulator::with_slots_capacity(num_storages);
@@ -6520,10 +6525,6 @@ impl AccountsDb {
         for storage in &storages {
             self.accounts_index.add_root(storage.slot());
         }
-
-        // Roots added above bypass `add_root`, so seed `max_root` from the index's highest root.
-        self.max_root
-            .fetch_max(self.accounts_index.max_root_inclusive(), Ordering::Relaxed);
 
         self.set_storage_count_and_alive_bytes(total_accum.storage_info, &mut timings);
 
