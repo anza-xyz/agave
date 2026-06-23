@@ -182,9 +182,10 @@ fn sanitize_instructions(
         }
 
         if let Some(max_accounts_per_instruction) = config.max_accounts_per_instruction
-            && instruction.accounts.len() > max_accounts_per_instruction {
-                return Err(TransactionViewError::SanitizeError);
-            }
+            && instruction.accounts.len() > max_accounts_per_instruction
+        {
+            return Err(TransactionViewError::SanitizeError);
+        }
     }
 
     Ok(())
