@@ -1567,7 +1567,7 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
             "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\n\
-             queue_to_cpu_mapping = [\"0-1:3\", \"2:5\"]\n",
+             queue_to_cpu_mapping = [\"0:3\", \"1:4\", \"2:5\"]\n",
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1583,7 +1583,7 @@ mod xdp_tests {
             config.queues,
             vec![
                 QueueCpuBinding { queue: 0, cpu: 3 },
-                QueueCpuBinding { queue: 1, cpu: 3 },
+                QueueCpuBinding { queue: 1, cpu: 4 },
                 QueueCpuBinding { queue: 2, cpu: 5 },
             ]
         );

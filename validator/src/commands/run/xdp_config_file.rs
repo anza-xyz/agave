@@ -9,12 +9,12 @@
 //! [xdp]
 //! interface = "ens1f0"                       # optional; omit to auto-detect
 //! zero_copy = true                           # optional; default false
-//! queue_to_cpu_mapping = ["0-3:8", "4-7:9"]  # required, non-empty
+//! queue_to_cpu_mapping = ["0:8", "1:9"]      # required, non-empty
 //! ```
 //!
-//! Each `"<queues>:<cpu>"` entry binds every queue in the set (`0-3,8` grammar)
-//! to `cpu`, producing one [`QueueCpuBinding`] per queue. Queues must be disjoint
-//! across the whole mapping.
+//! Each `"<queue>:<cpu>"` entry binds one NIC queue to one CPU core, producing a
+//! [`QueueCpuBinding`]. The mapping is one-to-one: no queue and no CPU may appear
+//! more than once.
 
 use {
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
@@ -49,17 +49,18 @@ pub enum XdpConfigFileError {
     #[error("queue_to_cpu_mapping must not be empty")]
     EmptyMapping,
 
-    /// A mapping entry was not in `"<queues>:<cpu>"` form.
-    #[error("invalid queue->cpu mapping `{input}` (expected \"<queues>:<cpu>\")")]
+    /// A mapping entry was not a single `"<queue>:<cpu>"` pair.
+    #[error("invalid queue->cpu mapping `{input}` (expected \"<queue>:<cpu>\")")]
     MappingSyntax { input: String },
-
-    /// The queue side of an entry was not a valid `"0-3,8"` set.
-    #[error("invalid queue set in mapping `{input}` (bad syntax, reversed range, or empty)")]
-    BadQueueSet { input: String },
 
     /// A NIC queue was bound more than once across the mapping.
     #[error("queue {queue} is mapped more than once")]
     DuplicateQueue { queue: u32 },
+
+    /// A CPU core was bound to more than one queue (the mapping must be
+    /// one-to-one).
+    #[error("CPU core {cpu} is mapped to more than one queue")]
+    DuplicateCpu { cpu: usize },
 }
 
 /// Serde DTO mirroring the literal TOML shape.
@@ -80,7 +81,7 @@ struct RawXdp {
     queue_to_cpu_mapping: StrOrVec,
 }
 
-/// A single `"queues:cpu"` mapping string, or a list of them.
+/// A single `"queue:cpu"` mapping string, or a list of them.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum StrOrVec {
@@ -119,13 +120,21 @@ fn parse_str(text: &str) -> Result<XdpConfig, XdpConfigFileError> {
         return Err(XdpConfigFileError::EmptyMapping);
     }
 
-    let mut queues = Vec::new();
-    let mut seen = HashSet::new();
+    let mut queues = Vec::with_capacity(entries.len());
+    let mut seen_queues = HashSet::new();
+    let mut seen_cpus = HashSet::new();
     for entry in &entries {
         let (queue_str, cpu_str) =
             entry
                 .split_once(':')
                 .ok_or_else(|| XdpConfigFileError::MappingSyntax {
+                    input: entry.clone(),
+                })?;
+        let queue: u32 =
+            queue_str
+                .trim()
+                .parse()
+                .map_err(|_| XdpConfigFileError::MappingSyntax {
                     input: entry.clone(),
                 })?;
         let cpu: usize =
@@ -135,46 +144,16 @@ fn parse_str(text: &str) -> Result<XdpConfig, XdpConfigFileError> {
                 .map_err(|_| XdpConfigFileError::MappingSyntax {
                     input: entry.clone(),
                 })?;
-        let queue_ids =
-            parse_queue_set(queue_str.trim()).ok_or_else(|| XdpConfigFileError::BadQueueSet {
-                input: entry.clone(),
-            })?;
-        for queue in queue_ids {
-            if !seen.insert(queue) {
-                return Err(XdpConfigFileError::DuplicateQueue { queue });
-            }
-            queues.push(QueueCpuBinding { queue, cpu });
+        if !seen_queues.insert(queue) {
+            return Err(XdpConfigFileError::DuplicateQueue { queue });
         }
+        if !seen_cpus.insert(cpu) {
+            return Err(XdpConfigFileError::DuplicateCpu { cpu });
+        }
+        queues.push(QueueCpuBinding { queue, cpu });
     }
 
     Ok(XdpConfig::new(raw.xdp.interface, queues, raw.xdp.zero_copy))
-}
-
-/// Parse a `"0-3,8"`-style queue set into its ids. Returns `None` on bad syntax,
-/// a reversed range, or an empty set.
-fn parse_queue_set(input: &str) -> Option<Vec<u32>> {
-    if input.is_empty() {
-        return None;
-    }
-    let mut out = Vec::new();
-    for part in input.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            return None;
-        }
-        match part.split_once('-') {
-            Some((lo, hi)) => {
-                let lo: u32 = lo.trim().parse().ok()?;
-                let hi: u32 = hi.trim().parse().ok()?;
-                if lo > hi {
-                    return None;
-                }
-                out.extend(lo..=hi);
-            }
-            None => out.push(part.parse().ok()?),
-        }
-    }
-    Some(out)
 }
 
 #[cfg(test)]
@@ -218,30 +197,15 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     }
 
     #[test]
-    fn range_expands_to_one_binding_per_queue() {
-        let c = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"0-3:8\", \"4-5:9\"]\n").unwrap();
-        assert_eq!(
-            c.queues,
-            vec![
-                QueueCpuBinding { queue: 0, cpu: 8 },
-                QueueCpuBinding { queue: 1, cpu: 8 },
-                QueueCpuBinding { queue: 2, cpu: 8 },
-                QueueCpuBinding { queue: 3, cpu: 8 },
-                QueueCpuBinding { queue: 4, cpu: 9 },
-                QueueCpuBinding { queue: 5, cpu: 9 },
-            ]
-        );
-    }
-
-    #[test]
     fn non_contiguous_queues() {
-        let c = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"1,3,5:10\"\n").unwrap();
+        let c = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"1:10\", \"3:11\", \"5:12\"]\n")
+            .unwrap();
         assert_eq!(
             c.queues,
             vec![
                 QueueCpuBinding { queue: 1, cpu: 10 },
-                QueueCpuBinding { queue: 3, cpu: 10 },
-                QueueCpuBinding { queue: 5, cpu: 10 },
+                QueueCpuBinding { queue: 3, cpu: 11 },
+                QueueCpuBinding { queue: 5, cpu: 12 },
             ]
         );
     }
@@ -270,12 +234,19 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn rejects_duplicate_queue() {
-        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"0-1:8\", \"1-2:9\"]\n")
+        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"0:8\", \"0:9\"]\n")
             .unwrap_err();
         assert!(matches!(
             e,
-            XdpConfigFileError::DuplicateQueue { queue: 1 }
+            XdpConfigFileError::DuplicateQueue { queue: 0 }
         ));
+    }
+
+    #[test]
+    fn rejects_duplicate_cpu() {
+        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"0:8\", \"1:8\"]\n")
+            .unwrap_err();
+        assert!(matches!(e, XdpConfigFileError::DuplicateCpu { cpu: 8 }));
     }
 
     #[test]
@@ -285,8 +256,9 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     }
 
     #[test]
-    fn rejects_reversed_range() {
-        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"5-3:8\"\n").unwrap_err();
-        assert!(matches!(e, XdpConfigFileError::BadQueueSet { .. }));
+    fn rejects_queue_range() {
+        // Ranges/sets are no longer accepted; a single queue is required.
+        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0-3:8\"\n").unwrap_err();
+        assert!(matches!(e, XdpConfigFileError::MappingSyntax { .. }));
     }
 }
