@@ -66,8 +66,8 @@ pub fn get_unknown_last_index(
         let slot_meta = slot_meta_cache
             .entry(slot)
             .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
-        if let Some(slot_meta) = slot_meta {
-            if slot_meta.last_index.is_none() {
+        if let Some(slot_meta) = slot_meta
+            && slot_meta.last_index.is_none() {
                 let shred_index = blockstore.get_index(slot).unwrap();
                 let num_processed_shreds = if let Some(shred_index) = shred_index {
                     shred_index.data().num_shreds() as u64
@@ -77,7 +77,6 @@ pub fn get_unknown_last_index(
                 unknown_last.push((slot, slot_meta.received, num_processed_shreds));
                 processed_slots.insert(slot);
             }
-        }
     }
     // Prioritize slots with more data shreds currently present in blockstore.
     unknown_last.sort_by(|(_, _, count1), (_, _, count2)| count2.cmp(count1));
@@ -107,14 +106,13 @@ fn get_unrepaired_path(
         let slot_meta = slot_meta_cache
             .entry(slot)
             .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
-        if let Some(slot_meta) = slot_meta {
-            if !slot_meta.is_full() {
+        if let Some(slot_meta) = slot_meta
+            && !slot_meta.is_full() {
                 path.push(slot);
                 if let Some(parent_slot) = slot_meta.parent_slot {
                     slot = parent_slot
                 }
             }
-        }
     }
     path.reverse();
     path

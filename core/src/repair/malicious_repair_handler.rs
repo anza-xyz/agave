@@ -56,11 +56,10 @@ impl MaliciousRepairHandler {
 
     /// Check if we should respond maliciously for this slot and shred index
     fn should_respond_maliciously(&self, slot: Slot, shred_index: u64) -> bool {
-        if let Some((start, end)) = self.config.slot_range {
-            if slot < start || slot > end {
+        if let Some((start, end)) = self.config.slot_range
+            && (slot < start || slot > end) {
                 return false;
             }
-        }
 
         let slot_matches = self
             .config
@@ -162,8 +161,7 @@ impl RepairHandler for MaliciousRepairHandler {
             // Parse the original shred to get its metadata
             if let Ok(original_shred) =
                 Shred::new_from_serialized_shred(original_shred_bytes.clone())
-            {
-                if let Some(equivocating_shred) =
+                && let Some(equivocating_shred) =
                     self.generate_equivocating_shred(&original_shred, shred_index)
                 {
                     info!(
@@ -172,7 +170,6 @@ impl RepairHandler for MaliciousRepairHandler {
                     );
                     return repair_response_packet_from_bytes(equivocating_shred, dest, nonce);
                 }
-            }
         }
 
         // Fall back to normal response

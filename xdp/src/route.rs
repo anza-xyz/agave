@@ -534,8 +534,8 @@ impl Router {
         let next_hop_ip = IpAddr::V4(next_hop_v4);
         let preferred_src_ip = route.preferred_src;
 
-        if let Some(default_route) = &self.cached_default_route {
-            if default_route.ip_addr == next_hop_ip && default_route.if_index == if_index {
+        if let Some(default_route) = &self.cached_default_route
+            && default_route.ip_addr == next_hop_ip && default_route.if_index == if_index {
                 return Ok(NextHop {
                     ip_addr: next_hop_ip,
                     if_index,
@@ -546,7 +546,6 @@ impl Router {
                     vlan: default_route.vlan,
                 });
             }
-        }
 
         if let Some(gre) = self.gre_route_info(if_index) {
             return Ok(NextHop {
