@@ -1,10 +1,10 @@
 //! Parser for the validator's `--config` TOML file.
 //!
-//! The file carries an optional `[xdp]` section (AF_XDP transmit) and any number
-//! of `[threads.<name>]` sections, each pinning a managed thread to a CPU. The
-//! server looks up the threads it knows by name (e.g. `poh`); other names parse
-//! and are simply not consumed. Unknown *fields* are rejected so that unsupported
-//! settings cannot be set silently.
+//! The file is versioned TOML. The server reads the sections it understands and
+//! rejects unknown *fields* within them, so typos and unsupported settings fail
+//! loudly rather than being silently ignored. Managed threads are declared under
+//! `[threads.<name>]` and looked up by name, so new thread kinds need no parser
+//! change. The example below is illustrative, not the full set of options.
 //!
 //! ```toml
 //! version = 1
