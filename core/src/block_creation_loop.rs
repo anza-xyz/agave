@@ -60,10 +60,15 @@ use {
 pub(crate) mod rewards;
 mod stats;
 
-// Imperically derived value estimating the time to drain and record the final batch of
-// transactions, produce the block footer, produce the 'alpentick', freeze the bank, shred the final
-// batches of the block, and broadcast. Recording stops this much before the slot timeout so
-// block completion has time to finish before the leader window deadline.
+// Empirically derived value estimating the time to
+// - drain and record the final batch of transactions,
+// - produce the block footer,
+// - produce the 'alpentick',
+// - freeze the bank,
+// - shred the final batches of the block,
+// - broadcast.
+// Recording stops this much before the slot timeout so block completion has time to finish before
+// the leader window deadline.
 const TIME_TO_COMPLETE_BLOCK_BROADCAST: Duration = Duration::from_millis(6);
 
 /// Source of a leader-window notification consumed by BCL.
