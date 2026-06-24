@@ -51,7 +51,7 @@ agave-votor = { path = "../votor", features = ["agave-unstable-api"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-genesis-config = { workspace = true, }
+solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }

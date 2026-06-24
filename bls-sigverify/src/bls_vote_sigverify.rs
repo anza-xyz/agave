@@ -1,13 +1,11 @@
-use crate::{rewards::AddVoteMessage, sig_verified_messages::SigVerifiedVoteBatch};
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-
 use {
     crate::{
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
         errors::SigVerifyVoteError,
-        rewards::rewards_wants_vote,
-        sig_verified_messages::SigVerifiedBatch,
+        rewards::{AddVoteMessage, rewards_wants_vote},
+        sig_verified_messages::{SigVerifiedBatch, SigVerifiedVoteBatch},
         stats::SigVerifyVoteStats,
         utils::{
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
