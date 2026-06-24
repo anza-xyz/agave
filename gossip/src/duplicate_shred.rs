@@ -401,7 +401,7 @@ pub(crate) mod tests {
                 _unused_shred_type: rng.random(),
                 num_chunks: rng.random(),
                 chunk_index: rng.random(),
-                chunk: (0..chunk_len).map(|_| rng.random()).collect(),
+                chunk: (0..chunk_len).map(|_| rng.random::<u8>()).collect(),
             };
 
             let bincode_bytes = bincode::serialize(&dup).unwrap();
