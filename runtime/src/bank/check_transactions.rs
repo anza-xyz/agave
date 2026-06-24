@@ -91,6 +91,35 @@ impl Bank {
         )
     }
 
+    pub fn precheck_transaction_age(
+        &self,
+        tx: &impl TransactionWithMeta,
+        max_age: usize,
+        strict_nonce_size_check: bool,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> TransactionCheckResult {
+        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
+        if !enable_tx_v1 && tx.version() == TransactionVersion::Number(1) {
+            return Err(TransactionError::UnsupportedVersion);
+        }
+
+        let hash_queue = self.blockhash_queue.read().unwrap();
+        let last_blockhash = hash_queue.last_hash();
+        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+
+        let compute_budget_and_limits = self.get_compute_budget_and_limits(tx, error_counters)?;
+
+        self.check_transaction_age(
+            tx,
+            max_age,
+            &next_durable_nonce,
+            &hash_queue,
+            error_counters,
+            compute_budget_and_limits,
+            strict_nonce_size_check,
+        )
+    }
+
     fn filter_v1_transactions<'a, Tx: TransactionWithMeta>(
         &self,
         sanitized_txs: &'a [impl core::borrow::Borrow<Tx>],
@@ -124,53 +153,14 @@ impl Bank {
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
 
-        let feature_set: &FeatureSet = &self.feature_set;
-        let feature_snapshot = feature_set.snapshot();
-        let fee_features = FeeFeatures::from(feature_set);
-
-        let raise_cpi_limit = feature_snapshot.raise_cpi_nesting_limit_to_8;
-
         sanitized_txs
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => {
-                    let compute_budget_and_limits = tx
-                        .borrow()
-                        .transaction_configuration(feature_set)
-                        .map(|config| {
-                            let fee_details = calculate_fee_details(
-                                tx.borrow(),
-                                self.fee_structure.lamports_per_signature,
-                                config.priority_fee_lamports,
-                                fee_features,
-                            );
-                            if let Some(compute_budget) = self.compute_budget {
-                                // This block of code is only necessary to retain legacy behavior of the code.
-                                // It should be removed along with the change to favor transaction's compute budget limits
-                                // over configured compute budget in Bank.
-                                compute_budget.get_compute_budget_and_limits(
-                                    config.loaded_accounts_data_size_limit,
-                                    fee_details,
-                                )
-                            } else {
-                                SVMTransactionExecutionAndFeeBudgetLimits {
-                                    budget: SVMTransactionExecutionBudget {
-                                        compute_unit_limit: u64::from(config.compute_unit_limit),
-                                        heap_size: config.updated_heap_bytes,
-                                        ..SVMTransactionExecutionBudget::new_with_defaults(
-                                            raise_cpi_limit,
-                                        )
-                                    },
-                                    loaded_accounts_data_size_limit: config
-                                        .loaded_accounts_data_size_limit,
-                                    fee_details,
-                                }
-                            }
-                        })
-                        .inspect_err(|_err| {
-                            error_counters.invalid_compute_budget += 1;
-                        })?;
+                    let compute_budget_and_limits =
+                        self.get_compute_budget_and_limits(tx.borrow(), error_counters)?;
+
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
@@ -296,6 +286,49 @@ impl Bank {
         status_cache
             .get_status(key, transaction_blockhash, &self.ancestors)
             .map(|status| status.0)
+    }
+
+    fn get_compute_budget_and_limits(
+        &self,
+        tx: &impl TransactionWithMeta,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> Result<SVMTransactionExecutionAndFeeBudgetLimits, TransactionError> {
+        let feature_set: &FeatureSet = &self.feature_set;
+        let feature_snapshot = feature_set.snapshot();
+        let fee_features = FeeFeatures::from(feature_set);
+        let raise_cpi_limit = feature_snapshot.raise_cpi_nesting_limit_to_8;
+
+        tx.transaction_configuration(feature_set)
+            .map(|config| {
+                let fee_details = calculate_fee_details(
+                    tx,
+                    self.fee_structure.lamports_per_signature,
+                    config.priority_fee_lamports,
+                    fee_features,
+                );
+                if let Some(compute_budget) = self.compute_budget {
+                    // This block of code is only necessary to retain legacy behavior of the code.
+                    // It should be removed along with the change to favor transaction's compute budget limits
+                    // over configured compute budget in Bank.
+                    compute_budget.get_compute_budget_and_limits(
+                        config.loaded_accounts_data_size_limit,
+                        fee_details,
+                    )
+                } else {
+                    SVMTransactionExecutionAndFeeBudgetLimits {
+                        budget: SVMTransactionExecutionBudget {
+                            compute_unit_limit: u64::from(config.compute_unit_limit),
+                            heap_size: config.updated_heap_bytes,
+                            ..SVMTransactionExecutionBudget::new_with_defaults(raise_cpi_limit)
+                        },
+                        loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit,
+                        fee_details,
+                    }
+                }
+            })
+            .inspect_err(|_err| {
+                error_counters.invalid_compute_budget += 1;
+            })
     }
 }
 
