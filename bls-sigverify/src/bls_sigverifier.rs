@@ -859,7 +859,8 @@ mod tests {
         assert_eq!(batches.len(), 1);
         match &batches[0] {
             SigVerifiedBatch::Votes(votes) => {
-                assert_eq!(votes.len(), num_votes);
+                assert_eq!(votes.len(), 1);
+                assert_eq!(votes[0].ranks().count_ones(), num_votes);
             }
             rest => panic!("unexpected type: {rest:?}"),
         }
@@ -930,7 +931,10 @@ mod tests {
         let total_votes_verified = batches
             .into_iter()
             .map(|batch| match batch {
-                SigVerifiedBatch::Votes(votes) => votes.len(),
+                SigVerifiedBatch::Votes(votes) => {
+                    assert_eq!(votes.len(), 1);
+                    votes[0].ranks().count_ones()
+                }
                 rest => panic!("unexpected type: {rest:?}"),
             })
             .sum::<usize>();
@@ -1013,7 +1017,7 @@ mod tests {
                             panic!("invalid vote verified");
                         }
                     }
-                    votes.len()
+                    votes.iter().map(|v| v.ranks().count_ones()).sum::<usize>()
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
@@ -1371,7 +1375,8 @@ mod tests {
 
         let batch_0_was_votes = match &batches[0] {
             SigVerifiedBatch::Votes(votes) => {
-                assert_eq!(votes.len(), num_votes);
+                assert_eq!(votes.len(), 1);
+                assert_eq!(votes[0].ranks().count_ones(), num_votes);
                 true
             }
             SigVerifiedBatch::Certificates(certs) => {
@@ -1383,14 +1388,15 @@ mod tests {
         match &batches[1] {
             SigVerifiedBatch::Votes(votes) => {
                 assert!(!batch_0_was_votes);
-                assert_eq!(votes.len(), num_votes);
+                assert_eq!(votes.len(), 1);
+                assert_eq!(votes[0].ranks().count_ones(), num_votes);
             }
             SigVerifiedBatch::Certificates(certs) => {
                 assert!(batch_0_was_votes);
                 assert_eq!(certs.len(), 1);
             }
         }
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, num_votes as u64);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
     }
 
