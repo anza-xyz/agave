@@ -1,5 +1,5 @@
-#![feature(test)]
-extern crate test;
+
+
 
 use {
     rand::{Rng, rng},
@@ -17,7 +17,7 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     std::sync::Arc,
-    test::Bencher,
+    Bencher,
 };
 const TRANSFER_TRANSACTION_COMPUTE_UNIT: u32 = 200;
 
@@ -39,7 +39,7 @@ fn build_sanitized_transaction(
     RuntimeTransaction::from_transaction_for_tests(transaction)
 }
 
-#[bench]
+
 #[ignore]
 fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
     let prioritization_fee_cache = PrioritizationFeeCache::default();
@@ -92,7 +92,7 @@ fn process_transactions_multiple_slots(banks: &[Arc<Bank>], num_slots: usize, nu
     }
 }
 
-#[bench]
+
 #[ignore]
 fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
     const NUM_SLOTS: usize = 5;
@@ -111,3 +111,6 @@ fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
         process_transactions_multiple_slots(&banks, NUM_SLOTS, NUM_THREADS);
     });
 }
+
+benchmark_group!(benches, bench_process_transactions_single_slot, bench_process_transactions_multiple_slots);
+benchmark_main!(benches);
