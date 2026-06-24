@@ -90,6 +90,17 @@ pub enum ConfigFileError {
     /// A `cpus` entry was not a valid `"0-3,8"` set string.
     #[error("invalid cpu set `{input}` (expected an index or a \"0-3,8\" range)")]
     CpuSet { input: String },
+
+    /// Two exclusive reservations requested the same CPU.
+    #[error(
+        "CPU {cpu} is exclusively reserved by both {first} and {second}; exclusive reservations \
+         may not share a CPU core"
+    )]
+    ExclusiveCpuConflict {
+        cpu: usize,
+        first: String,
+        second: String,
+    },
 }
 
 /// A parsed validator config file.
@@ -108,6 +119,45 @@ impl FileConfig {
     pub fn thread(&self, name: &str) -> Option<&ThreadConfig> {
         self.threads.get(name)
     }
+
+    /// Insert or replace the `[threads.<name>]` block. Used to fold CLI overrides
+    /// into the parsed configuration before validation.
+    pub fn set_thread(&mut self, name: impl Into<String>, thread: ThreadConfig) {
+        self.threads.insert(name.into(), thread);
+    }
+
+    /// The exclusively-claimed CPUs from `[threads.*]` (reservation = exclusive),
+    /// keyed by CPU with the claiming thread's name. Errs if two threads claim the
+    /// same CPU. Callers fold in XDP queue CPUs, which are exclusive too.
+    pub fn exclusive_thread_cpus(&self) -> Result<BTreeMap<usize, String>, ConfigFileError> {
+        let mut owners = BTreeMap::new();
+        for (name, thread) in &self.threads {
+            if thread.reservation == Reservation::Exclusive {
+                for &cpu in &thread.cpus {
+                    claim_exclusive(&mut owners, cpu, format!("[threads.{name}]"))?;
+                }
+            }
+        }
+        Ok(owners)
+    }
+}
+
+/// Record `owner`'s exclusive claim on `cpu` in `owners`, erroring if another
+/// entity already claimed it. Conflicts are caught regardless of insertion order.
+pub(crate) fn claim_exclusive(
+    owners: &mut BTreeMap<usize, String>,
+    cpu: usize,
+    owner: String,
+) -> Result<(), ConfigFileError> {
+    if let Some(first) = owners.get(&cpu) {
+        return Err(ConfigFileError::ExclusiveCpuConflict {
+            cpu,
+            first: first.clone(),
+            second: owner,
+        });
+    }
+    owners.insert(cpu, owner);
+    Ok(())
 }
 
 /// How a managed thread consumes the CPU capacity it is placed on.
@@ -130,20 +180,12 @@ pub struct ThreadConfig {
     pub reservation: Reservation,
 }
 
-/// Proof of History thread configuration. PoH only supports single-CPU affinity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PohConfig {
-    /// Logical CPU the PoH thread is pinned to.
-    pub cpu: usize,
-}
-
-impl TryFrom<&ThreadConfig> for PohConfig {
-    type Error = ConfigFileError;
-
-    /// PoH pins to a single CPU, so the thread must specify exactly one.
-    fn try_from(thread: &ThreadConfig) -> Result<Self, Self::Error> {
-        match thread.cpus.as_slice() {
-            [cpu] => Ok(PohConfig { cpu: *cpu }),
+impl ThreadConfig {
+    /// The single CPU this thread pins to, erroring if it does not specify
+    /// exactly one. For consumers (e.g. PoH) that only support single-CPU affinity.
+    pub fn single_cpu(&self) -> Result<usize, ConfigFileError> {
+        match self.cpus.as_slice() {
+            [cpu] => Ok(*cpu),
             cpus => Err(ConfigFileError::SingleCpuRequired { count: cpus.len() }),
         }
     }
@@ -487,25 +529,61 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     }
 
     #[test]
+    fn exclusive_thread_cpus_collects_distinct() {
+        let c = parse(
+            "version = 1\n[threads.a]\ncpus = [2]\nreservation = \"exclusive\"\n[threads.b]\n\
+             cpus = [3]\nreservation = \"exclusive\"\n",
+        )
+        .unwrap();
+        let owners = c.exclusive_thread_cpus().unwrap();
+        assert!(owners.contains_key(&2) && owners.contains_key(&3));
+    }
+
+    #[test]
+    fn exclusive_thread_cpus_detects_conflict() {
+        // Generic over thread names: two arbitrary threads claiming CPU 5.
+        let c = parse(
+            "version = 1\n[threads.a]\ncpus = [5]\nreservation = \"exclusive\"\n[threads.b]\n\
+             cpus = [5]\nreservation = \"exclusive\"\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            c.exclusive_thread_cpus(),
+            Err(ConfigFileError::ExclusiveCpuConflict { cpu: 5, .. })
+        ));
+    }
+
+    #[test]
+    fn exclusive_thread_cpus_ignores_non_exclusive() {
+        // A `none` thread claims nothing, so it never conflicts.
+        let c = parse(
+            "version = 1\n[threads.a]\ncpus = [5]\nreservation = \"exclusive\"\n[threads.b]\n\
+             cpus = [5]\n",
+        )
+        .unwrap();
+        assert!(c.exclusive_thread_cpus().unwrap().contains_key(&5));
+    }
+
+    #[test]
     fn rejects_bad_cpu_set() {
         let e = parse("version = 1\n[threads.t]\ncpus = \"2-x\"\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::CpuSet { .. }));
     }
 
     #[test]
-    fn poh_requires_single_cpu() {
+    fn single_cpu_requires_exactly_one() {
         let one = ThreadConfig {
             cpus: vec![2],
             reservation: Reservation::None,
         };
-        assert_eq!(PohConfig::try_from(&one).unwrap(), PohConfig { cpu: 2 });
+        assert_eq!(one.single_cpu().unwrap(), 2);
 
         let many = ThreadConfig {
             cpus: vec![2, 3],
             reservation: Reservation::None,
         };
         assert!(matches!(
-            PohConfig::try_from(&many),
+            many.single_cpu(),
             Err(ConfigFileError::SingleCpuRequired { count: 2 })
         ));
 
@@ -514,7 +592,7 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
             reservation: Reservation::None,
         };
         assert!(matches!(
-            PohConfig::try_from(&none),
+            none.single_cpu(),
             Err(ConfigFileError::SingleCpuRequired { count: 0 })
         ));
     }
