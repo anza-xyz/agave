@@ -374,7 +374,6 @@ impl FlushStats {
 #[derive(Debug, Default)]
 pub struct LatestAccountsIndexRootsStats {
     pub roots_len: AtomicUsize,
-    pub uncleaned_roots_len: AtomicUsize,
     pub roots_range: AtomicU64,
     pub rooted_cleaned_count: AtomicUsize,
     pub unrooted_cleaned_count: AtomicUsize,
@@ -386,9 +385,6 @@ impl LatestAccountsIndexRootsStats {
     pub fn update(&self, accounts_index_roots_stats: &AccountsIndexRootsStats) {
         if let Some(value) = accounts_index_roots_stats.roots_len {
             self.roots_len.store(value, Ordering::Relaxed);
-        }
-        if let Some(value) = accounts_index_roots_stats.uncleaned_roots_len {
-            self.uncleaned_roots_len.store(value, Ordering::Relaxed);
         }
         if let Some(value) = accounts_index_roots_stats.roots_range {
             self.roots_range.store(value, Ordering::Relaxed);
@@ -415,11 +411,6 @@ impl LatestAccountsIndexRootsStats {
         datapoint_info!(
             "accounts_index_roots_len",
             ("roots_len", self.roots_len.load(Ordering::Relaxed), i64),
-            (
-                "uncleaned_roots_len",
-                self.uncleaned_roots_len.load(Ordering::Relaxed),
-                i64
-            ),
             (
                 "roots_range_width",
                 self.roots_range.load(Ordering::Relaxed),

@@ -195,7 +195,6 @@ pub fn default_num_flush_threads() -> NonZeroUsize {
 #[derive(Debug, Default)]
 pub struct AccountsIndexRootsStats {
     pub roots_len: Option<usize>,
-    pub uncleaned_roots_len: Option<usize>,
     pub roots_range: Option<u64>,
     pub rooted_cleaned_count: usize,
     pub unrooted_cleaned_count: usize,
