@@ -4,7 +4,6 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
-        consensus_metrics::ConsensusMetricsEvent,
         event::{
             CompletedBlock, LatestSwitchRequest, RepairEvent, RepairEventSender, SwitchBankEvent,
             VotorEvent, VotorEventReceiver,
@@ -20,7 +19,10 @@ use {
         },
         votor::SharedContext,
     },
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
+    agave_votor_messages::{
+        consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
+        vote::Vote,
+    },
     crossbeam_channel::{RecvError, SendError, TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
@@ -448,15 +450,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = *standstill_slot {
-                    if block.slot > slot {
-                        *standstill_slot = None;
-                        info!(
-                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
-                             at slot={}. Ending timeout extension",
-                            block.slot
-                        );
-                    }
+                if let Some(slot) = *standstill_slot
+                    && block.slot > slot
+                {
+                    *standstill_slot = None;
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.slot
+                    );
                 }
 
                 if let Some(parent_block) =
@@ -874,8 +876,10 @@ impl EventHandler {
                     panic!(
                         "{my_pubkey}: Block {block:?} has been finalized, however we have a bank \
                          hash mismatch. The cluster bank hash is {expected_hash} however we \
-                         computed {}. At this point we will be unable to recover. Please save a \
-                         copy of your ledger to share on discord and restart from a snapshot > {}.",
+                         computed {}. At this point we will be unable to recover. Ensure that you \
+                         are running a supported Agave version for this cluster. If this is not \
+                         operator error,please save a copy of your ledger to share on discord and \
+                         restart from a snapshot > {}.",
                         bank.hash(),
                         block.slot
                     );
@@ -951,7 +955,6 @@ mod tests {
         super::*,
         crate::{
             commitment::CommitmentAggregationData,
-            consensus_metrics::ConsensusMetricsEventReceiver,
             event::{LeaderWindowInfo, RepairEventReceiver},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
@@ -960,8 +963,10 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+            metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
@@ -997,7 +1002,7 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<SigVerifiedBatch>,
+        own_vote_receiver: Receiver<ConsensusMessage>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1136,6 +1141,7 @@ mod tests {
 
         let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
         let voting_context = VotingContext {
+            cluster_info: cluster_info.clone(),
             identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
             vote_history,
@@ -1386,16 +1392,16 @@ mod tests {
                         found |= votes.len() != previous_len;
                         !votes.is_empty()
                     }
-                    BLSOp::PushCertificates { .. } => true,
+                    BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
                 });
                 assert!(found, "Did not find expected vote: {expected_message:?}");
             }
         }
 
         fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
-            let expected_vote_serialized = wincode::serialize(expected_vote).unwrap();
-            let signature: BLSSignature =
-                self.my_bls_keypair.sign(&expected_vote_serialized).into();
+            let payload =
+                get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
+            let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote: *expected_vote,
                 rank: 0,
@@ -1418,28 +1424,28 @@ mod tests {
                     found |= votes.len() != previous_len;
                     !votes.is_empty()
                 }
-                BLSOp::PushCertificates { .. } => true,
+                BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
             let mut received_messages = Vec::with_capacity(expected_votes.len());
             for _ in expected_votes {
-                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
+                let ConsensusMessage::Vote(vote) = self.own_vote_receiver.try_recv().unwrap()
                 else {
-                    panic!("expected own vote batch");
+                    panic!("expected own vote");
                 };
-                received_messages.extend(votes);
+                received_messages.push(vote);
             }
 
             for expected_vote in expected_votes {

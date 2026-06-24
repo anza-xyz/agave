@@ -2,6 +2,7 @@
 //! node stakes
 use {
     crate::{
+        alpenglow_epoch_type::RewardEpochDelegatedStakes,
         stake_account,
         stake_delegation::{delegation_activation_status, delegation_effective_stake},
         stake_history::StakeHistory,
@@ -24,7 +25,6 @@ use {
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
-        ops::Add,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
@@ -66,6 +66,7 @@ pub enum InvalidCacheEntryReason {
 }
 
 type StakeAccount = stake_account::StakeAccount<Delegation>;
+pub(crate) type DelegatedStakes = ImblHashMap<Pubkey, u64>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Debug)]
@@ -118,12 +119,7 @@ impl StakesCache {
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
                             let mut stakes = self.0.write().unwrap();
-                            stakes.upsert_vote_account(
-                                pubkey,
-                                vote_account,
-                                new_rate_activation_epoch,
-                                use_fixed_point_stake_math,
-                            )
+                            stakes.upsert_vote_account(pubkey, vote_account)
                         };
                     }
                     Err(_) => {
@@ -169,9 +165,19 @@ impl StakesCache {
         next_epoch: Epoch,
         stake_history: StakeHistory,
         vote_accounts: VoteAccounts,
+        delegated_stakes: DelegatedStakes,
     ) {
         let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, stake_history, vote_accounts)
+        stakes.activate_epoch(next_epoch, stake_history, vote_accounts, delegated_stakes)
+    }
+
+    pub(crate) fn refresh_delegated_stakes(
+        &self,
+        new_rate_activation_epoch: Option<Epoch>,
+        use_fixed_point_stake_math: bool,
+    ) {
+        let mut stakes = self.0.write().unwrap();
+        stakes.refresh_delegated_stakes(new_rate_activation_epoch, use_fixed_point_stake_math);
     }
 }
 
@@ -189,6 +195,7 @@ impl StakesCache {
     field_qualifiers(
         vote_accounts(pub),
         stake_delegations(pub),
+        delegated_stakes(pub),
         unused(pub),
         epoch(pub),
         stake_history(pub),
@@ -200,6 +207,10 @@ pub struct Stakes<T: Clone> {
 
     /// stake_delegations
     stake_delegations: ImblHashMap<Pubkey, T>,
+
+    /// current effective stake delegated to each vote account pubkey
+    #[serde(skip)]
+    delegated_stakes: DelegatedStakes,
 
     /// unused
     unused: u64,
@@ -217,6 +228,7 @@ impl<T: Clone> Stakes<T> {
             vote_accounts,
             epoch,
             stake_delegations: ImblHashMap::new(),
+            delegated_stakes: DelegatedStakes::default(),
             unused: 0,
             stake_history: StakeHistory::default(),
         }
@@ -247,6 +259,7 @@ impl<T: Clone> Stakes<T> {
         let Self {
             vote_accounts,
             stake_delegations: _,
+            delegated_stakes: _,
             unused: _,
             epoch,
             stake_history,
@@ -263,7 +276,7 @@ impl Stakes<StakeAccount> {
     ) -> Self {
         let stake_history = StakeHistory::default();
         let mut vote_accounts = VoteAccountsHashMap::default();
-        let mut delegated_stakes: HashMap<Pubkey, u64> = HashMap::default();
+        let mut delegated_stakes = DelegatedStakes::default();
         let mut stake_delegations = ImblHashMap::new();
         let epoch = 0;
 
@@ -292,20 +305,23 @@ impl Stakes<StakeAccount> {
                         new_rate_activation_epoch,
                         use_fixed_point_stake_math,
                     );
-                    *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                    if stake != 0 {
+                        *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                    }
                     stake_delegations.insert(*pubkey, stake_account);
                 }
             }
         }
 
         let mut vote_accounts = VoteAccounts::from(Arc::new(vote_accounts));
-        for (vote_pubkey, stake) in delegated_stakes {
-            vote_accounts.add_stake(&vote_pubkey, stake);
+        for (vote_pubkey, stake) in &delegated_stakes {
+            vote_accounts.add_stake(vote_pubkey, *stake);
         }
 
         Self {
             vote_accounts,
             stake_delegations,
+            delegated_stakes,
             unused: 0,
             epoch,
             stake_history,
@@ -379,6 +395,7 @@ impl Stakes<StakeAccount> {
         Ok(Self {
             vote_accounts: stakes.vote_accounts.clone(),
             stake_delegations,
+            delegated_stakes: DelegatedStakes::default(),
             unused: stakes.unused,
             epoch: stakes.epoch,
             stake_history: stakes.stake_history,
@@ -391,12 +408,16 @@ impl Stakes<StakeAccount> {
         vote_accounts: VoteAccounts,
         stake_delegations: ImblHashMap<Pubkey, StakeAccount>,
     ) -> Self {
+        let stake_history = StakeHistory::default();
+        let delegated_stakes =
+            Self::calculate_delegated_stakes(&stake_delegations, epoch, &stake_history, None, true);
         Self {
             vote_accounts,
             stake_delegations,
+            delegated_stakes,
             unused: 0,
             epoch,
-            stake_history: StakeHistory::default(),
+            stake_history,
         }
     }
 
@@ -411,15 +432,20 @@ impl Stakes<StakeAccount> {
         new_rate_activation_epoch: Option<Epoch>,
         stake_delegations: &[(&Pubkey, &StakeAccount)],
         use_fixed_point_stake_math: bool,
-    ) -> (StakeHistory, VoteAccounts) {
+    ) -> (
+        StakeHistory,
+        VoteAccounts,
+        DelegatedStakes,
+        RewardEpochDelegatedStakes,
+    ) {
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
-        let stake_history_entry = thread_pool.install(|| {
+        let (stake_history_entry, effective_delegated_stakes) = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
                 .fold(
-                    StakeActivationStatus::default,
-                    |acc, (_stake_pubkey, stake_account)| {
+                    || (StakeActivationStatus::default(), HashMap::default()),
+                    |(acc, mut delegated_stakes), (_stake_pubkey, stake_account)| {
                         let delegation = stake_account.delegation();
                         let activation_status = delegation_activation_status(
                             delegation,
@@ -428,16 +454,27 @@ impl Stakes<StakeAccount> {
                             new_rate_activation_epoch,
                             use_fixed_point_stake_math,
                         );
-                        acc + activation_status
+                        *delegated_stakes.entry(delegation.voter_pubkey).or_default() +=
+                            activation_status.effective;
+                        (acc + activation_status, delegated_stakes)
                     },
                 )
-                .reduce(StakeActivationStatus::default, Add::add)
+                .reduce(
+                    || (StakeActivationStatus::default(), HashMap::default()),
+                    |(activation_status_a, delegated_stakes_a),
+                     (activation_status_b, delegated_stakes_b)| {
+                        (
+                            activation_status_a + activation_status_b,
+                            merge_delegated_stakes(delegated_stakes_a, delegated_stakes_b),
+                        )
+                    },
+                )
         });
         let mut stake_history = self.stake_history.clone();
         stake_history.add(self.epoch, stake_history_entry);
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
-        let vote_accounts = refresh_vote_accounts(
+        let (vote_accounts, delegated_stakes) = refresh_vote_accounts(
             thread_pool,
             next_epoch,
             &self.vote_accounts,
@@ -446,7 +483,16 @@ impl Stakes<StakeAccount> {
             new_rate_activation_epoch,
             use_fixed_point_stake_math,
         );
-        (stake_history, vote_accounts)
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: self.epoch,
+            delegated_stakes: effective_delegated_stakes,
+        };
+        (
+            stake_history,
+            vote_accounts,
+            delegated_stakes,
+            reward_epoch_delegated_stakes,
+        )
     }
 
     pub(crate) fn activate_epoch(
@@ -454,35 +500,73 @@ impl Stakes<StakeAccount> {
         next_epoch: Epoch,
         stake_history: StakeHistory,
         vote_accounts: VoteAccounts,
+        delegated_stakes: DelegatedStakes,
     ) {
         self.epoch = next_epoch;
         self.stake_history = stake_history;
         self.vote_accounts = vote_accounts;
+        self.delegated_stakes = delegated_stakes;
     }
 
-    /// Sum the stakes that point to the given voter_pubkey
-    fn calculate_stake(
+    fn calculate_delegated_stakes(
         stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
-        voter_pubkey: &Pubkey,
         epoch: Epoch,
         stake_history: &StakeHistory,
         new_rate_activation_epoch: Option<Epoch>,
         use_fixed_point_stake_math: bool,
-    ) -> u64 {
-        stake_delegations
-            .values()
-            .map(StakeAccount::delegation)
-            .filter(|delegation| &delegation.voter_pubkey == voter_pubkey)
-            .map(|delegation| {
-                delegation_effective_stake(
-                    delegation,
-                    epoch,
-                    stake_history,
-                    new_rate_activation_epoch,
-                    use_fixed_point_stake_math,
-                )
-            })
-            .sum()
+    ) -> DelegatedStakes {
+        let mut delegated_stakes = DelegatedStakes::new();
+        for stake_account in stake_delegations.values() {
+            let delegation = stake_account.delegation();
+            let stake = delegation_effective_stake(
+                delegation,
+                epoch,
+                stake_history,
+                new_rate_activation_epoch,
+                use_fixed_point_stake_math,
+            );
+            if stake != 0 {
+                *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+            }
+        }
+        delegated_stakes
+    }
+
+    fn refresh_delegated_stakes(
+        &mut self,
+        new_rate_activation_epoch: Option<Epoch>,
+        use_fixed_point_stake_math: bool,
+    ) {
+        self.delegated_stakes = Self::calculate_delegated_stakes(
+            &self.stake_delegations,
+            self.epoch,
+            &self.stake_history,
+            new_rate_activation_epoch,
+            use_fixed_point_stake_math,
+        );
+    }
+
+    fn add_delegated_stake(&mut self, voter_pubkey: Pubkey, stake: u64) {
+        if stake == 0 {
+            return;
+        }
+        *self.delegated_stakes.entry(voter_pubkey).or_default() += stake;
+    }
+
+    fn sub_delegated_stake(&mut self, voter_pubkey: &Pubkey, stake: u64) {
+        if stake == 0 {
+            return;
+        }
+        let current_stake = self
+            .delegated_stakes
+            .get_mut(voter_pubkey)
+            .expect("subtraction from missing delegated stake");
+        *current_stake = current_stake
+            .checked_sub(stake)
+            .expect("subtraction value exceeds delegated stake");
+        if *current_stake == 0 {
+            self.delegated_stakes.remove(voter_pubkey);
+        }
     }
 
     fn remove_vote_account(&mut self, vote_pubkey: &Pubkey) -> Option<VoteAccount> {
@@ -504,6 +588,7 @@ impl Stakes<StakeAccount> {
                 new_rate_activation_epoch,
                 use_fixed_point_stake_math,
             );
+            self.sub_delegated_stake(&removed_delegation.voter_pubkey, removed_stake);
             self.vote_accounts
                 .sub_stake(&removed_delegation.voter_pubkey, removed_stake);
         }
@@ -513,22 +598,17 @@ impl Stakes<StakeAccount> {
         &mut self,
         vote_pubkey: &Pubkey,
         vote_account: VoteAccount,
-        new_rate_activation_epoch: Option<Epoch>,
-        use_fixed_point_stake_math: bool,
     ) -> Option<VoteAccount> {
         debug_assert_ne!(vote_account.lamports(), 0u64);
 
-        let stake_delegations = &self.stake_delegations;
-        self.vote_accounts.insert(*vote_pubkey, vote_account, || {
-            Self::calculate_stake(
-                stake_delegations,
-                vote_pubkey,
-                self.epoch,
-                &self.stake_history,
-                new_rate_activation_epoch,
-                use_fixed_point_stake_math,
-            )
-        })
+        let calculate_delegated_stake = || {
+            self.delegated_stakes
+                .get(vote_pubkey)
+                .copied()
+                .unwrap_or_default()
+        };
+        self.vote_accounts
+            .insert(*vote_pubkey, vote_account, calculate_delegated_stake)
     }
 
     fn upsert_stake_delegation(
@@ -549,7 +629,10 @@ impl Stakes<StakeAccount> {
             use_fixed_point_stake_math,
         );
         match self.stake_delegations.insert(stake_pubkey, stake_account) {
-            None => self.vote_accounts.add_stake(&voter_pubkey, stake),
+            None => {
+                self.add_delegated_stake(voter_pubkey, stake);
+                self.vote_accounts.add_stake(&voter_pubkey, stake);
+            }
             Some(old_stake_account) => {
                 let old_delegation = old_stake_account.delegation();
                 let old_voter_pubkey = old_delegation.voter_pubkey;
@@ -561,6 +644,8 @@ impl Stakes<StakeAccount> {
                     use_fixed_point_stake_math,
                 );
                 if voter_pubkey != old_voter_pubkey || stake != old_stake {
+                    self.sub_delegated_stake(&old_voter_pubkey, old_stake);
+                    self.add_delegated_stake(voter_pubkey, stake);
                     self.vote_accounts.sub_stake(&old_voter_pubkey, old_stake);
                     self.vote_accounts.add_stake(&voter_pubkey, stake);
                 }
@@ -621,6 +706,7 @@ impl From<Stakes<StakeAccount>> for Stakes<Delegation> {
         Self {
             vote_accounts: stakes.vote_accounts,
             stake_delegations,
+            delegated_stakes: DelegatedStakes::default(),
             unused: stakes.unused,
             epoch: stakes.epoch,
             stake_history: stakes.stake_history,
@@ -641,6 +727,7 @@ impl From<Stakes<StakeAccount>> for Stakes<Stake> {
         Self {
             vote_accounts: stakes.vote_accounts,
             stake_delegations,
+            delegated_stakes: DelegatedStakes::default(),
             unused: stakes.unused,
             epoch: stakes.epoch,
             stake_history: stakes.stake_history,
@@ -661,11 +748,25 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
         Self {
             vote_accounts: stakes.vote_accounts,
             stake_delegations,
+            delegated_stakes: DelegatedStakes::default(),
             unused: stakes.unused,
             epoch: stakes.epoch,
             stake_history: stakes.stake_history,
         }
     }
+}
+
+fn merge_delegated_stakes(
+    mut stakes: HashMap</*voter:*/ Pubkey, /*stake:*/ u64>,
+    other: HashMap</*voter:*/ Pubkey, /*stake:*/ u64>,
+) -> HashMap</*voter:*/ Pubkey, /*stake:*/ u64> {
+    if stakes.len() < other.len() {
+        return merge_delegated_stakes(other, stakes);
+    }
+    for (pubkey, stake) in other {
+        *stakes.entry(pubkey).or_default() += stake;
+    }
+    stakes
 }
 
 fn refresh_vote_accounts(
@@ -676,9 +777,8 @@ fn refresh_vote_accounts(
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
     use_fixed_point_stake_math: bool,
-) -> VoteAccounts {
-    type StakesHashMap = HashMap</*voter:*/ Pubkey, /*stake:*/ u64>;
-    fn merge(mut stakes: StakesHashMap, other: StakesHashMap) -> StakesHashMap {
+) -> (VoteAccounts, DelegatedStakes) {
+    fn merge(mut stakes: DelegatedStakes, other: DelegatedStakes) -> DelegatedStakes {
         if stakes.len() < other.len() {
             return merge(other, stakes);
         }
@@ -691,10 +791,9 @@ fn refresh_vote_accounts(
         stake_delegations
             .par_iter()
             .fold(
-                HashMap::default,
+                DelegatedStakes::default,
                 |mut delegated_stakes, (_stake_pubkey, stake_account)| {
                     let delegation = stake_account.delegation();
-                    let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
                     let stake = delegation_effective_stake(
                         delegation,
                         epoch,
@@ -702,13 +801,15 @@ fn refresh_vote_accounts(
                         new_rate_activation_epoch,
                         use_fixed_point_stake_math,
                     );
-                    *entry += stake;
+                    if stake != 0 {
+                        *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                    }
                     delegated_stakes
                 },
             )
-            .reduce(HashMap::default, merge)
+            .reduce(DelegatedStakes::default, merge)
     });
-    vote_accounts
+    let vote_accounts = vote_accounts
         .iter()
         .map(|(&vote_pubkey, vote_account)| {
             let delegated_stake = delegated_stakes
@@ -717,7 +818,8 @@ fn refresh_vote_accounts(
                 .unwrap_or_default();
             (vote_pubkey, (delegated_stake, vote_account.clone()))
         })
-        .collect()
+        .collect();
+    (vote_accounts, delegated_stakes)
 }
 
 #[cfg(test)]
@@ -740,6 +842,7 @@ pub(crate) mod tests {
             Self {
                 vote_accounts: stakes.vote_accounts,
                 stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),
+                delegated_stakes: DelegatedStakes::default(),
                 unused: stakes.unused,
                 epoch: stakes.epoch,
                 stake_history: stakes.stake_history,
@@ -1091,19 +1194,21 @@ pub(crate) mod tests {
             .stake()
             .unwrap();
 
+        let initial_expected_stake = {
+            let stakes = stakes_cache.stakes();
+            effective_stake(&stake, stakes.epoch, &stakes.stake_history, None, true)
+        };
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
-            let expected_stake =
-                effective_stake(&stake, stakes.epoch, &stakes.stake_history, None, true);
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
-                expected_stake
+                initial_expected_stake
             );
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let next_epoch = 3;
-        let (stake_history, vote_accounts) = {
+        let (stake_history, vote_accounts, delegated_stakes, effective_delegated_stakes) = {
             let stakes = stakes_cache.stakes();
             let stake_delegations = stakes.stake_delegations_vec();
             stakes.calculate_activated_stake(
@@ -1114,7 +1219,14 @@ pub(crate) mod tests {
                 true,
             )
         };
-        stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts);
+        assert_eq!(
+            effective_delegated_stakes
+                .delegated_stakes
+                .get(&vote_pubkey)
+                .copied(),
+            Some(initial_expected_stake)
+        );
+        stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts, delegated_stakes);
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();

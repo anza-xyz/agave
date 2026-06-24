@@ -63,10 +63,7 @@ pub(crate) fn set_root(
         ctx.blockstore
             .insert_optimistic_slot(new_root, &hash, timestamp().try_into().unwrap())
     {
-        error!(
-            "failed to record optimistic slot in blockstore: slot={}: {:?}",
-            new_root, &e
-        );
+        error!("failed to record optimistic slot in blockstore: slot={new_root}: {e:?}");
     }
 
     if let Err(err) =

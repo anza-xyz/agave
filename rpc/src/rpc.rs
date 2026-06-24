@@ -449,7 +449,7 @@ impl JsonRpcRequestProcessor {
     #[cfg(test)]
     pub fn new_from_bank(bank: Bank, socket_addr_space: SocketAddrSpace) -> Self {
         use {
-            crate::rpc_service::service_runtime,
+            crate::rpc_service::service_runtime, crossbeam_channel::bounded,
             solana_send_transaction_service::test_utils::create_client_for_tests,
         };
 
@@ -468,7 +468,7 @@ impl JsonRpcRequestProcessor {
         });
 
         let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
-        let (transaction_sender, transaction_receiver) = unbounded();
+        let (transaction_sender, transaction_receiver) = bounded(1024);
 
         let config = JsonRpcConfig::default();
         let JsonRpcConfig {
@@ -3802,10 +3802,7 @@ pub mod rpc_full {
             config: Option<RpcRequestAirdropConfig>,
         ) -> Result<String> {
             debug!("request_airdrop rpc request received");
-            trace!(
-                "request_airdrop id={} lamports={} config: {:?}",
-                pubkey_str, lamports, &config
-            );
+            trace!("request_airdrop id={pubkey_str} lamports={lamports} config: {config:?}");
 
             let faucet_addr = meta.config.faucet_addr.ok_or_else(Error::invalid_request)?;
             let pubkey = verify_pubkey(&pubkey_str)?;
@@ -4460,7 +4457,7 @@ where
             Error::invalid_params(format!(
                 "failed to deserialize {}: {}",
                 type_name::<T>(),
-                &err.to_string()
+                err
             ))
         })
         .map(|output| (wire_output, output))
@@ -4530,6 +4527,8 @@ pub fn populate_blockstore_for_tests(
     blockstore: Arc<Blockstore>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
 ) {
+    use crossbeam_channel::bounded;
+
     let slot = bank.slot();
     let parent_slot = bank.parent_slot();
     let shreds =
@@ -4537,8 +4536,8 @@ pub fn populate_blockstore_for_tests(
     blockstore.insert_shreds(shreds, None, false).unwrap();
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 
-    let (transaction_status_sender, transaction_status_receiver) = unbounded();
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
@@ -4610,6 +4609,7 @@ pub mod tests {
         solana_message::{
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
             v0::{self, MessageAddressTableLookup},
+            v1,
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_program_option::COption,
@@ -9447,6 +9447,32 @@ pub mod tests {
             );
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
             assert_eq!(response.value, TEST_SIGNATURE_FEE);
+        }
+
+        {
+            const PRIORITY_FEE: u64 = 42;
+            let v1_msg = VersionedMessage::V1(v1::Message::new(
+                MessageHeader {
+                    num_required_signatures: 1,
+                    ..MessageHeader::default()
+                },
+                v1::TransactionConfig {
+                    priority_fee: Some(PRIORITY_FEE),
+                    ..v1::TransactionConfig::empty()
+                },
+                recent_blockhash,
+                vec![Pubkey::new_unique()],
+                vec![],
+            ));
+
+            let request = create_test_request(
+                "getFeeForMessage",
+                Some(json!([
+                    BASE64_STANDARD.encode(wincode::serialize(&v1_msg).unwrap())
+                ])),
+            );
+            let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
+            assert_eq!(response.value, TEST_SIGNATURE_FEE + PRIORITY_FEE);
         }
     }
 

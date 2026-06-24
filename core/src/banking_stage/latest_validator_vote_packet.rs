@@ -108,7 +108,7 @@ impl LatestValidatorVote {
 
         let vote = SanitizedTransactionView::try_new_sanitized(
             std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
-            true,
+            &solana_runtime_transaction::sanitize_config::sanitize_config(true),
         )
         .unwrap();
 
@@ -182,47 +182,38 @@ mod tests {
         let keypairs = ValidatorVoteKeypairs::new_rand();
         let blockhash = Hash::new_unique();
         let switch_proof = Hash::new_unique();
-        let mut tower_sync = BytesPacket::from_data(
+        let mut tower_sync = BytesPacket::from_data(new_tower_sync_transaction(
+            TowerSync::from(vec![(0, 3), (1, 2), (2, 1)]),
+            blockhash,
+            &keypairs.node_keypair,
+            &keypairs.vote_keypair,
+            &keypairs.vote_keypair,
             None,
-            new_tower_sync_transaction(
-                TowerSync::from(vec![(0, 3), (1, 2), (2, 1)]),
-                blockhash,
-                &keypairs.node_keypair,
-                &keypairs.vote_keypair,
-                &keypairs.vote_keypair,
-                None,
-            ),
-        )
+        ))
         .unwrap();
         tower_sync
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let mut tower_sync_switch = BytesPacket::from_data(
-            None,
-            new_tower_sync_transaction(
-                TowerSync::from(vec![(0, 3), (1, 2), (3, 1)]),
-                blockhash,
-                &keypairs.node_keypair,
-                &keypairs.vote_keypair,
-                &keypairs.vote_keypair,
-                Some(switch_proof),
-            ),
-        )
+        let mut tower_sync_switch = BytesPacket::from_data(new_tower_sync_transaction(
+            TowerSync::from(vec![(0, 3), (1, 2), (3, 1)]),
+            blockhash,
+            &keypairs.node_keypair,
+            &keypairs.vote_keypair,
+            &keypairs.vote_keypair,
+            Some(switch_proof),
+        ))
         .unwrap();
         tower_sync_switch
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let random_transaction = BytesPacket::from_data(
-            None,
-            transfer(
-                &keypairs.node_keypair,
-                &Pubkey::new_unique(),
-                1000,
-                blockhash,
-            ),
-        )
+        let random_transaction = BytesPacket::from_data(transfer(
+            &keypairs.node_keypair,
+            &Pubkey::new_unique(),
+            1000,
+            blockhash,
+        ))
         .unwrap();
         let packet_batch =
             PacketBatch::from(vec![tower_sync, tower_sync_switch, random_transaction]);

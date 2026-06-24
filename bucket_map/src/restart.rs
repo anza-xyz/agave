@@ -95,7 +95,7 @@ impl Debug for RestartableBucket {
         write!(
             f,
             "{:?}",
-            &self.restart.as_ref().map(|restart| restart.lock().unwrap())
+            self.restart.as_ref().map(|restart| restart.lock().unwrap())
         )?;
         Ok(())
     }

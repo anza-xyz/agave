@@ -125,6 +125,7 @@ mod tests {
         // inject a reward sysvar for test
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = 42_000; // total_points is arbitrary for the purposes of this test
+        let block_rewards = 42_000_000; // block_rewards are arbitrary for this test
         let expected_epoch_rewards = EpochRewards {
             distribution_starting_block_height: 42,
             num_partitions,
@@ -142,6 +143,7 @@ mod tests {
                 rewards: 100,
                 points: total_points,
             },
+            block_rewards,
         );
 
         bank1

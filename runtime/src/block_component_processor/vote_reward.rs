@@ -608,7 +608,7 @@ mod tests {
                 create_genesis_config_with_alpenglow_vote_accounts,
                 create_genesis_config_with_leader_ex, create_validator,
             },
-            inflation_rewards::commission_split,
+            inflation_rewards::commission_split_preserve_lamports,
             stake_utils,
             validated_block_finalization::ValidatedBlockFinalizationCert,
         },
@@ -907,11 +907,11 @@ mod tests {
         .unwrap();
 
         let handle = vote_state_from_bank(&bank, &target_vote_pubkey);
-        assert_eq!(handle.root_slot(), Some(final_cert.slot()));
+        assert_eq!(handle.root_slot(), Some(final_cert.slot().slot()));
         assert_eq!(handle.votes().len(), 1);
         assert_eq!(
             handle.votes().front().unwrap().lockout.slot(),
-            final_cert.slot().max(reward_slot)
+            final_cert.slot().slot().max(reward_slot)
         );
     }
 
@@ -1272,7 +1272,7 @@ mod tests {
                 let stake = initial_lamports - rent_exempt_reserve;
                 let stake_weighted_reward = validator_reward * stake / validator_stake;
                 let (voter_reward, staker_reward, is_split) =
-                    commission_split(self.commission_bps, stake_weighted_reward);
+                    commission_split_preserve_lamports(self.commission_bps, stake_weighted_reward);
                 assert!(is_split);
                 assert_eq!(
                     staker_reward,

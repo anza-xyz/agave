@@ -12,6 +12,7 @@ publish = true
 agave-unstable-api = []
 
 [dependencies]
+agave-cpu-utils = { workspace = true }
 arc-swap = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -24,7 +25,6 @@ agave-xdp-ebpf = { workspace = true }
 arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
-core_affinity = { workspace = true }
 
 [lints]
 workspace = true

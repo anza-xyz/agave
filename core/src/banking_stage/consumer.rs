@@ -5,7 +5,6 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    itertools::Itertools,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
@@ -133,9 +132,10 @@ impl Consumer {
             txs,
             &pre_results,
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
-        let check_results: Vec<_> = check_results
+        let check_results = check_results
             .into_iter()
             .zip(txs.iter())
             .map(|(result, tx)| match result {
@@ -147,12 +147,12 @@ impl Consumer {
                     }
                 }
                 Err(err) => Err(err),
-            })
-            .collect();
+            });
+
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
-            check_results.into_iter(),
+            check_results,
             ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
@@ -331,6 +331,7 @@ impl Consumer {
                     ),
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
+                    strict_nonce_size_check: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -349,20 +350,20 @@ impl Consumer {
         };
 
         let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
-        let (processed_transactions, processing_results_to_transactions_us) = measure_us!(
-            processing_results
+        let (processed_transactions, processing_results_to_transactions_us) = measure_us!({
+            let mut processed_transactions =
+                Vec::with_capacity(processed_counts.processed_transactions_count as usize);
+            for (processing_result, tx) in processing_results
                 .iter()
                 .zip(batch.sanitized_transactions())
-                .filter_map(|(processing_result, tx)| {
-                    if processing_result.was_processed() {
-                        entry_bytes += tx.serialized_size() as u64;
-                        Some(tx.to_versioned_transaction())
-                    } else {
-                        None
-                    }
-                })
-                .collect_vec()
-        );
+            {
+                if processing_result.was_processed() {
+                    entry_bytes += tx.serialized_size() as u64;
+                    processed_transactions.push(tx.to_versioned_transaction());
+                }
+            }
+            processed_transactions
+        });
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;

@@ -81,6 +81,7 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
+    solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_stake_interface as stake,
     solana_system_interface::program as system_program,
@@ -2250,6 +2251,7 @@ fn create_snapshot_to_hard_fork(
     blockstore_processor::process_blockstore_from_root(
         blockstore,
         &bank_forks,
+        compute_shred_version(&genesis_config.hash(), None),
         &leader_schedule_cache,
         &process_options,
         None,
@@ -2716,10 +2718,7 @@ fn test_oc_bad_signatures() {
     );
 
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        format!(
-            "ws://{}",
-            &cluster.entry_point_info.rpc_pubsub().unwrap().to_string()
-        ),
+        format!("ws://{}", cluster.entry_point_info.rpc_pubsub().unwrap()),
         RpcBlockSubscribeFilter::All,
         Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig::confirmed()),
@@ -5225,11 +5224,16 @@ fn test_duplicate_shreds_switch_failure() {
         // Ensure all the slots <= dup_slot are also full so we know we can replay up to dup_slot
         // on restart
         info!("Waiting to receive and replay entire duplicate fork with tip {dup_slot}");
+        let start = Instant::now();
         loop {
             let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
             if let Some(frozen_hash) = duplicate_fork_validator_blockstore.get_bank_hash(dup_slot) {
                 return frozen_hash;
             }
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "Timed out waiting to receive and replay duplicate fork with tip {dup_slot}",
+            );
             sleep(Duration::from_millis(1000));
         }
     }

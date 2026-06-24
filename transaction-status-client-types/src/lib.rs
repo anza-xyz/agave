@@ -202,7 +202,7 @@ pub struct EncodedTransactionWithStatusMeta {
     pub version: Option<TransactionVersion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reward {
     pub pubkey: String,

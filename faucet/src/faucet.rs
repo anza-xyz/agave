@@ -33,7 +33,7 @@ use {
     wincode::{SchemaRead, SchemaWrite, deserialize, serialize, serialized_size},
 };
 #[cfg(feature = "dev-context-only-utils")]
-use {crossbeam_channel::unbounded, std::net::Ipv4Addr, std::thread};
+use {crossbeam_channel::bounded, std::net::Ipv4Addr, std::thread};
 
 #[macro_export]
 macro_rules! socketaddr {
@@ -364,7 +364,7 @@ pub fn run_local_faucet_for_tests(
     per_time_cap: Option<u64>,
     port: u16,
 ) -> SocketAddr {
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = bounded(1024);
     run_local_faucet_with_config(
         sender,
         LocalFaucetConfig {

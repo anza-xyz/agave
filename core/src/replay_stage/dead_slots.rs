@@ -146,7 +146,8 @@ fn should_mark_soft_dead(
     migration_status: &MigrationStatus,
 ) -> bool {
     let slot = bank.slot();
-    if !migration_status.should_allow_fast_leader_handover(slot)
+    if !bank.feature_set.snapshot().alpenglow_fast_leader_handover
+        || !migration_status.should_allow_block_markers(slot)
         || blockstore.is_dead(slot)
         || !is_update_parent_recoverable_replay_error(err)
     {

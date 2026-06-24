@@ -1,9 +1,13 @@
 use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
-        instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
-        transaction_config_frame::TransactionConfigView, transaction_data::TransactionData,
-        transaction_frame::TransactionFrame, transaction_version::TransactionVersion,
+        instructions_frame::InstructionsIterator,
+        result::Result,
+        sanitize::{SanitizeConfig, sanitize},
+        transaction_config_frame::TransactionConfigView,
+        transaction_data::TransactionData,
+        transaction_frame::TransactionFrame,
+        transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
@@ -39,11 +43,8 @@ impl<D: TransactionData> TransactionView<false, D> {
     }
 
     /// Sanitizes the transaction view, returning a sanitized view on success.
-    pub fn sanitize(
-        self,
-        enable_instruction_accounts_limit: bool,
-    ) -> Result<SanitizedTransactionView<D>> {
-        sanitize(&self, enable_instruction_accounts_limit)?;
+    pub fn sanitize(self, config: &SanitizeConfig) -> Result<SanitizedTransactionView<D>> {
+        sanitize(&self, config)?;
         Ok(SanitizedTransactionView {
             data: self.data,
             frame: self.frame,
@@ -53,9 +54,9 @@ impl<D: TransactionData> TransactionView<false, D> {
 
 impl<D: TransactionData> TransactionView<true, D> {
     /// Creates a new `TransactionView`, running sanitization checks.
-    pub fn try_new_sanitized(data: D, enable_instruction_accounts_limit: bool) -> Result<Self> {
+    pub fn try_new_sanitized(data: D, config: &SanitizeConfig) -> Result<Self> {
         let unsanitized_view = TransactionView::try_new_unsanitized(data)?;
-        unsanitized_view.sanitize(enable_instruction_accounts_limit)
+        unsanitized_view.sanitize(config)
     }
 }
 

@@ -30,6 +30,7 @@ use {
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::sysvar_cache_from_accounts,
     },
+    agave_precompiles::is_precompile,
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     std::ffi::c_int,
@@ -181,13 +182,57 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         cache
     };
 
-    execute_instr_with_callback(
+    let mut effects = execute_instr_with_callback(
         &instr_context,
         &ConformanceCallback,
         &mut program_cache,
         &sysvar_cache,
-    )
-    .into()
+    );
+
+    // Precompile verification failures surface as `Custom`, but Firedancer
+    // reports a custom error code of 0 for precompiles.
+    if effects.custom_err.is_some()
+        && is_precompile(&instr_context.instruction.program_id, |_| true)
+    {
+        effects.custom_err = Some(0);
+    }
+
+    // TODO: Firedancer's tooling compares resulting account contents even
+    // when execution fails, so the harness must report them. Account
+    // contents are not meaningful on error (partial writes can diverge based
+    // on timing, e.g. with direct mapping or builtins), so once the tooling
+    // supports it, the harness should skip the account comparison on error
+    // entirely, which would also make the CU-exhaustion workaround below
+    // unnecessary.
+    direct_mapping_handle_cu_exhaustion(
+        instr_context.feature_set.virtual_address_space_adjustments,
+        effects.cu_avail,
+        effects.result.is_some(),
+        effects
+            .resulting_accounts
+            .iter_mut()
+            .map(|(_, account)| &mut account.data),
+    );
+
+    effects.into()
+}
+
+/// Due to how Firedancer's VM CU accounting works, when
+/// virtual_address_space_adjustments is enabled and execution fails with the
+/// CU meter exhausted, we cannot compare the data region of the accounts with
+/// Agave.  Clears each supplied data buffer in that case.
+#[cfg(feature = "conformance")]
+fn direct_mapping_handle_cu_exhaustion<'a>(
+    virtual_address_space_adjustments_active: bool,
+    cu_avail: u64,
+    has_err: bool,
+    account_data: impl IntoIterator<Item = &'a mut Vec<u8>>,
+) {
+    if virtual_address_space_adjustments_active && cu_avail == 0 && has_err {
+        for data in account_data {
+            data.clear();
+        }
+    }
 }
 
 /// # Safety

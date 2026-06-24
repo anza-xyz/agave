@@ -25,6 +25,7 @@ use {
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
+    solana_net_utils::PinnedXdpSender,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
@@ -135,12 +136,22 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
+        let no_verify_chained_merkle_root = shred::filter::check_feature_activation_from_bank(
+            &feature_set::alpenglow::id(),
+            shred_slot,
+            &root_bank,
+        );
 
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict)
             | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
             PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
                 if validate_chained_block_id || validate_chained_block_id_2 {
                     // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
                     // We still need to mark the block as dead for other client teams.
@@ -149,6 +160,11 @@ fn run_check_duplicate(
                 return Ok(());
             }
             PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
                 if validate_chained_block_id_2 {
                     blockstore.set_dead_slot(shred_slot)?;
                 }
@@ -299,6 +315,7 @@ impl WindowService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        repair_xdp_sender: Option<PinnedXdpSender>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -320,6 +337,7 @@ impl WindowService {
             repair_info.clone(),
             outstanding_repair_requests.clone(),
             repair_service_channels,
+            repair_xdp_sender,
         );
 
         let block_id_repair_service = BlockIdRepairService::new(

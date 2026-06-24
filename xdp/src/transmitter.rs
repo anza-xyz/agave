@@ -16,10 +16,10 @@ use {
         load_xdp_program,
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
-        set_cpu_affinity,
         tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
         umem::{OwnedUmem, PageAlignedMemory},
     },
+    agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     aya::Ebpf,
@@ -35,10 +35,25 @@ use {
 #[cfg(target_os = "linux")]
 const ROUTE_MONITOR_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Binding of a single NIC hardware TX queue to a CPU core.
+///
+/// Each binding becomes one TX worker thread, pinned to `cpu`, whose AF_XDP
+/// socket is bound to hardware queue `queue` on the configured interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueueCpuBinding {
+    /// NIC hardware TX queue id the AF_XDP socket binds to.
+    pub queue: u32,
+    /// Logical CPU core the worker thread is pinned to.
+    pub cpu: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct XdpConfig {
     pub interface: Option<String>,
-    pub cpus: Vec<usize>,
+    /// NIC-queue -> CPU-core bindings. One TX worker is created per entry, in
+    /// order. The queue id is taken explicitly from the binding rather than
+    /// inferred from position, so callers can target arbitrary hardware queues.
+    pub queues: Vec<QueueCpuBinding>,
     pub zero_copy: bool,
     // The capacity of the channel that sits between senders and each XDP thread that enqueues
     // packets to the NIC.
@@ -54,7 +69,7 @@ impl Default for XdpConfig {
     fn default() -> Self {
         Self {
             interface: None,
-            cpus: vec![],
+            queues: vec![],
             zero_copy: false,
             tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
         }
@@ -62,10 +77,14 @@ impl Default for XdpConfig {
 }
 
 impl XdpConfig {
-    pub fn new(interface: Option<impl Into<String>>, cpus: Vec<usize>, zero_copy: bool) -> Self {
+    pub fn new(
+        interface: Option<impl Into<String>>,
+        queues: Vec<QueueCpuBinding>,
+        zero_copy: bool,
+    ) -> Self {
         Self {
             interface: interface.map(|s| s.into()),
-            cpus,
+            queues,
             zero_copy,
             tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
         }
@@ -236,7 +255,7 @@ impl TransmitterBuilder {
         };
         let XdpConfig {
             interface: maybe_interface,
-            cpus,
+            queues,
             zero_copy,
             tx_channel_cap,
         } = config;
@@ -251,32 +270,36 @@ impl TransmitterBuilder {
         tx_loop_config_builder.zero_copy(zero_copy);
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
-        let reserved_cores = cpus.iter().cloned().collect::<HashSet<_>>();
-        let available_cores = core_affinity::get_core_ids()
-            .expect("linux provide affine cores")
+        let reserved_cores = queues
+            .iter()
+            .map(|binding| CpuId::new(binding.cpu))
+            .collect::<io::Result<HashSet<_>>>()?;
+        let unreserved_cores = cpu_affinity(None)?
             .into_iter()
-            .map(|core_affinity::CoreId { id }| id)
-            .collect::<HashSet<_>>();
-        let unreserved_cores = available_cores
-            .difference(&reserved_cores)
-            .cloned()
+            .filter(|core| !reserved_cores.contains(core))
             .collect::<Vec<_>>();
 
-        let tx_loop_builders = cpus
-            .into_iter()
-            .zip(std::iter::repeat_with(|| tx_loop_config.clone()))
-            .enumerate()
-            .map(|(i, (cpu_id, config))| {
-                // since we aren't necessarily allocating from the thread that we intend to run on,
-                // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
-                // is allocated to the correct numa node
-                set_cpu_affinity([cpu_id]).unwrap();
-                let tx_loop_builder = TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev);
-                // migrate main thread back off of the last xdp reserved cpu
-                set_cpu_affinity(unreserved_cores.clone()).unwrap();
-                tx_loop_builder
-            })
-            .collect::<Vec<_>>();
+        if unreserved_cores.is_empty() {
+            return Err("all CPUs are reserved; no CPU available for the main thread".into());
+        }
+
+        let mut tx_loop_builders = Vec::with_capacity(queues.len());
+        for binding in queues {
+            // since we aren't necessarily allocating from the thread that we intend to run on,
+            // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
+            // is allocated to the correct numa node
+            let cpu = CpuId::new(binding.cpu)?;
+            set_cpu_affinity(None, [cpu])?;
+            let tx_loop_builder = TxLoopBuilder::new(
+                binding.cpu,
+                QueueId(binding.queue as u64),
+                tx_loop_config.clone(),
+                &dev,
+            );
+            // migrate main thread back off of the last xdp reserved cpu
+            set_cpu_affinity(None, unreserved_cores.iter().copied())?;
+            tx_loop_builders.push(tx_loop_builder);
+        }
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.

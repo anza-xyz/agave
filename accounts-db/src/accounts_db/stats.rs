@@ -26,8 +26,8 @@ pub struct StoreAccountsUnfrozenStats {
     pub last_report: AtomicInterval,
     /// time spent writing accounts to the write cache
     pub write_to_cache_us: AtomicU64,
-    /// time spend updating the accounts index
-    pub update_index_us: AtomicU64,
+    /// time spent updating the secondary indexes
+    pub update_secondary_index_us: AtomicU64,
     /// initial number of accounts to be stored
     pub num_initial_accounts_to_store: AtomicU64,
     /// number of accounts actually stored
@@ -59,8 +59,8 @@ impl StoreAccountsUnfrozenStats {
                 i64
             ),
             (
-                "update_index_us",
-                self.update_index_us.swap(0, Ordering::Relaxed),
+                "update_secondary_index_us",
+                self.update_secondary_index_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -354,6 +354,7 @@ pub struct FlushStats {
     pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
     pub select_pubkeys_us: Saturating<u64>,
+    pub disk_index_write_through_us: Saturating<u64>,
 }
 
 impl FlushStats {
@@ -366,6 +367,7 @@ impl FlushStats {
             .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
         self.select_pubkeys_us += other.select_pubkeys_us;
+        self.disk_index_write_through_us += other.disk_index_write_through_us;
     }
 }
 
