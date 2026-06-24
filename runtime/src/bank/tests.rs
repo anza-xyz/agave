@@ -11027,18 +11027,41 @@ fn test_squash_timing_add_assign() {
         squash_accounts_ms: 1,
         squash_accounts_cache_ms: 2,
         squash_cache_ms: 5,
+        squash_accounts_cache_v2_ms: Some(5),
     };
 
     let expected = SquashTiming {
         squash_accounts_ms: 2,
         squash_accounts_cache_ms: 2 * 2,
         squash_cache_ms: 5 * 2,
+        squash_accounts_cache_v2_ms: Some(5 * 2),
     };
 
     t0 += t1;
     t0 += t1;
 
-    assert!(t0 == expected);
+    assert_eq!(t0, expected);
+
+    let mut t0 = SquashTiming::default();
+
+    let t1 = SquashTiming {
+        squash_accounts_ms: 1,
+        squash_accounts_cache_ms: 2,
+        squash_cache_ms: 5,
+        squash_accounts_cache_v2_ms: None,
+    };
+
+    let expected = SquashTiming {
+        squash_accounts_ms: 2,
+        squash_accounts_cache_ms: 2 * 2,
+        squash_cache_ms: 5 * 2,
+        squash_accounts_cache_v2_ms: None,
+    };
+
+    t0 += t1;
+    t0 += t1;
+
+    assert_eq!(t0, expected)
 }
 
 #[test]

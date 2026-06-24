@@ -281,6 +281,7 @@ pub type BankSlotDelta = SlotDelta<Result<()>>;
 pub struct SquashTiming {
     pub squash_accounts_ms: u64,
     pub squash_accounts_cache_ms: u64,
+    pub squash_accounts_cache_v2_ms: Option<u64>,
     pub squash_cache_ms: u64,
 }
 
@@ -288,6 +289,15 @@ impl AddAssign for SquashTiming {
     fn add_assign(&mut self, rhs: Self) {
         self.squash_accounts_ms += rhs.squash_accounts_ms;
         self.squash_accounts_cache_ms += rhs.squash_accounts_cache_ms;
+        self.squash_accounts_cache_v2_ms = match (
+            self.squash_accounts_cache_v2_ms,
+            rhs.squash_accounts_cache_v2_ms,
+        ) {
+            (Some(lhs), Some(rhs)) => Some(lhs + rhs),
+            (Some(lhs), None) => Some(lhs),
+            (None, Some(rhs)) => Some(rhs),
+            (None, None) => None,
+        };
         self.squash_cache_ms += rhs.squash_cache_ms;
     }
 }
@@ -2076,7 +2086,7 @@ impl Bank {
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
         let stakes_cache_v2 = runtime_config.enable_stakes_cache_v2.then(|| {
-            StakesCacheV2::load_from_deserialized_delegations(fields.stakes.clone(), |pubkey| {
+            let (stakes_cache_v2, stakes_time) = measure_time!(StakesCacheV2::load_from_deserialized_delegations(fields.stakes.clone(), |pubkey| {
                 let (account, _slot) = bank_rc
                     .accounts
                     .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
@@ -2085,7 +2095,9 @@ impl Bank {
             .expect(
                 "Stakes cache v2 is inconsistent with accounts-db. This can indicate a corrupted \
                  snapshot or bugs in cached accounts or accounts-db.",
-            )
+            ));
+            info!("Loading Stakes cache v2 took: {stakes_time}");
+            stakes_cache_v2
         });
         let (stakes, stakes_time) = measure_time!(
             Stakes::load_from_deserialized_delegations(fields.stakes, |pubkey| {
@@ -3154,14 +3166,16 @@ impl Bank {
     pub fn squash(&self) -> SquashTiming {
         self.freeze();
 
-        if let Some(stakes_cache_v2) = &self.stakes_cache_v2 {
+        let squash_accounts_cache_v2_ms = self.stakes_cache_v2.as_ref().map(|stakes_cache_v2| {
+            let squash_cache_v2_time = Measure::start("squash_cache_v2_time");
             let parent_banks = self.parents();
             let rooted_stake_delegation_caches = parent_banks
                 .iter()
                 .rev()
                 .filter_map(|bank| bank.stakes_cache_v2.as_ref());
             stakes_cache_v2.apply_rooted_stake_delegation_deltas(rooted_stake_delegation_caches);
-        }
+            squash_cache_v2_time.end_as_us()
+        });
 
         //this bank and all its parents are now on the rooted path
         let mut roots = Vec::with_capacity(self.ancestors.len());
@@ -3190,6 +3204,7 @@ impl Bank {
         SquashTiming {
             squash_accounts_ms: squash_accounts_time.as_ms(),
             squash_accounts_cache_ms: total_cache_us / 1000,
+            squash_accounts_cache_v2_ms,
             squash_cache_ms: squash_cache_time.as_ms(),
         }
     }
