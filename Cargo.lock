@@ -12701,7 +12701,7 @@ checksum = "654e5643eff75d7f8c99197ce1440ed19a3474eada74c12bbac488b2cafdae27"
 dependencies = [
  "prettyplease 0.2.37",
  "proc-macro2",
- "prost-build 0.14.3",
+ "prost-build 0.14.4",
  "prost-types 0.14.4",
  "quote",
  "syn 2.0.117",
