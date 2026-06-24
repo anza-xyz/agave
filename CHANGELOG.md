@@ -49,6 +49,9 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* Added `--config`, which points to a TOML configuration file for the validator (e.g. XDP and
+  PoH thread pinning settings). Where a setting is also available as a CLI flag, the flag
+  overrides the value from the file.
 ### CLI
 #### Breaking
 #### Changes
