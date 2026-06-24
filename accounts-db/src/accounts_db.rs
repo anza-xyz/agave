@@ -4236,9 +4236,6 @@ impl AccountsDb {
             .num_stored_slots_removed
             .fetch_add(num_stored_slots_removed, Ordering::Relaxed);
         purge_stats
-            .total_removed_storage_entries
-            .fetch_add(num_stored_slots_removed, Ordering::Relaxed);
-        purge_stats
             .total_removed_stored_bytes
             .fetch_add(total_removed_stored_bytes, Ordering::Relaxed);
         self.stats
@@ -6633,8 +6630,7 @@ impl AccountsDb {
                 }
                 ObsoleteAccountsStats {
                     accounts_marked_obsolete: reclaims.len() as u64,
-                    slots_removed: stats.total_removed_storage_entries.load(Ordering::Relaxed)
-                        as u64,
+                    slots_removed: stats.num_stored_slots_removed.load(Ordering::Relaxed) as u64,
                 }
             })
             .sum();

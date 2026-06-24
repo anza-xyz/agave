@@ -246,7 +246,6 @@ pub struct PurgeStats {
     pub drop_storage_entries_elapsed: AtomicU64,
     pub num_cached_slots_removed: AtomicUsize,
     pub num_stored_slots_removed: AtomicUsize,
-    pub total_removed_storage_entries: AtomicUsize,
     pub total_removed_cached_bytes: AtomicU64,
     pub total_removed_stored_bytes: AtomicU64,
     pub scan_storages_elapsed: AtomicU64,
@@ -292,12 +291,6 @@ impl PurgeStats {
                 (
                     "num_stored_slots_removed",
                     self.num_stored_slots_removed.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "total_removed_storage_entries",
-                    self.total_removed_storage_entries
-                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
