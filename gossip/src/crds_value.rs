@@ -21,6 +21,8 @@ use {
     },
     wincode::{ReadError, ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(
@@ -185,6 +187,7 @@ impl CrdsValue {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn data(&self) -> &CrdsData {
         &self.data
     }
