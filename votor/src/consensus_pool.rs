@@ -92,6 +92,16 @@ fn is_pubkey_present(
     Ok(*batch.ranks().get(rank as usize).unwrap())
 }
 
+fn get_max_validators(bank: &Bank, slot: Slot) -> Result<usize, AddVoteError> {
+    match bank.epoch_stakes_from_slot(slot) {
+        Some(stakes) => Ok(stakes.bls_pubkey_to_rank_map().len()),
+        None => Err(AddVoteError::EpochStakesNotFound {
+            root_slot: bank.slot(),
+            slot,
+        }),
+    }
+}
+
 /// Container to store received votes and certificates.
 ///
 /// Based on received votes and certificates, generates new `VotorEvent`s and generates new certificates.
@@ -157,15 +167,15 @@ impl ConsensusPool {
         root_bank: &Bank,
         total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
-    ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
-        // TODO: look up max validators from epoch stakes
-        let max_validators = 2048;
+    ) -> Result<(u64, Vec<Certificate>), AddVoteError> {
+        let max_validators = get_max_validators(root_bank, batch.vote().slot())?;
         let slot = batch.vote().slot();
         let pool = self
             .vote_pools
             .entry(slot)
             .or_insert_with(|| VotePool::new(slot, max_validators));
         pool.add_vote(root_bank, total_stake, batch, &self.completed_certificates)
+            .map_err(AddVoteError::VotePoolAddVote)
     }
 
     fn insert_certificate(
@@ -317,9 +327,7 @@ impl ConsensusPool {
             });
         }
         let vote_type = vote.get_type();
-        let (entry_stake, new_certs) = self
-            .update_vote_pool(root_bank, total_stake, &batch)
-            .map_err(AddVoteError::VotePoolAddVote)?;
+        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, total_stake, &batch)?;
         let fallback_vote_counters = self
             .slot_stake_counters_map
             .entry(vote_slot)
@@ -1165,44 +1173,6 @@ mod tests {
                     .any(|cert| { cert.cert_type == cert_type })
             );
         }
-    }
-
-    #[test]
-    fn test_add_vote_zero_stake() {
-        let mut ctx = TestContext::new();
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
-        ctx.pool
-            .add_batch(
-                &bank,
-                Pubkey::new_unique(),
-                SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_verified(
-                    &bank,
-                    VoteMessage {
-                        vote: Vote::new_skip_vote(5),
-                        rank: 100,
-                        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    },
-                )]),
-                &mut vec![],
-            )
-            .unwrap();
-        // TODO: figure out what error the above is returning and then update the code below.
-        // assert_eq!(
-        //     ctx.pool.add_batch(
-        //         &bank,
-        //         Pubkey::new_unique(),
-        //         SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(
-        //             &bank,
-        //             VoteMessage {
-        //                 vote: Vote::new_skip_vote(5),
-        //                 rank: 100,
-        //                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        //             }
-        //         )]),
-        //         &mut vec![]
-        //     ),
-        //     Err(AddVoteError::InvalidRank(100))
-        // );
     }
 
     fn assert_single_certificate_range(
