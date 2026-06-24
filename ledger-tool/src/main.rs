@@ -1018,6 +1018,13 @@ fn main() {
                 .help(BlockVerificationMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("skip_inter_slot_verification")
+                .long("skip-inter-slot-verification")
+                .takes_value(false)
+                .global(true)
+                .help("Skip inter-slot parent block ID verification while processing the ledger"),
+        )
+        .arg(
             Arg::with_name("unified_scheduler_handler_threads")
                 .long("unified-scheduler-handler-threads")
                 .value_name("COUNT")
