@@ -267,7 +267,7 @@ imbl = "7.0.0"
 indexmap = "2.14.0"
 indicatif = "0.18.4"
 io-uring = { version = "0.7.12", features = ["io_safety"] }
-itertools = "0.14.0"
+itertools = "0.15.0"
 jemalloc-ctl = { package = "tikv-jemalloc-ctl", version = "0.6.0", features = [
     "stats",
 ] }
