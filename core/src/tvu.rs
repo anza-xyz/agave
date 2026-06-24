@@ -189,7 +189,10 @@ pub struct AlpenglowInitializationState {
 
     pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
 
+    // server sockets for votor
     pub alpenglow_sockets: Vec<UdpSocket>,
+    // client socket for votor
+    pub alpenglow_client_socket: UdpSocket,
     #[cfg(feature = "dev-context-only-utils")]
     pub voting_service_test_override: Option<agave_votor::voting_service::VotingServiceOverride>,
 }
@@ -270,6 +273,7 @@ impl Tvu {
             votor_event_receiver,
             key_notifiers,
             alpenglow_sockets,
+            alpenglow_client_socket,
             #[cfg(feature = "dev-context-only-utils")]
             voting_service_test_override,
             highest_finalized,
@@ -314,6 +318,7 @@ impl Tvu {
             &votor_rt_handle,
             &cluster_info.keypair(),
             alpenglow_sockets,
+            alpenglow_client_socket,
             ingress_tx,
             votor_allowlist.clone(),
             votor_banlist.clone(),
@@ -882,6 +887,8 @@ pub mod tests {
                 votor_event_receiver,
                 key_notifiers,
                 alpenglow_sockets: vec![bind_to_localhost_unique().expect("bind alpenglow socket")],
+                alpenglow_client_socket: bind_to_localhost_unique()
+                    .expect("bind alpenglow client socket"),
                 voting_service_test_override: None,
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,

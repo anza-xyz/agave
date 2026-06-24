@@ -348,6 +348,17 @@ impl Node {
         )
         .unwrap();
 
+        // Dedicated egress socket for the alpenglow QUIC datagram transport. It
+        // is intentionally bound on its own port (not a member of the
+        // `alpenglow` SO_REUSEPORT accept group) so peers' handshake replies
+        // always return to the dialing endpoint.
+        let (_, quic_alpenglow_client) = bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_configs.primarily_write_quic,
+        )
+        .unwrap();
+
         let (_, rpc_sts_client) = bind_in_range_with_config(
             bind_ip_addr,
             port_range,
@@ -422,6 +433,7 @@ impl Node {
             tpu_vote_quic,
             tpu_vote_forwarding_client,
             quic_vote_client,
+            quic_alpenglow_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };

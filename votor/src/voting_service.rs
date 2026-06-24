@@ -601,12 +601,14 @@ mod tests {
             .expect("tokio runtime");
         let socket = bind_to_localhost_unique().expect("bind UDP");
         let addr = socket.local_addr().expect("local addr");
+        let client_socket = bind_to_localhost_unique().expect("bind client UDP");
         let (ingress_tx, ingress_rx) = bounded(4096);
         let banlist = Arc::new(Banlist::<Pubkey>::default());
         let endpoint = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
             vec![socket],
+            client_socket,
             ingress_tx,
             allowlist,
             banlist,

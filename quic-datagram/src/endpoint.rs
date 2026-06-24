@@ -62,14 +62,14 @@ pub struct QuicDatagramEndpoint {
 }
 
 impl QuicDatagramEndpoint {
-    /// Construct a datagram-only QUIC endpoint backed by `sockets`. The sockets
-    /// are expected to be SO_REUSEPORT siblings bound to the same address (see
-    /// `solana_net_utils::sockets::bind_more_with_config`); the kernel
-    /// load-balances inbound datagrams across them. One quinn endpoint is built
-    /// per socket and they share a single accept loop and connection table, so
-    /// the receive path fans out across the sockets while admission stays
-    /// centralized. The outbound (we-dial, send-only) direction uses the first
-    /// socket only. At least one socket is required.
+    /// Construct a datagram-only QUIC endpoint. `server_sockets` back the
+    /// inbound (we-accept) direction and are expected to be SO_REUSEPORT
+    /// siblings bound to the same address to load-balance inbound datagrams
+    /// across them. The outbound (we-dial, send-only) direction runs on a
+    /// dedicated `client_socket` bound to its own port — NOT a member of the
+    /// SO_REUSEPORT accept group. A dialing socket sharing the group's port
+    /// would have peers' handshake replies load-balanced by the kernel across
+    /// the sibling sockets.
     ///
     /// Spawns the inbound and outbound loops on `runtime`; dropping the handle
     /// cancels them. Received datagrams flow into `ingress` via `try_send`;
@@ -80,13 +80,14 @@ impl QuicDatagramEndpoint {
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
-        sockets: Vec<UdpSocket>,
+        server_sockets: Vec<UdpSocket>,
+        client_socket: UdpSocket,
         ingress: Sender<Datagram>,
         allowlist: Arc<dyn Allowlist>,
         banlist: Arc<Banlist<Pubkey>>,
         max_datagrams_per_second_per_peer: f64,
     ) -> Result<Self, Error> {
-        if sockets.is_empty() {
+        if server_sockets.is_empty() {
             return Err(Error::NoSockets);
         }
         let local_pubkey = keypair.pubkey();
@@ -101,7 +102,7 @@ impl QuicDatagramEndpoint {
             // Endpoint::new requires being inside the runtime context, else it
             // panics on its first internal `tokio::spawn`.
             let _guard = runtime.enter();
-            sockets
+            server_sockets
                 .into_iter()
                 .map(|socket| {
                     Endpoint::new(
@@ -115,11 +116,18 @@ impl QuicDatagramEndpoint {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        // The outbound direction dials from a single endpoint (the first
-        // socket). `set_default_client_config` is per-handle, so this clone is
-        // the one that carries the client config and is handed to the outbound
-        // loop; the original handle in `endpoints` still accepts inbound.
-        let mut outbound_endpoint = endpoints[0].clone();
+        // The outbound (we-dial, send-only) direction that runs on its own
+        // client-only endpoint bound to `client_socket`.
+        let mut outbound_endpoint = {
+            let _guard = runtime.enter();
+            Endpoint::new(
+                EndpointConfig::default(),
+                None,
+                client_socket,
+                Arc::new(TokioRuntime),
+            )
+            .map_err(Error::Endpoint)?
+        };
         outbound_endpoint.set_default_client_config(client_config);
 
         // Independent stats instances: each loop owns one and reports it under

@@ -2415,6 +2415,8 @@ pub struct Sockets {
     pub alpenglow: Vec<UdpSocket>, // quic read/write
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket, // quic write only
+    /// Client-side socket for the alpenglow QUIC.
+    pub quic_alpenglow_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
     pub rpc_sts_client: UdpSocket, // quic write only
 }

@@ -1664,6 +1664,7 @@ impl Validator {
                 votor_event_receiver,
                 key_notifiers: key_notifiers.clone(),
                 alpenglow_sockets: node.sockets.alpenglow,
+                alpenglow_client_socket: node.sockets.quic_alpenglow_client,
                 #[cfg(feature = "dev-context-only-utils")]
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,

@@ -606,10 +606,13 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
     let banlist = Arc::new(Banlist::<Pubkey>::default());
+    // Listener never dials, but the endpoint requires a dedicated egress socket.
+    let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
     let endpoint = QuicDatagramEndpoint::spawn(
         rt.handle(),
         &listener_keypair,
         vec![vote_listener_socket],
+        client_socket,
         sender,
         Arc::new(AllowAll),
         banlist,
