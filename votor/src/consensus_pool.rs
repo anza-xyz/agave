@@ -588,6 +588,7 @@ mod tests {
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
+        solana_signer::Signer,
         solana_signer_store::encode_base2,
         std::sync::{Arc, RwLock},
         test_case::test_case,
@@ -645,7 +646,12 @@ mod tests {
         fn add_batch(&mut self, batch: SigVerifiedBatch) -> (Option<Slot>, Vec<Arc<Certificate>>) {
             let root_bank = self.bank_forks.read().unwrap().root_bank();
             self.pool
-                .add_batch(&root_bank, Pubkey::new_unique(), batch, &mut vec![])
+                .add_batch(
+                    &root_bank,
+                    self.validators[0].vote_keypair.pubkey(),
+                    batch,
+                    &mut vec![],
+                )
                 .unwrap()
         }
 
@@ -726,7 +732,7 @@ mod tests {
             let vote = Vote::new_skip_vote(slot);
             pool.add_batch(
                 root_bank,
-                Pubkey::new_unique(),
+                keypairs[0].vote_keypair.pubkey(),
                 dummy_vote_message(
                     root_bank,
                     keypairs,
@@ -1156,7 +1162,7 @@ mod tests {
                 .pool
                 .add_batch(
                     &root_bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &root_bank,
                         &ctx.validators,
