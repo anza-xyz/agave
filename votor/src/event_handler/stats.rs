@@ -185,19 +185,23 @@ impl EventHandlerStats {
     }
 
     pub fn incr_vote(&mut self, bls_op: &BLSOp) {
-        if let BLSOp::PushVote { vote, .. } = bls_op {
-            let vote_type = vote.vote.get_type();
-            let entry = self.sent_votes.entry(vote_type).or_insert(0);
-            *entry = entry.saturating_add(1);
-            if vote_type == VoteType::Notarize {
-                let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
-                entry.vote_notarize = Some(Instant::now());
-            } else if vote_type == VoteType::Skip {
-                let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
-                entry.vote_skip = Some(Instant::now());
+        match bls_op {
+            BLSOp::PushVote { vote, .. } => {
+                let vote_type = vote.vote.get_type();
+                let entry = self.sent_votes.entry(vote_type).or_insert(0);
+                *entry = entry.saturating_add(1);
+                if vote_type == VoteType::Notarize {
+                    let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
+                    entry.vote_notarize = Some(Instant::now());
+                } else if vote_type == VoteType::Skip {
+                    let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
+                    entry.vote_skip = Some(Instant::now());
+                }
             }
-        } else {
-            warn!("Unexpected BLS operation: {bls_op:?}");
+            BLSOp::RefreshVotes { .. } => (),
+            _ => {
+                warn!("Unexpected BLS operation: {bls_op:?}");
+            }
         }
     }
 
