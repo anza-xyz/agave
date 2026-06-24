@@ -1791,6 +1791,17 @@ impl AccountsDb {
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
     pub fn clean_accounts(&self, max_clean_root_inclusive: Option<Slot>, is_startup: bool) {
+        if self.exhaustively_verify_refcounts {
+            //at startup use all cores to verify refcounts
+            if is_startup {
+                self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+            } else {
+                // otherwise, use the background thread pool
+                self.thread_pool_background
+                    .install(|| self.exhaustively_verify_refcounts(max_clean_root_inclusive));
+            }
+        }
+
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
 
         let purges_old_accounts_count = AtomicU64::default();
@@ -6547,13 +6558,6 @@ impl AccountsDb {
         timings.report(self.accounts_index.get_startup_stats());
 
         self.accounts_index.log_secondary_indexes();
-
-        // Debug-only check: verify the freshly generated index has correct refcounts against every
-        // storage. Runs exactly once per boot, here, where the index is complete and no background
-        // flush is mutating storages. `None` means "verify all storages" (no slot bound).
-        if self.exhaustively_verify_refcounts {
-            self.exhaustively_verify_refcounts(None);
-        }
 
         // Now that the index is generated, get the total length and capacity of the in-mem maps
         // across all the bins and set the initial value for the stat.
