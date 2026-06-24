@@ -1,3 +1,6 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
+
 use std::num::NonZero;
 
 use agave_votor_messages::{
@@ -65,6 +68,7 @@ pub struct SigVerifiedVoteBatch {
 }
 
 impl SigVerifiedVoteBatch {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new_from_vote_msg(bank: &Bank, msg: VoteMessage) -> Self {
         let rank_map = bank
             .epoch_stakes_from_slot(msg.vote.slot())

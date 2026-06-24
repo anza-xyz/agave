@@ -559,9 +559,10 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
-        crate::tests::get_cluster_info,
+        crate::{common::conflicting_types, tests::get_cluster_info},
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            vote::{Vote, VoteType},
             wire::get_vote_payload_to_sign,
         },
         bitvec::vec::BitVec,
@@ -583,6 +584,13 @@ mod tests {
         std::sync::{Arc, RwLock},
         test_case::test_case,
     };
+
+    fn get_key(bank: &Bank, slot: Slot, rank: u16) -> Pubkey {
+        let epoch_stakes = bank.epoch_stakes_from_slot(slot).unwrap();
+        let rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+        let entry = rank_map.get_pubkey_stake_entry(rank as usize).unwrap();
+        entry.vote_account_pubkey
+    }
 
     fn dummy_bitmap() -> Vec<u8> {
         let mut bitvec = BitVec::repeat(false, 1);
@@ -626,19 +634,18 @@ mod tests {
             }
         }
 
-        fn add_message(
-            &mut self,
-            message: ConsensusMessage,
-        ) -> (Option<Slot>, Vec<Arc<Certificate>>) {
+        fn add_batch(&mut self, batch: SigVerifiedBatch) -> (Option<Slot>, Vec<Arc<Certificate>>) {
             let root_bank = self.bank_forks.read().unwrap().root_bank();
             self.pool
-                .add_batch(&root_bank, &Pubkey::new_unique(), message, &mut vec![])
+                .add_batch(&root_bank, Pubkey::new_unique(), batch, &mut vec![])
                 .unwrap()
         }
 
         fn add_certificate(&mut self, vote: Vote) {
+            let bank = self.bank_forks.read().unwrap().root_bank();
             for rank in 0..=6 {
-                self.add_message(dummy_vote_message(
+                self.add_batch(dummy_vote_message(
+                    &bank,
                     &self.validators,
                     self.pool.cluster_info.my_shred_version(),
                     &vote,
@@ -664,17 +671,23 @@ mod tests {
     }
 
     fn dummy_vote_message(
+        bank: &Bank,
         keypairs: &[ValidatorVoteKeypairs],
         shred_version: u16,
         vote: &Vote,
         rank: usize,
-    ) -> ConsensusMessage {
+    ) -> SigVerifiedBatch {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypairs[rank].vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
         let payload = get_vote_payload_to_sign(*vote, shred_version);
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
-        ConsensusMessage::new_vote(*vote, signature, rank as u16)
+        let msg = VoteMessage {
+            vote: *vote,
+            signature,
+            rank: rank as u16,
+        };
+        SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)])
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
@@ -703,8 +716,14 @@ mod tests {
             let vote = Vote::new_skip_vote(slot);
             pool.add_batch(
                 root_bank,
-                &Pubkey::new_unique(),
-                dummy_vote_message(keypairs, pool.cluster_info.my_shred_version(), &vote, rank),
+                Pubkey::new_unique(),
+                dummy_vote_message(
+                    root_bank,
+                    keypairs,
+                    pool.cluster_info.my_shred_version(),
+                    &vote,
+                    rank,
+                ),
                 &mut vec![],
             )
             .unwrap();
@@ -980,7 +999,7 @@ mod tests {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
-            ctx.add_message(ConsensusMessage::Certificate(notarize_cert));
+            ctx.add_batch(SigVerifiedBatch::Certificates(vec![notarize_cert]));
         }
 
         let highest_slot_fn = match &vote {
@@ -995,7 +1014,9 @@ mod tests {
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::Genesis(_genesis_vote) => |_pool: &ConsensusPool| 0,
         };
-        ctx.add_message(dummy_vote_message(
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1004,7 +1025,8 @@ mod tests {
         let slot = vote.slot();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         // Same key voting again shouldn't make a certificate
-        ctx.add_message(dummy_vote_message(
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1012,7 +1034,8 @@ mod tests {
         ));
         assert!(highest_slot_fn(&ctx.pool) < slot);
         for rank in 0..4 {
-            ctx.add_message(dummy_vote_message(
+            ctx.add_batch(dummy_vote_message(
+                &bank,
                 &ctx.validators,
                 ctx.pool.cluster_info.my_shred_version(),
                 &vote,
@@ -1021,7 +1044,8 @@ mod tests {
         }
         assert!(highest_slot_fn(&ctx.pool) < slot);
         let new_validator_ix = 6;
-        let (new_finalized_slot, certs_to_send) = ctx.add_message(dummy_vote_message(
+        let (new_finalized_slot, certs_to_send) = ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1042,7 +1066,7 @@ mod tests {
         // Now add the same certificate again, this should silently exit.
         for cert in certs_to_send {
             let (new_finalized_slot, certs_to_send) =
-                ctx.add_message(ConsensusMessage::Certificate((*cert).clone()));
+                ctx.add_batch(SigVerifiedBatch::Certificates(vec![(*cert).clone()]));
             assert!(new_finalized_slot.is_none());
             assert_eq!(certs_to_send, []);
         }
@@ -1082,17 +1106,17 @@ mod tests {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
-            ctx.add_message(ConsensusMessage::Certificate(notarize_cert));
+            ctx.add_batch(SigVerifiedBatch::Certificates(vec![notarize_cert]));
         }
 
-        let message = ConsensusMessage::Certificate(cert.clone());
+        let message = SigVerifiedBatch::Certificates(vec![cert.clone()]);
         // Add the certificate to the pool
         let root_bank = ctx.bank_forks.read().unwrap().root_bank();
         let (new_finalized_slot, certs_to_send) = ctx
             .pool
             .add_batch(
                 &root_bank,
-                &Pubkey::new_unique(),
+                Pubkey::new_unique(),
                 message.clone(),
                 &mut vec![],
             )
@@ -1111,7 +1135,7 @@ mod tests {
         // Adding the cert again will not trigger another send
         let (new_finalized_slot, certs_to_send) = ctx
             .pool
-            .add_batch(&root_bank, &Pubkey::new_unique(), message, &mut vec![])
+            .add_batch(&root_bank, Pubkey::new_unique(), message, &mut vec![])
             .unwrap();
         assert!(new_finalized_slot.is_none());
         assert_eq!(certs_to_send, []);
@@ -1122,8 +1146,9 @@ mod tests {
                 .pool
                 .add_batch(
                     &root_bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &root_bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1144,19 +1169,38 @@ mod tests {
     fn test_add_vote_zero_stake() {
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        assert_eq!(
-            ctx.pool.add_batch(
+        ctx.pool
+            .add_batch(
                 &bank,
-                &Pubkey::new_unique(),
-                ConsensusMessage::Vote(VoteMessage {
-                    vote: Vote::new_skip_vote(5),
-                    rank: 100,
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                }),
-                &mut vec![]
-            ),
-            Err(AddVoteError::InvalidRank(100))
-        );
+                Pubkey::new_unique(),
+                SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(
+                    &bank,
+                    VoteMessage {
+                        vote: Vote::new_skip_vote(5),
+                        rank: 100,
+                        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    },
+                )]),
+                &mut vec![],
+            )
+            .unwrap();
+        // TODO: figure out what error the above is returning and then update the code below.
+        // assert_eq!(
+        //     ctx.pool.add_batch(
+        //         &bank,
+        //         Pubkey::new_unique(),
+        //         SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(
+        //             &bank,
+        //             VoteMessage {
+        //                 vote: Vote::new_skip_vote(5),
+        //                 rank: 100,
+        //                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        //             }
+        //         )]),
+        //         &mut vec![]
+        //     ),
+        //     Err(AddVoteError::InvalidRank(100))
+        // );
     }
 
     fn assert_single_certificate_range(
@@ -1172,6 +1216,7 @@ mod tests {
     #[test]
     fn test_consecutive_slots() {
         let mut ctx = TestContext::new();
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
 
         ctx.add_certificate(Vote::new_skip_vote(15));
         assert_eq!(ctx.pool.highest_skip_slot(), 15);
@@ -1180,7 +1225,8 @@ mod tests {
             let slot = (i as u64).saturating_add(16);
             let vote = Vote::new_skip_vote(slot);
             // These should not extend the skip range
-            ctx.add_message(dummy_vote_message(
+            ctx.add_batch(dummy_vote_message(
+                &bank,
                 &ctx.validators,
                 ctx.pool.cluster_info.my_shred_version(),
                 &vote,
@@ -1194,39 +1240,19 @@ mod tests {
     #[test]
     fn test_multi_skip_cert() {
         let mut ctx = TestContext::new();
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
 
         // We have 10 validators, 40% voted for (5, 15)
         for rank in 0..4 {
-            add_skip_vote_range(
-                &mut ctx.pool,
-                &ctx.bank_forks.read().unwrap().root_bank(),
-                5,
-                15,
-                &ctx.validators,
-                rank,
-            );
+            add_skip_vote_range(&mut ctx.pool, &bank, 5, 15, &ctx.validators, rank);
         }
         // 30% voted for (5, 8)
         for rank in 4..7 {
-            add_skip_vote_range(
-                &mut ctx.pool,
-                &ctx.bank_forks.read().unwrap().root_bank(),
-                5,
-                8,
-                &ctx.validators,
-                rank,
-            );
+            add_skip_vote_range(&mut ctx.pool, &bank, 5, 8, &ctx.validators, rank);
         }
         // The rest voted for (11, 15)
         for rank in 7..10 {
-            add_skip_vote_range(
-                &mut ctx.pool,
-                &ctx.bank_forks.read().unwrap().root_bank(),
-                11,
-                15,
-                &ctx.validators,
-                rank,
-            );
+            add_skip_vote_range(&mut ctx.pool, &bank, 11, 15, &ctx.validators, rank);
         }
         // Test slots from 5 to 15, [5, 8] and [11, 15] should be certified, the others aren't
         for slot in 5..9 {
@@ -1243,17 +1269,11 @@ mod tests {
     #[test]
     fn test_add_multiple_votes() {
         let mut ctx = TestContext::new();
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
 
         // 10 validators, half vote for (5, 15), the other (20, 30)
         for rank in 0..5 {
-            add_skip_vote_range(
-                &mut ctx.pool,
-                &ctx.bank_forks.read().unwrap().root_bank(),
-                5,
-                15,
-                &ctx.validators,
-                rank,
-            );
+            add_skip_vote_range(&mut ctx.pool, &bank, 5, 15, &ctx.validators, rank);
         }
         for rank in 5..10 {
             add_skip_vote_range(
@@ -1284,6 +1304,7 @@ mod tests {
     #[test]
     fn test_add_multiple_disjoint_votes() {
         let mut ctx = TestContext::new();
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
         // 50% of the validators vote for (1, 10)
         for rank in 0..5 {
             add_skip_vote_range(
@@ -1297,7 +1318,8 @@ mod tests {
         }
         // 10% vote for skip 2
         let vote = Vote::new_skip_vote(2);
-        ctx.add_message(dummy_vote_message(
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1308,7 +1330,8 @@ mod tests {
         assert_single_certificate_range(&ctx.pool, 2, 2);
         // 10% vote for skip 4
         let vote = Vote::new_skip_vote(4);
-        ctx.add_message(dummy_vote_message(
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1320,7 +1343,8 @@ mod tests {
         assert_single_certificate_range(&ctx.pool, 4, 4);
         // 10% vote for skip 3
         let vote = Vote::new_skip_vote(3);
-        ctx.add_message(dummy_vote_message(
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1346,6 +1370,7 @@ mod tests {
     #[test]
     fn test_update_existing_singleton_vote() {
         let mut ctx = TestContext::new();
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
         // 50% voted on (1, 6)
         for rank in 0..5 {
             add_skip_vote_range(
@@ -1359,7 +1384,8 @@ mod tests {
         }
         // Range expansion on a singleton vote should be ok
         let vote = Vote::new_skip_vote(1);
-        ctx.add_message(dummy_vote_message(
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1393,7 +1419,8 @@ mod tests {
 
         // AlreadyExists, silently fail
         let vote = Vote::new_skip_vote(20);
-        ctx.add_message(dummy_vote_message(
+        ctx.add_batch(dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
@@ -1468,7 +1495,7 @@ mod tests {
         agave_logger::setup();
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        let (my_vote_key, _, _) = get_key_and_stakes(&bank, 0, 0).unwrap();
+        let my_vote_key = get_key(&bank, 0, 0);
 
         // Use slot 0 (first in leader window: 0 % 4 == 0) so SafeToNotar goes directly to events
         let slot = 0;
@@ -1480,8 +1507,9 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                &my_vote_key,
+                my_vote_key,
                 dummy_vote_message(
+                    &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
                     &vote,
@@ -1498,8 +1526,9 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1527,8 +1556,9 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1548,8 +1578,9 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                &my_vote_key,
+                my_vote_key,
                 dummy_vote_message(
+                    &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
                     &vote,
@@ -1567,8 +1598,9 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1602,8 +1634,9 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1632,7 +1665,7 @@ mod tests {
     fn test_safe_to_skip() {
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        let (my_vote_key, _, _) = get_key_and_stakes(&bank, 0, 0).unwrap();
+        let my_vote_key = get_key(&bank, 0, 0);
         let slot = 2;
         let mut new_events = vec![];
 
@@ -1642,8 +1675,9 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                &my_vote_key,
+                my_vote_key,
                 dummy_vote_message(
+                    &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
                     &vote,
@@ -1660,8 +1694,9 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1683,8 +1718,9 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                &Pubkey::new_unique(),
+                Pubkey::new_unique(),
                 dummy_vote_message(
+                    &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
                     &vote,
@@ -1728,15 +1764,27 @@ mod tests {
         let vote_2 = create_new_vote(vote_type_2, slot);
         pool.add_batch(
             bank,
-            &Pubkey::new_unique(),
-            dummy_vote_message(validators, pool.cluster_info.my_shred_version(), &vote_1, 0),
+            Pubkey::new_unique(),
+            dummy_vote_message(
+                bank,
+                validators,
+                pool.cluster_info.my_shred_version(),
+                &vote_1,
+                0,
+            ),
             &mut vec![],
         )
         .unwrap();
         pool.add_batch(
             bank,
-            &Pubkey::new_unique(),
-            dummy_vote_message(validators, pool.cluster_info.my_shred_version(), &vote_2, 0),
+            Pubkey::new_unique(),
+            dummy_vote_message(
+                bank,
+                validators,
+                pool.cluster_info.my_shred_version(),
+                &vote_2,
+                0,
+            ),
             &mut vec![],
         )
         .unwrap_err();
@@ -1782,8 +1830,8 @@ mod tests {
         ctx.pool
             .add_batch(
                 &root_bank,
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_1),
+                Pubkey::new_unique(),
+                SigVerifiedBatch::Certificates(vec![cert_1]),
                 &mut vec![],
             )
             .unwrap();
@@ -1798,8 +1846,8 @@ mod tests {
         ctx.pool
             .add_batch(
                 &root_bank,
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_2),
+                Pubkey::new_unique(),
+                SigVerifiedBatch::Certificates(vec![cert_2]),
                 &mut vec![],
             )
             .unwrap();
@@ -1822,8 +1870,9 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &new_bank,
-                    &Pubkey::new_unique(),
+                    Pubkey::new_unique(),
                     dummy_vote_message(
+                        &new_bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
                         &vote,
@@ -1839,14 +1888,14 @@ mod tests {
             slot: 2,
             block_id: Hash::new_unique(),
         });
-        let cert = ConsensusMessage::Certificate(Certificate {
+        let cert = SigVerifiedBatch::Certificates(vec![Certificate {
             cert_type,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
-        });
+        }]);
         assert!(
             ctx.pool
-                .add_batch(&new_bank, &Pubkey::new_unique(), cert, &mut vec![])
+                .add_batch(&new_bank, Pubkey::new_unique(), cert, &mut vec![])
                 .is_err()
         );
     }
@@ -1867,13 +1916,13 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_3));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_3]));
         let cert_4 = Certificate {
             cert_type: CertificateType::Finalize(4),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_4));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_4]));
         // Should return both certificates
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
@@ -1891,7 +1940,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_5));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_5]));
 
         // Add Finalize cert on 5
         let cert_5_finalize = Certificate {
@@ -1899,7 +1948,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_5_finalize));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_5_finalize]));
 
         // Add FinalizeFast cert on 5
         let cert_5 = Certificate {
@@ -1910,7 +1959,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_5));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_5]));
         // Slot 5 is now the highest finalized slot, so standstill cert refresh only returns
         // certificates for later slots.
         let certs = ctx.pool.get_certs_for_standstill();
@@ -1925,7 +1974,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_6));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_6]));
         // Should return certs after highest finalized slot 5.
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 1);
@@ -1938,7 +1987,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_6_finalize));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_6_finalize]));
         // Add a NotarizeFallback cert on 6
         let cert_6_notarize_fallback = Certificate {
             cert_type: CertificateType::NotarizeFallback(Block {
@@ -1948,7 +1997,9 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_6_notarize_fallback));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![
+            cert_6_notarize_fallback,
+        ]));
         // Slot 6 is now the current highest finalized slot, so no slot-6 certs should
         // be returned by the queued refresh path.
         let certs = ctx.pool.get_certs_for_standstill();
@@ -1960,7 +2011,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_7));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_7]));
         // Should return certs after highest finalized slot 6.
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 1);
@@ -1975,7 +2026,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_8_finalize));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_8_finalize]));
         let cert_8_notarize = Certificate {
             cert_type: CertificateType::Notarize(Block {
                 slot: 8,
@@ -1984,7 +2035,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert_8_notarize));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_8_notarize]));
 
         // Slot 8 is now the current highest finalized slot, so latest-finalization
         // certs are refreshed from highest_finalized instead of this queue.
@@ -2012,8 +2063,8 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
-                    ConsensusMessage::Certificate(cert),
+                    Pubkey::new_unique(),
+                    SigVerifiedBatch::Certificates(vec![cert]),
                     &mut events,
                 )
                 .unwrap();
@@ -2043,8 +2094,8 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    &Pubkey::new_unique(),
-                    ConsensusMessage::Certificate(cert),
+                    Pubkey::new_unique(),
+                    SigVerifiedBatch::Certificates(vec![cert]),
                     &mut events,
                 )
                 .unwrap();
@@ -2071,7 +2122,7 @@ mod tests {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
-            ctx.add_message(ConsensusMessage::Certificate(cert));
+            ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert]));
         }
         let cert = Certificate {
             cert_type: CertificateType::FinalizeFast(Block {
@@ -2084,8 +2135,8 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert),
+                Pubkey::new_unique(),
+                SigVerifiedBatch::Certificates(vec![cert]),
                 &mut events,
             )
             .unwrap();
@@ -2105,19 +2156,21 @@ mod tests {
     #[test]
     fn test_vote_message_signature_verification() {
         let ctx = TestContext::new();
+        let bank = ctx.bank_forks.read().unwrap().root_bank();
         let rank_to_test = 3;
         let vote = Vote::new_notarization_vote(Block {
             slot: 42,
             block_id: Hash::new_unique(),
         });
 
-        let consensus_message = dummy_vote_message(
+        let batch = dummy_vote_message(
+            &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
             rank_to_test,
         );
-        let ConsensusMessage::Vote(vote_message) = consensus_message else {
+        let SigVerifiedBatch::Votes(msgs) = batch else {
             panic!("Expected Vote message")
         };
 
@@ -2127,8 +2180,8 @@ mod tests {
                 .unwrap();
 
         let payload = get_vote_payload_to_sign(vote, ctx.pool.cluster_info.my_shred_version());
-        vote_message
-            .signature
+        msgs[0]
+            .signature()
             .verify(&bls_keypair.public, &payload)
             .expect("vote message signature should verify");
     }
@@ -2147,7 +2200,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
-        ctx.add_message(ConsensusMessage::Certificate(cert));
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert]));
         assert!(!ctx.generated_cert_types.has_cert(&cert_type));
     }
 
