@@ -4630,7 +4630,7 @@ fn test_replay_stage_refresh_last_vote() {
         .unwrap();
 
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-        ConnectionCache::new_quic_for_tests(
+        solana_client::connection_cache::ConnectionCache::new_quic(
             "connection_cache_vote_quic",
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
@@ -4735,7 +4735,7 @@ fn test_replay_stage_refresh_last_vote() {
         .unwrap();
 
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-        ConnectionCache::new_quic_for_tests(
+        solana_client::connection_cache::ConnectionCache::new_quic(
             "connection_cache_vote_quic",
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
@@ -4864,7 +4864,7 @@ fn test_replay_stage_refresh_last_vote() {
         .recv_timeout(Duration::from_secs(1))
         .unwrap();
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-        ConnectionCache::new_quic_for_tests(
+        solana_client::connection_cache::ConnectionCache::new_quic(
             "connection_cache_vote_quic",
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
@@ -5006,7 +5006,7 @@ fn send_vote_in_new_bank(
         .recv_timeout(Duration::from_secs(1))
         .unwrap();
     let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-        ConnectionCache::new_quic_for_tests(
+        solana_client::connection_cache::ConnectionCache::new_quic(
             "connection_cache_vote_quic",
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         )
