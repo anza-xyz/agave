@@ -32,6 +32,7 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
     )
 )]
 /// The per epoch info stored in the off curve account.
+#[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 pub(super) struct EpochInflationState {
     /// The rewards (in lamports) that would be paid to a validator whose stake is equal to the
