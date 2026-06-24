@@ -71,6 +71,7 @@ signal-hook = "0.4.4"
 solana-account = "4.3.1"
 solana-account-decoder = { path = "../account-decoder", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
+solana-bls-signatures = { version = "3.3.0", features = ["serde"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-builtins = { path = "../builtins", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "../clap-utils", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
@@ -151,6 +152,7 @@ solana-vote-program = { path = "../programs/vote", version = "=4.3.0-alpha.0", d
 tempfile = "3.23.0"
 thiserror = "2.0.17"
 tokio = "1.48.0"
+wincode = { version = "0.5.5", features = ["derive"] }
 
 [profile.dev]
 debug = "line-tables-only"
