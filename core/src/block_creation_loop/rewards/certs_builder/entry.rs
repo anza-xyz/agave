@@ -123,7 +123,6 @@ mod tests {
         rand::Rng,
         solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
-        solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -147,14 +146,6 @@ mod tests {
         }
     }
 
-    pub(crate) fn new_bank_for_tests() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
-        let leader = SlotLeader::new_unique();
-        let genesis_config = GenesisConfig::default();
-        let bank = Bank::new_with_paths_for_tests(&genesis_config, None, vec![], Some(leader));
-        assert_eq!(*bank.leader(), leader);
-        bank.wrap_with_bank_forks_for_tests()
-    }
-
     pub(crate) fn new_vote(
         bank: &Bank,
         vote: Vote,
@@ -175,10 +166,13 @@ mod tests {
     pub(crate) fn get_rank_map_keypairs(
         max_validators: usize,
         slot: Slot,
-    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
-        let (rank_map, keypairs, _, _) =
-            get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot);
-        (rank_map, keypairs)
+    ) -> (
+        Arc<BLSPubkeyToRankMap>,
+        Vec<BlsKeypair>,
+        Arc<Bank>,
+        Arc<RwLock<BankForks>>,
+    ) {
+        get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot)
     }
 
     pub(crate) fn get_rank_map_keypairs_with_stakes(
@@ -233,10 +227,9 @@ mod tests {
 
     #[test]
     fn validate_build_skip_cert() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _bank_forks) = get_rank_map_keypairs(max_validators, slot);
         let shred_version = rand::rng().random();
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();
@@ -255,11 +248,10 @@ mod tests {
 
     #[test]
     fn validate_build_notar_cert() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _forks) = get_rank_map_keypairs(max_validators, slot);
 
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();

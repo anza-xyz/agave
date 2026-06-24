@@ -105,7 +105,7 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_rank_map_keypairs, new_bank_for_tests, new_vote, validate_bitmap,
+            get_rank_map_keypairs, new_vote, validate_bitmap,
         },
         agave_votor_messages::{
             consensus_message::VoteMessage, vote::Vote, wire::get_vote_payload_to_sign,
@@ -129,11 +129,10 @@ mod tests {
 
     #[test]
     fn validate_build_sig_bitmap() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 2;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _forks) = get_rank_map_keypairs(max_validators, slot);
         let mut partial_cert = PartialCert::new(max_validators);
         assert!(matches!(
             partial_cert.clone().build_sig_bitmap(),
@@ -150,11 +149,10 @@ mod tests {
 
     #[test]
     fn validate_add_vote() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 2;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _forks) = get_rank_map_keypairs(max_validators, slot);
         let mut partial_cert = PartialCert::new(max_validators);
         let skip = Vote::new_skip_vote(slot);
         let vote = new_invalid_vote(&bank, skip, 2);
@@ -179,11 +177,10 @@ mod tests {
 
     #[test]
     fn validate_wants_vote() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 2;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _forks) = get_rank_map_keypairs(max_validators, slot);
         let skip = Vote::new_skip_vote(slot);
         let mut partial_cert = PartialCert::new(max_validators);
         let vote = new_invalid_vote(&bank, skip, 2);

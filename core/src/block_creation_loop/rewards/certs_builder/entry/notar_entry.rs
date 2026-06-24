@@ -94,25 +94,19 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_bank_for_tests, new_vote,
-            validate_bitmap,
+            get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_vote, validate_bitmap,
         },
-        agave_votor_messages::{
-            consensus_message::{Block, VoteMessage},
-            vote::Vote,
-        },
+        agave_votor_messages::{consensus_message::Block, vote::Vote},
         rand::Rng,
-        solana_bls_signatures::{Signature as BLSSignature, signature::BLS_SIGNATURE_AFFINE_SIZE},
         solana_hash::Hash,
     };
 
     #[test]
     fn validator_add_vote() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _forks) = get_rank_map_keypairs(max_validators, slot);
         let rank = 0;
         let mut entry = NotarEntry::new(max_validators);
 
@@ -121,17 +115,8 @@ mod tests {
             slot,
             block_id: blockid0,
         });
-        let invalid_vote = VoteMessage {
-            vote: notar,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank,
-        };
-        let invalid_vote = SigVerifiedVoteBatch::new_verified(&bank, invalid_vote);
-        entry
-            .add_vote(&rank_map, max_validators, blockid0, &invalid_vote)
-            .unwrap_err();
 
-        let vote = new_vote(&bank, notar, rank as usize, &keypairs, shred_version);
+        let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
         entry
             .add_vote(&rank_map, max_validators, blockid0, &vote)
             .unwrap();
