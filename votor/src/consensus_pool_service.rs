@@ -642,6 +642,7 @@ mod tests {
     use {
         super::*,
         crate::tests::get_cluster_info,
+        agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
         agave_votor_messages::{
             certificate::CertificateType,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
@@ -783,17 +784,20 @@ mod tests {
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
-            let message = ConsensusMessage::Vote(VoteMessage {
-                vote: notarize_vote,
-                signature: bls_keypair.sign(&vote_serialized).into(),
-                rank: my_rank as u16,
-            });
+            let message = SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(
+                &root_bank,
+                VoteMessage {
+                    vote: notarize_vote,
+                    signature: bls_keypair.sign(&vote_serialized).into(),
+                    rank: my_rank as u16,
+                },
+            )]);
 
             let mut stats = ConsensusPoolServiceStats::new();
             let result = ConsensusPoolService::add_batch(
                 &root_bank,
                 &ctx.ctx.cluster_info.id(),
-                &ctx.ctx.my_vote_pubkey,
+                ctx.ctx.my_vote_pubkey,
                 message,
                 &mut ctx.consensus_pool,
                 &mut events,
@@ -857,8 +861,8 @@ mod tests {
         let result = ConsensusPoolService::add_batch(
             &root_bank,
             &ctx.ctx.cluster_info.id(),
-            &ctx.ctx.my_vote_pubkey,
-            ConsensusMessage::Certificate(skip_certificate),
+            ctx.ctx.my_vote_pubkey,
+            SigVerifiedBatch::Certificates(vec![skip_certificate]),
             &mut ctx.consensus_pool,
             &mut events,
             &mut stats,
@@ -924,8 +928,8 @@ mod tests {
             let result = ConsensusPoolService::add_batch(
                 &root_bank,
                 &ctx.ctx.cluster_info.id(),
-                &ctx.ctx.my_vote_pubkey,
-                ConsensusMessage::Certificate(skip_certificate),
+                ctx.ctx.my_vote_pubkey,
+                SigVerifiedBatch::Certificates(vec![skip_certificate]),
                 &mut ctx.consensus_pool,
                 &mut events,
                 &mut stats,
