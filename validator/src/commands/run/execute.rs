@@ -1,9 +1,10 @@
 #[cfg(target_os = "linux")]
 use {
-    crate::commands::run::config_file::{FileConfig, PohConfig, parse_config_file},
+    crate::commands::run::config_file::{FileConfig, PohConfig, Reservation, parse_config_file},
     agave_cpu_utils::cpu_affinity,
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
+    std::collections::BTreeMap,
 };
 use {
     crate::{
@@ -185,13 +186,16 @@ pub fn execute(
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config: Option<XdpConfig> = build_xdp_config(
-        matches,
-        &operation,
-        &bind_addresses,
-        file_config.xdp.as_ref(),
-        poh_pinned_cpu_core,
-    )?;
+    let xdp_transmit_config: Option<XdpConfig> = {
+        let exclusive_cpus = exclusive_thread_cpus(matches, &file_config, poh_pinned_cpu_core);
+        build_xdp_config(
+            matches,
+            &operation,
+            &bind_addresses,
+            file_config.xdp.as_ref(),
+            &exclusive_cpus,
+        )?
+    };
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -1418,13 +1422,53 @@ fn resolve_poh_pinned_cpu_core(
     Ok(poh_service::DEFAULT_PINNED_CPU_CORE)
 }
 
+/// CPUs that managed threads have claimed exclusively, keyed by CPU with the
+/// owning entity's name for diagnostics. XDP queue handlers (also exclusive) must
+/// not auto-select or be mapped onto these. Today the validator only pins the PoH
+/// thread, so it is the sole consumer; whether its resolved core is reserved
+/// follows the same cli > config precedence as the core itself (see
+/// [`poh_exclusive_owner`]).
+#[cfg(target_os = "linux")]
+fn exclusive_thread_cpus(
+    matches: &ArgMatches,
+    file_config: &FileConfig,
+    poh_pinned_cpu_core: Option<usize>,
+) -> BTreeMap<usize, String> {
+    let mut reserved = BTreeMap::new();
+    if let (Some(owner), Some(core)) = (
+        poh_exclusive_owner(matches, file_config),
+        poh_pinned_cpu_core,
+    ) {
+        reserved.insert(core, owner.to_string());
+    }
+    reserved
+}
+
+/// Whether the PoH core is reserved exclusively, and the label of whatever
+/// declared it. A core set on the command line (`--poh-pinned-cpu-core`) is
+/// implicitly exclusive — matching the behavior before `--config` existed — while
+/// a core from `[threads.poh]` honors that entry's `reservation` (default
+/// `none`). A default-sourced core carries no reservation.
+#[cfg(target_os = "linux")]
+fn poh_exclusive_owner(matches: &ArgMatches, file_config: &FileConfig) -> Option<&'static str> {
+    if matches.is_present("poh_pinned_cpu_core")
+        || matches.is_present("experimental_poh_pinned_cpu_core")
+    {
+        return Some("--poh-pinned-cpu-core");
+    }
+    file_config
+        .thread("poh")
+        .filter(|thread| thread.reservation == Reservation::Exclusive)
+        .map(|_| "threads.poh")
+}
+
 #[cfg(target_os = "linux")]
 fn build_xdp_config(
     matches: &ArgMatches,
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
     config: Option<&XdpConfig>,
-    poh_pinned_cpu_core: Option<usize>,
+    exclusive_cpus: &BTreeMap<usize, String>,
 ) -> Result<Option<XdpConfig>, String> {
     if matches.is_present("no_xdp") || *operation == Operation::Initialize {
         return Ok(None);
@@ -1472,7 +1516,7 @@ fn build_xdp_config(
     } else if let Some(config) = config {
         config.queues.clone()
     } else {
-        // Auto-select a single core, avoiding the PoH core.
+        // Auto-select a single core, avoiding any exclusively reserved CPU.
         let allowed = cpu_affinity(None).map_err(|e| {
             format!(
                 "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
@@ -1483,22 +1527,24 @@ fn build_xdp_config(
             .iter()
             .rev()
             .map(|cpu| **cpu)
-            .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+            .find(|cpu| !exclusive_cpus.contains_key(cpu))
             .ok_or_else(|| {
                 format!(
-                    "XDP requires a dedicated CPU core separate from PoH (core \
-                     {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable \
-                     XDP."
+                    "XDP requires a dedicated CPU core, but every available core is exclusively \
+                     reserved ({exclusive_cpus:?}). Pass --no-xdp to disable XDP."
                 )
             })?;
         vec![QueueCpuBinding { queue: 0, cpu }]
     };
 
-    // No XDP worker may share the PoH pinned core, whatever the mapping's source.
-    if let Some(poh_core) = poh_pinned_cpu_core {
-        if queues.iter().any(|binding| binding.cpu == poh_core) {
+    // XDP queue handler CPUs are themselves exclusive, so they may not land on a
+    // CPU another entity has reserved exclusively (e.g. an `exclusive` PoH thread).
+    for binding in &queues {
+        if let Some(owner) = exclusive_cpus.get(&binding.cpu) {
             return Err(format!(
-                "XDP maps a worker to PoH core {poh_core}; XDP and PoH must not share a CPU core"
+                "XDP maps a worker to CPU {}, which is exclusively reserved by [{owner}]; two \
+                 exclusive reservations may not share a CPU core",
+                binding.cpu
             ));
         }
     }
@@ -1544,7 +1590,8 @@ mod xdp_tests {
         parse_config_file(file.path()).expect("config must parse")
     }
 
-    /// Mirror what `execute` does: resolve PoH from the same file, then build XDP.
+    /// Mirror what `execute` does: resolve PoH from the same file, derive the
+    /// exclusive-CPU set, then build XDP.
     fn build(
         matches: &ArgMatches,
         operation: &Operation,
@@ -1552,12 +1599,13 @@ mod xdp_tests {
         file_config: &FileConfig,
     ) -> Result<Option<XdpConfig>, String> {
         let poh = resolve_poh_pinned_cpu_core(matches, file_config)?;
+        let exclusive_cpus = exclusive_thread_cpus(matches, file_config, poh);
         build_xdp_config(
             matches,
             operation,
             bind_addresses,
             file_config.xdp.as_ref(),
-            poh,
+            &exclusive_cpus,
         )
     }
 
@@ -1631,13 +1679,33 @@ mod xdp_tests {
     }
 
     #[test]
-    fn test_explicit_xdp_core_conflicts_with_poh_core_is_error() {
+    fn test_explicit_xdp_core_conflicts_with_exclusive_poh_is_error() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE
-            .unwrap_or(0)
-            .to_string();
-        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
+        // PoH owns core 6 exclusively; an XDP worker mapped onto it must error.
+        let file_config =
+            parse_file("version = 1\n[threads.poh]\ncpus = [6]\nreservation = \"exclusive\"\n");
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "6"]);
+        let result = build(&matches, &Operation::Run, &single_ip_bind(), &file_config);
+        assert!(
+            result.unwrap_err().contains("exclusively reserved"),
+            "XDP core overlapping an exclusive PoH core must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_cli_poh_core_is_implicitly_exclusive() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // A CLI-set PoH core is exclusive even with no config file, so XDP mapped
+        // onto it must error (the pre-`--config` behavior).
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--poh-pinned-cpu-core",
+            "6",
+            "--xdp-cpu-cores",
+            "6",
+        ]);
         let result = build(
             &matches,
             &Operation::Run,
@@ -1645,9 +1713,23 @@ mod xdp_tests {
             &FileConfig::default(),
         );
         assert!(
-            result.unwrap_err().contains("PoH core"),
-            "XDP core overlapping PoH core must produce an error"
+            result.unwrap_err().contains("exclusively reserved"),
+            "a CLI-set PoH core must be treated as exclusive"
         );
+    }
+
+    #[test]
+    fn test_xdp_core_may_share_non_exclusive_poh_core() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // PoH on core 6 with the default `none` reservation does not own it, so an
+        // XDP worker is allowed to share it.
+        let file_config = parse_file("version = 1\n[threads.poh]\ncpus = [6]\n");
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "6"]);
+        let config = build(&matches, &Operation::Run, &single_ip_bind(), &file_config)
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(config.queues, vec![QueueCpuBinding { queue: 0, cpu: 6 }]);
     }
 
     #[test]
@@ -1675,18 +1757,19 @@ mod xdp_tests {
     }
 
     #[test]
-    fn test_config_file_conflicting_with_poh_core_is_error() {
+    fn test_config_file_xdp_conflicting_with_exclusive_poh_is_error() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE.unwrap_or(0);
-        let file_config = parse_file(&format!(
-            "version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0:{poh_core}\"\n"
-        ));
+        // PoH owns core 6 exclusively; the [xdp] mapping puts a worker on it too.
+        let file_config = parse_file(
+            "version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0:6\"\n[threads.poh]\ncpus = \
+             [6]\nreservation = \"exclusive\"\n",
+        );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let result = build(&matches, &Operation::Run, &single_ip_bind(), &file_config);
         assert!(
-            result.unwrap_err().contains("PoH core"),
-            "config file mapping a worker to the PoH core must produce an error"
+            result.unwrap_err().contains("exclusively reserved"),
+            "config file mapping a worker to an exclusive PoH core must produce an error"
         );
     }
 
