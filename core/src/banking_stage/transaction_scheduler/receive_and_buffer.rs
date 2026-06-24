@@ -169,21 +169,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let start = Instant::now();
 
         let mut received_message = false;
-        let mut stats = ReceivingStats {
-            num_received: 0,
-            num_dropped_without_parsing: 0,
-            num_dropped_on_parsing_and_sanitization: 0,
-            num_dropped_on_lock_validation: 0,
-            num_dropped_on_compute_budget: 0,
-            num_dropped_on_age: 0,
-            num_dropped_on_already_processed: 0,
-            num_dropped_on_fee_payer: 0,
-            num_dropped_on_filter_key: 0,
-            num_dropped_on_capacity: 0,
-            num_buffered: 0,
-            receive_time_us: 0,
-            buffer_time_us: 0,
-        };
+        let mut stats = ReceivingStats::default();
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -247,21 +233,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        Ok(ReceivingStats {
-            num_received: stats.num_received,
-            num_dropped_without_parsing: stats.num_dropped_without_parsing,
-            num_dropped_on_parsing_and_sanitization: stats.num_dropped_on_parsing_and_sanitization,
-            num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
-            num_dropped_on_age: stats.num_dropped_on_age,
-            num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
-            num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
-            num_dropped_on_filter_key: stats.num_dropped_on_filter_key,
-            num_dropped_on_capacity: stats.num_dropped_on_capacity,
-            num_buffered: stats.num_buffered,
-            receive_time_us: stats.receive_time_us,
-            buffer_time_us: stats.buffer_time_us,
-        })
+        Ok(stats)
     }
 }
 
@@ -296,30 +268,6 @@ impl TransactionViewReceiveAndBuffer {
         let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
         let mut error_counters = TransactionErrorMetrics::default();
         let mut receiving_stats = ReceivingStats::default();
-
-        // XXX HANA ok this is quite the difficult refactor. what happens already
-        // * loop through packets in packet batches. parse and do basic static validation
-        //   we implicitly discard anything that fails validation although we correctly log it
-        // * if it succeeded it goes in the slab. this gives us a usize id
-        // * get priority this is our priority-id. we push this into our 64-tx tmpbuffer
-        // * if we hit 64 we go to the next checks for the accumulated batch:
-        //   - check transactions. v1, age, nonce, status cache
-        //   - mut foreach over check results. check errors get removed from slap and logged
-        //   - then we check feepayer. mutate check result to err if err and remove from slab
-        //     if feepayer succeeded we log that we buffered something and otherwise do nothing in loop
-        //   - finally we filter errors, map to ids, and push into the real priority queue
-        //     the push fn returns a number of evictions which we also log
-        // * after we finish all packet batches we run the above lambda one final time to clear the rest
-        // * return all the logged stats. done
-        //
-        // so what im thinking is, i wrote a new fn to *just* check v1/age/nonce with no status cache
-        // i want to run this over each individual transaction. then we have three cases:
-        // * Ok(Some): valid nonce. check feepayer and push to queue immediately
-        // * Ok(None): valid blockhash. this goes into the 64-batch like normal, we still need to do status cache
-        // * Err: invalid nonce or blockhash. doesnt matter which, drop it
-        //   the present `check_transactions()` flow has to lock status cache and map over all txs
-        //   in this case we only pass valid blockhash txs through there, others never take the lock
-        // this improves further when we filter on nonce account because it drastically reduces *second* pass txs
 
         for packet_batch in packet_batch_message.iter() {
             for packet in packet_batch.iter() {
@@ -381,7 +329,6 @@ impl TransactionViewReceiveAndBuffer {
                                 &mut error_counters,
                             ) {
                                 Ok(_) => {
-                                    // HANA perhaps a new stat for nonce-immediate? perhaps buffered *and* a new stat?
                                     receiving_stats.num_buffered += 1;
                                     receiving_stats.num_dropped_on_capacity += container
                                         .push_ids_into_queue(std::iter::once(
