@@ -22,6 +22,7 @@ frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+num_enum = { workspace = true }
 rand = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -34,6 +35,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-sanitize = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-wincode-varint = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 wincode = { workspace = true }
 
 [dev-dependencies]

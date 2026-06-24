@@ -61,7 +61,7 @@ pub struct ContactInfoSnapshot {
 impl From<&ContactInfo> for ContactInfoSnapshot {
     fn from(info: &ContactInfo) -> Self {
         let v = info.version();
-        let client_id_u16 = u16::try_from(v.client().clone()).unwrap_or(u16::MAX);
+        let client_id_u16 = u16::from(v.client().clone());
         Self {
             pubkey: *info.pubkey(),
             wallclock: info.wallclock(),

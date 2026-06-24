@@ -44,7 +44,7 @@ impl Default for Version {
                 .unwrap_or_else(|| rng().random::<u32>()),
             feature_set,
             // Other client implementations need to modify this line.
-            client: u16::try_from(ClientId::Agave).unwrap(),
+            client: u16::from(ClientId::Agave),
         }
     }
 }

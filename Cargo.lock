@@ -11351,6 +11351,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
+ "num_enum",
  "rand 0.9.4",
  "semver 1.0.28",
  "serde",
@@ -11359,6 +11360,7 @@ dependencies = [
  "solana-sanitize",
  "solana-serde-varint",
  "solana-wincode-varint",
+ "strum",
  "wincode",
 ]
 
