@@ -545,13 +545,20 @@ impl CrdsGossipPull {
                         && should_retain_crds_value(&entry.value)
                 }
             };
-            let out: Vec<_> = crds
+            let entries: Vec<_> = crds
                 .filter_bitmask(filter.mask, filter.mask_bits)
                 .filter(pred)
-                .map(|entry| entry.value.clone())
-                .take(output_size_limit.load(Ordering::Relaxed).max(0) as usize)
                 .collect();
-            output_size_limit.fetch_sub(out.len() as i64, Ordering::Relaxed);
+            let num_entries = entries.len() as i64;
+            let out: Vec<_> = entries
+                .into_iter()
+                .take(
+                    output_size_limit
+                        .fetch_sub(num_entries, Ordering::Relaxed)
+                        .max(0) as usize,
+                )
+                .map(|entry| entry.value.clone())
+                .collect();
             out
         };
         let ret: Vec<_> = thread_pool.install(|| requests.par_iter().map(apply_filter).collect());
