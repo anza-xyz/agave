@@ -176,13 +176,20 @@ mod tests {
         max_validators: usize,
         slot: Slot,
     ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
-        get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot)
+        let (rank_map, keypairs, _, _) =
+            get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot);
+        (rank_map, keypairs)
     }
 
     pub(crate) fn get_rank_map_keypairs_with_stakes(
         stakes: Vec<u64>,
         slot: Slot,
-    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
+    ) -> (
+        Arc<BLSPubkeyToRankMap>,
+        Vec<BlsKeypair>,
+        Arc<Bank>,
+        Arc<RwLock<BankForks>>,
+    ) {
         let max_validators = stakes.len();
         let validator_keypairs = (0..max_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -221,7 +228,7 @@ mod tests {
                     .clone()
             })
             .collect::<Vec<_>>();
-        (rank_map, signing_keys)
+        (rank_map, signing_keys, bank, bank_forks)
     }
 
     #[test]

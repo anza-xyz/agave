@@ -46,11 +46,10 @@ impl PartialCert {
 
     /// Returns true if the [`PartialCert`] needs the vote else false.
     pub(super) fn wants_vote(&self, ranks: &BitVec<u8>) -> bool {
-        ranks
-            .iter()
-            .by_vals()
-            .zip(self.bitvec.iter().by_vals())
-            .any(|(x, y)| x && y)
+        !self
+            .bitvec
+            .iter_ones()
+            .any(|i| ranks.get(i).is_some_and(|bit| *bit))
     }
 
     /// Adds a new observed vote to the aggregate.
@@ -71,6 +70,7 @@ impl PartialCert {
                 .ok_or(AddVoteError::InvalidRank)?;
             validators.push(entry.vote_account_pubkey);
         }
+        self.bitvec |= vote.ranks();
         self.validators.append(&mut validators);
         self.stake += vote.stake().get();
         self.signature = signature;

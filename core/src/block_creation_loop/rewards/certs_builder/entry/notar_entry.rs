@@ -143,10 +143,9 @@ mod tests {
 
     #[test]
     fn validate_build_cert() {
-        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) =
+        let (rank_map, keypairs, bank, _bank_forks) =
             get_rank_map_keypairs_with_stakes(vec![1_000, 900, 10, 10, 10], slot);
         let shred_version = rand::rng().random();
 
