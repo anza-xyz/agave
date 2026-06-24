@@ -1254,8 +1254,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .value_name("PATH")
             .help(
-                "Path to a TOML configuration file for the server. Where a setting is also \
-                 available as a CLI flag, the flag overrides the value from the file",
+                "Path to a TOML configuration file for the server (Linux only). Where a setting \
+                 is also available as a CLI flag, the flag overrides the value from the file",
             ),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
