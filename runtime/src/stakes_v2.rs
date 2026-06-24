@@ -249,7 +249,6 @@ impl StakeDelegationIndex {
 ///   banks.
 /// - A local [`ForkDelta`].
 /// - A local [`StakesCacheV2State`].
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 pub(crate) struct StakesCacheV2 {
     stake_delegation_index: Arc<StakeDelegationIndex>,
