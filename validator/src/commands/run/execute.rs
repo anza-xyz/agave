@@ -1576,6 +1576,30 @@ mod xdp_tests {
     }
 
     #[test]
+    fn test_no_xdp_allowed_with_config_file() {
+        // --no-xdp only disables the XDP transmit path; it must not conflict with
+        // --config, whose file may carry non-XDP settings (e.g. PoH pinning).
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = \
+             [\"0:3\"]\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--config",
+            file.path().to_str().unwrap(),
+            "--no-xdp",
+        ]);
+        let file_config = parse_config_file(file.path()).expect("config must parse");
+        let result = build(&matches, &Operation::Run, &single_ip_bind(), &file_config);
+        assert!(
+            result.unwrap().is_none(),
+            "--no-xdp must disable XDP even when the config file declares an [xdp] section"
+        );
+    }
+
+    #[test]
     fn test_init_disables_xdp() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);

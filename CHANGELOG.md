@@ -40,6 +40,9 @@ Release channels have their own copy of this changelog:
 * `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* Added `--config`, which points to a TOML configuration file for the validator (e.g. XDP and
+  PoH thread pinning settings). Where a setting is also available as a CLI flag, the flag
+  overrides the value from the file.
 ### CLI
 #### Breaking
 #### Changes
