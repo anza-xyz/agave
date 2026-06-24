@@ -357,6 +357,7 @@ fn recv_batches(
 mod tests {
     use {
         super::*,
+        crate::sig_verified_messages::SigVerifiedVoteBatch,
         agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
         agave_votor_messages::{
             VerifiedVoterSlotsReceiver,
@@ -764,8 +765,13 @@ mod tests {
 
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
         // Both messages were eventually delivered (no silent drop).
-        assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
-        assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
+        let bank = ctx.verifier.sharable_banks.root();
+        let msg1 =
+            SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(&bank, msg1)]);
+        let msg2 =
+            SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(&bank, msg2)]);
+        assert_eq!(m1_recv, msg1);
+        assert_eq!(m2_recv, msg2);
         // pool_sent counts every message that made it onto the channel,
         // whether via try_send or the blocking fallback.
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
@@ -1003,7 +1009,7 @@ mod tests {
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(votes) => {
                     for vote in &votes {
-                        if vote.vote == vote2 && vote.rank == invalid_rank {
+                        if vote.vote == vote2 && *vote.ranks().get(invalid_rank as usize).unwrap() {
                             panic!("invalid vote verified");
                         }
                     }
@@ -1075,7 +1081,7 @@ mod tests {
         match &batches[0] {
             SigVerifiedBatch::Votes(votes) => {
                 for vote in votes {
-                    if vote.rank == invalid_rank {
+                    if *vote.ranks().get(invalid_rank as usize).unwrap() {
                         found_msg = true;
                         break;
                     }
