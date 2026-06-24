@@ -149,7 +149,7 @@ mod tests {
         keypairs: &[BlsKeypair],
         shred_version: u16,
     ) -> VoteMessage {
-        let serialized = get_vote_payload_to_sign(&vote, shred_version);
+        let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
         VoteMessage {
             vote,

@@ -130,12 +130,6 @@ impl BlockComponentProcessor {
             return Ok(());
         }
 
-        // If we encounter an UpdateParent when fast leader handover is disabled, error.
-        if !migration_status.should_allow_fast_leader_handover(slot) && self.update_parent.is_some()
-        {
-            return Err(BlockComponentProcessorError::SpuriousUpdateParent);
-        }
-
         // Post-migration: both header and footer are required
         if !self.has_footer {
             return Err(BlockComponentProcessorError::MissingBlockFooter);
@@ -190,6 +184,8 @@ impl BlockComponentProcessor {
 
         let markers_fully_enabled = migration_status.should_allow_block_markers(slot);
         let in_migration = migration_status.is_in_migration();
+        let fast_leader_handover_active =
+            bank.feature_set.snapshot().alpenglow_fast_leader_handover;
 
         match marker {
             // Header and genesis cert can be processed either:
@@ -219,7 +215,11 @@ impl BlockComponentProcessor {
             ),
 
             BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
-                self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
+                if fast_leader_handover_active {
+                    self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
+                } else {
+                    Err(BlockComponentProcessorError::SpuriousUpdateParent)
+                }
             }
 
             // Any other combination means we saw a marker too early
@@ -1559,7 +1559,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO(ksn): Enable when fast leader handover is enabled in MigrationPhase::should_allow_fast_leader_handover
     fn test_workflow_with_update_parent() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();

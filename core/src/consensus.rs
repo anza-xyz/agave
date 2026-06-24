@@ -1061,9 +1061,11 @@ impl Tower {
                 .unwrap_or(true)
             {
                 // Our last vote slot was purged because it was on a duplicate fork, don't continue below
-                // where checks may panic. We allow a freebie vote here that may violate switching
-                // thresholds
-                // TODO: Properly handle this case
+                // where checks may panic. We allow a freebie vote here without checking the switch
+                // threshold as it is trivially satisfied:
+                // - Freebie can only occur because our last vote block was dumped & repaired
+                // - Dump & repair only triggers due to another version reaching duplicate confirmation (52%)
+                // - 52% > 38% so the switching threshold is implicitely satisifed
                 info!(
                     "Allowing switch vote on {:?} because last vote {:?} was rolled back",
                     (switch_slot, switch_hash),
@@ -1998,7 +2000,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 
@@ -3093,7 +3095,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 
@@ -3182,7 +3184,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 
@@ -3820,7 +3822,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 

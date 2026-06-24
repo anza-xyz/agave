@@ -136,12 +136,22 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
+        let no_verify_chained_merkle_root = shred::filter::check_feature_activation_from_bank(
+            &feature_set::alpenglow::id(),
+            shred_slot,
+            &root_bank,
+        );
 
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict)
             | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
             PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
                 if validate_chained_block_id || validate_chained_block_id_2 {
                     // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
                     // We still need to mark the block as dead for other client teams.
@@ -150,6 +160,11 @@ fn run_check_duplicate(
                 return Ok(());
             }
             PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
                 if validate_chained_block_id_2 {
                     blockstore.set_dead_slot(shred_slot)?;
                 }

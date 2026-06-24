@@ -989,6 +989,9 @@ pub struct AccountsDb {
     /// Members are Slot and capacity. If capacity is smaller, then
     /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
+
+    /// The largest slot that has been added as a root via `add_root`.
+    max_root: AtomicU64,
 }
 
 pub fn quarter_thread_count() -> usize {
@@ -1150,6 +1153,7 @@ impl AccountsDb {
             latest_full_snapshot_slot: SeqLock::new(None),
             last_swept_full_snapshot_slot: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
+            max_root: AtomicU64::new(0),
         };
 
         {
@@ -1405,20 +1409,17 @@ impl AccountsDb {
     /// get the oldest slot that is within one epoch of the highest known root.
     /// The slot will have been offset by `self.ancient_append_vec_offset`
     fn get_oldest_non_ancient_slot(&self, epoch_schedule: &EpochSchedule) -> Slot {
-        self.get_oldest_non_ancient_slot_from_slot(
-            epoch_schedule,
-            self.accounts_index.max_root_inclusive(),
-        )
+        self.get_oldest_non_ancient_slot_from_slot(epoch_schedule, self.max_root())
     }
 
-    /// get the oldest slot that is within one epoch of `max_root_inclusive`.
+    /// get the oldest slot that is within one epoch of `max_root`.
     /// The slot will have been offset by `self.ancient_append_vec_offset`
     fn get_oldest_non_ancient_slot_from_slot(
         &self,
         epoch_schedule: &EpochSchedule,
-        max_root_inclusive: Slot,
+        max_root: Slot,
     ) -> Slot {
-        let mut result = max_root_inclusive;
+        let mut result = max_root;
         if let Some(offset) = self.ancient_append_vec_offset {
             result = Self::apply_offset_to_slot(result, offset);
         }
@@ -1426,7 +1427,7 @@ impl AccountsDb {
             result,
             -((epoch_schedule.slots_per_epoch as i64).saturating_sub(1)),
         );
-        result.min(max_root_inclusive)
+        result.min(max_root)
     }
 
     /// Collect all the uncleaned slots, up to a max slot
@@ -3422,13 +3423,11 @@ impl AccountsDb {
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
-            self.accounts_index.max_root_inclusive()
-        })
-        .ok_or(ScanError::SlotRemoved {
-            slot: ancestors.max_slot(),
-            bank_id,
-        })?;
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+            .ok_or(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
         // Scan Guard max root must be used as the scan guard guarantees that
@@ -3532,13 +3531,11 @@ impl AccountsDb {
         }
 
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
-            self.accounts_index.max_root_inclusive()
-        })
-        .ok_or(ScanError::SlotRemoved {
-            slot: ancestors.max_slot(),
-            bank_id,
-        })?;
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+            .ok_or(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
         // Scan Guard max root must be used as the scan guard guarantees that
@@ -3948,7 +3945,7 @@ impl AccountsDb {
         load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
-        let starting_max_root = self.accounts_index.max_root_inclusive();
+        let starting_max_root = self.max_root();
 
         // Check the write cache first; a hit is the freshest version visible on this fork,
         // so return it
@@ -4004,7 +4001,7 @@ impl AccountsDb {
         }
         if load_hint == LoadHint::FixedMaxRoot {
             // If the load hint is that the max root is fixed, the max root should be fixed.
-            let ending_max_root = self.accounts_index.max_root_inclusive();
+            let ending_max_root = self.max_root();
             if starting_max_root != ending_max_root {
                 warn!(
                     "do_load_with_populate_read_cache() scanning pubkey {pubkey} called with \
@@ -5066,14 +5063,6 @@ impl AccountsDb {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
 
-        // If reclaiming old slots, ensure the target slot is a root
-        // Having an unrooted slot reclaim a rooted version of a slot
-        // could lead to index corruption if the unrooted version is
-        // discarded
-        if reclaim == UpsertReclaim::ReclaimOldSlots {
-            assert!(target_slot <= self.accounts_index.max_root_inclusive());
-        }
-
         let update = |start, end| {
             let mut reclaims = ReclaimsSlotList::with_capacity((end - start) / 2);
 
@@ -6028,10 +6017,17 @@ impl AccountsDb {
         self.accounts_cache.add_root(slot);
         cache_time.stop();
 
+        self.max_root.fetch_max(slot, Ordering::Relaxed);
+
         AccountsAddRootTiming {
             index_us: index_time.as_us(),
             cache_us: cache_time.as_us(),
         }
+    }
+
+    /// Returns the largest slot that has been added as a root via `add_root`.
+    pub fn max_root(&self) -> Slot {
+        self.max_root.load(Ordering::Relaxed)
     }
 
     /// Returns storages for `requested_slots`
@@ -6250,6 +6246,11 @@ impl AccountsDb {
             storages.truncate(limit); // get rid of the newer slots and keep just the older
         }
         let num_storages = storages.len();
+
+        // `storages` is sorted by slot, so the last one is the highest root.
+        if let Some(storage) = storages.last() {
+            self.max_root.fetch_max(storage.slot(), Ordering::Relaxed);
+        }
 
         self.accounts_index.set_startup(Startup::Startup);
 

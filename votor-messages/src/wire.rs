@@ -103,14 +103,17 @@ pub(crate) struct WireSlotVoteMessage {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
-pub(crate) struct WireCertSignature {
+/// Signature on a wire cert message
+pub struct WireCertSignature {
     #[cfg_attr(
         feature = "frozen-abi",
         stable_abi_sample(with = "sample_bls_signature(rng)")
     )]
     #[wincode(with = "PodBLSSignature")]
-    pub(crate) signature: BLSSignature,
-    pub(crate) bitmap: Vec<u8>,
+    /// the aggregate signature
+    pub signature: BLSSignature,
+    /// bitmap of ranks of validators included in the aggregate.
+    pub bitmap: Vec<u8>,
 }
 
 impl From<Certificate> for WireCertSignature {
@@ -131,9 +134,12 @@ pub(crate) struct WireSlotCertMessage {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
-pub(crate) struct WireBlockCertMessage {
-    pub(crate) block: Block,
-    pub(crate) signature: WireCertSignature,
+/// A wire cert message that holds a block.
+pub struct WireBlockCertMessage {
+    /// the block the cert is certifying.
+    pub block: Block,
+    /// the signature of the cert message.
+    pub signature: WireCertSignature,
 }
 
 #[cfg_attr(
@@ -340,48 +346,103 @@ impl VersionedWireConsensusMessage {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 /// Vote payload that must be signed
-enum VotePayloadToSign {
+pub enum VotePayloadToSign {
     #[wincode(tag = 1)]
-    Notar { block: Block, shred_version: u16 },
+    /// notar vote
+    Notar {
+        /// block
+        block: Block,
+        /// shred version
+        shred_version: u16,
+    },
     #[wincode(tag = 2)]
-    Finalize { slot: Slot, shred_version: u16 },
+    /// finalize vote
+    Finalize {
+        /// slot
+        slot: Slot,
+        /// shred version
+        shred_version: u16,
+    },
     #[wincode(tag = 3)]
-    Skip { slot: Slot, shred_version: u16 },
+    /// skip vote
+    Skip {
+        /// slot
+        slot: Slot,
+        /// shred version
+        shred_version: u16,
+    },
     #[wincode(tag = 4)]
-    NotarFallback { block: Block, shred_version: u16 },
+    /// notar fallback vote
+    NotarFallback {
+        /// block
+        block: Block,
+        /// shred version
+        shred_version: u16,
+    },
     #[wincode(tag = 5)]
-    SkipFallback { slot: Slot, shred_version: u16 },
+    /// skip fallback vote
+    SkipFallback {
+        /// slot
+        slot: Slot,
+        /// shred version
+        shred_version: u16,
+    },
     #[wincode(tag = 6)]
-    Genesis { block: Block, shred_version: u16 },
+    /// genesis vote
+    Genesis {
+        /// block
+        block: Block,
+        /// shred version
+        shred_version: u16,
+    },
+}
+
+impl VotePayloadToSign {
+    /// Converts a `Vote` into a `VotePayloadToSign`
+    pub fn new_from_vote(vote: Vote, shred_version: u16) -> Self {
+        match vote {
+            Vote::Notarize(v) => Self::Notar {
+                block: v.block,
+                shred_version,
+            },
+            Vote::NotarizeFallback(v) => Self::NotarFallback {
+                block: v.block,
+                shred_version,
+            },
+            Vote::Genesis(v) => Self::Genesis {
+                block: v.block,
+                shred_version,
+            },
+            Vote::Finalize(v) => Self::Finalize {
+                slot: v.slot,
+                shred_version,
+            },
+            Vote::Skip(v) => Self::Skip {
+                slot: v.slot,
+                shred_version,
+            },
+            Vote::SkipFallback(v) => Self::SkipFallback {
+                slot: v.slot,
+                shred_version,
+            },
+        }
+    }
+
+    /// Returns the slot the vote is for.
+    pub fn slot(&self) -> Slot {
+        match self {
+            Self::Notar { block, .. }
+            | Self::NotarFallback { block, .. }
+            | Self::Genesis { block, .. } => block.slot,
+            Self::Finalize { slot, .. }
+            | Self::Skip { slot, .. }
+            | Self::SkipFallback { slot, .. } => *slot,
+        }
+    }
 }
 
 /// Returns the appropriate vote payload to sign.
-pub fn get_vote_payload_to_sign(vote: &Vote, shred_version: u16) -> Vec<u8> {
-    let vote_to_sign = match vote {
-        Vote::Notarize(v) => VotePayloadToSign::Notar {
-            block: v.block,
-            shred_version,
-        },
-        Vote::NotarizeFallback(v) => VotePayloadToSign::NotarFallback {
-            block: v.block,
-            shred_version,
-        },
-        Vote::Genesis(v) => VotePayloadToSign::Genesis {
-            block: v.block,
-            shred_version,
-        },
-        Vote::Finalize(v) => VotePayloadToSign::Finalize {
-            slot: v.slot,
-            shred_version,
-        },
-        Vote::Skip(v) => VotePayloadToSign::Skip {
-            slot: v.slot,
-            shred_version,
-        },
-        Vote::SkipFallback(v) => VotePayloadToSign::SkipFallback {
-            slot: v.slot,
-            shred_version,
-        },
-    };
+pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
+    let vote_to_sign = VotePayloadToSign::new_from_vote(vote, shred_version);
     wincode::serialize(&vote_to_sign).unwrap()
 }

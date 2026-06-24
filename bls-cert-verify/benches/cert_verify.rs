@@ -32,7 +32,7 @@ fn create_signed_vote_message(
     vote: Vote,
     rank: usize,
 ) -> VoteMessage {
-    let payload = get_vote_payload_to_sign(&vote, shred_version);
+    let payload = get_vote_payload_to_sign(vote, shred_version);
     let signature: BlsSignature = bls_keypair.sign(&payload).into();
     VoteMessage {
         vote,
@@ -205,7 +205,7 @@ fn bench_verify_cert(c: &mut Criterion) {
                         verify_certificate(cert_base2, total_validators, total_stake, |rank| {
                             pubkeys_ref
                                 .get(rank)
-                                .map(|bls_pubkey| (TEST_STAKE, *bls_pubkey))
+                                .map(|bls_pubkey| (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey))
                         })
                         .unwrap();
                     },
@@ -231,7 +231,7 @@ fn bench_verify_cert(c: &mut Criterion) {
                         verify_certificate(cert_base3, total_validators, total_stake, |rank| {
                             pubkeys_ref
                                 .get(rank)
-                                .map(|bls_pubkey| (TEST_STAKE, *bls_pubkey))
+                                .map(|bls_pubkey| (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey))
                         })
                         .unwrap();
                     },
