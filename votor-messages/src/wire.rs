@@ -441,6 +441,22 @@ impl VotePayloadToSign {
     }
 }
 
+impl From<VotePayloadToSign> for Vote {
+    /// Converts a `VotePayloadToSign` back into a `Vote`, dropping the shred version.
+    fn from(vote_payload: VotePayloadToSign) -> Self {
+        match vote_payload {
+            VotePayloadToSign::Notar { block, .. } => Self::new_notarization_vote(block),
+            VotePayloadToSign::Finalize { slot, .. } => Self::new_finalization_vote(slot),
+            VotePayloadToSign::Skip { slot, .. } => Self::new_skip_vote(slot),
+            VotePayloadToSign::NotarFallback { block, .. } => {
+                Self::new_notarization_fallback_vote(block)
+            }
+            VotePayloadToSign::SkipFallback { slot, .. } => Self::new_skip_fallback_vote(slot),
+            VotePayloadToSign::Genesis { block, .. } => Self::new_genesis_vote(block),
+        }
+    }
+}
+
 /// Returns the appropriate vote payload to sign.
 pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
     let vote_to_sign = VotePayloadToSign::new_from_vote(vote, shred_version);
