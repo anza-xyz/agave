@@ -38,8 +38,8 @@ Release channels have their own copy of this changelog:
 * XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
   `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
   `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
-  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
-  with a core that conflicts with the PoH core is an error.
+  core is auto-selected to avoid the exclusively-reserved PoH core; passing
+  `--xdp-cpu-cores` with a core that conflicts with an exclusive PoH core is an error.
 #### Deprecations
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
@@ -49,12 +49,14 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
-* Added `--config`, which points to a TOML configuration file for the validator (e.g. XDP and
-  PoH thread pinning settings). Where a setting is also available as a CLI flag, the flag
+* Added `--config` (Linux only), which points to a TOML configuration file for the validator
+  (e.g. XDP and PoH thread pinning settings). Where a setting is also available as a CLI flag, the flag
   overrides the value from the file. A `[threads.<name>]` entry may declare
   `reservation = "exclusive"` to claim its CPU core for that thread alone; XDP queue handler
   CPUs are always exclusive, and two exclusive claimants may not share a core. A PoH core set
-  via `--poh-pinned-cpu-core` is implicitly exclusive. An exclusive reservation only excludes
+  via `--poh-pinned-cpu-core`, or the built-in default when `[threads.poh]` is omitted, is
+  implicitly exclusive; an explicit `[threads.poh]` honors its own `reservation` (default
+  `none`). An exclusive reservation only excludes
   other managed claimants, so threads not managed through the config (and the kernel's own
   NAPI/softirq work) may still be scheduled on an exclusive core.
 ### CLI
