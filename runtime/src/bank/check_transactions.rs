@@ -91,11 +91,13 @@ impl Bank {
         )
     }
 
+    // NOTE this function can only be used for block production,
+    // because it enforces `strict_nonce_size_check` unconditionally.
+    // introducing this into replay requires a feature gate
     pub fn precheck_transaction_age(
         &self,
         tx: &impl TransactionWithMeta,
         max_age: usize,
-        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
         let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
@@ -116,7 +118,7 @@ impl Bank {
             &hash_queue,
             error_counters,
             compute_budget_and_limits,
-            strict_nonce_size_check,
+            true, // strict_nonce_size_check
         )
     }
 

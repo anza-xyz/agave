@@ -314,7 +314,6 @@ impl TransactionViewReceiveAndBuffer {
                         .precheck_transaction_age(
                             transaction,
                             working_bank.max_processing_age(),
-                            true,
                             &mut error_counters,
                         )
                         .map(|details| details.nonce_address())
@@ -351,7 +350,7 @@ impl TransactionViewReceiveAndBuffer {
                             // If at capacity, run checks and remove invalid transactions.
                             if transaction_priority_ids.len() == EXTRA_CAPACITY {
                                 check_and_push_blockhash_batch_to_queue(
-                                    &working_bank,
+                                    working_bank,
                                     container,
                                     &mut transaction_priority_ids,
                                     &lock_results,
@@ -374,7 +373,7 @@ impl TransactionViewReceiveAndBuffer {
 
         // Any remaining packets undergo status/age checks
         check_and_push_blockhash_batch_to_queue(
-            &working_bank,
+            working_bank,
             container,
             &mut transaction_priority_ids,
             &lock_results,
