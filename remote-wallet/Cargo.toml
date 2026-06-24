@@ -11,7 +11,10 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
-all-features = true
+# `all-features` can't be used here: hidapi's linux backends
+# (linux-{shared,static}-{hidraw,libusb}) are mutually exclusive.
+# Document the default backend plus the unstable API instead.
+features = ["agave-unstable-api"]
 rustdoc-args = ["--cfg=docsrs"]
 
 [features]
