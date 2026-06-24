@@ -59,6 +59,9 @@ impl PartialCert {
         rank_map: &BLSPubkeyToRankMap,
         vote: &SigVerifiedVoteBatch,
     ) -> Result<(), AddVoteError> {
+        if !self.wants_vote(vote.ranks()) {
+            return Err(AddVoteError::Duplicate);
+        }
         let mut signature = self.signature;
         signature.aggregate_with(std::iter::once(vote.signature()))?;
         let mut validators = vec![];
@@ -102,26 +105,29 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_rank_map_keypairs, new_vote, validate_bitmap,
+            get_rank_map_keypairs, new_bank_for_tests, new_vote, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
         rand::Rng,
         solana_bls_signatures::Keypair as BlsKeypair,
+        solana_runtime::bank::Bank,
     };
 
-    fn new_invalid_vote(vote: Vote, rank: usize) -> VoteMessage {
+    fn new_invalid_vote(bank: &Bank, vote: Vote, rank: usize) -> SigVerifiedVoteBatch {
         let serialized = wincode::serialize(&vote).unwrap();
         let keypair = BlsKeypair::new();
         let signature = keypair.sign(&serialized).into();
-        VoteMessage {
+        let msg = VoteMessage {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
-        }
+        };
+        SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)
     }
 
     #[test]
     fn validate_build_sig_bitmap() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 2;
         let shred_version = rand::rng().random();
@@ -133,10 +139,8 @@ mod tests {
         ));
         let skip = Vote::new_skip_vote(slot);
         for rank in 0..max_validators {
-            let vote = new_vote(skip, rank, &keypairs, shred_version);
-            partial_cert
-                .add_vote(&rank_map, vote.rank, &vote.signature)
-                .unwrap();
+            let vote = new_vote(&bank, skip, rank, &keypairs, shred_version);
+            partial_cert.add_vote(&rank_map, &vote).unwrap();
             let (_signature, bitmap, _) = partial_cert.clone().build_sig_bitmap().unwrap();
             validate_bitmap(&bitmap, rank + 1, max_validators);
         }
@@ -144,56 +148,50 @@ mod tests {
 
     #[test]
     fn validate_add_vote() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 2;
         let shred_version = rand::rng().random();
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
         let mut partial_cert = PartialCert::new(max_validators);
         let skip = Vote::new_skip_vote(slot);
-        let vote = new_invalid_vote(skip, 2);
+        let vote = new_invalid_vote(&bank, skip, 2);
         assert!(matches!(
-            partial_cert.add_vote(&rank_map, vote.rank, &vote.signature),
+            partial_cert.add_vote(&rank_map, &vote),
             Err(AddVoteError::InvalidRank)
         ));
-        let vote = new_vote(skip, 0, &keypairs, shred_version);
-        partial_cert
-            .add_vote(&rank_map, vote.rank, &vote.signature)
-            .unwrap();
+        let vote = new_vote(&bank, skip, 0, &keypairs, shred_version);
+        partial_cert.add_vote(&rank_map, &vote).unwrap();
         assert!(matches!(
-            partial_cert.add_vote(&rank_map, vote.rank, &vote.signature),
+            partial_cert.add_vote(&rank_map, &vote),
             Err(AddVoteError::Duplicate)
         ));
-        let vote = new_vote(skip, 1, &keypairs, shred_version);
-        partial_cert
-            .add_vote(&rank_map, vote.rank, &vote.signature)
-            .unwrap();
-        let vote = new_vote(skip, 0, &keypairs, shred_version);
+        let vote = new_vote(&bank, skip, 1, &keypairs, shred_version);
+        partial_cert.add_vote(&rank_map, &vote).unwrap();
+        let vote = new_vote(&bank, skip, 0, &keypairs, shred_version);
         assert!(matches!(
-            partial_cert.add_vote(&rank_map, vote.rank, &vote.signature),
+            partial_cert.add_vote(&rank_map, &vote),
             Err(AddVoteError::Duplicate)
         ));
     }
 
     #[test]
     fn validate_wants_vote() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 2;
         let shred_version = rand::rng().random();
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
         let skip = Vote::new_skip_vote(slot);
         let mut partial_cert = PartialCert::new(max_validators);
-        let vote = new_invalid_vote(skip, 2);
-        assert!(!partial_cert.wants_vote(vote.rank));
-        let vote = new_vote(skip, 0, &keypairs, shred_version);
-        assert!(partial_cert.wants_vote(vote.rank));
-        partial_cert
-            .add_vote(&rank_map, vote.rank, &vote.signature)
-            .unwrap();
-        assert!(!partial_cert.wants_vote(vote.rank));
-        let vote = new_vote(skip, 1, &keypairs, shred_version);
-        partial_cert
-            .add_vote(&rank_map, vote.rank, &vote.signature)
-            .unwrap();
-        assert!(!partial_cert.wants_vote(vote.rank));
+        let vote = new_invalid_vote(&bank, skip, 2);
+        assert!(!partial_cert.wants_vote(vote.ranks()));
+        let vote = new_vote(&bank, skip, 0, &keypairs, shred_version);
+        assert!(partial_cert.wants_vote(vote.ranks()));
+        partial_cert.add_vote(&rank_map, &vote).unwrap();
+        assert!(!partial_cert.wants_vote(vote.ranks()));
+        let vote = new_vote(&bank, skip, 1, &keypairs, shred_version);
+        partial_cert.add_vote(&rank_map, &vote).unwrap();
+        assert!(!partial_cert.wants_vote(vote.ranks()));
     }
 }

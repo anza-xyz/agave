@@ -94,19 +94,21 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_vote, validate_bitmap,
+            get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_bank_for_tests, new_vote,
+            validate_bitmap,
         },
         agave_votor_messages::{
             consensus_message::{Block, VoteMessage},
             vote::Vote,
         },
         rand::Rng,
-        solana_bls_signatures::signature::BLS_SIGNATURE_AFFINE_SIZE,
+        solana_bls_signatures::{Signature as BLSSignature, signature::BLS_SIGNATURE_AFFINE_SIZE},
         solana_hash::Hash,
     };
 
     #[test]
     fn validator_add_vote() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
@@ -124,40 +126,24 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank,
         };
+        let invalid_vote = SigVerifiedVoteBatch::new_from_vote_msg(&bank, invalid_vote);
         entry
-            .add_vote(
-                &rank_map,
-                invalid_vote.rank,
-                &invalid_vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&rank_map, max_validators, blockid0, &invalid_vote)
             .unwrap_err();
 
-        let vote = new_vote(notar, rank as usize, &keypairs, shred_version);
+        let vote = new_vote(&bank, notar, rank as usize, &keypairs, shred_version);
         entry
-            .add_vote(
-                &rank_map,
-                vote.rank,
-                &vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&rank_map, max_validators, blockid0, &vote)
             .unwrap();
         let err = entry
-            .add_vote(
-                &rank_map,
-                vote.rank,
-                &vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&rank_map, max_validators, blockid0, &vote)
             .unwrap_err();
         assert!(matches!(err, AddVoteError::Duplicate));
     }
 
     #[test]
     fn validate_build_cert() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
         let (rank_map, keypairs) =
@@ -175,15 +161,9 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
             entry
-                .add_vote(
-                    &rank_map,
-                    vote.rank,
-                    &vote.signature,
-                    blockid0,
-                    max_validators,
-                )
+                .add_vote(&rank_map, max_validators, blockid0, &vote)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -191,15 +171,9 @@ mod tests {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
             entry
-                .add_vote(
-                    &rank_map,
-                    vote.rank,
-                    &vote.signature,
-                    blockid1,
-                    max_validators,
-                )
+                .add_vote(&rank_map, max_validators, blockid1, &vote)
                 .unwrap();
         }
         let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();

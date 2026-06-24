@@ -21,6 +21,8 @@ pub(super) enum AddVoteError {
     InvalidRank,
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
+    #[error("Received duplicate vote")]
+    Duplicate,
 }
 
 /// Per slot container for storing notar and skip votes for creating rewards certificates.
@@ -114,19 +116,27 @@ impl Entry {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::{consensus_message::Block, wire::get_vote_payload_to_sign},
+        agave_votor_messages::{
+            consensus_message::{Block, VoteMessage},
+            wire::get_vote_payload_to_sign,
+        },
         rand::Rng,
         solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
+        solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_runtime::{
             bank::{Bank, SlotLeader},
+            bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer_store::{Decoded, decode},
-        std::{collections::HashMap, sync::Arc},
+        std::{
+            collections::HashMap,
+            sync::{Arc, RwLock},
+        },
     };
 
     pub(crate) fn validate_bitmap(bitmap: &[u8], num_set: usize, max_len: usize) {
@@ -137,19 +147,29 @@ mod tests {
         }
     }
 
+    pub(crate) fn new_bank_for_tests() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let leader = SlotLeader::new_unique();
+        let genesis_config = GenesisConfig::default();
+        let bank = Bank::new_with_paths_for_tests(&genesis_config, None, vec![], Some(leader));
+        assert_eq!(*bank.leader(), leader);
+        bank.wrap_with_bank_forks_for_tests()
+    }
+
     pub(crate) fn new_vote(
+        bank: &Bank,
         vote: Vote,
         rank: usize,
         keypairs: &[BlsKeypair],
         shred_version: u16,
-    ) -> VoteMessage {
+    ) -> SigVerifiedVoteBatch {
         let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
-        VoteMessage {
+        let msg = VoteMessage {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
-        }
+        };
+        SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)
     }
 
     pub(crate) fn get_rank_map_keypairs(
@@ -206,6 +226,7 @@ mod tests {
 
     #[test]
     fn validate_build_skip_cert() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
         let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
@@ -216,7 +237,7 @@ mod tests {
         assert_eq!(resp.notar, None);
 
         let skip = Vote::new_skip_vote(7);
-        let vote = new_vote(skip, 0, &keypairs, shred_version);
+        let vote = new_vote(&bank, skip, 0, &keypairs, shred_version);
         entry.add_vote(&rank_map, &vote).unwrap();
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.notar, None);
@@ -227,6 +248,7 @@ mod tests {
 
     #[test]
     fn validate_build_notar_cert() {
+        let (bank, _forks) = new_bank_for_tests();
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
@@ -245,7 +267,7 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
             entry.add_vote(&rank_map, &vote).unwrap();
         }
         for rank in 2..5 {
@@ -253,7 +275,7 @@ mod tests {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
             entry.add_vote(&rank_map, &vote).unwrap();
         }
         let resp = entry.build_certs(slot).unwrap();
