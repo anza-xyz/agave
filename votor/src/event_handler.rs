@@ -451,14 +451,15 @@ impl EventHandler {
                 );
 
                 if let Some(slot) = *standstill_slot
-                    && block.slot > slot {
-                        *standstill_slot = None;
-                        info!(
-                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
-                             at slot={}. Ending timeout extension",
-                            block.slot
-                        );
-                    }
+                    && block.slot > slot
+                {
+                    *standstill_slot = None;
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.slot
+                    );
+                }
 
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)

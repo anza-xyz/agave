@@ -142,14 +142,15 @@ impl ForkInfo {
         newly_valid_ancestor: Slot,
     ) {
         if let Some(latest_invalid_ancestor) = self.latest_invalid_ancestor
-            && latest_invalid_ancestor <= newly_valid_ancestor {
-                info!(
-                    "Fork choice for {my_key:?} clearing latest invalid ancestor \
-                     {latest_invalid_ancestor:?} because {newly_valid_ancestor:?} was duplicate \
-                     confirmed"
-                );
-                self.latest_invalid_ancestor = None;
-            }
+            && latest_invalid_ancestor <= newly_valid_ancestor
+        {
+            info!(
+                "Fork choice for {my_key:?} clearing latest invalid ancestor \
+                 {latest_invalid_ancestor:?} because {newly_valid_ancestor:?} was duplicate \
+                 confirmed"
+            );
+            self.latest_invalid_ancestor = None;
+        }
     }
 
     fn update_with_newly_invalid_ancestor(
