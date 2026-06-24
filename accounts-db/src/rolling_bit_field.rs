@@ -3,10 +3,7 @@
 //! Old key values are removed from the lesser values and do not accumulate.
 
 mod iterators;
-use {
-    bv::BitVec, iterators::RollingBitFieldOnesIter, solana_clock::Slot,
-    solana_nohash_hasher::IntSet,
-};
+use {bv::BitVec, iterators::RollingBitFieldOnesIter, solana_nohash_hasher::IntSet};
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone)]
@@ -113,11 +110,6 @@ impl RollingBitField {
     // find the array index
     fn get_address(&self, key: &u64) -> u64 {
         key % self.max_width
-    }
-
-    pub fn range_width(&self) -> u64 {
-        // note that max isn't updated on remove, so it can be above the current max
-        self.max_exclusive - self.min
     }
 
     pub fn min(&self) -> Option<u64> {
@@ -291,27 +283,6 @@ impl RollingBitField {
         self.max_exclusive
     }
 
-    pub fn max_inclusive(&self) -> u64 {
-        self.max_exclusive.saturating_sub(1)
-    }
-
-    /// return highest item < 'max_slot_exclusive'
-    pub fn get_prior(&self, max_slot_exclusive: Slot) -> Option<Slot> {
-        let mut slot = max_slot_exclusive.saturating_sub(1);
-        self.min().and_then(|min| {
-            loop {
-                if self.contains(&slot) {
-                    return Some(slot);
-                }
-                slot = slot.saturating_sub(1);
-                if slot == 0 || slot < min {
-                    break;
-                }
-            }
-            None
-        })
-    }
-
     pub fn get_all(&self) -> Vec<u64> {
         let mut all = Vec::with_capacity(self.count);
         self.excess.iter().for_each(|slot| all.push(*slot));
@@ -334,7 +305,10 @@ impl RollingBitField {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, log::*, solana_measure::measure::Measure, std::collections::HashSet};
+    use {
+        super::*, log::*, solana_clock::Slot, solana_measure::measure::Measure,
+        std::collections::HashSet,
+    };
 
     impl RollingBitField {
         pub fn clear(&mut self) {
@@ -738,22 +712,6 @@ mod tests {
             }
             assert_eq!(bitfield.min(), Some(overall_min));
             assert_eq!(bitfield.get_all().len(), hashset.len());
-            // range isn't tracked for excess items
-            if bitfield.excess.len() != bitfield.len() {
-                let width = if bitfield.is_empty() {
-                    0
-                } else {
-                    max + 1 - min
-                };
-                assert!(
-                    bitfield.range_width() >= width,
-                    "hashset: {:?}, bitfield: {:?}, bitfield.range_width: {}, width: {}",
-                    hashset,
-                    bitfield.get_all(),
-                    bitfield.range_width(),
-                    width,
-                );
-            }
         } else {
             assert_eq!(bitfield.min(), None);
         }

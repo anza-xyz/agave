@@ -762,7 +762,6 @@ impl AccountsDb {
                 self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
             }
         }
-        self.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
         metrics.accumulate(&write_ancient_accounts.metrics);
     }
 
@@ -1568,15 +1567,6 @@ mod tests {
                         }
                     });
 
-                    let roots = db
-                        .accounts_index
-                        .roots_tracker
-                        .read()
-                        .unwrap()
-                        .alive_roots
-                        .get_all();
-                    assert_eq!(roots, slots.clone().collect::<Vec<_>>());
-
                     if all_slots_shrunk {
                         // make it look like each of the slots was shrunk
                         slots.clone().for_each(|slot| {
@@ -1599,24 +1589,6 @@ mod tests {
                     slots.clone().for_each(|slot| {
                         assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&slot));
                     });
-
-                    let roots_after = db
-                        .accounts_index
-                        .roots_tracker
-                        .read()
-                        .unwrap()
-                        .alive_roots
-                        .get_all();
-
-                    assert_eq!(
-                        roots_after,
-                        if all_slots_shrunk {
-                            slots.clone().collect::<Vec<_>>()
-                        } else {
-                            vec![]
-                        },
-                        "all_slots_shrunk: {all_slots_shrunk}"
-                    );
                     slots.for_each(|slot| {
                         let storage = db.storage.get_slot_storage_entry(slot);
                         if all_slots_shrunk {

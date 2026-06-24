@@ -3,7 +3,6 @@ mod accounts_index_storage;
 mod bucket_map_holder;
 pub(crate) mod in_mem_accounts_index;
 mod iter;
-mod roots_tracker;
 mod secondary;
 mod stats;
 use {
@@ -24,12 +23,10 @@ use {
     log::*,
     rand::{Rng, rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
-    roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
     smallvec::SmallVec,
     solana_account::ReadableAccount,
     solana_clock::Slot,
-    solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     stats::Stats,
     std::{
@@ -38,7 +35,7 @@ use {
         num::NonZeroUsize,
         path::PathBuf,
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         },
     },
@@ -191,16 +188,6 @@ pub fn default_num_flush_threads() -> NonZeroUsize {
     NonZeroUsize::new(std::cmp::max(2, num_cpus::get() / 4)).expect("non-zero system threads")
 }
 
-#[derive(Debug, Default)]
-pub struct AccountsIndexRootsStats {
-    pub roots_len: Option<usize>,
-    pub roots_range: Option<u64>,
-    pub rooted_cleaned_count: usize,
-    pub unrooted_cleaned_count: usize,
-    pub clean_unref_from_storage_us: u64,
-    pub clean_dead_slot_us: u64,
-}
-
 #[derive(Copy, Clone)]
 pub enum AccountsIndexScanResult {
     /// if the entry is not in the in-memory index, do not add it unless the entry becomes dirty
@@ -224,16 +211,10 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
-    pub roots_tracker: RwLock<RootsTracker>,
 
     storage: AccountsIndexStorage<T, U>,
 
     pub purge_older_root_entries_one_slot_list: AtomicUsize,
-
-    /// # roots added since last check
-    pub roots_added: AtomicUsize,
-    /// # roots removed since last check
-    pub roots_removed: AtomicUsize,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
@@ -257,10 +238,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             spl_token_owner_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
                 "spl_token_owner_index_stats",
             ),
-            roots_tracker: RwLock::<RootsTracker>::default(),
             storage,
-            roots_added: AtomicUsize::default(),
-            roots_removed: AtomicUsize::default(),
         }
     }
 
@@ -1024,91 +1002,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
         reclaims
     }
-
-    /// Given a list of slots, return a new list of only the slots that are rooted
-    pub fn get_rooted_from_list<'a>(&self, slots: impl Iterator<Item = &'a Slot>) -> Vec<Slot> {
-        let roots_tracker = self.roots_tracker.read().unwrap();
-        slots
-            .filter_map(|s| {
-                if roots_tracker.alive_roots.contains(s) {
-                    Some(*s)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn is_alive_root(&self, slot: Slot) -> bool {
-        self.roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .contains(&slot)
-    }
-
-    pub fn add_root(&self, slot: Slot) {
-        self.roots_added.fetch_add(1, Ordering::Relaxed);
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        // `AccountsDb::flush_accounts_cache()` relies on roots being added in order
-        assert!(
-            slot >= w_roots_tracker.alive_roots.max_inclusive(),
-            "Roots must be added in order: {} < {}",
-            slot,
-            w_roots_tracker.alive_roots.max_inclusive()
-        );
-        // 'slot' is a root, so it is both 'root' and 'original'
-        w_roots_tracker.alive_roots.insert(slot);
-    }
-
-    pub(crate) fn clean_dead_slots<'a>(
-        &'a self,
-        dead_slots_iter: impl Iterator<Item = &'a Slot>,
-    ) -> AccountsIndexRootsStats {
-        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
-        let mut measure = Measure::start("clean_dead_slot");
-        let mut rooted_cleaned_count = 0;
-        let mut unrooted_cleaned_count = 0;
-        dead_slots_iter.for_each(|slot| {
-            if self.clean_dead_slot(*slot) {
-                rooted_cleaned_count += 1;
-            } else {
-                unrooted_cleaned_count += 1;
-            }
-        });
-        measure.stop();
-        accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
-        self.update_roots_stats(&mut accounts_index_root_stats);
-        accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
-        accounts_index_root_stats.unrooted_cleaned_count += unrooted_cleaned_count;
-
-        accounts_index_root_stats
-    }
-
-    /// Remove the slot when the storage for the slot is freed
-    /// Accounts no longer reference this slot.
-    /// return true if slot was a root
-    pub fn clean_dead_slot(&self, slot: Slot) -> bool {
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        if !w_roots_tracker.alive_roots.remove(&slot) {
-            false
-        } else {
-            drop(w_roots_tracker);
-            self.roots_removed.fetch_add(1, Ordering::Relaxed);
-            true
-        }
-    }
-
-    pub(crate) fn update_roots_stats(&self, stats: &mut AccountsIndexRootsStats) {
-        let roots_tracker = self.roots_tracker.read().unwrap();
-        stats.roots_len = Some(roots_tracker.alive_roots.len());
-        stats.roots_range = Some(roots_tracker.alive_roots.range_width());
-    }
-
-    pub fn all_alive_roots(&self) -> Vec<Slot> {
-        let tracker = self.roots_tracker.read().unwrap();
-        tracker.alive_roots.get_all()
-    }
 }
 
 /// modes the system can be in
@@ -1769,8 +1662,6 @@ mod tests {
             );
         }
 
-        index.add_root(root_slot);
-
         (index, pubkeys)
     }
 
@@ -1799,14 +1690,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_alive_root() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        assert!(!index.is_alive_root(0));
-        index.add_root(0);
-        assert!(index.is_alive_root(0));
-    }
-
-    #[test]
     fn test_insert_with_root() {
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
@@ -1814,7 +1697,6 @@ mod tests {
         index.upsert(0, 0, &key, true, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
         assert!(gc.is_empty());
 
-        index.add_root(0);
         let ancestors = Ancestors::from(vec![0]);
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
@@ -1822,27 +1704,6 @@ mod tests {
                 assert!(account_info);
             })
             .unwrap();
-    }
-
-    #[test]
-    fn test_clean_first() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        index.add_root(0);
-        index.add_root(1);
-        index.clean_dead_slot(0);
-        assert!(index.is_alive_root(1));
-        assert!(!index.is_alive_root(0));
-    }
-
-    #[test]
-    fn test_clean_last() {
-        //this behavior might be undefined, clean up should only occur on older slots
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        index.add_root(0);
-        index.add_root(1);
-        index.clean_dead_slot(1);
-        assert!(!index.is_alive_root(1));
-        assert!(index.is_alive_root(0));
     }
 
     #[test]
@@ -1908,9 +1769,6 @@ mod tests {
         index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::PopulateReclaims);
         index.upsert(2, 2, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
         index.upsert(3, 3, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.add_root(0);
-        index.add_root(1);
-        index.add_root(max_root);
         index.upsert(4, 4, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
 
         // Updating index should not purge older roots, only purges
@@ -2631,7 +2489,6 @@ mod tests {
         // If we set a root at `later_slot`, and clean, then even though the account with secondary_key1
         // was outdated by the update in the later slot, the primary account key is still alive,
         // so both secondary keys will still be kept alive.
-        index.add_root(later_slot);
         index.slot_list_mut(&account_key, |mut slot_list| {
             index.purge_older_root_entries(&mut slot_list, &mut ReclaimsSlotList::new(), None)
         });
@@ -2706,11 +2563,7 @@ mod tests {
 
             // It is invalid to reclaim older slots if the slot being upserted
             // is unrooted
-            let reclaim_method = if self.is_alive_root(slot) {
-                UPSERT_RECLAIM_TEST_DEFAULT
-            } else {
-                UpsertReclaim::IgnoreReclaims
-            };
+            let reclaim_method = UpsertReclaim::IgnoreReclaims;
 
             self.upsert(slot, slot, key, value, &mut gc, reclaim_method);
             assert!(gc.is_empty());

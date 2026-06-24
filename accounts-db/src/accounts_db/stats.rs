@@ -1,5 +1,4 @@
 use {
-    crate::{accounts_index::AccountsIndexRootsStats, append_vec::APPEND_VEC_STATS},
     solana_time_utils::AtomicInterval,
     std::{
         iter::Sum,
@@ -297,90 +296,9 @@ impl FlushStats {
 }
 
 #[derive(Debug, Default)]
-pub struct LatestAccountsIndexRootsStats {
-    pub roots_len: AtomicUsize,
-    pub roots_range: AtomicU64,
-    pub rooted_cleaned_count: AtomicUsize,
-    pub unrooted_cleaned_count: AtomicUsize,
-    pub clean_unref_from_storage_us: AtomicU64,
-    pub clean_dead_slot_us: AtomicU64,
-}
-
-impl LatestAccountsIndexRootsStats {
-    pub fn update(&self, accounts_index_roots_stats: &AccountsIndexRootsStats) {
-        if let Some(value) = accounts_index_roots_stats.roots_len {
-            self.roots_len.store(value, Ordering::Relaxed);
-        }
-        if let Some(value) = accounts_index_roots_stats.roots_range {
-            self.roots_range.store(value, Ordering::Relaxed);
-        }
-        self.rooted_cleaned_count.fetch_add(
-            accounts_index_roots_stats.rooted_cleaned_count,
-            Ordering::Relaxed,
-        );
-        self.unrooted_cleaned_count.fetch_add(
-            accounts_index_roots_stats.unrooted_cleaned_count,
-            Ordering::Relaxed,
-        );
-        self.clean_unref_from_storage_us.fetch_add(
-            accounts_index_roots_stats.clean_unref_from_storage_us,
-            Ordering::Relaxed,
-        );
-        self.clean_dead_slot_us.fetch_add(
-            accounts_index_roots_stats.clean_dead_slot_us,
-            Ordering::Relaxed,
-        );
-    }
-
-    pub fn report(&self) {
-        datapoint_info!(
-            "accounts_index_roots_len",
-            ("roots_len", self.roots_len.load(Ordering::Relaxed), i64),
-            (
-                "roots_range_width",
-                self.roots_range.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "unrooted_cleaned_count",
-                self.unrooted_cleaned_count.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "rooted_cleaned_count",
-                self.rooted_cleaned_count.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "clean_unref_from_storage_us",
-                self.clean_unref_from_storage_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "clean_dead_slot_us",
-                self.clean_dead_slot_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "append_vecs_open",
-                APPEND_VEC_STATS.files_open.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "append_vecs_dirty",
-                APPEND_VEC_STATS.files_dirty.load(Ordering::Relaxed),
-                i64
-            )
-        );
-
-        // Don't need to reset since this tracks the latest updates, not a cumulative total
-    }
-}
-
-#[derive(Debug, Default)]
 pub struct CleanAccountsStats {
     pub purge_stats: PurgeStats,
-    pub latest_accounts_index_roots_stats: LatestAccountsIndexRootsStats,
+    pub clean_unref_from_storage_us: AtomicU64,
 
     // stats held here and reported by clean_accounts
     pub clean_old_root_us: AtomicU64,
@@ -395,7 +313,6 @@ pub struct CleanAccountsStats {
 impl CleanAccountsStats {
     pub fn report(&self) {
         self.purge_stats.report("clean_purge_slots_stats", None);
-        self.latest_accounts_index_roots_stats.report();
     }
 }
 
