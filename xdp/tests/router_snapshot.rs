@@ -10,13 +10,13 @@ use {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn router_snapshot_resolves_gre_routes_from_netlink() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
 
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
-    common::add_route_to_dev(&format!("{}/32", links.right_ip), &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
-    common::add_route_to_dev_with_src("192.0.2.0/24", &gre.name, gre.overlay_ip);
+    common::add_route_to_dev_with_src("192.0.2.0/24", common::GRE_IFACE, gre.overlay_ip);
 
     let router_from_tables =
         Router::from_tables(RoutingTables::from_netlink(RouteTable::Main).expect("read tables"))

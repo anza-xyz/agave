@@ -13,10 +13,18 @@ use {
         },
     },
     bytes::Bytes,
+    nix::{
+        errno::Errno,
+        poll::{PollFd, PollFlags, PollTimeout, poll},
+        sys::socket::{
+            AddressFamily, MsgFlags, SockFlag, SockProtocol, SockType, SockaddrLike,
+            SockaddrStorage, bind, recv, socket,
+        },
+    },
     std::{
         io, mem,
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        os::fd::{AsFd, AsRawFd, OwnedFd},
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -78,17 +86,13 @@ impl Drop for TransmitterGuard {
 
 impl PacketSocket {
     fn bind(if_index: u32) -> io::Result<Self> {
-        let fd = unsafe {
-            libc::socket(
-                libc::AF_PACKET,
-                libc::SOCK_RAW | libc::SOCK_CLOEXEC,
-                (libc::ETH_P_ALL as u16).to_be() as i32,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let fd = socket(
+            AddressFamily::Packet,
+            SockType::Raw,
+            SockFlag::SOCK_CLOEXEC,
+            SockProtocol::EthAll,
+        )
+        .map_err(io::Error::from)?;
         let addr = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
             sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
@@ -98,16 +102,14 @@ impl PacketSocket {
             sll_halen: 0,
             sll_addr: [0; 8],
         };
-        let rc = unsafe {
-            libc::bind(
-                fd.as_raw_fd(),
-                &addr as *const _ as *const libc::sockaddr,
-                mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
+        let addr = unsafe {
+            SockaddrStorage::from_raw(
+                (&addr as *const libc::sockaddr_ll).cast(),
+                Some(mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t),
             )
-        };
-        if rc < 0 {
-            return Err(io::Error::last_os_error());
         }
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid packet address"))?;
+        bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
         Ok(Self { fd })
     }
 
@@ -153,45 +155,21 @@ impl PacketSocket {
                 ));
             }
             let remaining = deadline.saturating_duration_since(now);
-            let mut pfd = libc::pollfd {
-                fd: self.fd.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            let rc = unsafe {
-                libc::poll(
-                    &mut pfd,
-                    1,
-                    remaining.as_millis().min(i32::MAX as u128) as i32,
-                )
-            };
-            if rc < 0 {
-                let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(err);
-            }
-            if rc == 0 {
-                continue;
+            let mut pfd = [PollFd::new(self.fd.as_fd(), PollFlags::POLLIN)];
+            let timeout = PollTimeout::try_from(remaining).unwrap_or(PollTimeout::MAX);
+            match poll(&mut pfd, timeout) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(Errno::EINTR) => continue,
+                Err(err) => return Err(io::Error::from(err)),
             }
 
-            let len = unsafe {
-                libc::recv(
-                    self.fd.as_raw_fd(),
-                    frame.as_mut_ptr() as *mut libc::c_void,
-                    frame.len(),
-                    0,
-                )
+            let len = match recv(self.fd.as_raw_fd(), &mut frame, MsgFlags::empty()) {
+                Ok(len) => len,
+                Err(Errno::EINTR) => continue,
+                Err(err) => return Err(io::Error::from(err)),
             };
-            if len < 0 {
-                let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(err);
-            }
-            let frame = &frame[..len as usize];
+            let frame = &frame[..len];
             if let Some(payload) = matcher(frame) {
                 return Ok(payload.to_vec());
             }
@@ -347,9 +325,9 @@ fn matching_ipv4_udp_payload<'a>(
 fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
     let dst_port = 45_678;
@@ -359,7 +337,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
 
     let exit = Arc::new(AtomicBool::new(false));
     let mut config = XdpConfig::new(
-        Some(links.left_name.clone()),
+        Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
@@ -406,13 +384,15 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
 fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
-    common::add_route_to_dev(&format!("{}/32", links.right_ip), &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
-    common::add_route_to_dev_with_src("192.0.2.0/24", &gre.name, gre.overlay_ip);
+    common::add_route_to_dev_with_src("192.0.2.0/24", common::GRE_IFACE, gre.overlay_ip);
 
+    // Sending to the overlay destination exercises route lookup plus GRE encapsulation.
+    // The raw receiver observes the outer packet on the underlay veth peer.
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
     let dst_port = 45_679;
     let src_port = 12_346;
@@ -422,7 +402,7 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
 
     let exit = Arc::new(AtomicBool::new(false));
     let mut config = XdpConfig::new(
-        Some(links.left_name.clone()),
+        Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,

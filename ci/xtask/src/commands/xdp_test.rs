@@ -6,6 +6,7 @@ use {
     std::{
         collections::HashMap,
         env,
+        ffi::OsString,
         io::{self, Write},
         path::{Path, PathBuf},
         process::{Command, Stdio},
@@ -38,39 +39,36 @@ pub struct CommandArgs {
     tests: Vec<String>,
 
     #[arg(last = true)]
-    run_args: Vec<std::ffi::OsString>,
+    run_args: Vec<OsString>,
 }
 
 pub fn run(args: CommandArgs) -> Result<()> {
+    let CommandArgs {
+        release_with_debug,
+        runner,
+        tests,
+        run_args,
+    } = args;
     let repo_root = repo_root();
-    let tests = test_selection(&args.tests);
 
     info!("building local xdp tests from {}", repo_root.display());
-    let executables = build_tests(&repo_root, &tests, args.release_with_debug)?;
-
-    for (test, executable) in executables {
-        info!("running {test} from {}", executable.display());
-        let mut cmd = command_with_runner(args.runner.as_deref(), &executable)?;
-        cmd.current_dir(&repo_root)
-            .arg("--include-ignored")
-            .arg("--test-threads=1");
-        for arg in &args.run_args {
-            cmd.arg(arg);
-        }
-        let status = cmd
-            .status()
-            .with_context(|| format!("failed to run {test}"))?;
-        ensure!(status.success(), "{test} failed with {status}");
+    if tests.is_empty() {
+        let executables = build_tests(&repo_root, DEFAULT_TESTS, release_with_debug)?;
+        test_executables(&repo_root, executables, runner, run_args)
+    } else {
+        let executables = build_tests(&repo_root, &tests, release_with_debug)?;
+        test_executables(&repo_root, executables, runner, run_args)
     }
-
-    Ok(())
 }
 
-fn build_tests(
+fn build_tests<'a, S>(
     repo_root: &Path,
-    tests: &[String],
+    tests: &'a [S],
     release_with_debug: bool,
-) -> Result<Vec<(String, PathBuf)>> {
+) -> Result<Vec<(&'a S, PathBuf)>>
+where
+    S: AsRef<str>,
+{
     let mut cmd = Command::new(cargo_bin());
     cmd.current_dir(repo_root)
         .arg("test")
@@ -86,7 +84,7 @@ fn build_tests(
         cmd.arg("--profile").arg("release-with-debug");
     }
     for test in tests {
-        cmd.arg("--test").arg(test);
+        cmd.arg("--test").arg(test.as_ref());
     }
 
     let output = cmd.output().context("failed to build xdp tests")?;
@@ -114,12 +112,16 @@ struct CargoTarget {
     test: bool,
 }
 
-fn test_executables_from_cargo_stdout(
+fn test_executables_from_cargo_stdout<'a, S>(
     stdout: &[u8],
-    tests: &[String],
-) -> Result<Vec<(String, PathBuf)>> {
+    tests: &'a [S],
+) -> Result<Vec<(&'a S, PathBuf)>>
+where
+    S: AsRef<str>,
+{
     let mut executables = HashMap::new();
-    for line in String::from_utf8_lossy(stdout).lines() {
+    let stdout = std::str::from_utf8(stdout).context("cargo output is not valid UTF-8")?;
+    for line in stdout.lines() {
         let Ok(message) = serde_json::from_str::<CargoMessage>(line) else {
             continue;
         };
@@ -141,22 +143,40 @@ fn test_executables_from_cargo_stdout(
     tests
         .iter()
         .map(|test| {
-            let executable = executables
-                .remove(test)
-                .with_context(|| format!("cargo did not report executable for {test}"))?;
-            Ok((test.clone(), executable))
+            let executable = executables.remove(test.as_ref()).with_context(|| {
+                format!("cargo did not report executable for {}", test.as_ref())
+            })?;
+            Ok((test, executable))
         })
         .collect()
 }
 
-fn test_selection(selected: &[String]) -> Vec<String> {
-    if selected.is_empty() {
-        return DEFAULT_TESTS
-            .iter()
-            .map(|test| (*test).to_string())
-            .collect();
+fn test_executables<I, S>(
+    repo_root: &Path,
+    executables: I,
+    runner: Option<String>,
+    run_args: Vec<OsString>,
+) -> Result<()>
+where
+    I: IntoIterator<Item = (S, PathBuf)>,
+    S: AsRef<str>,
+{
+    for (test, executable) in executables {
+        info!("running {} from {}", test.as_ref(), executable.display());
+        let mut cmd = command_with_runner(runner.as_deref(), &executable)?;
+        cmd.current_dir(repo_root)
+            .arg("--include-ignored")
+            .arg("--test-threads=1");
+        for arg in &run_args {
+            cmd.arg(arg);
+        }
+        let status = cmd
+            .status()
+            .with_context(|| format!("failed to run {}", test.as_ref()))?;
+        ensure!(status.success(), "{} failed with {status}", test.as_ref());
     }
-    selected.to_vec()
+
+    Ok(())
 }
 
 fn repo_root() -> PathBuf {

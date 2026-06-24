@@ -1,29 +1,27 @@
 #![cfg(target_os = "linux")]
 #![allow(dead_code)]
 
+pub use aya::test_helpers::NetNsGuard;
 use {
     agave_xdp::netlink::MacAddress,
     std::{
-        ffi::CString,
-        fs::File,
-        os::fd::AsRawFd,
+        ffi::{CString, OsString},
+        os::unix::ffi::OsStringExt,
         path::{Path, PathBuf},
-        process::Command,
+        process::{Command, Output},
         sync::OnceLock,
         thread,
         time::{Duration, Instant},
     },
 };
 
-const LEFT_IFACE: &str = "axdp0";
-const RIGHT_IFACE: &str = "axdp1";
-const GRE_IFACE: &str = "gxdp0";
+pub const LEFT_IFACE: &str = "axdp0";
+pub const RIGHT_IFACE: &str = "axdp1";
+pub const GRE_IFACE: &str = "gxdp0";
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TestLinks {
-    pub left_name: String,
-    pub right_name: String,
     pub left_if_index: u32,
     pub right_if_index: u32,
     pub left_ip: std::net::Ipv4Addr,
@@ -35,126 +33,61 @@ pub struct TestLinks {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TestGreTunnel {
-    pub name: String,
     pub if_index: u32,
     pub local_ip: std::net::Ipv4Addr,
     pub remote_ip: std::net::Ipv4Addr,
     pub overlay_ip: std::net::Ipv4Addr,
 }
 
-pub struct NetNsGuard {
-    old_ns: File,
-}
-
-impl NetNsGuard {
-    pub fn new() -> Self {
-        require_root();
-
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) };
-        let old_ns_path = format!("/proc/self/task/{tid}/ns/net");
-        let old_ns = File::open(&old_ns_path)
-            .unwrap_or_else(|err| panic!("failed to open {old_ns_path}: {err}"));
-
-        if unsafe { libc::unshare(libc::CLONE_NEWNET) } != 0 {
-            let err = std::io::Error::last_os_error();
-            panic!("failed to unshare network namespace: {err}");
-        }
-
-        let netns = Self { old_ns };
-        netns.ip(&["link", "set", "lo", "up"]);
-        netns
-    }
-
-    pub fn ip(&self, args: &[&str]) {
-        run_command(ip_command(), args);
-    }
-}
-
-impl Drop for NetNsGuard {
-    fn drop(&mut self) {
-        if unsafe { libc::setns(self.old_ns.as_raw_fd(), libc::CLONE_NEWNET) } == 0 {
-            return;
-        }
-
-        let err = std::io::Error::last_os_error();
-        if std::thread::panicking() {
-            eprintln!("failed to restore original network namespace: {err}");
-        } else {
-            panic!("failed to restore original network namespace: {err}");
-        }
-    }
-}
-
 pub fn setup_veth_pair() -> TestLinks {
-    setup_veth_pair_named(
+    let left_ip = std::net::Ipv4Addr::new(10, 0, 0, 1);
+    let right_ip = std::net::Ipv4Addr::new(10, 0, 0, 2);
+    let left_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+    let right_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]);
+
+    run_ip(&[
+        "link",
+        "add",
         LEFT_IFACE,
+        "type",
+        "veth",
+        "peer",
+        "name",
         RIGHT_IFACE,
-        std::net::Ipv4Addr::new(10, 0, 0, 1),
-        std::net::Ipv4Addr::new(10, 0, 0, 2),
-        MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]),
-        MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]),
-    )
-}
-
-pub fn setup_gre_tunnel(underlay: &TestLinks) -> TestGreTunnel {
-    setup_gre_tunnel_named(
-        GRE_IFACE,
-        underlay.left_ip,
-        underlay.right_ip,
-        std::net::Ipv4Addr::new(192, 0, 2, 1),
-    )
-}
-
-pub fn setup_gre_tunnel_named(
-    name: &str,
-    local_ip: std::net::Ipv4Addr,
-    remote_ip: std::net::Ipv4Addr,
-    overlay_ip: std::net::Ipv4Addr,
-) -> TestGreTunnel {
-    let local = local_ip.to_string();
-    let remote = remote_ip.to_string();
-    run_ip(&[
-        "tunnel", "add", name, "mode", "gre", "local", &local, "remote", &remote, "ttl", "64",
     ]);
-    add_ipv4_addr(&format!("{overlay_ip}/32"), name);
-    set_link_up(name);
-
-    TestGreTunnel {
-        name: name.to_string(),
-        if_index: if_index(name),
-        local_ip,
-        remote_ip,
-        overlay_ip,
-    }
-}
-
-pub fn setup_veth_pair_named(
-    left_name: &str,
-    right_name: &str,
-    left_ip: std::net::Ipv4Addr,
-    right_ip: std::net::Ipv4Addr,
-    left_mac: MacAddress,
-    right_mac: MacAddress,
-) -> TestLinks {
-    run_ip(&[
-        "link", "add", left_name, "type", "veth", "peer", "name", right_name,
-    ]);
-    set_link_mac(left_name, &left_mac.to_string());
-    set_link_mac(right_name, &right_mac.to_string());
-    add_ipv4_addr(&format!("{left_ip}/24"), left_name);
-    add_ipv4_addr(&format!("{right_ip}/24"), right_name);
-    set_link_up(left_name);
-    set_link_up(right_name);
+    set_link_mac(LEFT_IFACE, &left_mac.to_string());
+    set_link_mac(RIGHT_IFACE, &right_mac.to_string());
+    add_ipv4_addr(&format!("{left_ip}/24"), LEFT_IFACE);
+    add_ipv4_addr(&format!("{right_ip}/24"), RIGHT_IFACE);
+    set_link_up(LEFT_IFACE);
+    set_link_up(RIGHT_IFACE);
 
     TestLinks {
-        left_name: left_name.to_string(),
-        right_name: right_name.to_string(),
-        left_if_index: if_index(left_name),
-        right_if_index: if_index(right_name),
+        left_if_index: if_index(LEFT_IFACE),
+        right_if_index: if_index(RIGHT_IFACE),
         left_ip,
         right_ip,
         left_mac,
         right_mac,
+    }
+}
+
+pub fn setup_gre_tunnel(underlay: &TestLinks) -> TestGreTunnel {
+    let local = underlay.left_ip.to_string();
+    let remote = underlay.right_ip.to_string();
+    let overlay_ip = std::net::Ipv4Addr::new(192, 0, 2, 1);
+
+    run_ip(&[
+        "tunnel", "add", GRE_IFACE, "mode", "gre", "local", &local, "remote", &remote, "ttl", "64",
+    ]);
+    add_ipv4_addr(&format!("{overlay_ip}/32"), GRE_IFACE);
+    set_link_up(GRE_IFACE);
+
+    TestGreTunnel {
+        if_index: if_index(GRE_IFACE),
+        local_ip: underlay.left_ip,
+        remote_ip: underlay.right_ip,
+        overlay_ip,
     }
 }
 
@@ -170,6 +103,10 @@ pub fn add_route_to_dev(destination: &str, dev: &str) {
 pub fn add_route_to_dev_with_src(destination: &str, dev: &str, src: std::net::Ipv4Addr) {
     let src = src.to_string();
     run_ip(&["route", "replace", destination, "dev", dev, "src", &src]);
+}
+
+pub fn delete_link(dev: &str) {
+    run_ip(&["link", "del", dev]);
 }
 
 #[allow(dead_code)]
@@ -217,14 +154,6 @@ where
     }
 }
 
-fn require_root() {
-    assert_eq!(
-        unsafe { libc::geteuid() },
-        0,
-        "XDP integration tests require root. Use `cargo xtask xdp-test --runner \"sudo -n -E\"`.",
-    );
-}
-
 fn set_link_mac(dev: &str, mac: &str) {
     run_ip(&["link", "set", "dev", dev, "address", mac]);
 }
@@ -249,23 +178,27 @@ fn run_ip(args: &[&str]) {
 }
 
 fn run_command(program: &Path, args: &[&str]) {
-    let output = Command::new(program)
+    let Output {
+        status,
+        stdout,
+        stderr,
+    } = Command::new(program)
         .args(args)
         .output()
         .unwrap_or_else(|err| panic!("failed to run {program:?} {args:?}: {err}"));
-    if output.status.success() {
+    if status.success() {
         return;
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     panic!(
         "{program:?} {args:?} failed: {}
 stdout:
 {}
 stderr:
 {}",
-        output.status, stdout, stderr
+        status,
+        OsString::from_vec(stdout).display(),
+        OsString::from_vec(stderr).display(),
     );
 }
 

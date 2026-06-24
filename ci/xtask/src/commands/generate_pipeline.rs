@@ -191,7 +191,6 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_sanity_step());
     pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_checks_step());
-    pipeline.add_step(default_xdp_test_step());
     Ok(pipeline)
 }
 
@@ -236,6 +235,7 @@ struct PullRequestPipelineFlags {
     stable_sbf: bool,
     shuttle: bool,
     coverage: bool,
+    xdp_tests: bool,
 }
 
 impl PullRequestPipelineFlags {
@@ -342,6 +342,11 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/test-coverage.sh")
                         || file.starts_with("ci/coverage/")
                 }),
+            xdp_tests: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.starts_with("xdp/") || file.ends_with("ci/test-xdp.sh")),
         }
     }
 }
@@ -390,9 +395,9 @@ async fn generate_pull_request_pipeline(
     if flags.localnet {
         pipeline.add_step(default_localnet_step());
     }
-    // Run XDP tests on every PR so CI continuously verifies the privileged
-    // network-namespace test environment, not only XDP source changes.
-    pipeline.add_step(default_xdp_test_step());
+    if flags.xdp_tests {
+        pipeline.add_step(default_xdp_test_step());
+    }
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -905,6 +910,7 @@ mod tests {
         assert!(!f.stable_sbf);
         assert!(!f.shuttle);
         assert!(!f.coverage);
+        assert!(!f.xdp_tests);
     }
 
     #[test]
@@ -921,6 +927,7 @@ mod tests {
         assert!(f.stable_sbf);
         assert!(f.shuttle);
         assert!(f.coverage);
+        assert!(f.xdp_tests);
     }
 
     #[test]
@@ -937,6 +944,20 @@ mod tests {
         assert!(f.stable_sbf);
         assert!(f.shuttle);
         assert!(f.coverage);
+        assert!(f.xdp_tests);
+    }
+
+    #[test]
+    fn test_xdp_change_triggers_xdp_tests() {
+        let f = flags(&["xdp/tests/README.md"]);
+        assert!(f.xdp_tests);
+    }
+
+    #[test]
+    fn test_test_xdp_sh_triggers_xdp_tests_and_shellcheck() {
+        let f = flags(&["ci/test-xdp.sh"]);
+        assert!(f.shellcheck);
+        assert!(f.xdp_tests);
     }
 
     #[test]
@@ -954,6 +975,7 @@ mod tests {
         assert!(!f.stable_sbf);
         assert!(!f.shuttle);
         assert!(!f.coverage);
+        assert!(!f.xdp_tests);
     }
 
     #[test]
@@ -971,5 +993,6 @@ mod tests {
         assert!(!f.stable_sbf);
         assert!(!f.shuttle);
         assert!(!f.coverage);
+        assert!(!f.xdp_tests);
     }
 }

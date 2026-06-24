@@ -14,12 +14,12 @@ use {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn netlink_snapshot_reads_the_prepared_namespace() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
 
     let routed_prefix = "203.0.113.0/24";
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
-    common::add_route(routed_prefix, links.right_ip, &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::add_route(routed_prefix, links.right_ip, common::LEFT_IFACE);
 
     let interfaces = netlink_get_interfaces(AF_INET as u8).expect("read interfaces from netlink");
     assert!(
@@ -55,7 +55,7 @@ fn netlink_snapshot_reads_the_prepared_namespace() {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn netlink_snapshot_reads_gre_tunnel_metadata() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
     let gre = common::setup_gre_tunnel(&links);
 

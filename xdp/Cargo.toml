@@ -31,6 +31,10 @@ arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+aya = { workspace = true, features = ["test-helpers"] }
+nix = { workspace = true, features = ["net", "poll", "socket"] }
+
 [[test]]
 name = "netlink_snapshot"
 path = "tests/netlink_snapshot.rs"

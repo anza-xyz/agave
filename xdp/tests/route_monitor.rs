@@ -63,7 +63,7 @@ fn start_route_monitor() -> RouteMonitorGuard {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_live_route_updates() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
 
     let monitor = start_route_monitor();
@@ -74,8 +74,8 @@ fn route_monitor_publishes_live_route_updates() {
         Err(RouteError::NoRouteFound(_))
     ));
 
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
-    common::add_route("203.0.113.0/24", links.right_ip, &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
 
     common::wait_until(
         "the route monitor to publish a newly added route",
@@ -112,15 +112,15 @@ fn route_monitor_publishes_live_route_updates() {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_live_neighbor_updates() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
 
     let monitor = start_route_monitor();
     let routed_destination = Ipv4Addr::new(203, 0, 113, 7);
 
-    common::add_route("203.0.113.0/24", links.right_ip, &links.left_name);
+    common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
     let initial_mac = links.right_mac;
-    common::replace_neighbor(links.right_ip, initial_mac, &links.left_name);
+    common::replace_neighbor(links.right_ip, initial_mac, common::LEFT_IFACE);
 
     common::wait_until(
         "the route monitor to publish the initial neighbor",
@@ -141,7 +141,7 @@ fn route_monitor_publishes_live_neighbor_updates() {
     );
 
     let updated_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x44]);
-    common::replace_neighbor(links.right_ip, updated_mac, &links.left_name);
+    common::replace_neighbor(links.right_ip, updated_mac, common::LEFT_IFACE);
 
     common::wait_until(
         "the route monitor to publish a replaced neighbor",
@@ -155,7 +155,7 @@ fn route_monitor_publishes_live_neighbor_updates() {
         },
     );
 
-    common::delete_neighbor(links.right_ip, &links.left_name);
+    common::delete_neighbor(links.right_ip, common::LEFT_IFACE);
     common::wait_until(
         "the route monitor to publish a removed neighbor",
         Duration::from_secs(2),
@@ -178,11 +178,11 @@ fn route_monitor_publishes_live_neighbor_updates() {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_link_removals() {
-    let netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
 
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
-    common::add_route("203.0.113.0/24", links.right_ip, &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
 
     let monitor = start_route_monitor();
     let routed_destination = Ipv4Addr::new(203, 0, 113, 7);
@@ -203,7 +203,7 @@ fn route_monitor_publishes_link_removals() {
         },
     );
 
-    netns.ip(&["link", "del", &links.left_name]);
+    common::delete_link(common::LEFT_IFACE);
     common::wait_until(
         "the route monitor to publish a removed link",
         Duration::from_secs(2),
@@ -220,7 +220,7 @@ fn route_monitor_publishes_link_removals() {
 #[test]
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_live_gre_route_updates() {
-    let netns = common::NetNsGuard::new();
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair();
 
     let monitor = start_route_monitor();
@@ -230,10 +230,10 @@ fn route_monitor_publishes_live_gre_route_updates() {
         Err(RouteError::NoRouteFound(_))
     ));
 
-    common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
-    common::add_route_to_dev(&format!("{}/32", links.right_ip), &links.left_name);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
-    common::add_route_to_dev_with_src("192.0.2.0/24", &gre.name, gre.overlay_ip);
+    common::add_route_to_dev_with_src("192.0.2.0/24", common::GRE_IFACE, gre.overlay_ip);
 
     common::wait_until(
         "the route monitor to publish a GRE overlay route",
@@ -260,7 +260,7 @@ fn route_monitor_publishes_live_gre_route_updates() {
         },
     );
 
-    netns.ip(&["link", "del", &gre.name]);
+    common::delete_link(common::GRE_IFACE);
     common::wait_until(
         "the route monitor to publish a removed GRE link",
         Duration::from_secs(2),

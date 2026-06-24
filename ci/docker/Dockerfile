@@ -38,6 +38,7 @@ RUN \
   git \
   vim \
   jq \
+  iproute2 \
   ca-certificates \
   curl \
   gnupg \
