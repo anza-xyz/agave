@@ -357,14 +357,14 @@ impl TransactionViewReceiveAndBuffer {
                         .expect("transaction must exist")
                         .priority();
 
-                    let tx = container
+                    let transaction = container
                         .get_transaction(transaction_id)
                         .expect("transaction must exist");
 
                     // Pre-check this is a potentially valid transaction
                     match working_bank
                         .precheck_transaction_age(
-                            tx,
+                            transaction,
                             working_bank.max_processing_age(),
                             true,
                             &mut error_counters,
@@ -374,8 +374,25 @@ impl TransactionViewReceiveAndBuffer {
                         // Valid nonce transaction. Add to priority queue immediately.
                         // It is fine to skip StatusCache because "invalid nonce transactions"
                         // is a superset of "recently executed transactions".
-                        Ok(Some(nonce_address)) => {
-                            todo!()
+                        Ok(Some(_nonce_address)) => {
+                            match Consumer::check_fee_payer_unlocked(
+                                working_bank,
+                                transaction,
+                                &mut error_counters,
+                            ) {
+                                Ok(_) => {
+                                    // HANA perhaps a new stat for nonce-immediate? perhaps buffered *and* a new stat?
+                                    receiving_stats.num_buffered += 1;
+                                    receiving_stats.num_dropped_on_capacity += container
+                                        .push_ids_into_queue(std::iter::once(
+                                            TransactionPriorityId::new(priority, transaction_id),
+                                        ));
+                                }
+                                Err(_) => {
+                                    receiving_stats.num_dropped_on_fee_payer += 1;
+                                    container.remove_by_id(transaction_id);
+                                }
+                            }
                         }
 
                         // Potentially valid blockhash transaction. Put in our local batch.
