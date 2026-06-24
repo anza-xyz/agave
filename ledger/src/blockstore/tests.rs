@@ -3010,6 +3010,7 @@ fn test_get_complete_block_with_block_markers() {
         .cloned()
         .collect();
     blockstore.insert_shreds(shreds, true).unwrap();
+    blockstore.set_roots([parent_slot, slot].iter()).unwrap();
 
     let (slot_entries, num_shreds, is_full) = blockstore
         .get_slot_entries_with_shred_info(slot, 0, false)
@@ -3048,6 +3049,36 @@ fn test_get_complete_block_with_block_markers() {
         entries.last().unwrap().hash.to_string()
     );
     assert!(complete_block.transactions.is_empty());
+
+    let VersionedConfirmedBlockWithComponents { block, components } = blockstore
+        .get_rooted_block_with_components(slot, true)
+        .unwrap();
+    assert_eq!(block, complete_block);
+    let [
+        ConfirmedBlockComponent::BlockMarker(header),
+        ConfirmedBlockComponent::EntryBatch(entry_summaries),
+        ConfirmedBlockComponent::BlockMarker(footer),
+    ] = components.as_slice()
+    else {
+        panic!("unexpected confirmed block components");
+    };
+    let VersionedBlockMarker::V1(header) = header;
+    assert!(header.as_block_header().is_some());
+    assert_eq!(entry_summaries.len(), entries.len());
+    for (summary, entry) in entry_summaries.iter().zip(&entries) {
+        assert_eq!(summary.num_hashes, entry.num_hashes);
+        assert_eq!(summary.hash, entry.hash);
+        assert_eq!(summary.num_transactions, 0);
+        assert_eq!(summary.starting_transaction_index, 0);
+    }
+    let VersionedBlockMarker::V1(footer) = footer;
+    assert!(footer.as_block_footer().is_some());
+
+    *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
+    assert!(matches!(
+        blockstore.get_rooted_block_with_components(slot, true),
+        Err(BlockstoreError::SlotCleanedUp)
+    ));
 }
 
 #[test]

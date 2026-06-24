@@ -98,6 +98,10 @@ fn slot_to_entries_key(slot: Slot) -> String {
     slot_to_key(slot)
 }
 
+fn slot_to_block_markers_key(slot: Slot) -> String {
+    slot_to_key(slot)
+}
+
 fn slot_to_tx_by_addr_key(slot: Slot) -> String {
     slot_to_key(!slot)
 }
@@ -438,6 +442,7 @@ pub const DEFAULT_APP_PROFILE_ID: &str = "default";
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
 
 const BLOCKS_TABLE_NAME: &str = "blocks";
+const BLOCK_MARKERS_TABLE_NAME: &str = "block-markers";
 const ENTRIES_TABLE_NAME: &str = "entries";
 const TX_TABLE_NAME: &str = "tx";
 const TX_BY_ADDR_TABLE_NAME: &str = "tx-by-addr";
@@ -476,6 +481,7 @@ const METRICS_REPORT_INTERVAL_MS: u64 = 10_000;
 #[derive(Default)]
 struct LedgerStorageStats {
     num_blocks_table_reads: AtomicI64,
+    num_block_markers_table_reads: AtomicI64,
     num_entries_table_reads: AtomicI64,
     num_tx_table_reads: AtomicI64,
     num_tx_by_addr_table_reads: AtomicI64,
@@ -485,6 +491,12 @@ struct LedgerStorageStats {
 impl LedgerStorageStats {
     fn increment_num_blocks_table_reads(&self) {
         self.num_blocks_table_reads.fetch_add(1, Ordering::Relaxed);
+        self.maybe_report();
+    }
+
+    fn increment_num_block_markers_table_reads(&self) {
+        self.num_block_markers_table_reads
+            .fetch_add(1, Ordering::Relaxed);
         self.maybe_report();
     }
 
@@ -511,6 +523,12 @@ impl LedgerStorageStats {
                 (
                     "num_blocks_table_reads",
                     self.num_blocks_table_reads.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_block_markers_table_reads",
+                    self.num_block_markers_table_reads
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -721,6 +739,22 @@ impl LedgerStorage {
             })?;
         let entries = entry_cell_data.entries.into_iter().map(Into::into);
         Ok(entries)
+    }
+
+    pub async fn get_block_markers(&self, slot: Slot) -> Result<Vec<Vec<u8>>> {
+        trace!("LedgerStorage::get_block_markers request received: {slot:?}");
+        self.stats.increment_num_block_markers_table_reads();
+        let mut bigtable = self.connection.client();
+        bigtable
+            .get_bincode_cell::<Vec<Vec<u8>>>(
+                BLOCK_MARKERS_TABLE_NAME,
+                slot_to_block_markers_key(slot),
+            )
+            .await
+            .map_err(|err| match err {
+                bigtable::Error::RowNotFound => Error::BlockNotFound(slot),
+                _ => err.into(),
+            })
     }
 
     pub async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
@@ -1014,6 +1048,16 @@ impl LedgerStorage {
         slot: Slot,
         confirmed_block: VersionedConfirmedBlockWithEntries,
     ) -> Result<()> {
+        self.upload_confirmed_block_with_entries_and_markers(slot, confirmed_block, Vec::new())
+            .await
+    }
+
+    pub async fn upload_confirmed_block_with_entries_and_markers(
+        &self,
+        slot: Slot,
+        confirmed_block: VersionedConfirmedBlockWithEntries,
+        block_markers: Vec<Vec<u8>>,
+    ) -> Result<()> {
         trace!("LedgerStorage::upload_confirmed_block_with_entries request received: {slot:?}");
 
         let mut by_addr: HashMap<&Pubkey, Vec<TransactionByAddrInfo>> = HashMap::new();
@@ -1083,6 +1127,8 @@ impl LedgerStorage {
                 entries: entries.into_iter().enumerate().map(Into::into).collect(),
             },
         );
+        let num_block_markers = block_markers.len();
+        let block_markers_cell = (slot_to_block_markers_key(slot), block_markers);
 
         let mut tasks = vec![];
 
@@ -1116,6 +1162,17 @@ impl LedgerStorage {
                         &[entry_cell],
                     )
                     .await
+            }));
+        }
+
+        if num_block_markers > 0 {
+            let conn = self.connection.clone();
+            tasks.push(tokio::spawn(async move {
+                conn.put_bincode_cells_with_retry::<Vec<Vec<u8>>>(
+                    BLOCK_MARKERS_TABLE_NAME,
+                    &[block_markers_cell],
+                )
+                .await
             }));
         }
 
@@ -1163,6 +1220,7 @@ impl LedgerStorage {
             ("slot", slot, i64),
             ("transactions", num_transactions, i64),
             ("entries", num_entries, i64),
+            ("block_markers", num_block_markers, i64),
             ("bytes", bytes_written, i64),
         );
         Ok(())
@@ -1268,6 +1326,12 @@ impl LedgerStorage {
             .row_key_exists(ENTRIES_TABLE_NAME, slot_to_entries_key(slot))
             .await
             .is_ok_and(|x| x);
+        let block_markers_exist = self
+            .connection
+            .client()
+            .row_key_exists(BLOCK_MARKERS_TABLE_NAME, slot_to_block_markers_key(slot))
+            .await
+            .is_ok_and(|x| x);
 
         if !dry_run {
             if !address_slot_rows.is_empty() {
@@ -1288,6 +1352,15 @@ impl LedgerStorage {
                     .await?;
             }
 
+            if block_markers_exist {
+                self.connection
+                    .delete_rows_with_retry(
+                        BLOCK_MARKERS_TABLE_NAME,
+                        &[slot_to_block_markers_key(slot)],
+                    )
+                    .await?;
+            }
+
             self.connection
                 .delete_rows_with_retry(BLOCKS_TABLE_NAME, &[slot_to_blocks_key(slot)])
                 .await?;
@@ -1295,12 +1368,17 @@ impl LedgerStorage {
 
         info!(
             "{}deleted ledger data for slot {}: {} transaction rows, {} address slot rows, {} \
-             entry row",
+             entry row, {} block marker row",
             if dry_run { "[dry run] " } else { "" },
             slot,
             tx_deletion_rows.len(),
             address_slot_rows.len(),
-            if entries_exist { "with" } else { "WITHOUT" }
+            if entries_exist { "with" } else { "WITHOUT" },
+            if block_markers_exist {
+                "with"
+            } else {
+                "WITHOUT"
+            }
         );
 
         Ok(())
