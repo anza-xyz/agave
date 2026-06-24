@@ -1504,7 +1504,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &bank,
                         &ctx.validators,
@@ -1534,7 +1534,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &bank,
                         &ctx.validators,
@@ -1576,7 +1576,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &bank,
                         &ctx.validators,
@@ -1612,7 +1612,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &bank,
                         &ctx.validators,
@@ -1672,7 +1672,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &bank,
                         &ctx.validators,
@@ -1696,7 +1696,7 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                Pubkey::new_unique(),
+                ctx.validators[0].vote_keypair.pubkey(),
                 dummy_vote_message(
                     &bank,
                     &ctx.validators,
@@ -1742,7 +1742,7 @@ mod tests {
         let vote_2 = create_new_vote(vote_type_2, slot);
         pool.add_batch(
             bank,
-            Pubkey::new_unique(),
+            validators[0].vote_keypair.pubkey(),
             dummy_vote_message(
                 bank,
                 validators,
@@ -1755,7 +1755,7 @@ mod tests {
         .unwrap();
         pool.add_batch(
             bank,
-            Pubkey::new_unique(),
+            validators[0].vote_keypair.pubkey(),
             dummy_vote_message(
                 bank,
                 validators,
@@ -1808,7 +1808,7 @@ mod tests {
         ctx.pool
             .add_batch(
                 &root_bank,
-                Pubkey::new_unique(),
+                ctx.validators[0].vote_keypair.pubkey(),
                 SigVerifiedBatch::Certificates(vec![cert_1]),
                 &mut vec![],
             )
@@ -1824,7 +1824,7 @@ mod tests {
         ctx.pool
             .add_batch(
                 &root_bank,
-                Pubkey::new_unique(),
+                ctx.validators[0].vote_keypair.pubkey(),
                 SigVerifiedBatch::Certificates(vec![cert_2]),
                 &mut vec![],
             )
@@ -1848,7 +1848,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &new_bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     dummy_vote_message(
                         &new_bank,
                         &ctx.validators,
@@ -1871,11 +1871,14 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         }]);
-        assert!(
-            ctx.pool
-                .add_batch(&new_bank, Pubkey::new_unique(), cert, &mut vec![])
-                .is_err()
-        );
+        ctx.pool
+            .add_batch(
+                &new_bank,
+                ctx.validators[0].vote_keypair.pubkey(),
+                cert,
+                &mut vec![],
+            )
+            .unwrap_err();
     }
 
     #[test]
@@ -2041,7 +2044,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     SigVerifiedBatch::Certificates(vec![cert]),
                     &mut events,
                 )
@@ -2072,7 +2075,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    Pubkey::new_unique(),
+                    ctx.validators[0].vote_keypair.pubkey(),
                     SigVerifiedBatch::Certificates(vec![cert]),
                     &mut events,
                 )
@@ -2113,7 +2116,7 @@ mod tests {
         ctx.pool
             .add_batch(
                 &bank,
-                Pubkey::new_unique(),
+                ctx.validators[0].vote_keypair.pubkey(),
                 SigVerifiedBatch::Certificates(vec![cert]),
                 &mut events,
             )
