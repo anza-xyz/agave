@@ -52,19 +52,18 @@ pub struct Block {
 }
 
 /// A consensus vote.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
     /// The signature.
-    #[wincode(with = "PodBLSSignature")]
     pub signature: BLSSignature,
     /// The rank of the validator.
     pub rank: u16,
 }
 
 /// A consensus message sent between validators.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
     /// A vote from a single party.

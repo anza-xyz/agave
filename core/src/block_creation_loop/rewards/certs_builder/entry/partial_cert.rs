@@ -107,14 +107,16 @@ mod tests {
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
             get_rank_map_keypairs, new_bank_for_tests, new_vote, validate_bitmap,
         },
-        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        agave_votor_messages::{
+            consensus_message::VoteMessage, vote::Vote, wire::get_vote_payload_to_sign,
+        },
         rand::Rng,
         solana_bls_signatures::Keypair as BlsKeypair,
         solana_runtime::bank::Bank,
     };
 
     fn new_invalid_vote(bank: &Bank, vote: Vote, rank: usize) -> SigVerifiedVoteBatch {
-        let serialized = wincode::serialize(&vote).unwrap();
+        let serialized = get_vote_payload_to_sign(vote, 0);
         let keypair = BlsKeypair::new();
         let signature = keypair.sign(&serialized).into();
         let msg = VoteMessage {

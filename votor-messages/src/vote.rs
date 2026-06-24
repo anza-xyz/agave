@@ -1,22 +1,9 @@
 //! Vote data types for use by clients
-use {
-    crate::consensus_message::Block,
-    serde::{Deserialize, Serialize},
-    solana_clock::Slot,
-    solana_hash::Hash,
-    wincode::{SchemaRead, SchemaWrite},
-};
+use {crate::consensus_message::Block, solana_clock::Slot, solana_hash::Hash};
 
 /// Enum that clients can use to parse and create the vote
 /// structures expected by the program
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "Fd13KXQMkc1mCJEoHwyXWkcewqBCdRcAiMhS7Aqe4sm1")
-)]
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Vote {
     /// A notarization vote
     Notarize(NotarizationVote),
@@ -182,48 +169,14 @@ impl From<GenesisVote> for Vote {
 }
 
 /// A notarization vote
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "F9veHPmSwMyrYNSVuBLcvLGYSLgc7voTD3kUhxUHUTRU")
-)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct NotarizationVote {
     /// The block this vote is cast for
     pub block: Block,
 }
 
 /// A finalization vote
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2")
-)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct FinalizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -232,96 +185,28 @@ pub struct FinalizationVote {
 /// A skip vote
 /// Represents a range of slots to skip
 /// inclusive on both ends
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN")
-)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct SkipVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
 /// A notarization fallback vote
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "6UW4zutbRvyri4z8WAyKx8aUZkJrZX4XoiqC4XMUnUZk")
-)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct NotarizationFallbackVote {
     /// The block this vote is cast for
     pub block: Block,
 }
 
 /// A skip fallback vote
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF")
-)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
 /// A genesis vote. Only used during the migration from TowerBFT
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "8ty2gETfpyVGPNMYrEFS1YXeDRprfZaisSAmJwoAYusb")
-)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct GenesisVote {
     /// The block this vote is cast for
     pub block: Block,

@@ -10,7 +10,7 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_db::{
             AccountFromStorage, AccountsDb, AliveAccounts, GetUniqueAccountsResult, ShrinkCollect,
-            ShrinkCollectAliveSeparatedByRefs, UpdateIndexThreadSelection,
+            ShrinkCollectAliveSeparatedByRefs,
             stats::{ShrinkAncientStats, ShrinkStatsSub},
         },
         active_stats::ActiveStatItem,
@@ -563,12 +563,9 @@ impl AccountsDb {
             .expect("ancient shrink target slot must already have a storage");
         let (shrink_in_progress, create_and_insert_store_elapsed_us) =
             measure_us!(self.get_store_for_shrink(target_slot, old_store, bytes));
-        let (store_accounts_timing, rewrite_elapsed_us) =
-            measure_us!(self.store_accounts_for_shrink(
-                accounts_to_write,
-                shrink_in_progress.new_storage(),
-                UpdateIndexThreadSelection::PoolWithThreshold
-            ));
+        let (store_accounts_timing, rewrite_elapsed_us) = measure_us!(
+            self.store_accounts_for_squash(accounts_to_write, shrink_in_progress.new_storage())
+        );
 
         write_ancient_accounts.metrics.accumulate(&ShrinkStatsSub {
             store_accounts_timing,

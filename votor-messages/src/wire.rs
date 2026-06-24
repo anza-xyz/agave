@@ -442,16 +442,17 @@ impl VotePayloadToSign {
 }
 
 impl From<VotePayloadToSign> for Vote {
-    fn from(vote: VotePayloadToSign) -> Self {
-        match vote {
+    /// Converts a `VotePayloadToSign` back into a `Vote`, dropping the shred version.
+    fn from(vote_payload: VotePayloadToSign) -> Self {
+        match vote_payload {
             VotePayloadToSign::Notar { block, .. } => Self::new_notarization_vote(block),
+            VotePayloadToSign::Finalize { slot, .. } => Self::new_finalization_vote(slot),
+            VotePayloadToSign::Skip { slot, .. } => Self::new_skip_vote(slot),
             VotePayloadToSign::NotarFallback { block, .. } => {
                 Self::new_notarization_fallback_vote(block)
             }
-            VotePayloadToSign::Finalize { slot, .. } => Self::new_finalization_vote(slot),
-            VotePayloadToSign::Genesis { block, .. } => Self::new_genesis_vote(block),
-            VotePayloadToSign::Skip { slot, .. } => Self::new_skip_vote(slot),
             VotePayloadToSign::SkipFallback { slot, .. } => Self::new_skip_fallback_vote(slot),
+            VotePayloadToSign::Genesis { block, .. } => Self::new_genesis_vote(block),
         }
     }
 }

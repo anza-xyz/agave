@@ -44,6 +44,7 @@ Release channels have their own copy of this changelog:
 #### Breaking
 #### Changes
 * `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
+* Support Keystone hardware wallets using `usb://keystone`
 
 ## 4.1.0
 ### RPC

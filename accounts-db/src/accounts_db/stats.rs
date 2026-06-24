@@ -488,6 +488,7 @@ pub struct ShrinkAncientStats {
     pub shrink_stats: ShrinkStats,
     pub ancient_append_vecs_shrunk: AtomicU64,
     pub total_us: AtomicU64,
+    pub select_slots_us: AtomicU64,
     pub random_shrink: AtomicU64,
     pub slots_considered: AtomicU64,
     pub ancient_scanned: AtomicU64,
@@ -892,6 +893,11 @@ impl ShrinkAncientStats {
                 i64
             ),
             ("total_us", self.total_us.swap(0, Ordering::Relaxed), i64),
+            (
+                "select_slots_us",
+                self.select_slots_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
             (
                 "bytes_ancient_created",
                 self.bytes_ancient_created.swap(0, Ordering::Relaxed),

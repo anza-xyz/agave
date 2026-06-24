@@ -16,4 +16,5 @@ echo "--- coverage: root (part 1)"
   --features frozen-abi \
   --features dev-context-only-utils \
   --lib \
+  --bins \
   "${packages[@]}"

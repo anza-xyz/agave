@@ -498,14 +498,14 @@ impl Tower {
                 vote_slots.insert(slot);
             }
 
-            if start_root != vote_state.root_slot {
-                if let Some(root) = start_root {
-                    // The account's prior root can be older than this fork's root; clamp to
-                    // the same range for the same reason as above.
-                    if root > root_slot {
-                        trace!("ROOT: {root}");
-                        vote_slots.insert(root);
-                    }
+            if start_root != vote_state.root_slot
+                && let Some(root) = start_root
+            {
+                // The account's prior root can be older than this fork's root; clamp to
+                // the same range for the same reason as above.
+                if root > root_slot {
+                    trace!("ROOT: {root}");
+                    vote_slots.insert(root);
                 }
             }
             if let Some(root) = vote_state.root_slot {
@@ -703,15 +703,15 @@ impl Tower {
         vote_hash: Hash,
         block_id: Hash,
     ) -> Option<Slot> {
-        if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
-            if vote_slot <= last_voted_slot {
-                panic!(
-                    "Error while recording vote {} {} in local tower {:?}",
-                    vote_slot,
-                    vote_hash,
-                    VoteError::VoteTooOld
-                );
-            }
+        if let Some(last_voted_slot) = self.vote_state.last_voted_slot()
+            && vote_slot <= last_voted_slot
+        {
+            panic!(
+                "Error while recording vote {} {} in local tower {:?}",
+                vote_slot,
+                vote_hash,
+                VoteError::VoteTooOld
+            );
         }
 
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
@@ -807,10 +807,10 @@ impl Tower {
             if slot <= last_voted_slot {
                 return false;
             }
-        } else if let Some(root) = self.vote_state.root_slot {
-            if slot <= root {
-                return false;
-            }
+        } else if let Some(root) = self.vote_state.root_slot
+            && slot <= root
+        {
+            return false;
         }
         true
     }
@@ -841,15 +841,15 @@ impl Tower {
             }
         }
 
-        if let Some(root_slot) = vote_state.root_slot {
-            if slot != root_slot {
-                // This case should never happen because bank forks purges all
-                // non-descendants of the root every time root is set
-                assert!(
-                    ancestors.contains(&root_slot),
-                    "ancestors: {ancestors:?}, slot: {slot} root: {root_slot}"
-                );
-            }
+        if let Some(root_slot) = vote_state.root_slot
+            && slot != root_slot
+        {
+            // This case should never happen because bank forks purges all
+            // non-descendants of the root every time root is set
+            assert!(
+                ancestors.contains(&root_slot),
+                "ancestors: {ancestors:?}, slot: {slot} root: {root_slot}"
+            );
         }
 
         false
@@ -1061,9 +1061,11 @@ impl Tower {
                 .unwrap_or(true)
             {
                 // Our last vote slot was purged because it was on a duplicate fork, don't continue below
-                // where checks may panic. We allow a freebie vote here that may violate switching
-                // thresholds
-                // TODO: Properly handle this case
+                // where checks may panic. We allow a freebie vote here without checking the switch
+                // threshold as it is trivially satisfied:
+                // - Freebie can only occur because our last vote block was dumped & repaired
+                // - Dump & repair only triggers due to another version reaching duplicate confirmation (52%)
+                // - 52% > 38% so the switching threshold is implicitely satisifed
                 info!(
                     "Allowing switch vote on {:?} because last vote {:?} was rolled back",
                     (switch_slot, switch_hash),

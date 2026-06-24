@@ -2,8 +2,7 @@ use {
     super::vote_history_storage::{
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
-    agave_votor_messages::{consensus_message::Block, vote::Vote},
-    serde::{Deserialize, Serialize},
+    agave_votor_messages::{consensus_message::Block, vote::Vote, wire::VotePayloadToSign},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -13,7 +12,11 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+// Dummy shred version used for persisted votes - will be re-signed with the
+// correct shred version when performing the refresh
+const VOTE_HISTORY_SHRED_VERSION: u16 = 0;
+
+#[derive(Debug, SchemaRead, SchemaWrite, PartialEq, Clone)]
 pub enum VoteHistoryVersions {
     Current(VoteHistory),
 }
@@ -31,10 +34,13 @@ impl VoteHistoryVersions {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "BdNXvHhpPUTEba3DfDCLqirLoLXAmja2jyhroicM63bT")
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "MYpTecggZfULsn6SC1bojefNFK1R5kjBZg7wE8H8dHF",
+        abi_serializer = "wincode"
+    )
 )]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
     pub node_pubkey: Pubkey,
@@ -64,7 +70,7 @@ pub struct VoteHistory {
     its_over: HashSet<Slot>,
 
     /// All votes cast for a `slot`, for use in refresh
-    votes_cast: HashMap<Slot, Vec<Vote>>,
+    votes_cast: HashMap<Slot, Vec<VotePayloadToSign>>,
 
     /// Blocks which have a notarization certificate via the certificate pool
     notarized_blocks: HashSet<Block>,
@@ -131,7 +137,8 @@ impl VoteHistory {
             .iter()
             .filter(|&(&s, _)| s > slot)
             .flat_map(|(_, votes)| votes.iter())
-            .cloned()
+            .copied()
+            .map(Vote::from)
             .collect()
     }
 
@@ -203,7 +210,13 @@ impl VoteHistory {
                 // votor, we do not need to insert anything here.
             }
         }
-        self.votes_cast.entry(vote.slot()).or_default().push(vote);
+        self.votes_cast
+            .entry(vote.slot())
+            .or_default()
+            .push(VotePayloadToSign::new_from_vote(
+                vote,
+                VOTE_HISTORY_SHRED_VERSION,
+            ));
     }
 
     /// Add a new notarized block

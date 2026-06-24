@@ -328,6 +328,7 @@ reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.5"
 rts-alloc = { version = "4.0.0" }
+rusb = "0.9"
 rustls = { version = "0.23.40", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.28"
@@ -468,7 +469,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=4.2.0-alpha.0
 solana-runtime = { path = "runtime", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.21.0", default-features = false }
+solana-sbpf = { version = "=0.21.1", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.1"
 solana-secp256k1-recover = "3.1.1"
@@ -565,6 +566,8 @@ trees = "0.4.2"
 trezor-client = { version = "0.1.5", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
 unwrap_none = "0.1.2"
+ur-parse-lib = { version = "1.0.3", default-features = false, features = ["std"] }
+ur-registry = { version = "1.0.3", default-features = false, features = ["std"] }
 uriparse = "0.6.4"
 url = "2.5.8"
 winapi = "0.3.8"
