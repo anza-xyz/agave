@@ -3928,6 +3928,73 @@ impl ReplayStage {
         })
     }
 
+    fn freeze_completed_bank(
+        process_active_banks_context: &ProcessActiveBanksContext,
+        bank: &BankWithScheduler,
+        my_pubkey: &Pubkey,
+    ) -> Result<bool, BlockstoreProcessorError> {
+        let is_leader_block = Self::leader_is_me(bank.leader_id(), my_pubkey);
+
+        // The block id is the merkle root of the last data shred. For leader
+        // blocks, shredding may still be running; broadcast sets the block id
+        // when it finishes.
+        let block_id = process_active_banks_context
+            .blockstore
+            .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
+            .expect("Blockstore operations must succeed");
+        debug_assert!(block_id.is_some() || is_leader_block);
+        if block_id.is_some() {
+            bank.set_block_id(block_id);
+        }
+
+        // Freeze before notifying auxiliary threads that expect a frozen bank.
+        // Non-leader blocks also verify that the computed hash matches the
+        // block footer.
+        let verify_result = if process_active_banks_context
+            .migration_status
+            .should_allow_block_markers(bank.slot())
+            && !is_leader_block
+        {
+            bank.freeze_and_verify_bank_hash()
+        } else {
+            bank.freeze();
+            Ok(())
+        };
+
+        let bank_slot = bank.slot();
+        datapoint_info!(
+            "bank_frozen",
+            ("slot", bank_slot, i64),
+            ("hash", bank.hash().to_string(), String),
+        );
+
+        if let Err((expected_hash, computed_hash)) = verify_result {
+            warn!(
+                "Bank hash mismatch for slot {bank_slot}: expected {expected_hash}, computed \
+                 {computed_hash}",
+            );
+
+            datapoint_warn!(
+                "bank_hash_mismatch",
+                ("slot", bank_slot, i64),
+                ("expected", expected_hash.to_string(), String),
+                ("computed", computed_hash.to_string(), String),
+            );
+
+            if let Err(err) = bank_hash_details::write_bank_hash_details_file(bank) {
+                warn!("Unable to write bank hash details file: {err}");
+            }
+
+            return Err(BlockstoreProcessorError::BankHashMismatch(
+                bank_slot,
+                expected_hash,
+                computed_hash,
+            ));
+        }
+
+        Ok(is_leader_block)
+    }
+
     fn process_replay_results(
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
@@ -4017,75 +4084,23 @@ impl ReplayStage {
                         continue;
                     }
                 };
-                let is_leader_block = Self::leader_is_me(bank.leader_id(), my_pubkey);
-
-                // The block id is the merkle root of the last data shred
-                // For leader blocks, we might not have finished shredding (as it happens asynchronously)
-                // so this can return None. If that is the case, broadcast will set the block id once shredding
-                // finishes.
-                let block_id = process_active_banks_context
-                    .blockstore
-                    .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
-                    .expect("Blockstore operations must succeed");
-                debug_assert!(block_id.is_some() || is_leader_block);
-                if block_id.is_some() {
-                    bank.set_block_id(block_id);
-                }
-
-                // Freeze the bank before sending to any auxiliary threads that may expect to be
-                // operating on a frozen bank.
-                // Also if we are not the leader, ensure that our computed hash matches the hash in
-                // the block footer.
-                let verify_result = if process_active_banks_context
-                    .migration_status
-                    .should_allow_block_markers(bank.slot())
-                    && !Self::leader_is_me(bank.leader_id(), my_pubkey)
-                {
-                    bank.freeze_and_verify_bank_hash()
-                } else {
-                    bank.freeze();
-                    Ok(())
-                };
-
-                datapoint_info!(
-                    "bank_frozen",
-                    ("slot", bank_slot, i64),
-                    ("hash", bank.hash().to_string(), String),
-                );
-
-                if let Err((expected_hash, computed_hash)) = verify_result {
-                    warn!(
-                        "For slot {bank_slot} the leader said the bank hash should be: \
-                         {expected_hash} however we computed: {computed_hash}",
-                    );
-
-                    datapoint_warn!(
-                        "bank_hash_mismatch",
-                        ("slot", bank_slot, i64),
-                        ("expected", expected_hash.to_string(), String),
-                        ("computed", computed_hash.to_string(), String),
-                    );
-
-                    if let Err(err) = bank_hash_details::write_bank_hash_details_file(bank) {
-                        warn!("Unable to write bank hash details file: {err}");
-                    }
-
-                    Self::mark_replay_result_dead_slot(
-                        process_active_banks_context,
-                        bank,
-                        &BlockstoreProcessorError::BankHashMismatch(
-                            bank_slot,
-                            expected_hash,
-                            computed_hash,
-                        ),
-                        progress,
-                        duplicate_slots_to_repair,
-                        purge_repair_slot_counter,
-                        &mut tbft_structs,
-                    );
-
-                    continue;
-                }
+                let is_leader_block =
+                    match Self::freeze_completed_bank(process_active_banks_context, bank, my_pubkey)
+                    {
+                        Ok(is_leader_block) => is_leader_block,
+                        Err(err) => {
+                            Self::mark_replay_result_dead_slot(
+                                process_active_banks_context,
+                                bank,
+                                &err,
+                                progress,
+                                duplicate_slots_to_repair,
+                                purge_repair_slot_counter,
+                                &mut tbft_structs,
+                            );
+                            continue;
+                        }
+                    };
 
                 let r_replay_stats = completed_replay.replay_stats.read().unwrap();
                 let r_replay_progress = completed_replay.replay_progress.read().unwrap();
