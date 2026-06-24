@@ -1041,13 +1041,20 @@ mod tests {
         let slot = vote.slot();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         // Same key voting again shouldn't make a certificate
-        ctx.add_batch(dummy_vote_message(
-            &bank,
-            &ctx.validators,
-            ctx.pool.cluster_info.my_shred_version(),
-            &vote,
-            my_validator_ix,
-        ));
+        ctx.pool
+            .add_batch(
+                &bank,
+                ctx.validators[0].vote_keypair.pubkey(),
+                dummy_vote_message(
+                    &bank,
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    my_validator_ix,
+                ),
+                &mut vec![],
+            )
+            .unwrap_err();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         for rank in 0..4 {
             ctx.add_batch(dummy_vote_message(
@@ -1270,7 +1277,7 @@ mod tests {
             add_skip_vote_range(
                 &mut ctx.pool,
                 &ctx.bank_forks.read().unwrap().root_bank(),
-                5,
+                16,
                 30,
                 &ctx.validators,
                 rank,
@@ -1335,7 +1342,7 @@ mod tests {
         add_skip_vote_range(
             &mut ctx.pool,
             &ctx.bank_forks.read().unwrap().root_bank(),
-            3,
+            4,
             10,
             &ctx.validators,
             8,
@@ -1373,7 +1380,7 @@ mod tests {
         add_skip_vote_range(
             &mut ctx.pool,
             &ctx.bank_forks.read().unwrap().root_bank(),
-            1,
+            2,
             6,
             &ctx.validators,
             6,
@@ -1395,14 +1402,26 @@ mod tests {
         assert_eq!(ctx.pool.highest_skip_slot(), 20);
         assert_single_certificate_range(&ctx.pool, 10, 20);
 
-        // AlreadyExists, silently fail
+        // AlreadyExists, should fail with duplicate error
         let vote = Vote::new_skip_vote(20);
-        ctx.add_batch(dummy_vote_message(
-            &bank,
-            &ctx.validators,
-            ctx.pool.cluster_info.my_shred_version(),
-            &vote,
-            6,
+        let err = ctx
+            .pool
+            .add_batch(
+                &bank,
+                ctx.validators[0].vote_keypair.pubkey(),
+                dummy_vote_message(
+                    &bank,
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    6,
+                ),
+                &mut vec![],
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AddVoteError::VotePoolAddVote(VotePoolAddVoteError::Duplicate)
         ));
     }
 
@@ -1789,8 +1808,8 @@ mod tests {
                     *vote_type_2,
                     slot,
                 );
+                slot = slot.saturating_add(4);
             }
-            slot = slot.saturating_add(4);
         }
     }
 

@@ -663,6 +663,7 @@ mod tests {
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
+        solana_signer::Signer,
         std::sync::Arc,
     };
 
@@ -719,7 +720,7 @@ mod tests {
                 migration_status.clone(),
                 initial_parent_ready,
             );
-            let my_vote_pubkey = Pubkey::new_unique();
+            let my_vote_pubkey = validator_keypairs[0].vote_keypair.pubkey();
             let (consensus_message_sender, consensus_message_receiver) = unbounded();
             let (_own_message_sender, own_message_receiver) = unbounded();
             let (event_sender, event_receiver) = unbounded();
@@ -794,7 +795,7 @@ mod tests {
             )]);
 
             let mut stats = ConsensusPoolServiceStats::new();
-            let result = ConsensusPoolService::add_batch(
+            let (new_finalized_slot, new_certificates_to_send) = ConsensusPoolService::add_batch(
                 &root_bank,
                 &ctx.ctx.cluster_info.id(),
                 ctx.ctx.my_vote_pubkey,
@@ -802,10 +803,9 @@ mod tests {
                 &mut ctx.consensus_pool,
                 &mut events,
                 &mut stats,
-            );
-            assert!(result.is_ok());
+            )
+            .unwrap();
 
-            let (new_finalized_slot, new_certificates_to_send) = result.unwrap();
             let mut standstill_timer = Instant::now();
 
             // Send certificates if any were produced
