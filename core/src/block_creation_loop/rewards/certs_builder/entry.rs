@@ -169,7 +169,7 @@ mod tests {
             signature,
             rank: rank.try_into().unwrap(),
         };
-        SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)
+        SigVerifiedVoteBatch::new_verified(bank, msg)
     }
 
     pub(crate) fn get_rank_map_keypairs(

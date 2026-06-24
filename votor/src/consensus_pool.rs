@@ -687,7 +687,7 @@ mod tests {
             signature,
             rank: rank as u16,
         };
-        SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)])
+        SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_verified(bank, msg)])
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
@@ -1175,7 +1175,7 @@ mod tests {
             .add_batch(
                 &bank,
                 Pubkey::new_unique(),
-                SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(
+                SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_verified(
                     &bank,
                     VoteMessage {
                         vote: Vote::new_skip_vote(5),

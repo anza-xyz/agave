@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     agave_votor_messages::{
         certificate::Certificate,
@@ -25,11 +23,11 @@ pub enum SigVerifiedBatch {
 }
 
 impl SigVerifiedBatch {
-    pub fn new_from_consensus_message(bank: &Bank, msg: ConsensusMessage) -> Self {
+    pub fn new_verified(bank: &Bank, msg: ConsensusMessage) -> Self {
         match msg {
             ConsensusMessage::Certificate(cert) => Self::Certificates(vec![cert]),
             ConsensusMessage::Vote(msg) => {
-                Self::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(bank, msg)])
+                Self::Votes(vec![SigVerifiedVoteBatch::new_verified(bank, msg)])
             }
         }
     }
@@ -68,8 +66,7 @@ pub struct SigVerifiedVoteBatch {
 }
 
 impl SigVerifiedVoteBatch {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new_from_vote_msg(bank: &Bank, msg: VoteMessage) -> Self {
+    pub fn new_verified(bank: &Bank, msg: VoteMessage) -> Self {
         let rank_map = bank
             .epoch_stakes_from_slot(msg.vote.slot())
             .unwrap()

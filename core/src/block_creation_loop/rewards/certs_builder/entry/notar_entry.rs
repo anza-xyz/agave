@@ -126,7 +126,7 @@ mod tests {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank,
         };
-        let invalid_vote = SigVerifiedVoteBatch::new_from_vote_msg(&bank, invalid_vote);
+        let invalid_vote = SigVerifiedVoteBatch::new_verified(&bank, invalid_vote);
         entry
             .add_vote(&rank_map, max_validators, blockid0, &invalid_vote)
             .unwrap_err();

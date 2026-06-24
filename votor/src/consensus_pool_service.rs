@@ -629,7 +629,7 @@ impl ConsensusPoolService {
         let receiver = ctx.own_message_receiver.clone();
         for batch in std::iter::once(first)
             .chain(receiver.try_iter())
-            .map(|m| SigVerifiedBatch::new_from_consensus_message(root_bank, m))
+            .map(|m| SigVerifiedBatch::new_verified(root_bank, m))
         {
             Self::process_batch(ctx, batch, consensus_pool, events, standstill_timer, stats)?;
         }
@@ -784,7 +784,7 @@ mod tests {
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
-            let message = SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_vote_msg(
+            let message = SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_verified(
                 &root_bank,
                 VoteMessage {
                     vote: notarize_vote,
