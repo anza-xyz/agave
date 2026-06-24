@@ -1677,12 +1677,7 @@ impl AccountsDb {
     /// this function will call Rayon par_iter, so you will want to have thread pool installed if
     /// you want to call this without consuming all the cores on the CPU.
     fn exhaustively_verify_refcounts(&self, max_slot_inclusive: Option<Slot>) {
-        match max_slot_inclusive {
-            Some(max_slot_inclusive) => {
-                info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive}")
-            }
-            None => info!("exhaustively verifying refcounts of all storages"),
-        }
+        info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive:?}");
         let pubkey_refcount = DashMap::<Pubkey, Vec<Slot>>::default();
         let mut storages = self.storage.all_storages();
         // Flush is not running while we verify, so storages are stable. With no slot bound we
