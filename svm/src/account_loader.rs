@@ -102,6 +102,10 @@ impl CheckedTransactionDetails {
             compute_budget_and_limits,
         }
     }
+
+    pub fn nonce_address(&self) -> Option<Pubkey> {
+        self.nonce_address
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
