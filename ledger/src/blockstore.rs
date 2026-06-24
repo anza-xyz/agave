@@ -4102,6 +4102,24 @@ impl Blockstore {
         Ok(VersionedConfirmedBlockWithEntries { block, entries })
     }
 
+    pub fn get_rooted_block_with_components(
+        &self,
+        slot: Slot,
+        require_previous_blockhash: bool,
+    ) -> Result<VersionedConfirmedBlockWithComponents> {
+        let _cleanup_guard = self.check_lowest_cleanup_slot(slot)?;
+
+        if self.is_root(slot) {
+            return self.do_get_complete_block_with_components(
+                slot,
+                require_previous_blockhash,
+                true,
+                /*allow_dead_slots:*/ false,
+            );
+        }
+        Err(BlockstoreError::SlotNotRooted)
+    }
+
     #[cfg(feature = "dev-context-only-utils")]
     pub fn get_complete_block_with_components(
         &self,
@@ -4118,7 +4136,6 @@ impl Blockstore {
         )
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
     fn do_get_complete_block_with_components(
         &self,
         slot: Slot,
@@ -4219,7 +4236,6 @@ impl Blockstore {
     }
 
     // Helper to build VersionConfirmedBlock from blockhash and transactions
-    #[cfg(feature = "dev-context-only-utils")]
     fn build_versioned_confirmed_block(
         &self,
         slot: Slot,

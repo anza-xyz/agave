@@ -27,9 +27,12 @@ use {
         display::println_transaction,
     },
     solana_clock::Slot,
-    solana_entry::entry::{Entry, create_ticks},
+    solana_entry::{
+        block_component::{BlockComponent, BlockMarkerV1, VersionedBlockMarker},
+        entry::{Entry, create_ticks},
+    },
     solana_hash::Hash,
-    solana_keypair::keypair_from_seed,
+    solana_keypair::{Keypair, keypair_from_seed},
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
         blockstore::Blockstore,
@@ -40,10 +43,13 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signature::Signature,
     solana_storage_bigtable::CredentialType,
-    solana_transaction_status::{ConfirmedBlock, UiTransactionEncoding, VersionedConfirmedBlock},
+    solana_transaction_status::{
+        ConfirmedBlock, EntrySummary, UiTransactionEncoding, VersionedConfirmedBlock,
+    },
     std::{
         cmp::min,
         collections::HashSet,
+        error::Error,
         path::Path,
         process::exit,
         result::Result,
@@ -241,6 +247,209 @@ fn get_shred_config_from_ledger(
     }
 }
 
+struct BlockMarkers {
+    header: VersionedBlockMarker,
+    genesis: Option<VersionedBlockMarker>,
+    footer: VersionedBlockMarker,
+}
+
+fn classify_alpenglow_block_markers(
+    slot: Slot,
+    marker_payloads: Vec<Vec<u8>>,
+) -> Result<Option<BlockMarkers>, Box<dyn Error>> {
+    if marker_payloads.is_empty() {
+        return Ok(None);
+    }
+
+    let mut header = None;
+    let mut genesis = None;
+    let mut footer = None;
+    for (index, payload) in marker_payloads.into_iter().enumerate() {
+        let marker: VersionedBlockMarker = wincode::deserialize(&payload).map_err(|err| {
+            format!("Failed to deserialize block marker {index} for slot {slot}: {err}")
+        })?;
+        let VersionedBlockMarker::V1(marker_v1) = &marker;
+        let (marker_kind, destination) = match marker_v1 {
+            BlockMarkerV1::BlockHeader(_) => ("header", &mut header),
+            BlockMarkerV1::GenesisCertificate(_) => ("genesis certificate", &mut genesis),
+            BlockMarkerV1::BlockFooter(_) => ("footer", &mut footer),
+            BlockMarkerV1::UpdateParent(_) => {
+                warn!(
+                    "Ignoring UpdateParent block marker for slot {slot} during shred \
+                     reconstruction"
+                );
+                continue;
+            }
+        };
+        if destination.is_some() {
+            return Err(
+                format!("Multiple {marker_kind} block markers found for slot {slot}").into(),
+            );
+        }
+        *destination = Some(marker);
+    }
+
+    let header =
+        header.ok_or_else(|| format!("Missing header block marker for Alpenglow slot {slot}"))?;
+    let footer =
+        footer.ok_or_else(|| format!("Missing footer block marker for Alpenglow slot {slot}"))?;
+    Ok(Some(BlockMarkers {
+        header,
+        genesis,
+        footer,
+    }))
+}
+
+fn entries_from_summaries(
+    slot: Slot,
+    block: &ConfirmedBlock,
+    entry_summaries: impl Iterator<Item = EntrySummary>,
+) -> Result<Vec<Entry>, std::string::String> {
+    entry_summaries
+        .enumerate()
+        .map(|(i, entry_summary)| {
+            let num_hashes = entry_summary.num_hashes;
+            let hash = entry_summary.hash;
+            let starting_transaction_index = entry_summary.starting_transaction_index;
+            let num_transactions = entry_summary.num_transactions as usize;
+
+            let Some(transactions) = block
+                .transactions
+                .get(starting_transaction_index..starting_transaction_index + num_transactions)
+            else {
+                let num_block_transactions = block.transactions.len();
+                return Err(format!(
+                    "Entry summary {i} for slot {slot} with starting_transaction_index \
+                     {starting_transaction_index} and num_transactions {num_transactions} is in \
+                     conflict with the block, which has {num_block_transactions} transactions"
+                ));
+            };
+            let transactions = transactions
+                .iter()
+                .map(|tx_with_meta| tx_with_meta.get_transaction())
+                .collect();
+
+            Ok(Entry {
+                num_hashes,
+                hash,
+                transactions,
+            })
+        })
+        .collect()
+}
+
+fn split_alpenglow_entries(
+    slot: Slot,
+    block: &ConfirmedBlock,
+    mut entries: Vec<Entry>,
+) -> Result<(Vec<Entry>, Entry), Box<dyn Error>> {
+    let Some(alpentick) = entries.pop() else {
+        return Err(format!("Missing alpentick entry for Alpenglow slot {slot}"))?;
+    };
+    if !alpentick.is_tick() {
+        Err(format!(
+            "Missing trailing alpentick entry for Alpenglow slot {slot}"
+        ))?;
+    }
+
+    if let Some((index, _)) = entries
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry.is_tick())
+    {
+        Err(format!(
+            "Unexpected non-trailing tick entry at index {index} for Alpenglow slot {slot}"
+        ))?;
+    }
+
+    let blockhash = Hash::from_str(&block.blockhash)?;
+    if alpentick.hash != blockhash {
+        Err(format!(
+            "Alpentick hash {} does not match blockhash {} for Alpenglow slot {slot}",
+            alpentick.hash, blockhash
+        ))?;
+    }
+
+    Ok((entries, alpentick))
+}
+
+fn append_component_shreds(
+    data_shreds: &mut Vec<Shred>,
+    shredder: &Shredder,
+    keypair: &Keypair,
+    component: &BlockComponent,
+    is_last_in_slot: bool,
+    next_shred_index: &mut u32,
+    next_code_index: &mut u32,
+    chained_merkle_root: &mut Hash,
+    reed_solomon_cache: &ReedSolomonCache,
+) {
+    let shreds: Vec<_> = shredder
+        .make_merkle_shreds_from_component(
+            keypair,
+            component,
+            is_last_in_slot,
+            *chained_merkle_root,
+            *next_shred_index,
+            *next_code_index,
+            reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        )
+        .collect();
+    if let Some(last_data_shred) = shreds.iter().filter(|shred| shred.is_data()).last() {
+        *next_shred_index = last_data_shred.index() + 1;
+        *chained_merkle_root = last_data_shred
+            .merkle_root()
+            .expect("no more legacy shreds");
+    }
+    if let Some(last_code_shred) = shreds.iter().filter(|shred| shred.is_code()).last() {
+        *next_code_index = last_code_shred.index() + 1;
+    }
+    data_shreds.extend(shreds.into_iter().filter(Shred::is_data));
+}
+
+fn make_alpenglow_shreds(
+    slot: Slot,
+    block: &ConfirmedBlock,
+    markers: BlockMarkers,
+    entries: Vec<Entry>,
+    alpentick: Entry,
+    shred_config: &ShredConfig,
+    keypair: &Keypair,
+) -> Result<Vec<Shred>, Box<dyn Error>> {
+    let shredder = Shredder::new(slot, block.parent_slot, 0, shred_config.shred_version)?;
+    let mut chained_merkle_root = Hash::default();
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut data_shreds = Vec::new();
+    let mut next_shred_index = 0;
+    let mut next_code_index = 0;
+
+    let mut components = vec![BlockComponent::new_block_marker(markers.header)];
+    components.extend(markers.genesis.map(BlockComponent::new_block_marker));
+    if !entries.is_empty() {
+        components.push(BlockComponent::EntryBatch(entries));
+    }
+    components.push(BlockComponent::new_block_marker(markers.footer));
+    components.push(BlockComponent::EntryBatch(vec![alpentick]));
+
+    let last_component_index = components.len().saturating_sub(1);
+    for (index, component) in components.iter().enumerate() {
+        append_component_shreds(
+            &mut data_shreds,
+            &shredder,
+            keypair,
+            component,
+            index == last_component_index,
+            &mut next_shred_index,
+            &mut next_code_index,
+            &mut chained_merkle_root,
+            &reed_solomon_cache,
+        );
+    }
+
+    Ok(data_shreds)
+}
+
 async fn shreds(
     blockstore: Arc<Blockstore>,
     starting_slot: Slot,
@@ -269,40 +478,36 @@ async fn shreds(
 
     for slot in slots.iter() {
         let block = bigtable.get_confirmed_block(*slot).await?;
+        let maybe_alpenglow_markers = match bigtable.get_block_markers(*slot).await {
+            Ok(marker_payloads) => classify_alpenglow_block_markers(*slot, marker_payloads)?,
+            Err(solana_storage_bigtable::Error::BlockNotFound(_)) => None,
+            Err(err) => return Err(err.into()),
+        };
         let entry_summaries = bigtable.get_entries(*slot).await;
 
+        if let Some(alpenglow_markers) = maybe_alpenglow_markers {
+            let entries = match entry_summaries {
+                Ok(entry_summaries) => entries_from_summaries(*slot, &block, entry_summaries)?,
+                Err(err) => {
+                    return Err(format!("No entry data for Alpenglow slot {slot}: {err}").into());
+                }
+            };
+            let (entries, alpentick) = split_alpenglow_entries(*slot, &block, entries)?;
+            let data_shreds = make_alpenglow_shreds(
+                *slot,
+                &block,
+                alpenglow_markers,
+                entries,
+                alpentick,
+                &shred_config,
+                &keypair,
+            )?;
+            blockstore.insert_shreds(data_shreds, false)?;
+            continue;
+        }
+
         let entries = match entry_summaries {
-            Ok(entry_summaries) => entry_summaries
-                .enumerate()
-                .map(|(i, entry_summary)| {
-                    let num_hashes = entry_summary.num_hashes;
-                    let hash = entry_summary.hash;
-                    let starting_transaction_index = entry_summary.starting_transaction_index;
-                    let num_transactions = entry_summary.num_transactions as usize;
-
-                    let Some(transactions) = block.transactions.get(
-                        starting_transaction_index..starting_transaction_index + num_transactions,
-                    ) else {
-                        let num_block_transactions = block.transactions.len();
-                        return Err(format!(
-                            "Entry summary {i} for slot {slot} with starting_transaction_index \
-                             {starting_transaction_index} and num_transactions {num_transactions} \
-                             is in conflict with the block, which has {num_block_transactions} \
-                             transactions"
-                        ));
-                    };
-                    let transactions = transactions
-                        .iter()
-                        .map(|tx_with_meta| tx_with_meta.get_transaction())
-                        .collect();
-
-                    Ok(Entry {
-                        num_hashes,
-                        hash,
-                        transactions,
-                    })
-                })
-                .collect::<Result<Vec<Entry>, std::string::String>>()?,
+            Ok(entry_summaries) => entries_from_summaries(*slot, &block, entry_summaries)?,
             Err(err) => {
                 let err_msg = format!("Failed to get PoH entries for {slot}: {err}");
                 let (num_hashes_per_tick, num_ticks_per_slot) =
@@ -1643,7 +1848,126 @@ fn missing_blocks(reference: &[Slot], owned: &[Slot]) -> MissingBlocksData {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        solana_entry::block_component::{BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker},
+    };
+
+    fn deshred_batch(batch: &[Shred]) -> Vec<u8> {
+        Shredder::deshred(batch.iter().map(Shred::payload)).unwrap()
+    }
+
+    fn marker_is_header(marker: &VersionedBlockMarker) -> bool {
+        let VersionedBlockMarker::V1(marker_v1) = marker;
+        marker_v1.as_block_header().is_some()
+    }
+
+    fn marker_is_footer(marker: &VersionedBlockMarker) -> bool {
+        let VersionedBlockMarker::V1(marker_v1) = marker;
+        marker_v1.as_block_footer().is_some()
+    }
+
+    fn marker_is_genesis(marker: &VersionedBlockMarker) -> bool {
+        let VersionedBlockMarker::V1(marker_v1) = marker;
+        marker_v1.as_genesis_certificate().is_some()
+    }
+
+    #[test]
+    fn test_alpenglow_shreds_marker_ordering() {
+        let parent_slot = 41;
+        let blockhash = Hash::new_unique();
+        let block = ConfirmedBlock {
+            previous_blockhash: Hash::default().to_string(),
+            blockhash: blockhash.to_string(),
+            parent_slot,
+            transactions: vec![],
+            rewards: vec![],
+            num_partitions: None,
+            block_time: None,
+            block_height: None,
+        };
+        let markers = BlockMarkers {
+            header: VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot,
+                parent_block_id: Hash::default(),
+            }),
+            genesis: Some(VersionedBlockMarker::from_genesis_cert_block_marker(
+                GenesisCertBlockMarker {
+                    slot: 42,
+                    block_id: blockhash,
+                    bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: vec![1, 2, 3],
+                },
+            )),
+            footer: VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                bank_hash: Hash::new_unique(),
+                block_producer_time_nanos: 0,
+                block_user_agent: Vec::new(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            }),
+        };
+        let shred_config = ShredConfig {
+            shred_version: 0,
+            poh_generation_mode: ShredPohGenerationMode::RequireEntryData,
+        };
+        let keypair = keypair_from_seed(&[0; 64]).unwrap();
+
+        let alpentick = Entry {
+            num_hashes: 1,
+            hash: blockhash,
+            transactions: vec![],
+        };
+        let entry = Entry {
+            num_hashes: 0,
+            hash: Hash::new_unique(),
+            transactions: vec![],
+        };
+        let data_shreds = make_alpenglow_shreds(
+            42,
+            &block,
+            markers,
+            vec![entry.clone()],
+            alpentick,
+            &shred_config,
+            &keypair,
+        )
+        .unwrap();
+        let batches = data_shreds
+            .split_inclusive(|shred| shred.data_complete())
+            .collect::<Vec<_>>();
+        assert_eq!(batches.len(), 5);
+        assert!(!batches[0].last().unwrap().last_in_slot());
+        assert!(!batches[1].last().unwrap().last_in_slot());
+        assert!(!batches[2].last().unwrap().last_in_slot());
+        assert!(!batches[3].last().unwrap().last_in_slot());
+        assert!(batches[4].last().unwrap().last_in_slot());
+
+        let header_component: BlockComponent =
+            wincode::deserialize(&deshred_batch(batches[0])).unwrap();
+        assert!(header_component.as_marker().is_some_and(marker_is_header));
+
+        let genesis_component: BlockComponent =
+            wincode::deserialize(&deshred_batch(batches[1])).unwrap();
+        assert!(genesis_component.as_marker().is_some_and(marker_is_genesis));
+
+        let entry_component: BlockComponent =
+            wincode::deserialize(&deshred_batch(batches[2])).unwrap();
+        assert_eq!(entry_component, BlockComponent::EntryBatch(vec![entry]));
+
+        let footer_component: BlockComponent =
+            wincode::deserialize(&deshred_batch(batches[3])).unwrap();
+        assert!(footer_component.as_marker().is_some_and(marker_is_footer));
+
+        let alpentick_entries: Vec<Entry> =
+            wincode::deserialize(&deshred_batch(batches[4])).unwrap();
+        assert_eq!(alpentick_entries.len(), 1);
+        assert!(alpentick_entries[0].is_tick());
+        assert_eq!(alpentick_entries[0].num_hashes, 1);
+        assert_eq!(alpentick_entries[0].hash, blockhash);
+    }
 
     #[test]
     fn test_missing_blocks() {
