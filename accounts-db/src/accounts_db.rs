@@ -1433,12 +1433,14 @@ impl AccountsDb {
     /// Collect all the uncleaned slots, up to a max slot
     ///
     /// Search through the uncleaned Pubkeys and return all the slots, up to a maximum slot.
-    fn collect_uncleaned_slots_up_to_slot(&self, max_slot_inclusive: Slot) -> Vec<Slot> {
+    fn collect_uncleaned_slots_up_to_slot(&self, max_slot_inclusive: Option<Slot>) -> Vec<Slot> {
         self.uncleaned_pubkeys
             .iter()
             .filter_map(|entry| {
                 let slot = *entry.key();
-                (slot <= max_slot_inclusive).then_some(slot)
+                max_slot_inclusive
+                    .is_none_or(|max_slot_inclusive| slot <= max_slot_inclusive)
+                    .then_some(slot)
             })
             .collect()
     }
@@ -1448,7 +1450,7 @@ impl AccountsDb {
     /// pubkeys to `candidates` for cleaning.
     fn remove_uncleaned_slots_up_to_slot_and_move_pubkeys(
         &self,
-        max_slot_inclusive: Slot,
+        max_slot_inclusive: Option<Slot>,
         candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
     ) {
         let uncleaned_slots = self.collect_uncleaned_slots_up_to_slot(max_slot_inclusive);
@@ -1513,14 +1515,14 @@ impl AccountsDb {
         timings: &mut CleanKeyTimings,
     ) -> CleaningCandidates {
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
-        let max_root_inclusive = self.accounts_index.max_root_inclusive();
-        let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
         let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
         let mut min_dirty_slot = None::<u64>;
         self.dirty_stores.retain(|slot, store| {
-            if *slot > max_slot_inclusive {
+            if max_clean_root_inclusive
+                .is_some_and(|max_clean_root_inclusive| *slot > max_clean_root_inclusive)
+            {
                 true
             } else {
                 min_dirty_slot = min_dirty_slot.map(|min| min.min(*slot)).or(Some(*slot));
@@ -1544,15 +1546,14 @@ impl AccountsDb {
                 .might_contain_zero_lamport_entry |= is_zero_lamport;
         };
 
-        let mut dirty_store_routine = || {
+        // `min_dirty_slot` (computed above) already holds the oldest dirty slot over this same set.
+        timings.oldest_dirty_slot = min_dirty_slot.unwrap_or_default();
+        let dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
-            let oldest_dirty_slots: Vec<u64> = dirty_stores
+            dirty_stores
                 .par_chunks(chunk_size)
-                .map(|dirty_store_chunk| {
-                    let mut oldest_dirty_slot = max_slot_inclusive.saturating_add(1);
-                    dirty_store_chunk.iter().for_each(|(slot, store)| {
-                        oldest_dirty_slot = oldest_dirty_slot.min(*slot);
-
+                .for_each(|dirty_store_chunk| {
+                    dirty_store_chunk.iter().for_each(|(_slot, store)| {
                         store
                             .accounts
                             .scan_accounts_without_data(|_offset, account| {
@@ -1562,13 +1563,7 @@ impl AccountsDb {
                             })
                             .expect("must scan accounts storage");
                     });
-                    oldest_dirty_slot
-                })
-                .collect();
-            timings.oldest_dirty_slot = *oldest_dirty_slots
-                .iter()
-                .min()
-                .unwrap_or(&max_slot_inclusive.saturating_add(1));
+                });
         };
 
         if is_startup {
@@ -1588,7 +1583,10 @@ impl AccountsDb {
         timings.dirty_store_processing_us += dirty_store_processing_time.as_us();
 
         let mut collect_delta_keys = Measure::start("key_create");
-        self.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(max_slot_inclusive, &candidates);
+        self.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(
+            max_clean_root_inclusive,
+            &candidates,
+        );
         collect_delta_keys.stop();
         timings.collect_delta_keys_us += collect_delta_keys.as_us();
 
@@ -1614,7 +1612,9 @@ impl AccountsDb {
                 self.zero_lamport_accounts_to_purge_after_full_snapshot
                     .retain(|(slot, pubkey)| {
                         let is_candidate_for_clean =
-                            max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
+                            max_clean_root_inclusive.is_none_or(|max_clean_root_inclusive| {
+                                max_clean_root_inclusive >= *slot
+                            }) && latest_full_snapshot_slot >= *slot;
                         if is_candidate_for_clean {
                             insert_candidate(*pubkey, true);
                         }
@@ -1677,12 +1677,19 @@ impl AccountsDb {
     /// this function will call Rayon par_iter, so you will want to have thread pool installed if
     /// you want to call this without consuming all the cores on the CPU.
     fn exhaustively_verify_refcounts(&self, max_slot_inclusive: Option<Slot>) {
-        let max_slot_inclusive =
-            max_slot_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
-        info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive}");
+        match max_slot_inclusive {
+            Some(max_slot_inclusive) => {
+                info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive}")
+            }
+            None => info!("exhaustively verifying refcounts of all storages"),
+        }
         let pubkey_refcount = DashMap::<Pubkey, Vec<Slot>>::default();
         let mut storages = self.storage.all_storages();
-        storages.retain(|s| s.slot() <= max_slot_inclusive);
+        // Flush is not running while we verify, so storages are stable. With no slot bound we
+        // verify every storage; otherwise we drop storages newer than the bound.
+        if let Some(max_slot_inclusive) = max_slot_inclusive {
+            storages.retain(|s| s.slot() <= max_slot_inclusive);
+        }
         // populate
         storages.par_iter().for_each_init(
             || Box::new(append_vec::new_scan_accounts_reader()),
@@ -1734,7 +1741,11 @@ impl AccountsDb {
                                         let slot_list = index_entry.slot_list_read_lock();
                                         let num_too_new = slot_list
                                             .iter()
-                                            .filter(|(slot, _)| slot > &max_slot_inclusive)
+                                            .filter(|(slot, _)| {
+                                                max_slot_inclusive.is_some_and(
+                                                    |max_slot_inclusive| *slot > max_slot_inclusive,
+                                                )
+                                            })
                                             .count();
 
                                         if ((index_entry.ref_count() as usize) - num_too_new)
