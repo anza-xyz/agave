@@ -1,4 +1,4 @@
-use {crate::protocol::gossip_decode_to_effects, prost::Message, std::ffi::c_int};
+use {super::gossip_decode_to_effects, prost::Message, std::ffi::c_int};
 
 /// Conformance harness entry point for gossip message decoding.
 ///

@@ -50,6 +50,8 @@ use {
     },
     wincode::{SchemaRead, SchemaWrite},
 };
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
 // Retention period of hashes of received outdated values.
@@ -106,8 +108,10 @@ impl solana_sanitize::Sanitize for CrdsFilter {
 }
 
 impl CrdsFilter {
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    // Accessors exposed under `dev-context-only-utils` for the out-of-crate
+    // conformance harness (see the `agave-conformance` crate).
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn mask(&self) -> u64 {
         self.mask
     }
@@ -179,6 +183,7 @@ impl CrdsFilter {
         (!0u64).checked_shr(mask_bits).unwrap_or(0)
     }
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn canonical_mask(mask: u64, mask_bits: u32) -> u64 {
         // Normalize a mask so that all bits below mask_bits are 1s
         mask | Self::lsb_mask(mask_bits)
