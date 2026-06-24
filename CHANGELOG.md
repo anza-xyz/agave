@@ -51,7 +51,12 @@ Release channels have their own copy of this changelog:
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
 * Added `--config`, which points to a TOML configuration file for the validator (e.g. XDP and
   PoH thread pinning settings). Where a setting is also available as a CLI flag, the flag
-  overrides the value from the file.
+  overrides the value from the file. A `[threads.<name>]` entry may declare
+  `reservation = "exclusive"` to claim its CPU core for that thread alone; XDP queue handler
+  CPUs are always exclusive, and two exclusive claimants may not share a core. A PoH core set
+  via `--poh-pinned-cpu-core` is implicitly exclusive. An exclusive reservation only excludes
+  other managed claimants, so threads not managed through the config (and the kernel's own
+  NAPI/softirq work) may still be scheduled on an exclusive core.
 ### CLI
 #### Breaking
 #### Changes

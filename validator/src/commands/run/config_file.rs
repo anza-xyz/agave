@@ -18,11 +18,22 @@
 //! cpus = [2]                                 # logical CPU(s): an index, a "0-3,8"
 //!                                            # range string, or a list mixing both
 //!                                            # (e.g. 2, "2-5", or ["2-5", 8])
+//! reservation = "exclusive"                  # optional; "none" (default) or
+//!                                            # "exclusive"
 //! ```
 //!
 //! Each `"<queue>:<cpu>"` entry binds one NIC queue to one CPU core, producing a
 //! [`QueueCpuBinding`]. The mapping is one-to-one: no queue and no CPU may appear
 //! more than once.
+//!
+//! ## Reservations
+//!
+//! A `[threads.<name>]` may declare how it consumes its CPU via `reservation`:
+//! `"none"` (the default) lets other work co-schedule on the same core, while
+//! `"exclusive"` claims the core for that thread alone. XDP queue handler CPUs
+//! (the cpus in `queue_to_cpu_mapping`) are *always* exclusive. Two exclusive
+//! claimants may not overlap: mapping an XDP queue onto a CPU an exclusive thread
+//! owns (or vice versa) is an error.
 
 use {
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
@@ -99,11 +110,24 @@ impl FileConfig {
     }
 }
 
+/// How a managed thread consumes the CPU capacity it is placed on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reservation {
+    /// The entity shares its CPU(s); other work may co-schedule there.
+    #[default]
+    None,
+    /// The entity owns its CPU(s) outright; no other exclusive claimant may use
+    /// them. XDP queue handler CPUs are always exclusive in this sense.
+    Exclusive,
+}
+
 /// Configuration of a single managed thread (`[threads.<name>]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadConfig {
     /// Logical CPU(s) the thread may run on, sorted and de-duplicated.
     pub cpus: Vec<usize>,
+    /// How the thread consumes its CPU(s). Defaults to [`Reservation::None`].
+    pub reservation: Reservation,
 }
 
 /// Proof of History thread configuration. PoH only supports single-CPU affinity.
@@ -143,6 +167,16 @@ struct RawFile {
 #[serde(deny_unknown_fields)]
 struct RawThread {
     cpus: RawCpus,
+    #[serde(default)]
+    reservation: Option<RawReservation>,
+}
+
+/// The `reservation` value as written in the file.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RawReservation {
+    None,
+    Exclusive,
 }
 
 /// The `cpus` value: a single [`CpuSpec`] (e.g. `2` or `"2-5"`) or a list of them
@@ -181,7 +215,11 @@ fn build_thread(raw: &RawThread) -> Result<ThreadConfig, ConfigFileError> {
     }
     cpus.sort_unstable();
     cpus.dedup();
-    Ok(ThreadConfig { cpus })
+    let reservation = match raw.reservation {
+        None | Some(RawReservation::None) => Reservation::None,
+        Some(RawReservation::Exclusive) => Reservation::Exclusive,
+    };
+    Ok(ThreadConfig { cpus, reservation })
 }
 
 #[derive(Debug, Deserialize)]
@@ -333,7 +371,13 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     fn queries_thread_by_name() {
         let c = parse("version = 1\n[threads.poh]\ncpus = [3]\n").unwrap();
         assert!(c.xdp.is_none());
-        assert_eq!(c.thread("poh"), Some(&ThreadConfig { cpus: vec![3] }));
+        assert_eq!(
+            c.thread("poh"),
+            Some(&ThreadConfig {
+                cpus: vec![3],
+                reservation: Reservation::None,
+            })
+        );
         assert_eq!(c.thread("nonexistent"), None);
     }
 
@@ -342,8 +386,20 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
         // The parser keeps every declared thread; the server queries by name.
         let c = parse("version = 1\n[threads.poh]\ncpus = [2]\n[threads.replay]\ncpus = [8, 9]\n")
             .unwrap();
-        assert_eq!(c.thread("poh"), Some(&ThreadConfig { cpus: vec![2] }));
-        assert_eq!(c.thread("replay"), Some(&ThreadConfig { cpus: vec![8, 9] }));
+        assert_eq!(
+            c.thread("poh"),
+            Some(&ThreadConfig {
+                cpus: vec![2],
+                reservation: Reservation::None,
+            })
+        );
+        assert_eq!(
+            c.thread("replay"),
+            Some(&ThreadConfig {
+                cpus: vec![8, 9],
+                reservation: Reservation::None,
+            })
+        );
     }
 
     #[test]
@@ -353,7 +409,13 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
         )
         .unwrap();
         assert!(c.xdp.is_some());
-        assert_eq!(c.thread("poh"), Some(&ThreadConfig { cpus: vec![2] }));
+        assert_eq!(
+            c.thread("poh"),
+            Some(&ThreadConfig {
+                cpus: vec![2],
+                reservation: Reservation::None,
+            })
+        );
     }
 
     #[test]
@@ -397,6 +459,34 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     }
 
     #[test]
+    fn reservation_defaults_to_none() {
+        let t = parse("version = 1\n[threads.poh]\ncpus = [2]\n")
+            .unwrap()
+            .thread("poh")
+            .unwrap()
+            .reservation;
+        assert_eq!(t, Reservation::None);
+    }
+
+    #[test]
+    fn parses_exclusive_reservation() {
+        let t = parse("version = 1\n[threads.poh]\ncpus = [2]\nreservation = \"exclusive\"\n")
+            .unwrap()
+            .thread("poh")
+            .unwrap()
+            .reservation;
+        assert_eq!(t, Reservation::Exclusive);
+    }
+
+    #[test]
+    fn rejects_unknown_reservation() {
+        // An unrecognized reservation value is a hard (serde) error.
+        let e =
+            parse("version = 1\n[threads.poh]\ncpus = [2]\nreservation = \"bogus\"\n").unwrap_err();
+        assert!(matches!(e, ConfigFileError::Toml(_)));
+    }
+
+    #[test]
     fn rejects_bad_cpu_set() {
         let e = parse("version = 1\n[threads.t]\ncpus = \"2-x\"\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::CpuSet { .. }));
@@ -404,16 +494,25 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn poh_requires_single_cpu() {
-        let one = ThreadConfig { cpus: vec![2] };
+        let one = ThreadConfig {
+            cpus: vec![2],
+            reservation: Reservation::None,
+        };
         assert_eq!(PohConfig::try_from(&one).unwrap(), PohConfig { cpu: 2 });
 
-        let many = ThreadConfig { cpus: vec![2, 3] };
+        let many = ThreadConfig {
+            cpus: vec![2, 3],
+            reservation: Reservation::None,
+        };
         assert!(matches!(
             PohConfig::try_from(&many),
             Err(ConfigFileError::SingleCpuRequired { count: 2 })
         ));
 
-        let none = ThreadConfig { cpus: vec![] };
+        let none = ThreadConfig {
+            cpus: vec![],
+            reservation: Reservation::None,
+        };
         assert!(matches!(
             PohConfig::try_from(&none),
             Err(ConfigFileError::SingleCpuRequired { count: 0 })
