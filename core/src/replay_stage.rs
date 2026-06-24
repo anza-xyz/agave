@@ -4231,6 +4231,90 @@ impl ReplayStage {
         Self::notify_block_metadata(process_active_banks_context, bank, replay_progress);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn process_completed_bank(
+        process_active_banks_context: &ProcessActiveBanksContext,
+        bank: &BankWithScheduler,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+        latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
+        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
+        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
+        tbft_structs: &mut Option<&mut TowerBFTStructures>,
+        my_pubkey: &Pubkey,
+    ) -> Option<Slot> {
+        let bank_slot = bank.slot();
+        let mut bank_complete_time = Measure::start("bank_complete_time");
+        let bank_progress = progress
+            .get_mut(&bank_slot)
+            .expect("Bank fork progress entry missing for completed bank");
+
+        let completed_replay = match Self::complete_bank_replay(
+            process_active_banks_context,
+            bank,
+            bank_progress,
+            async_verification_freelist,
+        ) {
+            Ok(completed_replay) => completed_replay,
+            Err(err) => {
+                Self::mark_replay_result_dead_slot(
+                    process_active_banks_context,
+                    bank,
+                    &err,
+                    progress,
+                    duplicate_slots_to_repair,
+                    purge_repair_slot_counter,
+                    tbft_structs,
+                );
+                return None;
+            }
+        };
+
+        let is_leader_block =
+            match Self::freeze_completed_bank(process_active_banks_context, bank, my_pubkey) {
+                Ok(is_leader_block) => is_leader_block,
+                Err(err) => {
+                    Self::mark_replay_result_dead_slot(
+                        process_active_banks_context,
+                        bank,
+                        &err,
+                        progress,
+                        duplicate_slots_to_repair,
+                        purge_repair_slot_counter,
+                        tbft_structs,
+                    );
+                    return None;
+                }
+            };
+
+        let replay_stats = completed_replay.replay_stats.read().unwrap();
+        let replay_progress = completed_replay.replay_progress.read().unwrap();
+        Self::publish_frozen_bank(
+            process_active_banks_context,
+            bank,
+            bank_progress,
+            &replay_stats,
+            &replay_progress,
+            latest_validator_votes_for_frozen_banks,
+            duplicate_slots_to_repair,
+            purge_repair_slot_counter,
+            tbft_structs,
+            is_leader_block,
+        );
+        bank_complete_time.stop();
+
+        replay_stats.report_stats(
+            bank.slot(),
+            replay_progress.num_txs,
+            replay_progress.num_entries,
+            replay_progress.num_shreds,
+            bank_complete_time.as_us(),
+            completed_replay.is_unified_scheduler_enabled,
+        );
+
+        Some(bank_slot)
+    }
+
     fn process_replay_results(
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
@@ -4252,7 +4336,7 @@ impl ReplayStage {
             }
 
             let bank_slot = replay_result.bank_slot;
-            let Some(bank) = &bank_forks.read().unwrap().get_with_scheduler(bank_slot) else {
+            let Some(bank) = bank_forks.read().unwrap().get_with_scheduler(bank_slot) else {
                 info!("Abandoning replay of unrooted slot {bank_slot}");
                 continue;
             };
@@ -4264,7 +4348,7 @@ impl ReplayStage {
                     )) => {
                         handle_abandoned_bank(
                             process_active_banks_context,
-                            bank,
+                            &bank,
                             bank_slot,
                             update_parent,
                             bank_forks,
@@ -4279,14 +4363,13 @@ impl ReplayStage {
                     Err(err) => {
                         Self::mark_replay_result_dead_slot(
                             process_active_banks_context,
-                            bank,
+                            &bank,
                             err,
                             progress,
                             duplicate_slots_to_repair,
                             purge_repair_slot_counter,
                             &mut tbft_structs,
                         );
-                        // don't try to run the below logic to check if the bank is completed
                         continue;
                     }
                 }
@@ -4294,75 +4377,19 @@ impl ReplayStage {
 
             assert_eq!(bank_slot, bank.slot());
             if bank.is_complete() {
-                let mut bank_complete_time = Measure::start("bank_complete_time");
-                let bank_progress = progress
-                    .get_mut(&bank.slot())
-                    .expect("Bank fork progress entry missing for completed bank");
-
-                let completed_replay = match Self::complete_bank_replay(
+                if let Some(new_frozen_slot) = Self::process_completed_bank(
                     process_active_banks_context,
-                    bank,
-                    bank_progress,
+                    &bank,
+                    progress,
                     async_verification_freelist,
-                ) {
-                    Ok(completed_replay) => completed_replay,
-                    Err(err) => {
-                        Self::mark_replay_result_dead_slot(
-                            process_active_banks_context,
-                            bank,
-                            &err,
-                            progress,
-                            duplicate_slots_to_repair,
-                            purge_repair_slot_counter,
-                            &mut tbft_structs,
-                        );
-                        // don't try to run the remaining normal processing for the completed bank
-                        continue;
-                    }
-                };
-                let is_leader_block =
-                    match Self::freeze_completed_bank(process_active_banks_context, bank, my_pubkey)
-                    {
-                        Ok(is_leader_block) => is_leader_block,
-                        Err(err) => {
-                            Self::mark_replay_result_dead_slot(
-                                process_active_banks_context,
-                                bank,
-                                &err,
-                                progress,
-                                duplicate_slots_to_repair,
-                                purge_repair_slot_counter,
-                                &mut tbft_structs,
-                            );
-                            continue;
-                        }
-                    };
-
-                let r_replay_stats = completed_replay.replay_stats.read().unwrap();
-                let r_replay_progress = completed_replay.replay_progress.read().unwrap();
-                new_frozen_slots.push(bank.slot());
-                Self::publish_frozen_bank(
-                    process_active_banks_context,
-                    bank,
-                    bank_progress,
-                    &r_replay_stats,
-                    &r_replay_progress,
                     latest_validator_votes_for_frozen_banks,
                     duplicate_slots_to_repair,
                     purge_repair_slot_counter,
                     &mut tbft_structs,
-                    is_leader_block,
-                );
-                bank_complete_time.stop();
-
-                r_replay_stats.report_stats(
-                    bank.slot(),
-                    r_replay_progress.num_txs,
-                    r_replay_progress.num_entries,
-                    r_replay_progress.num_shreds,
-                    bank_complete_time.as_us(),
-                    completed_replay.is_unified_scheduler_enabled,
-                );
+                    my_pubkey,
+                ) {
+                    new_frozen_slots.push(new_frozen_slot);
+                }
             } else {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
