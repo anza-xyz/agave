@@ -7,29 +7,25 @@
 extern "C" {
 #endif
 
-#define BIG_MOD_EXP_ENDIANNESS_BE 0
-#define BIG_MOD_EXP_ENDIANNESS_LE 1
 #define BIG_MOD_EXP_MAX_BYTES 512
 
 typedef struct {
-  uint64_t base_addr;
+  const uint8_t *base;
   uint64_t base_len;
-  uint64_t exponent_addr;
+  const uint8_t *exponent;
   uint64_t exponent_len;
-  uint64_t modulus_addr;
+  const uint8_t *modulus;
   uint64_t modulus_len;
-  uint64_t result_addr;
-  uint64_t result_len;
 } SolBigModExpParams;
 
 /**
  * Big integer modular exponentiation
  *
- * @param endianness BIG_MOD_EXP_ENDIANNESS_BE or BIG_MOD_EXP_ENDIANNESS_LE
  * @param params Pointer to SolBigModExpParams struct
+ * @param result Pointer to writable result buffer, at least params->modulus_len bytes
  * @return 0 if executed successfully
  */
-@SYSCALL uint64_t sol_big_mod_exp(uint64_t, const SolBigModExpParams *);
+@SYSCALL uint64_t sol_big_mod_exp(const SolBigModExpParams *, uint8_t *);
 
 #ifdef __cplusplus
 }

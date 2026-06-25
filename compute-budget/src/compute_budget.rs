@@ -99,9 +99,10 @@ pub struct ComputeBudget {
     pub alt_bn128_pairing_one_pair_cost_other: u64,
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
-    /// Big integer moduler exponentiation cost divisor
-    /// The modular exponentiation cost is computed from operand words and
-    /// adjusted exponent bit length, divided by this divisor, plus
+    /// Big integer modular exponentiation cost divisor.
+    /// The modular exponentiation cost is computed from SIMD-0529 operand
+    /// complexity and adjusted exponent bit length, divided by this divisor,
+    /// plus
     /// `big_modular_exponentiation_base_cost`.
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number

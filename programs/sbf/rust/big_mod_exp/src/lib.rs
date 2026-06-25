@@ -74,13 +74,31 @@ fn big_mod_exp_test() {
 
     let test_cases: Vec<TestCase> = serde_json::from_str(test_data).unwrap();
     test_cases.iter().for_each(|test| {
-        let base = array_bytes::hex2bytes_unchecked(&test.base);
-        let exponent = array_bytes::hex2bytes_unchecked(&test.exponent);
-        let modulus = array_bytes::hex2bytes_unchecked(&test.modulus);
-        let expected = array_bytes::hex2bytes_unchecked(&test.expected);
+        let mut base = array_bytes::hex2bytes_unchecked(&test.base);
+        let mut exponent = array_bytes::hex2bytes_unchecked(&test.exponent);
+        let mut modulus = array_bytes::hex2bytes_unchecked(&test.modulus);
+        let mut expected = array_bytes::hex2bytes_unchecked(&test.expected);
+        base.reverse();
+        exponent.reverse();
+        modulus.reverse();
+        expected.reverse();
+
         let result = big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_slice());
-        assert_eq!(result, expected);
+        if is_supported_modulus(&modulus) {
+            assert_eq!(result, Some(expected));
+        } else {
+            assert_eq!(result, None);
+        }
     });
+}
+
+fn is_supported_modulus(modulus: &[u8]) -> bool {
+    let Some((&least_significant_byte, more_significant_bytes)) = modulus.split_first() else {
+        return false;
+    };
+
+    least_significant_byte & 1 == 1
+        && (least_significant_byte > 1 || more_significant_bytes.iter().any(|byte| *byte != 0))
 }
 
 #[unsafe(no_mangle)]
