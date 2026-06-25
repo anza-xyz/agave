@@ -1,23 +1,19 @@
 //! Parser for the validator's `--config` TOML file.
 //!
-//! The file is versioned TOML. The server reads the sections it understands and
-//! rejects unknown *fields* within them, so typos and unsupported settings fail
-//! loudly rather than being silently ignored. Managed threads are declared under
-//! `[threads.<name>]` and looked up by name, so new thread kinds need no parser
-//! change. The example below is illustrative, not the full set of options.
+//! The server reads the sections it understands and rejects unknown *fields*
+//! within them, so typos and unsupported settings fail loudly rather than being
+//! silently ignored. Managed threads are declared under `[threads.<name>]` and
+//! looked up by name, so new thread kinds need no parser change. The example
+//! below is illustrative, not the full set of options.
 //!
 //! ```toml
-//! version = 1
-//!
 //! [xdp]
 //! interface = "ens1f0"                       # optional; omit to auto-detect
 //! zero_copy = true                           # optional; default false
 //! queue_to_cpu_mapping = ["0:8", "1:9"]      # required (if [xdp] present), non-empty
 //!
 //! [threads.poh]
-//! cpus = [2]                                 # logical CPU(s): an index, a "0-3,8"
-//!                                            # range string, or a list mixing both
-//!                                            # (e.g. 2, "2-5", or ["2-5", 8])
+//! cpu = 2                                    # logical CPU index (a single core)
 //! reservation = "exclusive"                  # optional; "none" (default) or
 //!                                            # "exclusive"
 //! ```
@@ -38,7 +34,6 @@
 use {
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     serde::Deserialize,
-    solana_clap_utils::input_parsers::parse_cpu_ranges,
     std::{
         collections::{BTreeMap, HashSet},
         path::{Path, PathBuf},
@@ -61,17 +56,10 @@ pub enum ConfigFileError {
     #[error("malformed config: {0}")]
     Toml(#[from] toml::de::Error),
 
-    /// `version` was not `1`.
-    #[error("unsupported version {found} (expected 1)")]
-    Version { found: u64 },
-
-    /// `queue_to_cpu_mapping` resolved to no entries.
-    #[error("queue_to_cpu_mapping must not be empty")]
-    EmptyMapping,
-
-    /// A mapping entry was not a single `"<queue>:<cpu>"` pair.
-    #[error("invalid queue->cpu mapping `{input}` (expected \"<queue>:<cpu>\")")]
-    MappingSyntax { input: String },
+    /// `queue_to_cpu_mapping` was empty, or an entry was not a single
+    /// `"<queue>:<cpu>"` pair.
+    #[error("invalid queue_to_cpu_mapping: {0}")]
+    Mapping(String),
 
     /// A NIC queue was bound more than once across the mapping.
     #[error("queue {queue} is mapped more than once")]
@@ -81,15 +69,6 @@ pub enum ConfigFileError {
     /// one-to-one).
     #[error("CPU core {cpu} is mapped to more than one queue")]
     DuplicateCpu { cpu: usize },
-
-    /// A thread that only supports single-CPU affinity was given a different
-    /// number of CPUs.
-    #[error("thread requires exactly one cpu, but {count} were specified")]
-    SingleCpuRequired { count: usize },
-
-    /// A `cpus` entry was not a valid `"0-3,8"` set string.
-    #[error("invalid cpu set `{input}` (expected an index or a \"0-3,8\" range)")]
-    CpuSet { input: String },
 
     /// Two exclusive reservations requested the same CPU.
     #[error(
@@ -105,25 +84,26 @@ pub enum ConfigFileError {
 
 /// A parsed validator config file.
 #[derive(Debug, Default)]
-pub struct FileConfig {
+pub struct ConfigFile {
     /// AF_XDP transmit configuration (`[xdp]`), present only if declared.
     pub xdp: Option<XdpConfig>,
-    /// Managed threads (`[threads.<name>]`), keyed by name. More thread kinds
-    /// are expected over time; callers look up the ones they care about by name.
+    /// Managed threads (`[threads.<name>]`), keyed by name.
     threads: BTreeMap<String, ThreadConfig>,
 }
 
-impl FileConfig {
-    /// Configuration for the thread declared under `[threads.<name>]`, if any.
-    /// E.g. `config.thread("poh")`.
+impl ConfigFile {
     pub(crate) fn thread(&self, name: &str) -> Option<&ThreadConfig> {
         self.threads.get(name)
     }
 
-    /// Insert or replace the `[threads.<name>]` block. Used to fold CLI overrides
-    /// into the parsed configuration before validation.
+    /// Insert or replace a `[threads.<name>]` block, used to fold in CLI overrides.
     pub(crate) fn set_thread(&mut self, name: impl Into<String>, thread: ThreadConfig) {
         self.threads.insert(name.into(), thread);
+    }
+
+    /// Names of all declared `[threads.<name>]` blocks.
+    pub(crate) fn thread_names(&self) -> impl Iterator<Item = &str> {
+        self.threads.keys().map(String::as_str)
     }
 
     /// The exclusively-claimed CPUs from `[threads.*]` (reservation = exclusive),
@@ -133,9 +113,7 @@ impl FileConfig {
         let mut owners = BTreeMap::new();
         for (name, thread) in &self.threads {
             if thread.reservation == Reservation::Exclusive {
-                for &cpu in &thread.cpus {
-                    claim_exclusive(&mut owners, cpu, format!("[threads.{name}]"))?;
-                }
+                claim_exclusive(&mut owners, thread.cpu, format!("[threads.{name}]"))?;
             }
         }
         Ok(owners)
@@ -174,32 +152,18 @@ pub enum Reservation {
 /// Configuration of a single managed thread (`[threads.<name>]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadConfig {
-    /// Logical CPU(s) the thread may run on, sorted and de-duplicated.
-    pub cpus: Vec<usize>,
-    /// How the thread consumes its CPU(s). Defaults to [`Reservation::None`].
+    /// Logical CPU the thread pins to.
+    pub cpu: usize,
+    /// How the thread consumes its CPU. Defaults to [`Reservation::None`].
     pub reservation: Reservation,
-}
-
-impl ThreadConfig {
-    /// The single CPU this thread pins to, erroring if it does not specify
-    /// exactly one. For consumers (e.g. PoH) that only support single-CPU affinity.
-    pub(crate) fn single_cpu(&self) -> Result<usize, ConfigFileError> {
-        match self.cpus.as_slice() {
-            [cpu] => Ok(*cpu),
-            cpus => Err(ConfigFileError::SingleCpuRequired { count: cpus.len() }),
-        }
-    }
 }
 
 /// Serde DTO mirroring the literal TOML shape.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFile {
-    version: u64,
     #[serde(default)]
     xdp: Option<RawXdp>,
-    /// `[threads.<name>]` entries, keyed by name. Any name is accepted; the
-    /// server only consumes the ones it knows.
     #[serde(default)]
     threads: BTreeMap<String, RawThread>,
 }
@@ -208,7 +172,7 @@ struct RawFile {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawThread {
-    cpus: RawCpus,
+    cpu: usize,
     #[serde(default)]
     reservation: Option<RawReservation>,
 }
@@ -221,47 +185,15 @@ enum RawReservation {
     Exclusive,
 }
 
-/// The `cpus` value: a single [`CpuSpec`] (e.g. `2` or `"2-5"`) or a list of them
-/// (e.g. `[2, 3]` or `["2-5", 3]`).
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RawCpus {
-    One(CpuSpec),
-    Many(Vec<CpuSpec>),
-}
-
-/// A single CPU index (`2`) or a `"0-3,8"` set string.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum CpuSpec {
-    Index(usize),
-    Set(String),
-}
-
-/// Flatten the raw `cpus` value into a sorted, de-duplicated list of logical CPUs.
-fn build_thread(raw: &RawThread) -> Result<ThreadConfig, ConfigFileError> {
-    let specs = match &raw.cpus {
-        RawCpus::One(spec) => std::slice::from_ref(spec),
-        RawCpus::Many(specs) => specs.as_slice(),
-    };
-    let mut cpus = Vec::new();
-    for spec in specs {
-        match spec {
-            CpuSpec::Index(cpu) => cpus.push(*cpu),
-            CpuSpec::Set(set) => {
-                let parsed = parse_cpu_ranges(set)
-                    .map_err(|_| ConfigFileError::CpuSet { input: set.clone() })?;
-                cpus.extend(parsed);
-            }
-        }
-    }
-    cpus.sort_unstable();
-    cpus.dedup();
+fn build_thread(raw: &RawThread) -> ThreadConfig {
     let reservation = match raw.reservation {
         None | Some(RawReservation::None) => Reservation::None,
         Some(RawReservation::Exclusive) => Reservation::Exclusive,
     };
-    Ok(ThreadConfig { cpus, reservation })
+    ThreadConfig {
+        cpu: raw.cpu,
+        reservation,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,8 +223,8 @@ impl StrOrVec {
     }
 }
 
-/// Parse the validator config file into a [`FileConfig`].
-pub(crate) fn parse_config_file(path: &Path) -> Result<FileConfig, ConfigFileError> {
+/// Parse the validator config file into a [`ConfigFile`].
+pub(crate) fn parse_config_file(path: &Path) -> Result<ConfigFile, ConfigFileError> {
     let text = std::fs::read_to_string(path).map_err(|source| ConfigFileError::Io {
         path: path.to_path_buf(),
         source,
@@ -300,49 +232,32 @@ pub(crate) fn parse_config_file(path: &Path) -> Result<FileConfig, ConfigFileErr
     parse_str(&text)
 }
 
-fn parse_str(text: &str) -> Result<FileConfig, ConfigFileError> {
+fn parse_str(text: &str) -> Result<ConfigFile, ConfigFileError> {
     let raw: RawFile = toml::from_str(text)?;
-    if raw.version != 1 {
-        return Err(ConfigFileError::Version { found: raw.version });
-    }
-
-    let xdp = raw.xdp.map(build_xdp).transpose()?;
+    let xdp = raw.xdp.map(build_xdp_from_raw).transpose()?;
     let threads = raw
         .threads
         .iter()
-        .map(|(name, raw)| Ok((name.clone(), build_thread(raw)?)))
-        .collect::<Result<BTreeMap<_, _>, ConfigFileError>>()?;
-    Ok(FileConfig { xdp, threads })
+        .map(|(name, raw)| (name.clone(), build_thread(raw)))
+        .collect::<BTreeMap<_, _>>();
+    Ok(ConfigFile { xdp, threads })
 }
 
-fn build_xdp(raw: RawXdp) -> Result<XdpConfig, ConfigFileError> {
+fn build_xdp_from_raw(raw: RawXdp) -> Result<XdpConfig, ConfigFileError> {
     let entries = raw.queue_to_cpu_mapping.into_vec();
     if entries.is_empty() {
-        return Err(ConfigFileError::EmptyMapping);
+        return Err(ConfigFileError::Mapping("must not be empty".to_string()));
     }
 
     let mut queues = Vec::with_capacity(entries.len());
     let mut seen_queues = HashSet::new();
     let mut seen_cpus = HashSet::new();
     for entry in &entries {
-        let (queue_str, cpu_str) =
-            entry
-                .split_once(':')
-                .ok_or_else(|| ConfigFileError::MappingSyntax {
-                    input: entry.clone(),
-                })?;
-        let queue: u32 = queue_str
-            .trim()
-            .parse()
-            .map_err(|_| ConfigFileError::MappingSyntax {
-                input: entry.clone(),
-            })?;
-        let cpu: usize = cpu_str
-            .trim()
-            .parse()
-            .map_err(|_| ConfigFileError::MappingSyntax {
-                input: entry.clone(),
-            })?;
+        let mapping_err =
+            || ConfigFileError::Mapping(format!("`{entry}` is not a \"<queue>:<cpu>\" pair"));
+        let (queue_str, cpu_str) = entry.split_once(':').ok_or_else(mapping_err)?;
+        let queue: u32 = queue_str.trim().parse().map_err(|_| mapping_err())?;
+        let cpu: usize = cpu_str.trim().parse().map_err(|_| mapping_err())?;
         if !seen_queues.insert(queue) {
             return Err(ConfigFileError::DuplicateQueue { queue });
         }
@@ -359,7 +274,7 @@ fn build_xdp(raw: RawXdp) -> Result<XdpConfig, ConfigFileError> {
 mod tests {
     use super::*;
 
-    fn parse(s: &str) -> Result<FileConfig, ConfigFileError> {
+    fn parse(s: &str) -> Result<ConfigFile, ConfigFileError> {
         parse_str(s)
     }
 
@@ -369,7 +284,7 @@ mod tests {
 
     #[test]
     fn minimal_auto_interface() {
-        let c = xdp("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0:8\"\n");
+        let c = xdp("[xdp]\nqueue_to_cpu_mapping = \"0:8\"\n");
         assert_eq!(c.interface, None);
         assert!(!c.zero_copy);
         assert_eq!(c.queues, vec![QueueCpuBinding { queue: 0, cpu: 8 }]);
@@ -378,7 +293,6 @@ mod tests {
     #[test]
     fn full_fields() {
         let c = xdp(r#"
-version = 1
 [xdp]
 interface = "ens1f0"
 zero_copy = true
@@ -398,7 +312,7 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn non_contiguous_queues() {
-        let c = xdp("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"1:10\", \"3:11\", \"5:12\"]\n");
+        let c = xdp("[xdp]\nqueue_to_cpu_mapping = [\"1:10\", \"3:11\", \"5:12\"]\n");
         assert_eq!(
             c.queues,
             vec![
@@ -411,12 +325,12 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn queries_thread_by_name() {
-        let c = parse("version = 1\n[threads.poh]\ncpus = [3]\n").unwrap();
+        let c = parse("[threads.poh]\ncpu = 3\n").unwrap();
         assert!(c.xdp.is_none());
         assert_eq!(
             c.thread("poh"),
             Some(&ThreadConfig {
-                cpus: vec![3],
+                cpu: 3,
                 reservation: Reservation::None,
             })
         );
@@ -425,20 +339,18 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn parses_multiple_threads() {
-        // The parser keeps every declared thread; the server queries by name.
-        let c = parse("version = 1\n[threads.poh]\ncpus = [2]\n[threads.replay]\ncpus = [8, 9]\n")
-            .unwrap();
+        let c = parse("[threads.poh]\ncpu = 2\n[threads.replay]\ncpu = 8\n").unwrap();
         assert_eq!(
             c.thread("poh"),
             Some(&ThreadConfig {
-                cpus: vec![2],
+                cpu: 2,
                 reservation: Reservation::None,
             })
         );
         assert_eq!(
             c.thread("replay"),
             Some(&ThreadConfig {
-                cpus: vec![8, 9],
+                cpu: 8,
                 reservation: Reservation::None,
             })
         );
@@ -446,63 +358,39 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn parses_xdp_and_threads_together() {
-        let c = parse(
-            "version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0:8\"\n[threads.poh]\ncpus = [2]\n",
-        )
-        .unwrap();
+        let c = parse("[xdp]\nqueue_to_cpu_mapping = \"0:8\"\n[threads.poh]\ncpu = 2\n").unwrap();
         assert!(c.xdp.is_some());
         assert_eq!(
             c.thread("poh"),
             Some(&ThreadConfig {
-                cpus: vec![2],
+                cpu: 2,
                 reservation: Reservation::None,
             })
         );
     }
 
     #[test]
-    fn parses_cpu_forms() {
-        // single index
+    fn parses_single_cpu() {
         assert_eq!(
-            parse("version = 1\n[threads.t]\ncpus = 2\n")
+            parse("[threads.t]\ncpu = 2\n")
                 .unwrap()
                 .thread("t")
                 .unwrap()
-                .cpus,
-            vec![2]
-        );
-        // single range string
-        assert_eq!(
-            parse("version = 1\n[threads.t]\ncpus = \"2-5\"\n")
-                .unwrap()
-                .thread("t")
-                .unwrap()
-                .cpus,
-            vec![2, 3, 4, 5]
-        );
-        // list of indices
-        assert_eq!(
-            parse("version = 1\n[threads.t]\ncpus = [2, 3]\n")
-                .unwrap()
-                .thread("t")
-                .unwrap()
-                .cpus,
-            vec![2, 3]
-        );
-        // mixed list, with overlap de-duplicated and sorted
-        assert_eq!(
-            parse("version = 1\n[threads.t]\ncpus = [\"2-5\", 3]\n")
-                .unwrap()
-                .thread("t")
-                .unwrap()
-                .cpus,
-            vec![2, 3, 4, 5]
+                .cpu,
+            2
         );
     }
 
     #[test]
+    fn rejects_multiple_cpus() {
+        // `cpu` accepts a single index only; a list (or range string) is rejected.
+        let e = parse("[threads.t]\ncpu = [2, 3]\n").unwrap_err();
+        assert!(matches!(e, ConfigFileError::Toml(_)));
+    }
+
+    #[test]
     fn reservation_defaults_to_none() {
-        let t = parse("version = 1\n[threads.poh]\ncpus = [2]\n")
+        let t = parse("[threads.poh]\ncpu = 2\n")
             .unwrap()
             .thread("poh")
             .unwrap()
@@ -512,7 +400,7 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn parses_exclusive_reservation() {
-        let t = parse("version = 1\n[threads.poh]\ncpus = [2]\nreservation = \"exclusive\"\n")
+        let t = parse("[threads.poh]\ncpu = 2\nreservation = \"exclusive\"\n")
             .unwrap()
             .thread("poh")
             .unwrap()
@@ -523,16 +411,15 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     #[test]
     fn rejects_unknown_reservation() {
         // An unrecognized reservation value is a hard (serde) error.
-        let e =
-            parse("version = 1\n[threads.poh]\ncpus = [2]\nreservation = \"bogus\"\n").unwrap_err();
+        let e = parse("[threads.poh]\ncpu = 2\nreservation = \"bogus\"\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
     #[test]
     fn exclusive_thread_cpus_collects_distinct() {
         let c = parse(
-            "version = 1\n[threads.a]\ncpus = [2]\nreservation = \"exclusive\"\n[threads.b]\ncpus \
-             = [3]\nreservation = \"exclusive\"\n",
+            "[threads.a]\ncpu = 2\nreservation = \"exclusive\"\n[threads.b]\ncpu = 3\nreservation \
+             = \"exclusive\"\n",
         )
         .unwrap();
         let owners = c.exclusive_thread_cpus().unwrap();
@@ -541,10 +428,9 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn exclusive_thread_cpus_detects_conflict() {
-        // Generic over thread names: two arbitrary threads claiming CPU 5.
         let c = parse(
-            "version = 1\n[threads.a]\ncpus = [5]\nreservation = \"exclusive\"\n[threads.b]\ncpus \
-             = [5]\nreservation = \"exclusive\"\n",
+            "[threads.a]\ncpu = 5\nreservation = \"exclusive\"\n[threads.b]\ncpu = 5\nreservation \
+             = \"exclusive\"\n",
         )
         .unwrap();
         assert!(matches!(
@@ -556,108 +442,66 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     #[test]
     fn exclusive_thread_cpus_ignores_non_exclusive() {
         // A `none` thread claims nothing, so it never conflicts.
-        let c = parse(
-            "version = 1\n[threads.a]\ncpus = [5]\nreservation = \"exclusive\"\n[threads.b]\ncpus \
-             = [5]\n",
-        )
-        .unwrap();
+        let c = parse("[threads.a]\ncpu = 5\nreservation = \"exclusive\"\n[threads.b]\ncpu = 5\n")
+            .unwrap();
         assert!(c.exclusive_thread_cpus().unwrap().contains_key(&5));
     }
 
     #[test]
-    fn rejects_bad_cpu_set() {
-        let e = parse("version = 1\n[threads.t]\ncpus = \"2-x\"\n").unwrap_err();
-        assert!(matches!(e, ConfigFileError::CpuSet { .. }));
-    }
-
-    #[test]
-    fn single_cpu_requires_exactly_one() {
-        let one = ThreadConfig {
-            cpus: vec![2],
-            reservation: Reservation::None,
-        };
-        assert_eq!(one.single_cpu().unwrap(), 2);
-
-        let many = ThreadConfig {
-            cpus: vec![2, 3],
-            reservation: Reservation::None,
-        };
-        assert!(matches!(
-            many.single_cpu(),
-            Err(ConfigFileError::SingleCpuRequired { count: 2 })
-        ));
-
-        let none = ThreadConfig {
-            cpus: vec![],
-            reservation: Reservation::None,
-        };
-        assert!(matches!(
-            none.single_cpu(),
-            Err(ConfigFileError::SingleCpuRequired { count: 0 })
-        ));
-    }
-
-    #[test]
     fn empty_config_is_allowed() {
-        // A file with no [xdp] and no threads is valid; it configures nothing.
-        let c = parse("version = 1\n").unwrap();
+        let c = parse("").unwrap();
         assert!(c.xdp.is_none());
         assert_eq!(c.thread("poh"), None);
     }
 
     #[test]
-    fn rejects_wrong_version() {
-        assert!(matches!(
-            parse("version = 2\n[xdp]\nqueue_to_cpu_mapping = \"0:8\"\n"),
-            Err(ConfigFileError::Version { found: 2 })
-        ));
-    }
-
-    #[test]
     fn rejects_unknown_field() {
         // `rx_size` is not a supported field, so it must be rejected.
-        let e = parse("version = 1\n[xdp]\nrx_size = 8192\nqueue_to_cpu_mapping = \"0:8\"\n")
-            .unwrap_err();
+        let e = parse("[xdp]\nrx_size = 8192\nqueue_to_cpu_mapping = \"0:8\"\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
     #[test]
     fn rejects_unknown_thread_field() {
         // Any thread name is accepted, but unknown keys within a thread are not.
-        let e = parse("version = 1\n[threads.poh]\ncpus = [1]\nbogus = 2\n").unwrap_err();
+        let e = parse("[threads.poh]\ncpu = 1\nbogus = 2\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
     #[test]
     fn rejects_missing_mapping() {
-        let e = parse("version = 1\n[xdp]\ninterface = \"eth0\"\n").unwrap_err();
+        let e = parse("[xdp]\ninterface = \"eth0\"\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
     #[test]
     fn rejects_duplicate_queue() {
-        let e =
-            parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"0:8\", \"0:9\"]\n").unwrap_err();
+        let e = parse("[xdp]\nqueue_to_cpu_mapping = [\"0:8\", \"0:9\"]\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::DuplicateQueue { queue: 0 }));
     }
 
     #[test]
     fn rejects_duplicate_cpu() {
-        let e =
-            parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = [\"0:8\", \"1:8\"]\n").unwrap_err();
+        let e = parse("[xdp]\nqueue_to_cpu_mapping = [\"0:8\", \"1:8\"]\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::DuplicateCpu { cpu: 8 }));
     }
 
     #[test]
     fn rejects_bad_mapping_syntax() {
-        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0-1\"\n").unwrap_err();
-        assert!(matches!(e, ConfigFileError::MappingSyntax { .. }));
+        let e = parse("[xdp]\nqueue_to_cpu_mapping = \"0-1\"\n").unwrap_err();
+        assert!(matches!(e, ConfigFileError::Mapping(_)));
     }
 
     #[test]
     fn rejects_queue_range() {
         // Ranges/sets are no longer accepted; a single queue is required.
-        let e = parse("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0-3:8\"\n").unwrap_err();
-        assert!(matches!(e, ConfigFileError::MappingSyntax { .. }));
+        let e = parse("[xdp]\nqueue_to_cpu_mapping = \"0-3:8\"\n").unwrap_err();
+        assert!(matches!(e, ConfigFileError::Mapping(_)));
+    }
+
+    #[test]
+    fn rejects_empty_mapping() {
+        let e = parse("[xdp]\nqueue_to_cpu_mapping = []\n").unwrap_err();
+        assert!(matches!(e, ConfigFileError::Mapping(_)));
     }
 }

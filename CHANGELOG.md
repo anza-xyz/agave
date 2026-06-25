@@ -49,16 +49,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
-* Added `--config` (Linux only), which points to a TOML configuration file for the validator
-  (e.g. XDP and PoH thread pinning settings). Where a setting is also available as a CLI flag, the flag
-  overrides the value from the file. A `[threads.<name>]` entry may declare
-  `reservation = "exclusive"` to claim its CPU core for that thread alone; XDP queue handler
-  CPUs are always exclusive, and two exclusive claimants may not share a core. A PoH core set
-  via `--poh-pinned-cpu-core`, or the built-in default when `[threads.poh]` is omitted, is
-  implicitly exclusive; an explicit `[threads.poh]` honors its own `reservation` (default
-  `none`). An exclusive reservation only excludes
-  other managed claimants, so threads not managed through the config (and the kernel's own
-  NAPI/softirq work) may still be scheduled on an exclusive core.
+* Added Linux-only `--config <PATH>` for TOML-based validator settings, initially covering XDP and PoH CPU placement. CLI flags override file values. XDP and PoH CPU assignments may not overlap; other managed threads can opt into overlap checks with `reservation = "exclusive"`.
 ### CLI
 #### Breaking
 #### Changes
