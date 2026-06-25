@@ -1,6 +1,6 @@
 use {
     super::AddVoteError,
-    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     bitvec::{order::Lsb0, vec::BitVec},
     solana_bls_signatures::{
         Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
@@ -56,7 +56,7 @@ impl PartialCert {
     pub(super) fn add_vote(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        vote: &SigVerifiedVoteBatch,
+        vote: &VoteAggregate,
     ) -> Result<(), AddVoteError> {
         if !self.wants_vote(vote.ranks()) {
             return Err(AddVoteError::Duplicate);

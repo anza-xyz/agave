@@ -11,7 +11,7 @@ use {
     },
     agave_bls_sigverify::{
         generated_cert_types::GeneratedCertTypes,
-        sig_verified_messages::{SigVerifiedBatch, SigVerifiedVoteBatch},
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
@@ -83,13 +83,13 @@ fn get_rank(root_bank: &Bank, slot: Slot, pubkey: Pubkey) -> Result<u16, AddVote
 
 fn is_pubkey_present(
     root_bank: &Bank,
-    batch: &SigVerifiedVoteBatch,
+    aggregate: &VoteAggregate,
     pubkey: Pubkey,
 ) -> Result<bool, AddVoteError> {
-    let rank = get_rank(root_bank, batch.vote().slot(), pubkey)?;
-    // the vote was verified so the rank should exist in the batch's ranks, hence unwrap() should
+    let rank = get_rank(root_bank, aggregate.vote().slot(), pubkey)?;
+    // the vote was verified so the rank should exist in the aggregate's ranks, hence unwrap() should
     // be safe.
-    Ok(*batch.ranks().get(rank as usize).unwrap())
+    Ok(*aggregate.ranks().get(rank as usize).unwrap())
 }
 
 fn get_max_validators(bank: &Bank, slot: Slot) -> Result<usize, AddVoteError> {
@@ -166,16 +166,21 @@ impl ConsensusPool {
         &mut self,
         root_bank: &Bank,
         total_stake: NonZero<u64>,
-        batch: &SigVerifiedVoteBatch,
+        aggregate: &VoteAggregate,
     ) -> Result<(u64, Vec<Certificate>), AddVoteError> {
-        let max_validators = get_max_validators(root_bank, batch.vote().slot())?;
-        let slot = batch.vote().slot();
+        let max_validators = get_max_validators(root_bank, aggregate.vote().slot())?;
+        let slot = aggregate.vote().slot();
         let pool = self
             .vote_pools
             .entry(slot)
             .or_insert_with(|| VotePool::new(slot, max_validators));
-        pool.add_vote(root_bank, total_stake, batch, &self.completed_certificates)
-            .map_err(AddVoteError::VotePoolAddVote)
+        pool.add_vote(
+            root_bank,
+            total_stake,
+            aggregate,
+            &self.completed_certificates,
+        )
+        .map_err(AddVoteError::VotePoolAddVote)
     }
 
     fn insert_certificate(
@@ -311,10 +316,10 @@ impl ConsensusPool {
         &mut self,
         root_bank: &Bank,
         my_vote_pubkey: Pubkey,
-        batch: SigVerifiedVoteBatch,
+        aggregate: VoteAggregate,
         events: &mut Vec<VotorEvent>,
     ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
-        let vote = batch.vote();
+        let vote = aggregate.vote();
         let vote_slot = vote.slot();
         let total_stake = get_total_stake(root_bank, vote_slot)?;
 
@@ -327,7 +332,7 @@ impl ConsensusPool {
             });
         }
         let vote_type = vote.get_type();
-        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, total_stake, &batch)?;
+        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, total_stake, &aggregate)?;
         let fallback_vote_counters = self
             .slot_stake_counters_map
             .entry(vote_slot)
@@ -336,7 +341,7 @@ impl ConsensusPool {
         fallback_vote_counters.add_vote(
             vote,
             entry_stake,
-            is_pubkey_present(root_bank, &batch, my_vote_pubkey)?,
+            is_pubkey_present(root_bank, &aggregate, my_vote_pubkey)?,
             events,
             &mut self.pending_safe_to_notar,
             &mut self.stats,
@@ -701,9 +706,7 @@ mod tests {
             signature,
             rank: rank as u16,
         };
-        SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_verified_vote(
-            bank, msg,
-        )])
+        SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(bank, msg)])
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {

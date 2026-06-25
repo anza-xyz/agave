@@ -3,7 +3,7 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
-    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
     bitvec::vec::BitVec,
     solana_clock::Slot,
@@ -48,7 +48,7 @@ impl NotarEntry {
         rank_map: &BLSPubkeyToRankMap,
         max_validators: usize,
         block_id: Hash,
-        vote: &SigVerifiedVoteBatch,
+        vote: &VoteAggregate,
     ) -> Result<(), AddVoteError> {
         let partial = self
             .partials

@@ -3,7 +3,7 @@ use {
         RewardRequest, RewardRespSucc, RewardResponse,
     },
     agave_bls_sigverify::{
-        rewards::rewards_wants_vote, sig_verified_messages::SigVerifiedVoteBatch,
+        rewards::rewards_wants_vote, sig_verified_messages::VoteAggregate,
     },
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
     crossbeam_channel::RecvError,
@@ -85,7 +85,7 @@ impl CertsBuilder {
     }
 
     /// Returns [`true`] if the rewards container is interested in this vote else [`false`].
-    fn wants_vote(&self, root_slot: Slot, vote: &SigVerifiedVoteBatch) -> bool {
+    fn wants_vote(&self, root_slot: Slot, vote: &VoteAggregate) -> bool {
         if !rewards_wants_vote(
             &self.cluster_info,
             &self.leader_schedule,
@@ -101,7 +101,7 @@ impl CertsBuilder {
     }
 
     /// Adds received [`VoteMessage`] from other validators.
-    pub(super) fn add_vote(&mut self, root_bank: &Bank, vote: SigVerifiedVoteBatch) {
+    pub(super) fn add_vote(&mut self, root_bank: &Bank, vote: VoteAggregate) {
         let slot = vote.vote().slot();
         let Some(rank_map) = root_bank.get_rank_map(slot) else {
             warn!(

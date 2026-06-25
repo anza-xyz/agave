@@ -19,7 +19,7 @@ use {
     },
     agave_bls_sigverify::{
         generated_cert_types::GeneratedCertTypes,
-        sig_verified_messages::{SigVerifiedBatch, SigVerifiedVoteBatch},
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
     agave_votor_messages::{
         certificate::Certificate,
@@ -633,7 +633,7 @@ impl ConsensusPoolService {
             .map(|m| match m {
                 ConsensusMessage::Certificate(c) => SigVerifiedBatch::Certificates(vec![c]),
                 ConsensusMessage::Vote(v) => {
-                    let msg = SigVerifiedVoteBatch::new_from_verified_vote(root_bank, v);
+                    let msg = VoteAggregate::new_from_verified_vote(root_bank, v);
                     SigVerifiedBatch::Votes(vec![msg])
                 }
             })
@@ -649,7 +649,7 @@ mod tests {
     use {
         super::*,
         crate::tests::get_cluster_info,
-        agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
+        agave_bls_sigverify::sig_verified_messages::VoteAggregate,
         agave_votor_messages::{
             certificate::CertificateType,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
@@ -793,7 +793,7 @@ mod tests {
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
             let message =
-                SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_verified_vote(
+                SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
                     &root_bank,
                     VoteMessage {
                         vote: notarize_vote,

@@ -1,5 +1,5 @@
 use {
-    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::Block,
@@ -29,9 +29,9 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
 
 fn get_validators(
     root_bank: &Bank,
-    batch: &SigVerifiedVoteBatch,
+    aggregate: &VoteAggregate,
 ) -> Result<impl Iterator<Item = Result<Pubkey, VotePoolAddVoteError>>, VotePoolAddVoteError> {
-    let vote_slot = batch.vote().slot();
+    let vote_slot = aggregate.vote().slot();
     let rank_map = match root_bank.epoch_stakes_from_slot(vote_slot) {
         None => {
             return Err(VotePoolAddVoteError::NoEpochStakes {
@@ -41,7 +41,7 @@ fn get_validators(
         }
         Some(epoch_stakes) => epoch_stakes.bls_pubkey_to_rank_map(),
     };
-    Ok(batch
+    Ok(aggregate
         .ranks()
         .iter_ones()
         .map(|rank| match rank_map.get_pubkey_stake_entry(rank) {
@@ -83,25 +83,25 @@ impl NotarVoteEntry {
         }
     }
 
-    fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote().slot());
-        if has_common_bits(&self.ranks, batch.ranks()) {
+    fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        if has_common_bits(&self.ranks, aggregate.ranks()) {
             // TODO: is it important to figure out if this is invalid or duplicate vote?
             return Err(VotePoolAddVoteError::Invalid);
         }
-        let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
+        let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_vote(batch)?
+                entry.add_vote(aggregate)?
             }
             HashMapEntry::Vacant(e) => {
-                let entry = VoteEntry::new_with_batch(self.max_validators, batch);
+                let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
                 let stake = entry.stake;
                 e.insert(entry);
                 stake
             }
         };
-        self.ranks |= batch.ranks();
+        self.ranks |= aggregate.ranks();
         Ok(stake)
     }
 }
@@ -123,24 +123,24 @@ impl GenesisVoteEntry {
         }
     }
 
-    fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote().slot());
-        if has_common_bits(&self.ranks, batch.ranks()) {
+    fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        if has_common_bits(&self.ranks, aggregate.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
         }
-        let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
+        let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_vote(batch)?
+                entry.add_vote(aggregate)?
             }
             HashMapEntry::Vacant(e) => {
-                let entry = VoteEntry::new_with_batch(self.max_validators, batch);
+                let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
                 let stake = entry.stake;
                 e.insert(entry);
                 stake
             }
         };
-        self.ranks |= batch.ranks();
+        self.ranks |= aggregate.ranks();
         Ok(stake)
     }
 }
@@ -167,11 +167,11 @@ impl NotarFallbackVoteEntry {
     fn add_vote(
         &mut self,
         root_bank: &Bank,
-        batch: &SigVerifiedVoteBatch,
+        aggregate: &VoteAggregate,
     ) -> Result<u64, VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote().slot());
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
         let mut validators = vec![];
-        for validator in get_validators(root_bank, batch)? {
+        for validator in get_validators(root_bank, aggregate)? {
             let validator = validator?;
             if let Some(set) = self.validators.get(&validator)
                 && set.len() >= MAX_NOTAR_FALLBACK_PER_VALIDATOR
@@ -180,13 +180,13 @@ impl NotarFallbackVoteEntry {
             }
             validators.push(validator);
         }
-        let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
+        let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_vote(batch)?
+                entry.add_vote(aggregate)?
             }
             HashMapEntry::Vacant(e) => {
-                let entry = VoteEntry::new_with_batch(self.max_validators, batch);
+                let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
                 let stake = entry.stake;
                 e.insert(entry);
                 stake
@@ -196,9 +196,9 @@ impl NotarFallbackVoteEntry {
             self.validators
                 .entry(validator)
                 .or_default()
-                .insert(*batch.vote().block_id().unwrap());
+                .insert(*aggregate.vote().block_id().unwrap());
         }
-        self.ranks |= batch.ranks();
+        self.ranks |= aggregate.ranks();
         Ok(stake)
     }
 }
@@ -219,25 +219,25 @@ impl VoteEntry {
         }
     }
 
-    fn new_with_batch(max_validators: usize, batch: &SigVerifiedVoteBatch) -> Self {
+    fn new_with_aggregate(max_validators: usize, aggregate: &VoteAggregate) -> Self {
         let mut ranks = default_bitvec(max_validators);
-        ranks |= batch.ranks();
+        ranks |= aggregate.ranks();
         Self {
             ranks,
-            signature: *batch.signature(),
-            stake: batch.stake().get(),
+            signature: *aggregate.signature(),
+            stake: aggregate.stake().get(),
         }
     }
 
-    fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
-        if has_common_bits(&self.ranks, batch.ranks()) {
+    fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+        if has_common_bits(&self.ranks, aggregate.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
         }
         self.signature
-            .aggregate_with(std::iter::once(batch.signature()))
+            .aggregate_with(std::iter::once(aggregate.signature()))
             .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
-        self.ranks |= batch.ranks();
-        self.stake = self.stake.saturating_add(batch.stake().get());
+        self.ranks |= aggregate.ranks();
+        self.stake = self.stake.saturating_add(aggregate.stake().get());
         Ok(self.stake)
     }
 
@@ -322,10 +322,10 @@ impl VotePool {
     fn try_produce_finalize_cert(
         &mut self,
         total_stake: NonZero<u64>,
-        batch: &SigVerifiedVoteBatch,
+        aggregate: &VoteAggregate,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
-        let cert_type = CertificateType::Finalize(batch.vote().slot());
+        let cert_type = CertificateType::Finalize(aggregate.vote().slot());
         self.finalize
             .try_build_cert(cert_type, total_stake, completed_certs)
     }
@@ -359,10 +359,10 @@ impl VotePool {
     fn try_produce_skip_cert(
         &mut self,
         total_stake: NonZero<u64>,
-        batch: &SigVerifiedVoteBatch,
+        aggregate: &VoteAggregate,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
-        let cert_type = CertificateType::Skip(batch.vote().slot());
+        let cert_type = CertificateType::Skip(aggregate.vote().slot());
         match (self.skip.stake > 0, self.skip_fallback.stake > 0) {
             (false, false) => Ok(None),
             (true, false) => self
@@ -394,10 +394,10 @@ impl VotePool {
     fn try_produce_certs(
         &mut self,
         total_stake: NonZero<u64>,
-        batch: &SigVerifiedVoteBatch,
+        aggregate: &VoteAggregate,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
-        match batch.vote() {
+        match aggregate.vote() {
             Vote::Notarize(notar) => Ok([
                 self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs)?,
                 self.try_produce_notar_cert(total_stake, notar.block, completed_certs)?,
@@ -411,11 +411,11 @@ impl VotePool {
                 .into_iter()
                 .collect()),
             Vote::Finalize(_) => Ok(self
-                .try_produce_finalize_cert(total_stake, batch, completed_certs)?
+                .try_produce_finalize_cert(total_stake, aggregate, completed_certs)?
                 .into_iter()
                 .collect()),
             Vote::Skip(_) | Vote::SkipFallback(_) => Ok(self
-                .try_produce_skip_cert(total_stake, batch, completed_certs)?
+                .try_produce_skip_cert(total_stake, aggregate, completed_certs)?
                 .into_iter()
                 .collect()),
             Vote::Genesis(genesis) => Ok(self
@@ -430,82 +430,82 @@ impl VotePool {
         &mut self,
         root_bank: &Bank,
         total_stake: NonZero<u64>,
-        batch: &SigVerifiedVoteBatch,
+        aggregate: &VoteAggregate,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
-        debug_assert_eq!(self.slot, batch.vote().slot());
-        let stake = match batch.vote() {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let stake = match aggregate.vote() {
             Vote::Notarize(_) => {
-                if has_common_bits(&self.skip.ranks, batch.ranks())
-                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                if has_common_bits(&self.skip.ranks, aggregate.ranks())
+                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
                 if let Some(entry) = self
                     .notar_fallback
                     .entries
-                    .get(batch.vote().block_id().unwrap())
-                    && has_common_bits(&entry.ranks, batch.ranks())
+                    .get(aggregate.vote().block_id().unwrap())
+                    && has_common_bits(&entry.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.notar.add_vote(batch)
+                self.notar.add_vote(aggregate)
             }
             Vote::NotarizeFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, batch.ranks())
-                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                if has_common_bits(&self.finalize.ranks, aggregate.ranks())
+                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                if let Some(entry) = self.notar.entries.get(batch.vote().block_id().unwrap())
-                    && has_common_bits(&entry.ranks, batch.ranks())
+                if let Some(entry) = self.notar.entries.get(aggregate.vote().block_id().unwrap())
+                    && has_common_bits(&entry.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.notar_fallback.add_vote(root_bank, batch)
+                self.notar_fallback.add_vote(root_bank, aggregate)
             }
             Vote::Skip(_) => {
-                if has_common_bits(&self.notar.ranks, batch.ranks())
-                    || has_common_bits(&self.finalize.ranks, batch.ranks())
-                    || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
-                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                if has_common_bits(&self.notar.ranks, aggregate.ranks())
+                    || has_common_bits(&self.finalize.ranks, aggregate.ranks())
+                    || has_common_bits(&self.skip_fallback.ranks, aggregate.ranks())
+                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.skip.add_vote(batch)
+                self.skip.add_vote(aggregate)
             }
             Vote::SkipFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, batch.ranks())
-                    || has_common_bits(&self.skip.ranks, batch.ranks())
-                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                if has_common_bits(&self.finalize.ranks, aggregate.ranks())
+                    || has_common_bits(&self.skip.ranks, aggregate.ranks())
+                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.skip_fallback.add_vote(batch)
+                self.skip_fallback.add_vote(aggregate)
             }
             Vote::Finalize(_) => {
-                if has_common_bits(&self.skip.ranks, batch.ranks())
-                    || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
-                    || has_common_bits(&self.notar_fallback.ranks, batch.ranks())
-                    || has_common_bits(&self.genesis.ranks, batch.ranks())
+                if has_common_bits(&self.skip.ranks, aggregate.ranks())
+                    || has_common_bits(&self.skip_fallback.ranks, aggregate.ranks())
+                    || has_common_bits(&self.notar_fallback.ranks, aggregate.ranks())
+                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.finalize.add_vote(batch)
+                self.finalize.add_vote(aggregate)
             }
             Vote::Genesis(_) => {
-                if has_common_bits(&self.skip.ranks, batch.ranks())
-                    || has_common_bits(&self.skip_fallback.ranks, batch.ranks())
-                    || has_common_bits(&self.notar_fallback.ranks, batch.ranks())
-                    || has_common_bits(&self.notar.ranks, batch.ranks())
-                    || has_common_bits(&self.finalize.ranks, batch.ranks())
+                if has_common_bits(&self.skip.ranks, aggregate.ranks())
+                    || has_common_bits(&self.skip_fallback.ranks, aggregate.ranks())
+                    || has_common_bits(&self.notar_fallback.ranks, aggregate.ranks())
+                    || has_common_bits(&self.notar.ranks, aggregate.ranks())
+                    || has_common_bits(&self.finalize.ranks, aggregate.ranks())
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.genesis.add_vote(batch)
+                self.genesis.add_vote(aggregate)
             }
         }?;
-        let certs = self.try_produce_certs(total_stake, batch, completed_certs)?;
+        let certs = self.try_produce_certs(total_stake, aggregate, completed_certs)?;
         Ok((stake, certs))
     }
 }

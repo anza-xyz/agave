@@ -5,7 +5,7 @@ use {
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
         errors::SigVerifyVoteError,
         rewards::{AddVoteMessage, rewards_wants_vote},
-        sig_verified_messages::{SigVerifiedBatch, SigVerifiedVoteBatch},
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         stats::SigVerifyVoteStats,
         utils::{
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
@@ -40,7 +40,7 @@ use {
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 struct VerifiedVotePayload {
-    vote_message: SigVerifiedVoteBatch,
+    vote_aggregate: VoteAggregate,
     sender_vote_account_pubkeys: Vec<Pubkey>,
 }
 
@@ -73,10 +73,9 @@ impl UnverifiedVotePayload {
             signature: self.vote_message.signature,
             rank: self.vote_message.rank,
         };
-        let sig_verified_vote_batch =
-            SigVerifiedVoteBatch::new_from_verified_vote(root_bank, vote_msg);
+        let vote_aggregate = VoteAggregate::new_from_verified_vote(root_bank, vote_msg);
         is_verified.then_some(VerifiedVotePayload {
-            vote_message: sig_verified_vote_batch,
+            vote_aggregate,
             sender_vote_account_pubkeys: vec![self.sender_vote_account_pubkey],
         })
     }
@@ -138,8 +137,8 @@ fn inspect_for_repair(
     vote: &VerifiedVotePayload,
     msgs_for_repair: &mut HashMap<Pubkey, Vec<Slot>>,
 ) {
-    let vote_slot = vote.vote_message.vote.slot();
-    match vote.vote_message.vote {
+    let vote_slot = vote.vote_aggregate.vote.slot();
+    match vote.vote_aggregate.vote {
         Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
             for pubkey in &vote.sender_vote_account_pubkeys {
                 msgs_for_repair.entry(*pubkey).or_default().push(vote_slot);
@@ -173,9 +172,9 @@ fn process_verified_votes(
             cluster_info,
             leader_schedule,
             root_bank.slot(),
-            &payload.vote_message.vote,
+            &payload.vote_aggregate.vote,
         ) {
-            votes_for_reward.push(payload.vote_message.clone());
+            votes_for_reward.push(payload.vote_aggregate.clone());
         }
 
         inspect_for_repair(&payload, &mut msgs_for_repair);
@@ -183,10 +182,10 @@ fn process_verified_votes(
         for pubkey in &payload.sender_vote_account_pubkeys {
             votes_for_metrics.push(ConsensusMetricsEvent::Vote {
                 id: *pubkey,
-                vote: payload.vote_message.vote,
+                vote: payload.vote_aggregate.vote,
             });
         }
-        votes_for_pool.push(payload.vote_message);
+        votes_for_pool.push(payload.vote_aggregate);
     }
     let msgs_for_repair = msgs_for_repair
         .into_iter()
@@ -230,7 +229,7 @@ fn verify_votes(
         thread_pool,
     );
     if let Some(aggregate_signature) = optimistic_result {
-        let Some(sig_verified_vote_batch) = SigVerifiedVoteBatch::new_from_verified_votes(
+        let Some(vote_aggregate) = VoteAggregate::new_from_verified_votes(
             root_bank,
             vote_payload_to_sign,
             unverified_votes.iter().map(|v| v.vote_message.rank),
@@ -239,7 +238,7 @@ fn verify_votes(
             return vec![];
         };
         return vec![VerifiedVotePayload {
-            vote_message: sig_verified_vote_batch,
+            vote_aggregate,
             sender_vote_account_pubkeys: unverified_votes
                 .into_iter()
                 .map(|v| v.sender_vote_account_pubkey)

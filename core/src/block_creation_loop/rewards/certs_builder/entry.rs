@@ -1,7 +1,7 @@
 use {
     super::BuildRewardCertsRespError,
     crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
-    agave_bls_sigverify::sig_verified_messages::SigVerifiedVoteBatch,
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{reward_certificate::SkipRewardCertificate, vote::Vote},
     notar_entry::NotarEntry,
     partial_cert::{BuildSigBitmapError, PartialCert},
@@ -47,7 +47,7 @@ impl Entry {
     }
 
     /// Returns true if the [`Entry`] needs the vote else false.
-    pub(super) fn wants_vote(&self, vote: &SigVerifiedVoteBatch) -> bool {
+    pub(super) fn wants_vote(&self, vote: &VoteAggregate) -> bool {
         match vote.vote() {
             Vote::Skip(_) => self.skip.wants_vote(vote.ranks()),
             Vote::Notarize(_) => self.notar.wants_vote(vote.ranks()),
@@ -62,7 +62,7 @@ impl Entry {
     pub(super) fn add_vote(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        vote: &SigVerifiedVoteBatch,
+        vote: &VoteAggregate,
     ) -> Result<(), AddVoteError> {
         match vote.vote() {
             Vote::Notarize(notar) => {
@@ -152,7 +152,7 @@ mod tests {
         rank: usize,
         keypairs: &[BlsKeypair],
         shred_version: u16,
-    ) -> SigVerifiedVoteBatch {
+    ) -> VoteAggregate {
         let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
         let msg = VoteMessage {
@@ -160,7 +160,7 @@ mod tests {
             signature,
             rank: rank.try_into().unwrap(),
         };
-        SigVerifiedVoteBatch::new_from_verified_vote(bank, msg)
+        VoteAggregate::new_from_verified_vote(bank, msg)
     }
 
     pub(crate) fn get_rank_map_keypairs(

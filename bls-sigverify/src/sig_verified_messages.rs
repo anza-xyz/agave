@@ -14,7 +14,7 @@ use {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SigVerifiedBatch {
     /// Batch of votes.
-    Votes(Vec<SigVerifiedVoteBatch>),
+    Votes(Vec<VoteAggregate>),
     /// Batch of certs.
     Certificates(Vec<Certificate>),
 }
@@ -42,7 +42,7 @@ impl SigVerifiedBatch {
 /// NOTE: the fields should not be exposed outside of the crate so that users use approved paths to
 /// build it to ensure signature verification takes place.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SigVerifiedVoteBatch {
+pub struct VoteAggregate {
     /// The type of vote in the batch.
     pub(crate) vote: Vote,
     /// The aggregate signature of the votes in the batch.
@@ -53,7 +53,7 @@ pub struct SigVerifiedVoteBatch {
     pub(crate) ranks: BitVec<u8>,
 }
 
-impl SigVerifiedVoteBatch {
+impl VoteAggregate {
     /// Creates a sig verified vote batch from a VoteMessage.
     ///
     /// WARN: this is only public to enable handling already verified votes that are sent within

@@ -357,7 +357,7 @@ fn recv_batches(
 mod tests {
     use {
         super::*,
-        crate::sig_verified_messages::SigVerifiedVoteBatch,
+        crate::sig_verified_messages::VoteAggregate,
         agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
         agave_votor_messages::{
             VerifiedVoterSlotsReceiver,
@@ -766,10 +766,10 @@ mod tests {
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
         // Both messages were eventually delivered (no silent drop).
         let bank = ctx.verifier.sharable_banks.root();
-        let msg1 = SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_verified_vote(
+        let msg1 = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
             &bank, msg1,
         )]);
-        let msg2 = SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_verified_vote(
+        let msg2 = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
             &bank, msg2,
         )]);
         assert_eq!(m1_recv, msg1);
