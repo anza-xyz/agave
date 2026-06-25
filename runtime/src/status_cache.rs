@@ -1,9 +1,12 @@
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::{Arc, Mutex};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{Arc, Mutex};
 use {
     ahash::{HashMap, HashMapExt as _},
     log::*,
     serde::Serialize,
+    smallvec::SmallVec,
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
@@ -11,11 +14,6 @@ use {
         collections::{HashSet, hash_map::Entry},
         num::{NonZero, NonZeroUsize},
     },
-};
-#[cfg(not(feature = "shuttle-test"))]
-use {
-    rand::{Rng, rng},
-    std::sync::{Arc, Mutex},
 };
 
 // The maximum number of entries to store in the cache. This is the same as the number of recent
@@ -175,16 +173,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         key: K,
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
-        let keys: Vec<_> = self.cache.keys().copied().collect();
-
-        for blockhash in keys.iter() {
+        self.cache.keys().find_map(|blockhash| {
             trace!("get_status_any_blockhash: trying {blockhash}");
-            let status = self.get_status(&key, blockhash, ancestors);
-            if status.is_some() {
-                return status;
-            }
-        }
-        None
+            self.get_status(&key, blockhash, ancestors)
+        })
     }
 
     /// Add a known root fork.
@@ -193,6 +185,11 @@ impl<T: Serialize + Clone> StatusCache<T> {
     /// keys are cleared.
     pub fn add_root(&mut self, fork: Slot) {
         self.roots.insert(fork);
+        self.purge_roots();
+    }
+
+    pub fn add_roots<I: IntoIterator<Item = Slot>>(&mut self, forks: I) {
+        self.roots.extend(forks);
         self.purge_roots();
     }
 
@@ -220,15 +217,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let max_key_index = key.as_ref().len().saturating_sub(CACHED_KEY_SIZE + 1);
 
         // Get the cache entry for this blockhash.
-        let (max_slot, key_index, hash_map) =
-            self.cache.entry(*transaction_blockhash).or_insert_with(|| {
-                // DFS tests need deterministic behavior
-                #[cfg(feature = "shuttle-test")]
-                let key_index = 0;
-                #[cfg(not(feature = "shuttle-test"))]
-                let key_index = rng().random_range(0..max_key_index + 1);
-                (slot, key_index, HashMap::new())
-            });
+        let (max_slot, key_index, hash_map) = self
+            .cache
+            .entry(*transaction_blockhash)
+            .or_insert_with(|| (slot, 0, HashMap::new()));
 
         // Update the max slot observed to contain txs using this blockhash.
         *max_slot = std::cmp::max(slot, *max_slot);
@@ -247,12 +239,20 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        while self.roots.len() > self.max_root_entries() {
-            if let Some(min) = self.roots.iter().min().cloned() {
-                self.roots.remove(&min);
-                self.cache.retain(|_, (fork, _, _)| *fork > min);
-                self.slot_deltas.retain(|slot, _| *slot > min);
-            }
+        let max_root_entries = self.max_root_entries();
+        if self.roots.len() > max_root_entries {
+            let num_roots_to_purge = self.roots.len() - max_root_entries;
+            let mut roots = self
+                .roots
+                .iter()
+                .copied()
+                .collect::<SmallVec<[Slot; 0x200]>>();
+            let (_, cutoff, _) = roots.select_nth_unstable(num_roots_to_purge - 1);
+            let cutoff = *cutoff;
+
+            self.roots.retain(|root| *root > cutoff);
+            self.cache.retain(|_, (fork, _, _)| *fork > cutoff);
+            self.slot_deltas.retain(|slot, _| *slot > cutoff);
         }
     }
 

@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
@@ -49,5 +54,8 @@ solana-keypair = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
+solana-unified-scheduler-pool = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

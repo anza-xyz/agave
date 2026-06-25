@@ -118,11 +118,12 @@ impl SnapshotPackagerService {
                     }
 
                     let archive_time = Instant::now();
-                    // Regular operation, saved data is unlikely being read back soon, so allow direct-io.
-                    let io_setup = IoSetupState::default()
-                        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
-                        .with_direct_io(snapshot_config.use_direct_io);
 
+                    // Don't use direct IO to serialize snapshot, since it's re-read when creating archive
+                    // a moment later.
+                    let io_setup = IoSetupState::default()
+                        .with_direct_io(false)
+                        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
                     // Serializing the snapshot package is not allowed to fail, as archiving is
                     // not allowed to fail (see comment on archive_snapshot_package below
                     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
@@ -145,6 +146,8 @@ impl SnapshotPackagerService {
                         break;
                     };
 
+                    // Snapshot archive is unlikely to be read back soon, so allow direct-io now.
+                    let io_setup = io_setup.with_direct_io(snapshot_config.use_direct_io);
                     if let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind {
                         // Archiving the snapshot package is not allowed to fail.
                         // AccountsBackgroundService calls `clean_accounts()` with a value for
@@ -283,6 +286,11 @@ impl SnapshotPackagerService {
                 // the "storages flushed" file, so return early.
                 return;
             }
+            // Pin the storage file so it outlives the validator-exit Drop chain (which would
+            // otherwise remove it via AppendVec::drop) and is available for fastboot on restart.
+            // The next startup opens a fresh AppendVec over the file; that one defaults back to
+            // removing-on-drop, so normal runtime cleanup (shrink, clean) still applies later.
+            storage.disable_remove_on_drop();
         }
         info!("Flushing account storages... Done in {:?}", start.elapsed());
 
@@ -291,21 +299,21 @@ impl SnapshotPackagerService {
             snapshot_slot,
         );
 
-        info!("Hard linking account storages...");
+        info!("Writing account storages list...");
         let start = Instant::now();
-        let result = snapshot_utils::hard_link_storages_to_snapshot(
+        let result = snapshot_utils::write_storages_list_to_snapshot(
             &bank_snapshot_dir,
-            snapshot_slot,
             &snapshot_storages,
+            &io_setup,
         );
         if let Err(err) = result {
-            warn!("Failed to hard link account storages: {err}");
-            // If hard linking the storages failed, we do *NOT* want to mark the bank snapshot as
+            warn!("Failed to write account storages list: {err}");
+            // If writing the storages list failed, we do *NOT* want to mark the bank snapshot as
             // loadable so return early.
             return;
         }
         info!(
-            "Hard linking account storages... Done in {:?}",
+            "Writing account storages list... Done in {:?}",
             start.elapsed(),
         );
 

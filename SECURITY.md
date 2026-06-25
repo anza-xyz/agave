@@ -14,6 +14,10 @@ Provide a helpful title, detailed description of the vulnerability and an exploi
 proof-of-concept. Speculative submissions without proof-of-concept will be closed
 with no further consideration.
 
+Create one GHSA per finding. GHSAs reporting multiple findings will be closed as
+invalid. Such reports will not be eligible for bug bounties and will not hold a
+position in duplicate report standings.
+
 For vulnerabilities regarding SPL programs, please refer to the repositories
 and their associated security policy within the [solana-program organization](https://github.com/solana-program).
 
@@ -196,6 +200,7 @@ one week in order to be eligible for a bounty
   * In the stable and beta branches, vulnerabilities are eligible for bounty
   upon merge
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
+* Only reports describing a [single finding](#reporting) will be considered eligible
 * The participant submitting the bug report shall follow the process outlined within this document
 * Valid exploits can be eligible even if they are not successfully executed on a public cluster
 * Multiple submissions for the same class of exploit are still eligible for compensation, though may be compensated at a lower rate, however these will be assessed on a case-by-case basis

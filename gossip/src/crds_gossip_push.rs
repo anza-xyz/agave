@@ -294,8 +294,6 @@ mod tests {
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity

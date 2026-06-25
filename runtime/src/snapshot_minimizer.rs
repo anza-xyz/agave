@@ -317,7 +317,7 @@ impl<'a> SnapshotMinimizer<'a> {
             let storable_accounts =
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
-            self.accounts_db().store_accounts_frozen(
+            self.accounts_db().store_accounts_for_shrink(
                 storable_accounts,
                 new_storage,
                 UpdateIndexThreadSelection::Inline,

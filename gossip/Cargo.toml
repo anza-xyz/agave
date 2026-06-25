@@ -7,10 +7,12 @@ description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 bench = false
@@ -20,25 +22,30 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-bloom/frozen-abi",
+    "solana-hash/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-perf/frozen-abi",
+    "solana-pubkey/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-transaction/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:prost", "dep:protosol", "solana-bloom/dev-context-only-utils"]
+dev-context-only-utils = ["solana-bloom/dev-context-only-utils"]
+conformance = ["dep:prost", "dep:protosol", "dev-context-only-utils"]
+dummy-for-ci-check = ["conformance"]
 
 [dependencies]
 agave-logger = { workspace = true }
 agave-random = { workspace = true }
 arc-swap = { workspace = true }
-arrayvec = { workspace = true }
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 crossbeam-channel = { workspace = true }
+ed25519-dalek = { workspace = true }
 flate2 = { workspace = true }
 indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
@@ -53,7 +60,6 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
-siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
@@ -84,21 +90,23 @@ solana-signature = { workspace = true, default-features = false }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-wincode-varint = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+bincode = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
 serial_test = { workspace = true }
-solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "conformance"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -106,6 +114,9 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+tempfile = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]

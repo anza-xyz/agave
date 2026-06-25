@@ -204,6 +204,15 @@ impl GeyserPluginService {
         self.accounts_update_notifier.clone()
     }
 
+    /// Cloneable handle to the underlying plugin manager. Used by
+    /// startup wiring that needs to construct notifiers (e.g. the
+    /// contact info notifier) outside `GeyserPluginService::new`,
+    /// because they require resources (such as `ClusterInfo`) that are
+    /// not available at this point.
+    pub fn plugin_manager_handle(&self) -> Arc<ArcSwap<GeyserPluginManager>> {
+        self.plugin_manager.clone()
+    }
+
     pub fn get_transaction_notifier(&self) -> Option<TransactionNotifierArc> {
         self.transaction_notifier.clone()
     }

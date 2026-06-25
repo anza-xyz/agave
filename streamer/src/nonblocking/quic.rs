@@ -5,14 +5,16 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
-        quic_socket::QuicSocket,
+        quic_socket::{QuicSocket, QuicXdpSocketParts, QuicXdpTxSocket},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
+    quinn::{
+        Accept, AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime,
+    },
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -20,7 +22,7 @@ use {
     solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
-    solana_tls_utils::get_pubkey_from_tls_certificate,
+    solana_tls_utils::get_remote_pubkey,
     std::{
         array, fmt,
         iter::repeat_with,
@@ -156,14 +158,30 @@ where
     let endpoints = sockets
         .into_iter()
         .map(|sock| match sock {
-            QuicSocket::Kernel(udp_sock) => Endpoint::new(
+            QuicSocket::Kernel(socket) => Endpoint::new(
                 EndpointConfig::default(),
                 Some(config.clone()),
-                udp_sock,
+                socket,
                 Arc::new(TokioRuntime),
             )
             .map_err(QuicServerError::EndpointFailed),
-            QuicSocket::Xdp(_xdp_cfg) => unimplemented!(),
+            QuicSocket::Xdp(QuicXdpSocketParts {
+                socket,
+                fallback_src_ip,
+                xdp_sender,
+            }) => {
+                let socket = Arc::new(
+                    QuicXdpTxSocket::new(socket, fallback_src_ip, xdp_sender)
+                        .map_err(QuicServerError::EndpointFailed)?,
+                ) as Arc<dyn AsyncUdpSocket>;
+                Endpoint::new_with_abstract_socket(
+                    EndpointConfig::default(),
+                    Some(config.clone()),
+                    socket,
+                    Arc::new(TokioRuntime),
+                )
+                .map_err(QuicServerError::EndpointFailed)
+            }
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -311,6 +329,16 @@ where
         }
 
         if let Ok(Some(incoming)) = timeout_connection {
+            // our connection/handshake abuse mitigation policy is one of shed
+            // fast and bound resource consumption. attempting to be "smarter"
+            // before a peer has asserted control over their ip address by
+            // completing the retry challenge creates a scenario whereby peers
+            // can attack one another via ip spoofing. employ the following
+            // * limit duration of in-flight connection attempts with a timeout
+            // * protect against connection attempt bursts with a global rate-limiter
+            // * rate-limit abusive peers by (control-asserted) ip
+            // * cap total connections per-peer/ip
+
             stats
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
@@ -383,17 +411,6 @@ where
     }
     tasks.close();
     tasks.wait().await;
-}
-
-pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
-    // Use the client cert only if it is self signed and the chain length is 1.
-    connection
-        .peer_identity()?
-        .downcast::<Vec<rustls::pki_types::CertificateDer>>()
-        .ok()
-        .filter(|certs| certs.len() == 1)?
-        .first()
-        .and_then(get_pubkey_from_tls_certificate)
 }
 
 pub fn get_connection_stake(
@@ -1123,7 +1140,7 @@ pub mod test {
             },
         },
         assert_matches::assert_matches,
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
@@ -1570,7 +1587,7 @@ pub mod test {
     async fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, _) = unbounded();
+        let (sender, _) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
@@ -1606,7 +1623,7 @@ pub mod test {
     async fn test_quic_server_multiple_streams() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));

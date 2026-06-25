@@ -243,13 +243,13 @@ mod tests {
             },
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
-        crossbeam_channel::unbounded,
-        solana_clock::{DEFAULT_SLOTS_PER_EPOCH, NUM_CONSECUTIVE_LEADER_SLOTS},
+        crossbeam_channel::bounded,
+        solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_epoch_schedule::{
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
-        solana_leader_schedule::{LeaderSchedule, SlotLeader},
+        solana_leader_schedule::{LeaderSchedule, NUM_CONSECUTIVE_LEADER_SLOTS, SlotLeader},
         solana_runtime::stake_utils,
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},
@@ -337,7 +337,7 @@ mod tests {
             .map(|_| {
                 let cache = cache.clone();
                 let bank = bank.clone();
-                let (sender, receiver) = unbounded();
+                let (sender, receiver) = bounded(1024);
                 (
                     Builder::new()
                         .name("test_thread_race_leader_schedule_cache".to_string())
@@ -571,7 +571,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(res.0, expected_slot);
-        assert!(res.1 >= expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1);
+        assert!(res.1 >= expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 1);
 
         let res = cache
             .next_leader_slot(
@@ -579,12 +579,15 @@ mod tests {
                 0,
                 &bank,
                 None,
-                NUM_CONSECUTIVE_LEADER_SLOTS - 1,
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 1,
             )
             .unwrap();
 
         assert_eq!(res.0, expected_slot);
-        assert_eq!(res.1, expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 2);
+        assert_eq!(
+            res.1,
+            expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 2
+        );
     }
 
     #[test]

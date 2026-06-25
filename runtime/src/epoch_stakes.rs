@@ -17,6 +17,7 @@ use {
     std::{
         collections::HashMap,
         fmt,
+        num::NonZero,
         sync::{Arc, OnceLock},
     },
 };
@@ -36,7 +37,7 @@ pub struct BLSPubkeyStakeEntry {
     /// The bls pubkey of the validator specified in the vote account
     pub bls_pubkey: PopVerified<BLSPubkeyAffine>,
     /// The stake of the validator
-    pub stake: u64,
+    pub stake: NonZero<u64>,
 }
 
 /// Container to store a mapping from validator [`BLSPubkeyAffine`] to rank.
@@ -49,6 +50,7 @@ pub struct BLSPubkeyToRankMap {
     rank_map: HashMap<BLSPubkeyCompressed, u16>,
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
+    total_stake: NonZero<u64>,
 }
 
 // We cannot auto derive `AbiExample` for `BLSPubkeyToRankMap` because
@@ -60,6 +62,7 @@ impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
             rank_map: HashMap::new(),
             vote_pubkey_to_rank: HashMap::new(),
             sorted_pubkeys: Vec::new(),
+            total_stake: NonZero::new(1).unwrap(),
         }
     }
 }
@@ -78,32 +81,46 @@ pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
 
 impl BLSPubkeyToRankMap {
     pub fn new(epoch_vote_accounts_hash_map: &VoteAccountsHashMap) -> Self {
+        let mut candidates = Vec::with_capacity(epoch_vote_accounts_hash_map.len());
+        let mut bls_pubkey_counts = HashMap::new();
+        let mut node_pubkey_counts = HashMap::new();
+        for (&vote_account_pubkey, (stake, account)) in epoch_vote_accounts_hash_map {
+            let Some(stake) = NonZero::new(*stake) else {
+                continue;
+            };
+            let node_pubkey = *account.vote_state_view().node_pubkey();
+            let Some((bls_pubkey_compressed, bls_pubkey)) = account
+                .vote_state_view()
+                .bls_pubkey_compressed()
+                .and_then(bls_pubkey_compressed_bytes_to_bls_pubkey)
+            else {
+                continue;
+            };
+            let entry = BLSPubkeyStakeEntry {
+                vote_account_pubkey,
+                node_pubkey,
+                bls_pubkey,
+                stake,
+            };
+            *bls_pubkey_counts.entry(bls_pubkey_compressed).or_insert(0) += 1;
+            *node_pubkey_counts.entry(node_pubkey).or_insert(0) += 1;
+            candidates.push((entry, bls_pubkey_compressed));
+        }
         let mut keys_stake_entry_with_compressed: Vec<(BLSPubkeyStakeEntry, BLSPubkeyCompressed)> =
-            epoch_vote_accounts_hash_map
-                .iter()
-                .filter_map(|(&vote_account_pubkey, (stake, account))| {
-                    if *stake > 0 {
-                        let node_pubkey = *account.vote_state_view().node_pubkey();
-                        account
-                            .vote_state_view()
-                            .bls_pubkey_compressed()
-                            .and_then(bls_pubkey_compressed_bytes_to_bls_pubkey)
-                            .map(|(bls_pubkey_compressed, bls_pubkey)| {
-                                (
-                                    BLSPubkeyStakeEntry {
-                                        vote_account_pubkey,
-                                        node_pubkey,
-                                        bls_pubkey,
-                                        stake: *stake,
-                                    },
-                                    bls_pubkey_compressed,
-                                )
-                            })
-                    } else {
-                        None
-                    }
+            candidates
+                .into_iter()
+                .filter_map(|(entry, bls_pubkey_compressed)| {
+                    (bls_pubkey_counts[&bls_pubkey_compressed] == 1
+                        && node_pubkey_counts[&entry.node_pubkey] == 1)
+                        .then_some((entry, bls_pubkey_compressed))
                 })
                 .collect();
+        let total_stake = keys_stake_entry_with_compressed
+            .iter()
+            .fold(0u64, |stake, (entry, _)| {
+                stake.saturating_add(entry.stake.get())
+            });
+        let total_stake = NonZero::new(total_stake).expect("total stakes should not be 0");
         keys_stake_entry_with_compressed.sort_by(
             |(a_entry, a_pubkey_compressed), (b_entry, b_pubkey_compressed)| {
                 b_entry
@@ -128,6 +145,7 @@ impl BLSPubkeyToRankMap {
             rank_map: bls_pubkey_to_rank_map,
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
+            total_stake,
         }
     }
 
@@ -136,7 +154,11 @@ impl BLSPubkeyToRankMap {
     }
 
     pub fn len(&self) -> usize {
-        self.rank_map.len()
+        self.sorted_pubkeys.len()
+    }
+
+    pub fn total_stake(&self) -> NonZero<u64> {
+        self.total_stake
     }
 
     pub fn get_rank(&self, bls_pubkey: &PopVerified<BLSPubkeyAffine>) -> Option<&u16> {
@@ -644,14 +666,13 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(1; "single_vote_account")]
-    #[test_case(2; "multiple_vote_accounts")]
-    fn test_bls_pubkey_rank_map(num_vote_accounts_per_node: usize) {
+    #[test]
+    fn test_bls_pubkey_rank_map() {
         agave_logger::setup();
         let num_nodes = 10;
-        let num_vote_accounts = num_nodes * num_vote_accounts_per_node;
+        let num_vote_accounts = num_nodes;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node, true);
+        let vote_accounts_map = new_vote_accounts(num_nodes, 1, true);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()
@@ -662,7 +683,13 @@ pub(crate) mod tests {
         });
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
         let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        assert_eq!(bls_pubkey_to_rank_map.len(), num_vote_accounts);
+        let expected_num_vote_accounts = num_vote_accounts;
+        assert_eq!(bls_pubkey_to_rank_map.len(), expected_num_vote_accounts);
+        let expected_total_stake = epoch_stakes.total_stake();
+        assert_eq!(
+            bls_pubkey_to_rank_map.total_stake().get(),
+            expected_total_stake
+        );
         for (vote_account_pubkey, (stake, vote_account)) in epoch_vote_accounts {
             let vote_state_view = vote_account.vote_state_view();
             let (_comp, bls_pubkey) = bls_pubkey_compressed_bytes_to_bls_pubkey(
@@ -671,14 +698,14 @@ pub(crate) mod tests {
             .unwrap();
             let node_pubkey = *vote_state_view.node_pubkey();
             let index = bls_pubkey_to_rank_map.get_rank(&bls_pubkey).unwrap();
-            assert!(index >= &0 && index < &(num_vote_accounts as u16));
+            assert!(index >= &0 && index < &(expected_num_vote_accounts as u16));
             assert_eq!(
                 bls_pubkey_to_rank_map.get_pubkey_stake_entry(*index as usize),
                 Some(&BLSPubkeyStakeEntry {
                     vote_account_pubkey,
                     node_pubkey,
                     bls_pubkey,
-                    stake,
+                    stake: NonZero::new(stake).unwrap(),
                 })
             );
         }
@@ -691,6 +718,221 @@ pub(crate) mod tests {
             .expect("Epoch stakes should exist");
         let bls_pubkey_to_rank_map2 = epoch_stakes.bls_pubkey_to_rank_map();
         assert_eq!(bls_pubkey_to_rank_map2, bls_pubkey_to_rank_map);
+    }
+
+    #[test]
+    #[should_panic(expected = "total stakes should not be 0")]
+    fn test_multiple_vote_accounts_panics() {
+        agave_logger::setup();
+        let num_nodes = 10;
+
+        let vote_accounts_map = new_vote_accounts(num_nodes, 2, true);
+        let node_id_to_stake_map = vote_accounts_map
+            .keys()
+            .enumerate()
+            .map(|(index, node_id)| (*node_id, ((index + 1) * 100) as u64))
+            .collect::<HashMap<_, _>>();
+        let epoch_vote_accounts = new_epoch_vote_accounts(&vote_accounts_map, |node_id| {
+            *node_id_to_stake_map.get(node_id).unwrap()
+        });
+        let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
+        epoch_stakes.bls_pubkey_to_rank_map();
+    }
+
+    #[test]
+    fn test_bls_pubkey_rank_map_excludes_duplicate_bls_and_identity() {
+        let new_bls_pubkey = || {
+            let bls_pubkey_compressed: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
+            let bls_pubkey_compressed_serialized = bincode::serialize(&bls_pubkey_compressed)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let (_bls_pubkey_compressed, bls_pubkey) =
+                bls_pubkey_compressed_bytes_to_bls_pubkey(bls_pubkey_compressed_serialized)
+                    .unwrap();
+            (bls_pubkey_compressed_serialized, bls_pubkey)
+        };
+
+        let (duplicate_bls_pubkey_serialized, duplicate_bls_pubkey) = new_bls_pubkey();
+        let (duplicate_node_bls_pubkey_serialized, duplicate_node_bls_pubkey) = new_bls_pubkey();
+        let (duplicate_node_bls_pubkey_serialized_2, duplicate_node_bls_pubkey_2) =
+            new_bls_pubkey();
+        let (shared_voter_bls_pubkey_serialized, shared_voter_bls_pubkey) = new_bls_pubkey();
+        let (shared_voter_bls_pubkey_serialized_2, shared_voter_bls_pubkey_2) = new_bls_pubkey();
+        let (unique_bls_pubkey_serialized, unique_bls_pubkey) = new_bls_pubkey();
+
+        let duplicate_bls_vote_pubkey = Pubkey::new_unique();
+        let duplicate_bls_vote_pubkey_2 = Pubkey::new_unique();
+        let duplicate_node_vote_pubkey = Pubkey::new_unique();
+        let duplicate_node_vote_pubkey_2 = Pubkey::new_unique();
+        let shared_voter_vote_pubkey = Pubkey::new_unique();
+        let shared_voter_vote_pubkey_2 = Pubkey::new_unique();
+        let unique_vote_pubkey = Pubkey::new_unique();
+
+        let duplicate_node_pubkey = Pubkey::new_unique();
+        let shared_authorized_voter = Pubkey::new_unique();
+        let shared_voter_node_pubkey = Pubkey::new_unique();
+        let shared_voter_node_pubkey_2 = Pubkey::new_unique();
+        let unique_node_pubkey = Pubkey::new_unique();
+        let unique_voter = Pubkey::new_unique();
+
+        let account = |node_pubkey, authorized_voter, bls_pubkey| {
+            VoteAccount::try_from(create_v4_account_with_authorized(
+                &node_pubkey,
+                &authorized_voter,
+                bls_pubkey,
+                &node_pubkey,
+                0,
+                &node_pubkey,
+                0,
+                &node_pubkey,
+                100,
+            ))
+            .unwrap()
+        };
+        let epoch_vote_accounts = VoteAccountsHashMap::from([
+            (
+                duplicate_bls_vote_pubkey,
+                (
+                    100,
+                    account(
+                        Pubkey::new_unique(),
+                        Pubkey::new_unique(),
+                        duplicate_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                duplicate_bls_vote_pubkey_2,
+                (
+                    100,
+                    account(
+                        Pubkey::new_unique(),
+                        Pubkey::new_unique(),
+                        duplicate_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                duplicate_node_vote_pubkey,
+                (
+                    100,
+                    account(
+                        duplicate_node_pubkey,
+                        Pubkey::new_unique(),
+                        duplicate_node_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                duplicate_node_vote_pubkey_2,
+                (
+                    100,
+                    account(
+                        duplicate_node_pubkey,
+                        Pubkey::new_unique(),
+                        duplicate_node_bls_pubkey_serialized_2,
+                    ),
+                ),
+            ),
+            (
+                shared_voter_vote_pubkey,
+                (
+                    100,
+                    account(
+                        shared_voter_node_pubkey,
+                        shared_authorized_voter,
+                        shared_voter_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                shared_voter_vote_pubkey_2,
+                (
+                    100,
+                    account(
+                        shared_voter_node_pubkey_2,
+                        shared_authorized_voter,
+                        shared_voter_bls_pubkey_serialized_2,
+                    ),
+                ),
+            ),
+            (
+                unique_vote_pubkey,
+                (
+                    50,
+                    account(
+                        unique_node_pubkey,
+                        unique_voter,
+                        unique_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+        ]);
+
+        let rank_map = BLSPubkeyToRankMap::new(&epoch_vote_accounts);
+
+        assert_eq!(rank_map.len(), 3);
+        assert_eq!(rank_map.total_stake().get(), 250);
+        for bls_pubkey in [
+            duplicate_bls_pubkey,
+            duplicate_node_bls_pubkey,
+            duplicate_node_bls_pubkey_2,
+        ] {
+            assert!(rank_map.get_rank(&bls_pubkey).is_none());
+        }
+        for vote_pubkey in [
+            duplicate_bls_vote_pubkey,
+            duplicate_bls_vote_pubkey_2,
+            duplicate_node_vote_pubkey,
+            duplicate_node_vote_pubkey_2,
+        ] {
+            assert!(rank_map.get_rank_for_vote_pubkey(&vote_pubkey).is_none());
+        }
+
+        for (vote_account_pubkey, node_pubkey, bls_pubkey) in [
+            (
+                shared_voter_vote_pubkey,
+                shared_voter_node_pubkey,
+                shared_voter_bls_pubkey,
+            ),
+            (
+                shared_voter_vote_pubkey_2,
+                shared_voter_node_pubkey_2,
+                shared_voter_bls_pubkey_2,
+            ),
+        ] {
+            let rank = *rank_map.get_rank(&bls_pubkey).unwrap();
+            assert_eq!(
+                rank_map.get_rank_for_vote_pubkey(&vote_account_pubkey),
+                Some(&rank)
+            );
+            assert_eq!(
+                rank_map.get_pubkey_stake_entry(rank as usize),
+                Some(&BLSPubkeyStakeEntry {
+                    vote_account_pubkey,
+                    node_pubkey,
+                    bls_pubkey,
+                    stake: NonZero::new(100).unwrap(),
+                })
+            );
+        }
+
+        let unique_rank = *rank_map.get_rank(&unique_bls_pubkey).unwrap();
+        assert_eq!(
+            rank_map.get_rank_for_vote_pubkey(&unique_vote_pubkey),
+            Some(&unique_rank)
+        );
+        assert_eq!(
+            rank_map.get_pubkey_stake_entry(unique_rank as usize),
+            Some(&BLSPubkeyStakeEntry {
+                vote_account_pubkey: unique_vote_pubkey,
+                node_pubkey: unique_node_pubkey,
+                bls_pubkey: unique_bls_pubkey,
+                stake: NonZero::new(50).unwrap(),
+            })
+        );
+        assert!(rank_map.get_pubkey_stake_entry(rank_map.len()).is_none());
     }
 
     #[test]

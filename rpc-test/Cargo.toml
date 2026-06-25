@@ -31,7 +31,6 @@ solana-net-utils = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-test-validator = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-tpu-client-next = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -50,4 +49,8 @@ solana-rent = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
+solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = { workspace = true }
+
+[lints]
+workspace = true

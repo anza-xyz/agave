@@ -50,7 +50,6 @@ fi
   git diff "$target" --check --oneline
 )
 
-_ ci/check-channel-version.sh
 _ ci/nits.sh
 
 scripts/increment-cargo-version.sh check
@@ -82,5 +81,7 @@ EOF
     exit 1
   fi
 )
+
+./scripts/cargo-install-all.sh --dcou-check-only
 
 echo --- ok

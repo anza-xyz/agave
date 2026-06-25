@@ -3,15 +3,19 @@
 //! cores.
 
 use {
-    crate::{banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError},
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    crate::{
+        banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError,
+        transaction_priority::calculate_priority_from_bytes,
+    },
+    agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     solana_measure::measure_us,
     solana_perf::{
+        deduper::{self, Deduper},
         packet::PacketBatch,
         sigverify::{self},
     },
-    solana_runtime::bank_forks::SharableBanks,
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_transaction::Transaction,
     std::{
         num::NonZeroUsize,
@@ -23,14 +27,6 @@ use {
         time::Duration,
     },
 };
-
-pub(crate) struct TransactionSigVerifier {
-    worker_sender: Sender<TransactionVerifyTask>,
-}
-
-struct TransactionVerifyTask {
-    batch: PacketBatch,
-}
 
 pub(crate) struct GossipVerifyTask {
     batch: PacketBatch,
@@ -44,33 +40,46 @@ pub(crate) struct GossipVerifiedVoteBatch {
 
 #[derive(Clone)]
 pub(crate) struct SigVerifyWorkerStats {
+    pub(crate) total_batches: Arc<AtomicUsize>,
+    pub(crate) total_packets: Arc<AtomicUsize>,
+    pub(crate) total_dedup: Arc<AtomicUsize>,
+    pub(crate) total_dedup_time_us: Arc<AtomicUsize>,
     pub(crate) total_valid_packets: Arc<AtomicUsize>,
     pub(crate) total_verify_time_us: Arc<AtomicUsize>,
+    /// Max occupancy of the banking_stage channel sampled immediately before each send.
+    pub(crate) max_pre_send_len: Arc<AtomicUsize>,
+    /// Count of sends where the EvictingSender had to drop a batch to make room.
+    pub(crate) eviction_drops: Arc<AtomicUsize>,
+    pub(crate) total_dropped_below_priority_floor: Arc<AtomicUsize>,
+    pub(crate) total_priority_floor_time_us: Arc<AtomicUsize>,
 }
 
-impl TransactionSigVerifier {
-    fn new(worker_sender: Sender<TransactionVerifyTask>) -> Self {
-        Self { worker_sender }
-    }
+#[derive(Clone)]
+pub(crate) struct SigVerifyWorkerState {
+    banking_stage_sender: BankingPacketSender,
+    deduper: Arc<Deduper<2, [u8]>>,
+    stats: SigVerifyWorkerStats,
+    /// Scheduler-published priority floor: when saturated, the scheduler publishes
+    /// the queue-min transaction's priority and workers drop at-or-below-floor
+    /// arrivals here, ahead of signature verification. `None` disables the
+    /// check (e.g. for the vote worker, which is governed by a separate
+    /// priority policy in banking stage).
+    priority_floor: Option<Arc<SchedulerPriorityFloor>>,
+}
 
-    pub(crate) fn send_packets_to_worker_pool(
-        &mut self,
-        batches: Vec<PacketBatch>,
-    ) -> Result<usize, SigVerifyServiceError> {
-        let mut dropped_packets = 0;
-        for batch in batches {
-            match self.worker_sender.try_send(TransactionVerifyTask { batch }) {
-                Ok(()) => {}
-                Err(TrySendError::Full(task)) => {
-                    dropped_packets += task.batch.len();
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    return Err(SigVerifyServiceError::WorkerQueueClosed);
-                }
-            }
+impl SigVerifyWorkerState {
+    pub(crate) fn new(
+        banking_stage_sender: BankingPacketSender,
+        deduper: Arc<Deduper<2, [u8]>>,
+        stats: SigVerifyWorkerStats,
+        priority_floor: Option<Arc<SchedulerPriorityFloor>>,
+    ) -> Self {
+        Self {
+            banking_stage_sender,
+            deduper,
+            stats,
+            priority_floor,
         }
-
-        Ok(dropped_packets)
     }
 }
 
@@ -118,30 +127,28 @@ impl GossipSigVerifier {
     }
 }
 
-// Work queues are kept separate so that a spam on TPU
-// will not lead to us dropping votes.
-const SIGVERIFY_NON_VOTE_WORK_CHANNEL_SIZE: usize = 50_000;
-const SIGVERIFY_TPU_VOTE_WORK_CHANNEL_SIZE: usize = 5_000; // channel is batches not individual packets
+/// Gossip votes use a bounded queue into the worker pool.
 const SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE: usize = 50_000;
+
+pub(crate) struct SigVerifyWorkerSenders {
+    pub(crate) gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
+    pub(crate) forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
+}
 
 #[derive(Clone)]
 struct WorkerPoolChannels {
-    non_vote_receiver: Receiver<TransactionVerifyTask>,
-    tpu_vote_receiver: Receiver<TransactionVerifyTask>,
+    non_vote_receiver: Receiver<PacketBatch>,
+    tpu_vote_receiver: Receiver<PacketBatch>,
     gossip_receiver: Receiver<GossipVerifyTask>,
-    non_vote_banking_sender: BankingPacketSender,
-    tpu_vote_banking_sender: BankingPacketSender,
     gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
     forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
     sharable_banks: SharableBanks,
-    non_vote_stats: SigVerifyWorkerStats,
-    tpu_vote_stats: SigVerifyWorkerStats,
+    non_vote_state: SigVerifyWorkerState,
+    tpu_vote_state: SigVerifyWorkerState,
 }
 
 pub(crate) struct SigVerifyWorkerPool {
     exit: Arc<AtomicBool>,
-    non_vote_sender: Sender<TransactionVerifyTask>,
-    tpu_vote_sender: Sender<TransactionVerifyTask>,
     gossip_sender: Sender<GossipVerifyTask>,
     worker_hdls: Vec<JoinHandle<()>>,
 }
@@ -160,29 +167,24 @@ impl Drop for SigVerifyWorkerPool {
 impl SigVerifyWorkerPool {
     pub(crate) fn new(
         num_workers: NonZeroUsize,
-        non_vote_banking_sender: BankingPacketSender,
-        tpu_vote_banking_sender: BankingPacketSender,
-        gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
-        forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
+        non_vote_receiver: Receiver<PacketBatch>,
+        tpu_vote_receiver: Receiver<PacketBatch>,
+        senders: SigVerifyWorkerSenders,
         forward_non_votes: bool,
         sharable_banks: SharableBanks,
-        non_vote_stats: SigVerifyWorkerStats,
-        tpu_vote_stats: SigVerifyWorkerStats,
+        non_vote_state: SigVerifyWorkerState,
+        tpu_vote_state: SigVerifyWorkerState,
     ) -> Self {
-        let (non_vote_sender, non_vote_receiver) = bounded(SIGVERIFY_NON_VOTE_WORK_CHANNEL_SIZE);
-        let (tpu_vote_sender, tpu_vote_receiver) = bounded(SIGVERIFY_TPU_VOTE_WORK_CHANNEL_SIZE);
         let (gossip_sender, gossip_receiver) = bounded(SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE);
         let channels = WorkerPoolChannels {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_receiver,
-            non_vote_banking_sender,
-            tpu_vote_banking_sender,
-            gossip_verified_vote_sender,
-            forward_stage_sender,
+            gossip_verified_vote_sender: senders.gossip_verified_vote_sender,
+            forward_stage_sender: senders.forward_stage_sender,
             sharable_banks,
-            non_vote_stats,
-            tpu_vote_stats,
+            non_vote_state,
+            tpu_vote_state,
         };
         let exit = Arc::new(AtomicBool::new(false));
         let worker_hdls = (0..num_workers.get())
@@ -198,19 +200,9 @@ impl SigVerifyWorkerPool {
             .collect();
         Self {
             exit,
-            non_vote_sender,
-            tpu_vote_sender,
             gossip_sender,
             worker_hdls,
         }
-    }
-
-    pub(crate) fn non_vote_verifier(&self) -> TransactionSigVerifier {
-        TransactionSigVerifier::new(self.non_vote_sender.clone())
-    }
-
-    pub(crate) fn tpu_vote_verifier(&self) -> TransactionSigVerifier {
-        TransactionSigVerifier::new(self.tpu_vote_sender.clone())
     }
 
     pub(crate) fn gossip_verifier(&self) -> GossipSigVerifier {
@@ -232,30 +224,28 @@ impl SigVerifyWorkerPool {
         crossbeam_channel::select! {
             recv(&channels.non_vote_receiver) -> maybe_work => {
                 match maybe_work {
-                    Ok(work) => Self::run_transaction_task(
-                        work,
+                    Ok(batch) => Self::run_transaction_task(
+                        batch,
                         false,
-                        &channels.non_vote_banking_sender,
                         &channels.forward_stage_sender,
                         forward_non_votes,
                         false,
                         &channels.sharable_banks,
-                        &channels.non_vote_stats,
+                        &channels.non_vote_state,
                     ),
                     Err(_) => false,
                 }
             }
             recv(&channels.tpu_vote_receiver) -> maybe_work => {
                 match maybe_work {
-                    Ok(work) => Self::run_transaction_task(
-                        work,
+                    Ok(batch) => Self::run_transaction_task(
+                        batch,
                         true,
-                        &channels.tpu_vote_banking_sender,
                         &channels.forward_stage_sender,
                         true,
                         true,
                         &channels.sharable_banks,
-                        &channels.tpu_vote_stats,
+                        &channels.tpu_vote_state,
                     ),
                     Err(_) => false,
                 }
@@ -274,33 +264,99 @@ impl SigVerifyWorkerPool {
     }
 
     fn run_transaction_task(
-        mut work: TransactionVerifyTask,
+        mut batch: PacketBatch,
         reject_non_vote: bool,
-        banking_stage_sender: &BankingPacketSender,
         forward_stage_sender: &Sender<(BankingPacketBatch, bool)>,
         should_forward: bool,
         is_tpu_vote: bool,
         sharable_banks: &SharableBanks,
-        stats: &SigVerifyWorkerStats,
+        state: &SigVerifyWorkerState,
     ) -> bool {
-        let enable_tx_v1 = sharable_banks.working().feature_set.snapshot().enable_tx_v1;
+        state.stats.total_batches.fetch_add(1, Ordering::Relaxed);
+        state
+            .stats
+            .total_packets
+            .fetch_add(batch.len(), Ordering::Relaxed);
+
+        let (discard_or_dedup_fail, dedup_time_us) =
+            measure_us!(deduper::dedup_packets_and_count_discards(
+                &state.deduper,
+                std::slice::from_mut(&mut batch)
+            ));
+        state
+            .stats
+            .total_dedup
+            .fetch_add(discard_or_dedup_fail as usize, Ordering::Relaxed);
+        state
+            .stats
+            .total_dedup_time_us
+            .fetch_add(dedup_time_us as usize, Ordering::Relaxed);
+
+        let working_bank = sharable_banks.working();
+
+        if let Some(floor) = state.priority_floor.as_ref() {
+            let floor = floor.get();
+            if floor > 0 {
+                let ((dropped, all_below), priority_floor_time_us) = measure_us!(
+                    apply_priority_floor_to_batch(&mut batch, floor, &working_bank)
+                );
+                state
+                    .stats
+                    .total_priority_floor_time_us
+                    .fetch_add(priority_floor_time_us as usize, Ordering::Relaxed);
+                if dropped > 0 {
+                    state
+                        .stats
+                        .total_dropped_below_priority_floor
+                        .fetch_add(dropped, Ordering::Relaxed);
+                }
+                if all_below {
+                    // Entire batch went below-floor: nothing left to verify or
+                    // forward.
+                    return true;
+                }
+            }
+        }
+
+        let enable_tx_v1 = working_bank.feature_set.snapshot().enable_tx_v1;
         let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(
-            &mut work.batch,
+            &mut batch,
             reject_non_vote,
             enable_tx_v1,
         ));
-        let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&work.batch));
-        stats
+        let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&batch));
+        state
+            .stats
             .total_valid_packets
             .fetch_add(num_valid_packets, Ordering::Relaxed);
-        stats
+        state
+            .stats
             .total_verify_time_us
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
 
-        let banking_packet_batch = BankingPacketBatch::new(vec![work.batch]);
-        if let Err(err) = banking_stage_sender.send(banking_packet_batch.clone()) {
-            error!("sigverify send failed: {err:?}");
-            return false;
+        let banking_packet_batch = BankingPacketBatch::new(vec![batch]);
+        // Sample backlog before the push: measures consumer health without
+        // including this batch's own contribution.
+        state
+            .stats
+            .max_pre_send_len
+            .fetch_max(state.banking_stage_sender.len(), Ordering::Relaxed);
+        match state
+            .banking_stage_sender
+            .send(banking_packet_batch.clone())
+        {
+            Ok(0) => {} // avoid poking atomics if nothing was evicted (typical case)
+            Ok(evicted) => {
+                // record evicted amount into metrics
+                state
+                    .stats
+                    .eviction_drops
+                    .fetch_add(evicted, Ordering::Relaxed);
+            }
+            Err(err) => {
+                error!("sigverify send to banking failed: {err:?}");
+                return false;
+            }
         }
         if should_forward {
             Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
@@ -337,4 +393,39 @@ impl SigVerifyWorkerPool {
             warn!("forwarding stage channel is full, dropping packets.");
         }
     }
+}
+
+/// Apply the scheduler-published priority floor to a single batch in place.
+///
+/// Below-floor packets are marked `discard`. Returns `(dropped, all_below)`,
+/// where `dropped` is the number of packets newly marked and `all_below` is
+/// true iff no useful packets remain in the batch (so the caller can skip
+/// downstream work for this batch entirely).
+fn apply_priority_floor_to_batch(
+    batch: &mut PacketBatch,
+    floor: u64,
+    bank: &Bank,
+) -> (usize, bool) {
+    let mut dropped: usize = 0;
+    let mut any_kept = false;
+    for mut packet in batch.iter_mut() {
+        if packet.meta().discard() {
+            continue;
+        }
+        let Some(data) = packet.data(..) else {
+            // Zero-length or otherwise unreadable: leave to downstream
+            // stages to reject.
+            any_kept = true;
+            continue;
+        };
+        // Unparseable packets are kept and left for downstream rejection.
+        match calculate_priority_from_bytes(bank, data) {
+            Some(priority) if priority <= floor => {
+                packet.meta_mut().set_discard(true);
+                dropped = dropped.saturating_add(1);
+            }
+            _ => any_kept = true,
+        }
+    }
+    (dropped, !any_kept)
 }

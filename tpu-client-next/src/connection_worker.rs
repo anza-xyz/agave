@@ -11,7 +11,8 @@ use {
         transaction_batch::TransactionBatch,
     },
     quinn::{ConnectError, Connection, ConnectionError, Endpoint},
-    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_measure::measure::Measure,
     solana_time_utils::timestamp,
     solana_tls_utils::socket_addr_to_quic_server_name,
@@ -34,7 +35,7 @@ pub(crate) const DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::
 /// Interval between retry attempts for creating a new connection. This value is
 /// a best-effort estimate, based on current network conditions.
 const RETRY_SLEEP_INTERVAL: Duration =
-    Duration::from_millis(NUM_CONSECUTIVE_LEADER_SLOTS * DEFAULT_MS_PER_SLOT);
+    Duration::from_millis(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 * DEFAULT_MS_PER_SLOT);
 
 /// Maximum age (in milliseconds) of a blockhash, beyond which transaction
 /// batches are dropped.

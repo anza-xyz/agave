@@ -7,10 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -22,6 +24,7 @@ agave-unstable-api = []
 metrics = ["solana-syscalls/metrics", "solana-program-runtime/metrics"]
 sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
 shuttle-test = [
+    "dep:shuttle",
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",
     "solana-svm-type-overrides/shuttle-test",
@@ -31,6 +34,7 @@ svm-internal = []
 [dependencies]
 bincode = { workspace = true }
 qualifier_attr = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
@@ -76,3 +80,6 @@ harness = false
 [[bench]]
 name = "bpf_loader_upgradeable"
 harness = false
+
+[lints]
+workspace = true

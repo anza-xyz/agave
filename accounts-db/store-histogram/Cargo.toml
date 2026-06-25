@@ -16,3 +16,6 @@ dev-context-only-utils = []
 [dependencies]
 clap = { workspace = true }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

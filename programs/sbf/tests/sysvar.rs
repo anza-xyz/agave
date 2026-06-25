@@ -2,6 +2,7 @@
 
 use {
     agave_feature_set::disable_fees_sysvar,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::{AccountMeta, Instruction},
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -15,15 +16,38 @@ use {
     solana_sdk_ids::{
         bpf_loader_upgradeable,
         sysvar::{
-            clock, epoch_schedule, instructions, recent_blockhashes, rent, slot_hashes,
+            self, clock, epoch_schedule, instructions, recent_blockhashes, rent, slot_hashes,
             slot_history, stake_history,
         },
     },
     solana_signer::Signer,
-    solana_stake_interface::stake_history::{StakeHistory, StakeHistoryEntry},
+    solana_stake_interface::stake_history::{
+        SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
+    },
     solana_sysvar::epoch_rewards,
     solana_transaction::Transaction,
 };
+
+fn set_stake_history_sysvar_for_tests(bank: &Bank, stake_history: &StakeHistory) {
+    let stake_history_account_size =
+        STAKE_HISTORY_ACCOUNT_SIZE.max(bincode::serialized_size(stake_history).unwrap() as usize);
+    let old_stake_history_account = bank.get_account(&stake_history::id()).unwrap();
+    let lamports = old_stake_history_account
+        .lamports()
+        .max(bank.get_minimum_balance_for_rent_exemption(stake_history_account_size));
+    let mut stake_history_account = AccountSharedData::new_data_with_space(
+        lamports,
+        stake_history,
+        stake_history_account_size,
+        &sysvar::id(),
+    )
+    .unwrap();
+    stake_history_account.set_rent_epoch(old_stake_history_account.rent_epoch());
+    bank.store_account(&stake_history::id(), &stake_history_account);
+    bank.get_transaction_processor().reset_sysvar_cache();
+    bank.get_transaction_processor()
+        .fill_missing_sysvar_cache_entries(bank);
+}
 
 #[test]
 fn test_sysvar_syscalls() {
@@ -59,7 +83,7 @@ fn test_sysvar_syscalls() {
         );
         stake_history
     };
-    bank.set_sysvar_for_tests(&stake_history);
+    set_stake_history_sysvar_for_tests(&bank, &stake_history);
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let program_id = create_program(

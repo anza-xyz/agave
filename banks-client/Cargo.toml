@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -47,3 +49,6 @@ solana-pubkey = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
+
+[lints]
+workspace = true

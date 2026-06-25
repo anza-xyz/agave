@@ -5,81 +5,26 @@
 use {
     crate::poh::Poh,
     crossbeam_channel::{Receiver, Sender},
-    dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_address::Address,
+    solana_cost_model::shred_limit::DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_signature::Signature,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::{
-        ffi::OsStr,
-        iter::repeat_with,
-        sync::{Once, OnceLock},
-        time::Instant,
-    },
+    std::{iter::repeat_with, time::Instant},
     wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::BincodeLen},
 };
 
 pub type EntrySender = Sender<Vec<Entry>>;
 pub type EntryReceiver = Receiver<Vec<Entry>>;
 
-static API: OnceLock<Container<Api>> = OnceLock::new();
-
-pub fn init_poh() {
-    init(OsStr::new("libpoh-simd.so"));
-}
-
-fn init(name: &OsStr) {
-    static INIT_HOOK: Once = Once::new();
-
-    info!("Loading {name:?}");
-    INIT_HOOK.call_once(|| {
-        let path;
-        let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs() {
-            solana_perf::perf_libs::append_to_ld_library_path(
-                perf_libs_path.to_str().unwrap_or("").to_string(),
-            );
-            path = perf_libs_path.join(name);
-            path.as_os_str()
-        } else {
-            name
-        };
-
-        match unsafe { Container::load(lib_name) } {
-            Ok(api) => _ = API.set(api),
-            Err(err) => error!("Unable to load {lib_name:?}: {err}"),
-        }
-    })
-}
-
-pub fn api() -> Option<&'static Container<Api<'static>>> {
-    {
-        static INIT_HOOK: Once = Once::new();
-        INIT_HOOK.call_once(|| {
-            if std::env::var("TEST_PERF_LIBS").is_ok() {
-                init_poh()
-            }
-        });
-    }
-
-    API.get()
-}
-
-#[derive(SymBorApi)]
-pub struct Api<'a> {
-    pub poh_verify_many_simd_avx512skx:
-        Symbol<'a, unsafe extern "C" fn(hashes: *mut u8, num_hashes: *const u64)>,
-    pub poh_verify_many_simd_avx2:
-        Symbol<'a, unsafe extern "C" fn(hashes: *mut u8, num_hashes: *const u64)>,
-}
-
-const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-pub const MAX_DATA_SHREDS_SIZE: usize = MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
+pub const MAX_DATA_SHREDS_SIZE: usize =
+    DEFAULT_MAX_DATA_SHREDS_PER_SLOT as usize * solana_packet::PACKET_DATA_SIZE;
 pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 
 /// Each Entry contains three pieces of data. The `num_hashes` field is the number
@@ -479,20 +424,6 @@ where
     })
 }
 
-fn compare_hashes(computed_hash: Hash, ref_entry: &EntryVerificationData) -> bool {
-    let actual = if ref_entry.num_transactions != 0 {
-        let tx_hash = hash_signatures(&ref_entry.signatures);
-        let mut poh = Poh::new(computed_hash, None);
-        poh.record(tx_hash).unwrap().hash
-    } else if ref_entry.num_hashes > 0 {
-        let mut poh = Poh::new(computed_hash, None);
-        poh.tick().unwrap().hash
-    } else {
-        computed_hash
-    };
-    actual == ref_entry.hash
-}
-
 pub fn verify_entries_cpu_in_pool(
     entries: &[EntryVerificationData],
     start_hash: &Hash,
@@ -530,110 +461,11 @@ fn verify_entries_cpu_generic(
     }
 }
 
-fn verify_entries_cpu_x86_simd(
-    entries: &[EntryVerificationData],
-    start_hash: &Hash,
-    simd_len: usize,
-) -> EntryVerificationState {
-    use solana_hash::HASH_BYTES;
-    let now = Instant::now();
-    let genesis = [EntryVerificationData {
-        num_hashes: 0,
-        hash: *start_hash,
-        num_transactions: 0,
-        signatures: Vec::new(),
-    }];
-
-    let aligned_len = entries.len().div_ceil(simd_len) * simd_len;
-    let mut hashes_bytes = vec![0u8; HASH_BYTES * aligned_len];
-    genesis
-        .iter()
-        .chain(entries)
-        .enumerate()
-        .for_each(|(i, entry)| {
-            if i < entries.len() {
-                let start = i * HASH_BYTES;
-                let end = start + HASH_BYTES;
-                hashes_bytes[start..end].copy_from_slice(&entry.hash.to_bytes());
-            }
-        });
-    let mut hashes_chunked: Vec<_> = hashes_bytes.chunks_mut(simd_len * HASH_BYTES).collect();
-
-    let mut num_hashes: Vec<u64> = entries
-        .iter()
-        .map(|entry| entry.num_hashes.saturating_sub(1))
-        .collect();
-    num_hashes.resize(aligned_len, 0);
-    let num_hashes: Vec<_> = num_hashes.chunks(simd_len).collect();
-
-    let res = hashes_chunked
-        .par_iter_mut()
-        .zip(num_hashes)
-        .enumerate()
-        .all(|(i, (chunk, num_hashes))| {
-            match simd_len {
-                8 => unsafe {
-                    (api().unwrap().poh_verify_many_simd_avx2)(
-                        chunk.as_mut_ptr(),
-                        num_hashes.as_ptr(),
-                    );
-                },
-                16 => unsafe {
-                    (api().unwrap().poh_verify_many_simd_avx512skx)(
-                        chunk.as_mut_ptr(),
-                        num_hashes.as_ptr(),
-                    );
-                },
-                _ => {
-                    panic!("unsupported simd len: {simd_len}");
-                }
-            }
-            let entry_start = i * simd_len;
-            // The last chunk may produce indexes larger than what we have in the reference entries
-            // because it is aligned to simd_len.
-            let entry_end = std::cmp::min(entry_start + simd_len, entries.len());
-            entries[entry_start..entry_end]
-                .iter()
-                .enumerate()
-                .all(|(j, ref_entry)| {
-                    let start = j * HASH_BYTES;
-                    let end = start + HASH_BYTES;
-                    let hash = <[u8; HASH_BYTES]>::try_from(&chunk[start..end])
-                        .map(Hash::new_from_array)
-                        .unwrap();
-                    compare_hashes(hash, ref_entry)
-                })
-        });
-    let poh_duration_us = now.elapsed().as_micros() as u64;
-    EntryVerificationState {
-        verification_status: res,
-        poh_duration_us,
-    }
-}
-
 pub fn verify_entries_cpu(
     entries: &[EntryVerificationData],
     start_hash: &Hash,
 ) -> EntryVerificationState {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    let (has_avx2, has_avx512) = (
-        is_x86_feature_detected!("avx2"),
-        is_x86_feature_detected!("avx512f"),
-    );
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    let (has_avx2, has_avx512) = (false, false);
-
-    if api().is_some() {
-        if has_avx512 && entries.len() >= 128 {
-            verify_entries_cpu_x86_simd(entries, start_hash, 16)
-        } else if has_avx2 && entries.len() >= 48 {
-            verify_entries_cpu_x86_simd(entries, start_hash, 8)
-        } else {
-            verify_entries_cpu_generic(entries, start_hash)
-        }
-    } else {
-        verify_entries_cpu_generic(entries, start_hash)
-    }
+    verify_entries_cpu_generic(entries, start_hash)
 }
 
 // an EntrySlice is a slice of Entries
@@ -641,7 +473,6 @@ pub trait EntrySlice {
     /// Verifies the hashes and counts of a slice of transactions are all consistent.
     fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState;
     fn verify_cpu_generic(&self, start_hash: &Hash) -> EntryVerificationState;
-    fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState;
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
     /// Checks that each entry tick has the correct number of hashes. Entry slices do not
     /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
@@ -662,11 +493,6 @@ impl EntrySlice for [Entry] {
         verify_entries_cpu_generic(&verification_entries, start_hash)
     }
 
-    fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState {
-        let verification_entries = entries_to_verification_data(self);
-        verify_entries_cpu_x86_simd(&verification_entries, start_hash, simd_len)
-    }
-
     fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState {
         let verification_entries = entries_to_verification_data(self);
         verify_entries_cpu(&verification_entries, start_hash)
@@ -681,6 +507,9 @@ impl EntrySlice for [Entry] {
         for entry in self {
             *tick_hash_count = tick_hash_count.saturating_add(entry.num_hashes);
             if entry.is_tick() {
+                if entry.num_hashes == 0 {
+                    return false;
+                }
                 if *tick_hash_count != hashes_per_tick {
                     warn!(
                         "invalid tick hash count!: entry: {entry:#?}, tick_hash_count: \
@@ -1163,10 +992,16 @@ mod tests {
         assert_eq!(tick_hash_count, hashes_per_tick - 1);
         tick_hash_count = 0;
 
-        // full tx entry with tick entry should succeed
-        entries = vec![full_tx_entry.clone(), no_hash_tick_entry];
-        assert!(entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
+        // no hash tick entry should fail
+        entries = vec![no_hash_tick_entry.clone()];
+        assert!(!entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
         assert_eq!(tick_hash_count, 0);
+
+        // full tx entry with no hash tick entry should still fail
+        entries = vec![full_tx_entry.clone(), no_hash_tick_entry];
+        assert!(!entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
 
         // full tx entry with oversized tick entry should fail
         entries = vec![full_tx_entry.clone(), single_hash_tick_entry.clone()];

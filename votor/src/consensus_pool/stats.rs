@@ -1,5 +1,5 @@
 use {
-    agave_votor_messages::{consensus_message::CertificateType, vote::VoteType},
+    agave_votor_messages::{certificate::CertificateType, vote::VoteType},
     solana_metrics::datapoint_info,
     std::time::{Duration, Instant},
 };
@@ -21,15 +21,15 @@ impl CertificateStats {
     fn increment(&mut self, cert_type: &CertificateType) {
         match cert_type {
             CertificateType::Finalize(_) => self.finalize = self.finalize.saturating_add(1),
-            CertificateType::FinalizeFast(_, _) => {
+            CertificateType::FinalizeFast(_) => {
                 self.finalize_fast = self.finalize_fast.saturating_add(1)
             }
-            CertificateType::Notarize(_, _) => self.notarize = self.notarize.saturating_add(1),
-            CertificateType::NotarizeFallback(_, _) => {
+            CertificateType::Notarize(_) => self.notarize = self.notarize.saturating_add(1),
+            CertificateType::NotarizeFallback(_) => {
                 self.notarize_fallback = self.notarize_fallback.saturating_add(1)
             }
             CertificateType::Skip(_) => self.skip = self.skip.saturating_add(1),
-            CertificateType::Genesis(_, _) => self.genesis = self.genesis.saturating_add(1),
+            CertificateType::Genesis(_) => self.genesis = self.genesis.saturating_add(1),
         }
     }
 

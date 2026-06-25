@@ -8,7 +8,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH},
+        bank::{DEFAULT_VAT_TO_BURN_PER_EPOCH, MAX_ALPENGLOW_VOTE_ACCOUNTS},
         test_utils::{
             new_rand_vote_account, new_rand_vote_accounts, new_staked_vote_accounts, staked_nodes,
         },
@@ -381,7 +381,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert_eq!(filtered.len(), MAX_ALPENGLOW_VOTE_ACCOUNTS);
     // Check that all filtered accounts have bls pubkey.
-    for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
+    for (_stake, vote_account) in filtered.as_ref().values() {
         assert!(
             vote_account
                 .vote_state_view()
@@ -393,7 +393,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
     let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS - 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert!(filtered.len() <= new_limit);
-    for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
+    for (_stake, vote_account) in filtered.as_ref().values() {
         assert!(
             vote_account
                 .vote_state_view()
@@ -445,14 +445,14 @@ fn test_clone_and_filter_for_vat_not_enough_lamports() {
         MAX_STAKE_FOR_STAKED_ACCOUNT,
         |index| {
             if index < entries_to_modify {
-                VAT_TO_BURN_PER_EPOCH - 1
+                DEFAULT_VAT_TO_BURN_PER_EPOCH - 1
             } else {
                 10_000_000_000
             }
         },
     );
-    let filtered =
-        vote_accounts.clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH);
+    let filtered = vote_accounts
+        .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, DEFAULT_VAT_TO_BURN_PER_EPOCH);
     assert!(filtered.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS - entries_to_modify);
 }
 

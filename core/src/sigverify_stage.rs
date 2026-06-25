@@ -8,26 +8,21 @@ use {
     crate::{
         banking_trace::BankingPacketSender,
         sigverify::{
-            GossipSigVerifier, GossipVerifiedVoteBatch, SigVerifyWorkerPool, SigVerifyWorkerStats,
-            TransactionSigVerifier,
+            GossipSigVerifier, GossipVerifiedVoteBatch, SigVerifyWorkerPool,
+            SigVerifyWorkerSenders, SigVerifyWorkerState, SigVerifyWorkerStats,
         },
     },
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
     core::time::Duration,
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
-    solana_measure::measure::Measure,
-    solana_perf::{
-        deduper::{self, Deduper},
-        packet::PacketBatch,
-    },
+    crossbeam_channel::{Receiver, Sender, unbounded},
+    solana_perf::{deduper::Deduper, packet::PacketBatch},
     solana_runtime::bank_forks::SharableBanks,
-    solana_streamer::streamer::{self, StreamerError},
     solana_transaction::Transaction,
     std::{
         num::NonZeroUsize,
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Instant,
@@ -37,17 +32,17 @@ use {
 
 #[derive(Error, Debug)]
 pub enum SigVerifyServiceError {
-    #[error("streamer error")]
-    Streamer(#[from] StreamerError),
     #[error("sigverify worker queue closed")]
     WorkerQueueClosed,
 }
 
-type Result<T> = std::result::Result<T, SigVerifyServiceError>;
+const DEDUPER_NUM_BITS: u64 = 63_999_979;
+const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
+const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 
 pub struct SigVerifyStage {
-    non_vote_thread_hdl: JoinHandle<()>,
-    tpu_vote_thread_hdl: JoinHandle<()>,
+    exit: Arc<AtomicBool>,
+    servicer_thread_hdl: Option<JoinHandle<()>>,
     // pool held so workers stay alive. If dropped, workers in pool shut down.
     _worker_pool: SigVerifyWorkerPool,
 }
@@ -59,18 +54,25 @@ pub struct GossipSigVerifyHandle {
 
 #[derive(Default)]
 struct SigVerifierStats {
-    recv_batches_us_hist: histogram::Histogram, // time to call recv_batch
-    dedup_packets_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
-    batches_hist: histogram::Histogram,         // number of packet batches per verify call
-    packets_hist: histogram::Histogram,         // number of packets per verify call
     num_deduper_saturations: usize,
-    total_batches: usize,
-    total_packets: usize,
-    total_dedup: usize,
+    total_batches: Arc<AtomicUsize>,
+    total_packets: Arc<AtomicUsize>,
+    total_dedup: Arc<AtomicUsize>,
     total_valid_packets: Arc<AtomicUsize>,
-    total_dedup_time_us: usize,
+    total_dedup_time_us: Arc<AtomicUsize>,
     total_verify_time_us: Arc<AtomicUsize>,
-    total_dropped_on_capacity: usize,
+    /// Max occupancy of the banking_stage output channel since last report.
+    max_pre_send_len: Arc<AtomicUsize>,
+    /// Count of sends in which the EvictingSender had to drop a batch.
+    eviction_drops: Arc<AtomicUsize>,
+    total_dropped_below_priority_floor: Arc<AtomicUsize>,
+    total_priority_floor_time_us: Arc<AtomicUsize>,
+}
+
+struct ServicerState {
+    deduper: Arc<Deduper<2, [u8]>>,
+    metrics_name: &'static str,
+    stats: SigVerifierStats,
 }
 
 impl SigVerifierStats {
@@ -78,68 +80,12 @@ impl SigVerifierStats {
 
     fn maybe_report_and_reset(&mut self, name: &'static str) {
         // No need to report a datapoint if no batches/packets received
-        if self.total_batches == 0 {
+        if self.total_batches.load(Ordering::Relaxed) == 0 {
             return;
         }
 
         datapoint_info!(
             name,
-            (
-                "recv_batches_us_90pct",
-                self.recv_batches_us_hist.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "recv_batches_us_min",
-                self.recv_batches_us_hist.minimum().unwrap_or(0),
-                i64
-            ),
-            (
-                "recv_batches_us_max",
-                self.recv_batches_us_hist.maximum().unwrap_or(0),
-                i64
-            ),
-            (
-                "recv_batches_us_mean",
-                self.recv_batches_us_hist.mean().unwrap_or(0),
-                i64
-            ),
-            (
-                "dedup_packets_pp_us_90pct",
-                self.dedup_packets_pp_us_hist.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "dedup_packets_pp_us_min",
-                self.dedup_packets_pp_us_hist.minimum().unwrap_or(0),
-                i64
-            ),
-            (
-                "dedup_packets_pp_us_max",
-                self.dedup_packets_pp_us_hist.maximum().unwrap_or(0),
-                i64
-            ),
-            (
-                "dedup_packets_pp_us_mean",
-                self.dedup_packets_pp_us_hist.mean().unwrap_or(0),
-                i64
-            ),
-            (
-                "batches_90pct",
-                self.batches_hist.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            ("batches_min", self.batches_hist.minimum().unwrap_or(0), i64),
-            ("batches_max", self.batches_hist.maximum().unwrap_or(0), i64),
-            ("batches_mean", self.batches_hist.mean().unwrap_or(0), i64),
-            (
-                "packets_90pct",
-                self.packets_hist.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            ("packets_min", self.packets_hist.minimum().unwrap_or(0), i64),
-            ("packets_max", self.packets_hist.maximum().unwrap_or(0), i64),
-            ("packets_mean", self.packets_hist.mean().unwrap_or(0), i64),
             (
                 "num_deduper_saturations",
                 core::mem::take(&mut self.num_deduper_saturations),
@@ -147,41 +93,56 @@ impl SigVerifierStats {
             ),
             (
                 "total_batches",
-                core::mem::take(&mut self.total_batches),
+                self.total_batches.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "total_packets",
-                core::mem::take(&mut self.total_packets),
+                self.total_packets.swap(0, Ordering::Relaxed),
                 i64
             ),
-            ("total_dedup", core::mem::take(&mut self.total_dedup), i64),
+            (
+                "total_dedup",
+                self.total_dedup.swap(0, Ordering::Relaxed),
+                i64
+            ),
             (
                 "total_dedup_time_us",
-                core::mem::take(&mut self.total_dedup_time_us),
+                self.total_dedup_time_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "total_dropped_on_capacity",
-                core::mem::take(&mut self.total_dropped_on_capacity),
+                "total_dropped_below_priority_floor",
+                self.total_dropped_below_priority_floor
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "total_priority_floor_time_us",
+                self.total_priority_floor_time_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "total_valid_packets",
-                self.total_valid_packets.swap(0, Ordering::Relaxed) as i64,
+                self.total_valid_packets.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "total_verify_time_us",
-                self.total_verify_time_us.swap(0, Ordering::Relaxed) as i64,
+                self.total_verify_time_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "max_pre_send_len",
+                self.max_pre_send_len.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "eviction_drops",
+                self.eviction_drops.swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
         );
-
-        self.recv_batches_us_hist = histogram::Histogram::new();
-        self.dedup_packets_pp_us_hist = histogram::Histogram::new();
-        self.batches_hist = histogram::Histogram::new();
-        self.packets_hist = histogram::Histogram::new();
     }
 }
 
@@ -195,40 +156,80 @@ impl SigVerifyStage {
         num_workers: NonZeroUsize,
         forward_non_votes: bool,
         sharable_banks: SharableBanks,
+        scheduler_priority_floor: Option<Arc<SchedulerPriorityFloor>>,
     ) -> (Self, GossipSigVerifyHandle) {
         let (gossip_verified_vote_sender, verified_vote_receiver) = unbounded();
         let non_vote_stats = SigVerifierStats::default();
         let tpu_vote_stats = SigVerifierStats::default();
+        let exit = Arc::new(AtomicBool::new(false));
+        let mut rng = rand::rng();
+        let non_vote_deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
+        let tpu_vote_deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
         let worker_pool = SigVerifyWorkerPool::new(
             num_workers,
-            non_vote_sender,
-            tpu_vote_sender,
-            gossip_verified_vote_sender,
-            forward_stage_sender,
+            packet_receiver,
+            vote_packet_receiver,
+            SigVerifyWorkerSenders {
+                gossip_verified_vote_sender,
+                forward_stage_sender,
+            },
             forward_non_votes,
             sharable_banks,
-            SigVerifyWorkerStats {
-                total_valid_packets: non_vote_stats.total_valid_packets.clone(),
-                total_verify_time_us: non_vote_stats.total_verify_time_us.clone(),
-            },
-            SigVerifyWorkerStats {
-                total_valid_packets: tpu_vote_stats.total_valid_packets.clone(),
-                total_verify_time_us: tpu_vote_stats.total_verify_time_us.clone(),
-            },
+            SigVerifyWorkerState::new(
+                non_vote_sender,
+                non_vote_deduper.clone(),
+                SigVerifyWorkerStats {
+                    total_batches: non_vote_stats.total_batches.clone(),
+                    total_packets: non_vote_stats.total_packets.clone(),
+                    total_dedup: non_vote_stats.total_dedup.clone(),
+                    total_dedup_time_us: non_vote_stats.total_dedup_time_us.clone(),
+                    total_valid_packets: non_vote_stats.total_valid_packets.clone(),
+                    total_verify_time_us: non_vote_stats.total_verify_time_us.clone(),
+                    max_pre_send_len: non_vote_stats.max_pre_send_len.clone(),
+                    eviction_drops: non_vote_stats.eviction_drops.clone(),
+                    total_dropped_below_priority_floor: non_vote_stats
+                        .total_dropped_below_priority_floor
+                        .clone(),
+                    total_priority_floor_time_us: non_vote_stats
+                        .total_priority_floor_time_us
+                        .clone(),
+                },
+                scheduler_priority_floor,
+            ),
+            SigVerifyWorkerState::new(
+                tpu_vote_sender,
+                tpu_vote_deduper.clone(),
+                SigVerifyWorkerStats {
+                    total_batches: tpu_vote_stats.total_batches.clone(),
+                    total_packets: tpu_vote_stats.total_packets.clone(),
+                    total_dedup: tpu_vote_stats.total_dedup.clone(),
+                    total_dedup_time_us: tpu_vote_stats.total_dedup_time_us.clone(),
+                    total_valid_packets: tpu_vote_stats.total_valid_packets.clone(),
+                    total_verify_time_us: tpu_vote_stats.total_verify_time_us.clone(),
+                    max_pre_send_len: tpu_vote_stats.max_pre_send_len.clone(),
+                    eviction_drops: tpu_vote_stats.eviction_drops.clone(),
+                    total_dropped_below_priority_floor: tpu_vote_stats
+                        .total_dropped_below_priority_floor
+                        .clone(),
+                    total_priority_floor_time_us: tpu_vote_stats
+                        .total_priority_floor_time_us
+                        .clone(),
+                },
+                None, // votes are not dropped for priority-floor
+            ),
         );
-        let non_vote_thread_hdl = Self::verifier_service(
-            packet_receiver,
-            worker_pool.non_vote_verifier(),
-            "solSigVerTpu",
-            "tpu-verifier",
-            non_vote_stats,
-        );
-        let tpu_vote_thread_hdl = Self::verifier_service(
-            vote_packet_receiver,
-            worker_pool.tpu_vote_verifier(),
-            "solSigVerTpuVot",
-            "tpu-vote-verifier",
-            tpu_vote_stats,
+        let servicer_thread_hdl = Self::servicer(
+            exit.clone(),
+            ServicerState {
+                deduper: non_vote_deduper,
+                metrics_name: "tpu-verifier",
+                stats: non_vote_stats,
+            },
+            ServicerState {
+                deduper: tpu_vote_deduper,
+                metrics_name: "tpu-vote-verifier",
+                stats: tpu_vote_stats,
+            },
         );
         let gossip_sigverify_handle = GossipSigVerifyHandle {
             verifier: worker_pool.gossip_verifier(),
@@ -237,97 +238,68 @@ impl SigVerifyStage {
 
         (
             Self {
-                non_vote_thread_hdl,
-                tpu_vote_thread_hdl,
+                exit,
+                servicer_thread_hdl: Some(servicer_thread_hdl),
                 _worker_pool: worker_pool,
             },
             gossip_sigverify_handle,
         )
     }
 
-    pub fn join(self) -> thread::Result<()> {
-        let non_vote_result = self.non_vote_thread_hdl.join();
-        let tpu_vote_result = self.tpu_vote_thread_hdl.join();
-        non_vote_result?;
-        tpu_vote_result?;
-        Ok(())
+    pub fn join(mut self) -> thread::Result<()> {
+        self.join_servicer_thread()
     }
 
-    fn verifier<const K: usize>(
-        deduper: &Deduper<K, [u8]>,
-        recvr: &Receiver<PacketBatch>,
-        verifier: &mut TransactionSigVerifier,
-        stats: &mut SigVerifierStats,
-    ) -> Result<()> {
-        const SOFT_RECEIVE_CAP: usize = 5_000;
-        let (mut batches, num_packets, recv_duration) =
-            streamer::recv_packet_batches(recvr, SOFT_RECEIVE_CAP)?;
-
-        let batches_len = batches.len();
-        stats
-            .recv_batches_us_hist
-            .increment(recv_duration.as_micros() as u64)
-            .unwrap();
-        stats.batches_hist.increment(batches_len as u64).unwrap();
-        stats.packets_hist.increment(num_packets as u64).unwrap();
-        stats.total_batches += batches_len;
-        stats.total_packets += num_packets;
-
-        let mut dedup_time = Measure::start("sigverify_dedup_time");
-        let discard_or_dedup_fail =
-            deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
-        dedup_time.stop();
-        stats.total_dropped_on_capacity += verifier.send_packets_to_worker_pool(batches)?;
-        stats
-            .dedup_packets_pp_us_hist
-            .increment(dedup_time.as_us() / (num_packets as u64))
-            .unwrap();
-        stats.total_dedup += discard_or_dedup_fail;
-        stats.total_dedup_time_us += dedup_time.as_us() as usize;
-
-        Ok(())
+    fn join_servicer_thread(&mut self) -> thread::Result<()> {
+        self.exit.store(true, Ordering::Relaxed);
+        self.servicer_thread_hdl
+            .take()
+            .map(JoinHandle::join)
+            .unwrap_or(Ok(()))
     }
 
-    fn verifier_service(
-        packet_receiver: Receiver<PacketBatch>,
-        mut verifier: TransactionSigVerifier,
-        thread_name: &'static str,
-        metrics_name: &'static str,
-        mut stats: SigVerifierStats,
+    /// Drives deduper reset and metrics reporting for sigverify packet streams.
+    fn servicer(
+        exit: Arc<AtomicBool>,
+        mut non_vote_state: ServicerState,
+        mut tpu_vote_state: ServicerState,
     ) -> JoinHandle<()> {
         let mut last_print = Instant::now();
-        const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
-        const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
-        const DEDUPER_NUM_BITS: u64 = 63_999_979;
         Builder::new()
-            .name(thread_name.to_string())
+            .name("solSigVerSvc".to_string())
             .spawn(move || {
                 let mut rng = rand::rng();
-                let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
-                loop {
-                    if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, MAX_DEDUPER_AGE) {
-                        stats.num_deduper_saturations += 1;
-                    }
-                    if let Err(e) =
-                        Self::verifier(&deduper, &packet_receiver, &mut verifier, &mut stats)
-                    {
-                        match e {
-                            SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
-                                RecvTimeoutError::Disconnected,
-                            )) => break,
-                            SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
-                                RecvTimeoutError::Timeout,
-                            )) => (),
-                            _ => error!("{e:?}"),
+                while !exit.load(Ordering::Relaxed) {
+                    for state in [&mut non_vote_state, &mut tpu_vote_state] {
+                        if state.deduper.maybe_reset(
+                            &mut rng,
+                            DEDUPER_FALSE_POSITIVE_RATE,
+                            MAX_DEDUPER_AGE,
+                        ) {
+                            state.stats.num_deduper_saturations += 1;
                         }
                     }
                     if last_print.elapsed() > SigVerifierStats::REPORT_INTERVAL {
-                        stats.maybe_report_and_reset(metrics_name);
+                        non_vote_state
+                            .stats
+                            .maybe_report_and_reset(non_vote_state.metrics_name);
+                        tpu_vote_state
+                            .stats
+                            .maybe_report_and_reset(tpu_vote_state.metrics_name);
                         last_print = Instant::now();
                     }
+                    thread::sleep(Duration::from_millis(10));
                 }
             })
             .unwrap()
+    }
+}
+
+impl Drop for SigVerifyStage {
+    fn drop(&mut self) {
+        if let Err(err) = self.join_servicer_thread() {
+            error!("sigverify servicer encountered unexpected error: {err:?}");
+        }
     }
 }
 
@@ -382,7 +354,7 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::BankingTracer,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{VersionedMessage, v1},
@@ -438,11 +410,11 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = unbounded();
-        let (vote_packet_s, vote_packet_r) = unbounded();
+        let (packet_s, packet_r) = bounded(1024);
+        let (vote_packet_s, vote_packet_r) = bounded(1024);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
-        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_r,
             vote_packet_r,
@@ -452,6 +424,7 @@ mod tests {
             NonZeroUsize::new(4).unwrap(),
             false,
             sharable_banks,
+            None,
         );
 
         let now = Instant::now();
@@ -512,11 +485,11 @@ mod tests {
         }
         let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = unbounded();
-        let (vote_packet_s, vote_packet_r) = unbounded();
+        let (packet_s, packet_r) = bounded(1024);
+        let (vote_packet_s, vote_packet_r) = bounded(1024);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
-        let (forward_stage_s, _forward_stage_r) = unbounded();
+        let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_r,
             vote_packet_r,
@@ -526,6 +499,7 @@ mod tests {
             NonZeroUsize::new(1).unwrap(),
             false,
             sharable_banks,
+            None,
         );
 
         let mut bytes_batch = BytesPacketBatch::with_capacity(1);
@@ -534,8 +508,6 @@ mod tests {
             wincode::serialize(&test_tx_v1()).unwrap(),
         ));
         packet_s.send(PacketBatch::from(bytes_batch)).unwrap();
-        drop(packet_s);
-        drop(vote_packet_s);
 
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
@@ -545,6 +517,8 @@ mod tests {
             expected_valid
         );
 
+        drop(packet_s);
+        drop(vote_packet_s);
         drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }

@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -48,3 +50,6 @@ zstd = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
+
+[lints]
+workspace = true

@@ -99,7 +99,7 @@ pub fn spawn_shred_sigverify(
         .expect("new rayon threadpool");
     let run_shred_sigverify = move || {
         let mut rng = rand::rng();
-        let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
+        let deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
         let mut shred_buffer = Vec::with_capacity(SIGVERIFY_SHRED_BATCH_SIZE);
         loop {
             if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, DEDUPER_RESET_CYCLE) {

@@ -236,6 +236,7 @@ impl CrdsGossip {
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
@@ -245,6 +246,7 @@ impl CrdsGossip {
             output_size_limit,
             now,
             should_retain_crds_value,
+            try_consume_scan_budget,
             stats,
         )
     }
@@ -414,8 +416,6 @@ mod test {
             )
             .unwrap();
         let ping_cache = PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity

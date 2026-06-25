@@ -8,6 +8,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 
@@ -19,3 +24,6 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 spl-generic-token = { workspace = true }
+
+[lints]
+workspace = true

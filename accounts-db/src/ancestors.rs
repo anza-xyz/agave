@@ -46,6 +46,10 @@ impl Ancestors {
         self.ancestors.get_all()
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = Slot> + '_ {
+        self.ancestors.iter_ones()
+    }
+
     pub fn remove(&mut self, slot: &Slot) {
         self.ancestors.remove(slot);
     }
@@ -200,5 +204,17 @@ mod tests {
             );
             assert_eq!(count, count2);
         }
+    }
+
+    #[test]
+    fn test_ancestors_iter_matches_keys() {
+        let ancestors = Ancestors::from(vec![3, 42, 128_007, 128_017, 128_107]);
+
+        let mut keys = ancestors.keys();
+        let mut iter_keys = ancestors.iter().collect::<Vec<_>>();
+        keys.sort_unstable();
+        iter_keys.sort_unstable();
+
+        assert_eq!(iter_keys, keys);
     }
 }

@@ -185,7 +185,14 @@ pub fn process_instruction(
             {
                 msg!("StakeHistory identifier:");
                 sysvar::stake_history::id().log();
-                let _ = StakeHistory::from_account_info(&accounts[9]).unwrap();
+                let _: StakeHistory =
+                    if sysvar::stake_history::check_id(accounts[9].unsigned_key()) {
+                        bincode::deserialize(&accounts[9].data.borrow())
+                            .map_err(|_| ProgramError::InvalidArgument)
+                    } else {
+                        Err(ProgramError::InvalidArgument)
+                    }
+                    .unwrap();
                 // Syscall `sol_get_sysvar`.
                 let stake_history_sysvar = StakeHistorySysvar(1);
                 assert!(stake_history_sysvar.get_entry(0).is_some());

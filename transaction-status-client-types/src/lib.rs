@@ -182,11 +182,11 @@ impl EncodedTransaction {
             TransactionBinaryEncoding::Base58 => bs58::decode(blob)
                 .into_vec()
                 .ok()
-                .and_then(|bytes| bincode::deserialize(&bytes).ok()),
+                .and_then(|bytes| wincode::deserialize(&bytes).ok()),
             TransactionBinaryEncoding::Base64 => BASE64_STANDARD
                 .decode(blob)
                 .ok()
-                .and_then(|bytes| bincode::deserialize(&bytes).ok()),
+                .and_then(|bytes| wincode::deserialize(&bytes).ok()),
         };
 
         transaction.filter(|transaction| transaction.sanitize().is_ok())
@@ -202,7 +202,7 @@ pub struct EncodedTransactionWithStatusMeta {
     pub version: Option<TransactionVersion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reward {
     pub pubkey: String,
@@ -804,6 +804,30 @@ mod test {
             TransactionBinaryEncoding::Base58,
         );
         assert!(unsanitary_transaction.decode().is_none());
+    }
+
+    #[test]
+    fn test_decode_v1_wire_transaction() {
+        let transaction = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::default()],
+            message: solana_message::VersionedMessage::V1(solana_message::v1::Message::new(
+                solana_message::MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                solana_message::v1::TransactionConfig::empty(),
+                solana_message::Hash::default(),
+                vec![solana_message::Address::default()],
+                vec![],
+            )),
+        };
+        let encoded = EncodedTransaction::Binary(
+            BASE64_STANDARD.encode(wincode::serialize(&transaction).unwrap()),
+            TransactionBinaryEncoding::Base64,
+        );
+
+        assert_eq!(encoded.decode(), Some(transaction));
     }
 
     #[test]

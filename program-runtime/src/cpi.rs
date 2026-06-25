@@ -26,7 +26,7 @@ use {
 };
 
 /// CPI-specific error types
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum CpiError {
     #[error("Invalid pointer")]
     InvalidPointer,
@@ -100,22 +100,6 @@ struct SolAccountInfo {
     pub is_signer: bool,
     pub is_writable: bool,
     pub executable: bool,
-}
-
-/// Rust representation of C's SolSignerSeed
-#[derive(Debug)]
-#[repr(C)]
-struct SolSignerSeedC {
-    pub addr: u64,
-    pub len: u64,
-}
-
-/// Rust representation of C's SolSignerSeeds
-#[derive(Debug)]
-#[repr(C)]
-struct SolSignerSeedsC {
-    pub addr: u64,
-    pub len: u64,
 }
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
@@ -223,7 +207,13 @@ pub struct CallerAccount<'a> {
 }
 
 impl<'a> CallerAccount<'a> {
-    pub fn get_serialized_data(
+    /// # Safety
+    ///
+    /// * The caller must ensure that this function does not violate mutable reference uniqueness
+    ///   constraints;
+    /// * The caller must ensure that the lifetime of the returned slice does not outlive the
+    ///   backing data.
+    pub unsafe fn get_serialized_data(
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         check_aligned: bool,
         vm_addr: u64,
@@ -250,27 +240,31 @@ impl<'a> CallerAccount<'a> {
             Ok(&mut [])
         } else if virtual_address_space_adjustments {
             // Workaround the memory permissions (as these are from the PoV of being inside the VM)
-            let serialization_ptr = translate_slice_mut_for_cpi::<u8>(
-                memory_mapping,
-                solana_sbpf::ebpf::MM_INPUT_START,
-                1,
-                false, // Don't care since it is byte aligned
-            )?
-            .as_mut_ptr();
             unsafe {
+                // SAFETY: Invariants for constructing a mutable reference delegated to the caller.
+                let serialization_ptr: &'a mut [u8] = translate_slice_mut_for_cpi::<u8>(
+                    memory_mapping,
+                    solana_sbpf::ebpf::MM_INPUT_START,
+                    1,
+                    false, // Don't care since it is byte aligned
+                )?;
                 Ok(std::slice::from_raw_parts_mut(
                     serialization_ptr
+                        .as_mut_ptr()
                         .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
                     len,
                 ))
             }
         } else {
-            translate_slice_mut_for_cpi::<u8>(
-                memory_mapping,
-                vm_addr,
-                len as u64,
-                false, // Don't care since it is byte aligned
-            )
+            unsafe {
+                // SAFETY: Invariants for constructing a mutable reference delegated to the caller.
+                translate_slice_mut_for_cpi::<u8>(
+                    memory_mapping,
+                    vm_addr,
+                    len as u64,
+                    false, // Don't care since it is byte aligned
+                )
+            }
         }
     }
 
@@ -381,20 +375,22 @@ impl<'a> CallerAccount<'a> {
             let ref_to_len_in_vm =
                 translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
-            let serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                check_aligned,
-                vm_data_addr,
-                account_metadata.original_data_len,
-                if syscall_parameter_address_restrictions {
-                    *ref_to_len_in_vm as usize
-                } else {
-                    data.len()
-                },
-                syscall_parameter_address_restrictions,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
+            let serialized_data = unsafe {
+                CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    check_aligned,
+                    vm_data_addr,
+                    account_metadata.original_data_len,
+                    if syscall_parameter_address_restrictions {
+                        *ref_to_len_in_vm as usize
+                    } else {
+                        data.len()
+                    },
+                    syscall_parameter_address_restrictions,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?
+            };
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
@@ -498,20 +494,22 @@ impl<'a> CallerAccount<'a> {
         }
         let ref_to_len_in_vm =
             translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
-        let serialized_data = CallerAccount::get_serialized_data(
-            memory_mapping,
-            check_aligned,
-            account_info.data_addr,
-            account_metadata.original_data_len,
-            if syscall_parameter_address_restrictions {
-                *ref_to_len_in_vm as usize
-            } else {
-                account_info.data_len as usize
-            },
-            syscall_parameter_address_restrictions,
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        )?;
+        let serialized_data = unsafe {
+            CallerAccount::get_serialized_data(
+                memory_mapping,
+                check_aligned,
+                account_info.data_addr,
+                account_metadata.original_data_len,
+                if syscall_parameter_address_restrictions {
+                    *ref_to_len_in_vm as usize
+                } else {
+                    account_info.data_len as usize
+                },
+                syscall_parameter_address_restrictions,
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            )?
+        };
 
         Ok(CallerAccount {
             lamports,
@@ -535,12 +533,6 @@ pub trait SyscallInvokeSigned {
         account_infos_len: u64,
         invoke_context: &InvokeContext,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error>;
-    fn translate_signers(
-        program_id: &Pubkey,
-        signers_seeds_addr: u64,
-        signers_seeds_len: u64,
-        invoke_context: &InvokeContext,
-    ) -> Result<Vec<Pubkey>, Error>;
 }
 
 pub fn translate_instruction_rust(
@@ -636,7 +628,7 @@ pub fn translate_accounts_rust<'a>(
     )?
 }
 
-pub fn translate_signers_rust(
+pub fn translate_signers(
     program_id: &Pubkey,
     signers_seeds_addr: u64,
     signers_seeds_len: u64,
@@ -644,7 +636,6 @@ pub fn translate_signers_rust(
 ) -> Result<Vec<Pubkey>, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-    let mut signers = Vec::new();
     if signers_seeds_len > 0 {
         let signers_seeds = translate_slice::<VmSlice<VmSlice<u8>>>(
             memory_mapping,
@@ -655,27 +646,28 @@ pub fn translate_signers_rust(
         if signers_seeds.len() > MAX_SIGNERS {
             return Err(Box::new(CpiError::TooManySigners));
         }
-        for signer_seeds in signers_seeds.iter() {
-            let untranslated_seeds = translate_slice::<VmSlice<u8>>(
-                memory_mapping,
-                signer_seeds.ptr(),
-                signer_seeds.len(),
-                check_aligned,
-            )?;
-            if untranslated_seeds.len() > MAX_SEEDS {
-                return Err(Box::new(InstructionError::MaxSeedLengthExceeded));
-            }
-            let seeds = untranslated_seeds
-                .iter()
-                .map(|untranslated_seed| {
-                    translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
-                })
-                .collect::<Result<Vec<_>, Error>>()?;
-            let signer =
-                Pubkey::create_program_address(&seeds, program_id).map_err(CpiError::BadSeeds)?;
-            signers.push(signer);
-        }
-        Ok(signers)
+        Ok(signers_seeds
+            .iter()
+            .map(|signer_seeds| {
+                let untranslated_seeds = translate_slice::<VmSlice<u8>>(
+                    memory_mapping,
+                    signer_seeds.ptr(),
+                    signer_seeds.len(),
+                    check_aligned,
+                )?;
+                if untranslated_seeds.len() > MAX_SEEDS {
+                    return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
+                }
+                let seeds_bytes = untranslated_seeds
+                    .iter()
+                    .map(|untranslated_seed| {
+                        translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                Pubkey::create_program_address(&seeds_bytes, program_id)
+                    .map_err(|err| Box::new(CpiError::BadSeeds(err)) as Error)
+            })
+            .collect::<Result<Vec<_>, Error>>()?)
     } else {
         Ok(vec![])
     }
@@ -777,51 +769,6 @@ pub fn translate_accounts_c<'a>(
     )?
 }
 
-pub fn translate_signers_c(
-    program_id: &Pubkey,
-    signers_seeds_addr: u64,
-    signers_seeds_len: u64,
-    invoke_context: &InvokeContext,
-) -> Result<Vec<Pubkey>, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-    if signers_seeds_len > 0 {
-        let signers_seeds = translate_slice::<SolSignerSeedsC>(
-            memory_mapping,
-            signers_seeds_addr,
-            signers_seeds_len,
-            check_aligned,
-        )?;
-        if signers_seeds.len() > MAX_SIGNERS {
-            return Err(Box::new(CpiError::TooManySigners));
-        }
-        Ok(signers_seeds
-            .iter()
-            .map(|signer_seeds| {
-                let seeds = translate_slice::<SolSignerSeedC>(
-                    memory_mapping,
-                    signer_seeds.addr,
-                    signer_seeds.len,
-                    check_aligned,
-                )?;
-                if seeds.len() > MAX_SEEDS {
-                    return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
-                }
-                let seeds_bytes = seeds
-                    .iter()
-                    .map(|seed| {
-                        translate_slice::<u8>(memory_mapping, seed.addr, seed.len, check_aligned)
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                Pubkey::create_program_address(&seeds_bytes, program_id)
-                    .map_err(|err| Box::new(CpiError::BadSeeds(err)) as Error)
-            })
-            .collect::<Result<Vec<_>, Error>>()?)
-    } else {
-        Ok(vec![])
-    }
-}
-
 /// Call process instruction, common to both Rust and C
 pub fn cpi_common<S: SyscallInvokeSigned>(
     invoke_context: &mut InvokeContext,
@@ -851,7 +798,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         .transaction_context
         .get_current_instruction_context()?;
     let caller_program_id = instruction_context.get_program_key()?;
-    let signers = S::translate_signers(
+    let signers = translate_signers(
         caller_program_id,
         signers_seeds_addr,
         signers_seeds_len,
@@ -1180,16 +1127,18 @@ fn update_callee_account(
             if !account_data_direct_mapping && post_len < prev_len {
                 // If the account has been shrunk, we're going to zero the unused memory
                 // *that was previously used*.
-                let serialized_data = CallerAccount::get_serialized_data(
-                    memory_mapping,
-                    check_aligned,
-                    caller_account.vm_data_addr,
-                    caller_account.original_data_len,
-                    prev_len,
-                    syscall_parameter_address_restrictions,
-                    virtual_address_space_adjustments,
-                    account_data_direct_mapping,
-                )?;
+                let serialized_data = unsafe {
+                    CallerAccount::get_serialized_data(
+                        memory_mapping,
+                        check_aligned,
+                        caller_account.vm_data_addr,
+                        caller_account.original_data_len,
+                        prev_len,
+                        syscall_parameter_address_restrictions,
+                        virtual_address_space_adjustments,
+                        account_data_direct_mapping,
+                    )?
+                };
                 serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall) as Error)?
@@ -1333,16 +1282,18 @@ fn update_caller_account(
                     .fill(0);
             }
             // Set the length of caller_account.serialized_data to post_len.
-            caller_account.serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                check_aligned,
-                caller_account.vm_data_addr,
-                caller_account.original_data_len,
-                post_len,
-                syscall_parameter_address_restrictions,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
+            unsafe {
+                caller_account.serialized_data = CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    check_aligned,
+                    caller_account.vm_data_addr,
+                    caller_account.original_data_len,
+                    post_len,
+                    syscall_parameter_address_restrictions,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?;
+            }
         }
         // this is the len field in the AccountInfo::data slice
         *caller_account.ref_to_len_in_vm = post_len as u64;
@@ -1917,7 +1868,7 @@ mod tests {
             ))
             .unwrap();
 
-        let signers = translate_signers_rust(&program_id, vm_addr, 1, &invoke_context).unwrap();
+        let signers = translate_signers(&program_id, vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(signers[0], derived_key);
     }
 
@@ -1997,18 +1948,25 @@ mod tests {
         };
         let memory_mapping =
             unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
-
-        assert_matches!(
+        let serialized_data = unsafe {
             CallerAccount::get_serialized_data(
                 &memory_mapping,
                 true, // check_aligned
                 MM_INPUT_START,
                 account.data().len(),
-                account.data().len().saturating_add(MAX_PERMITTED_DATA_INCREASE).saturating_add(1),
-                true, // syscall_parameter_address_restrictions
-                true, // virtual_address_space_adjustments
+                account
+                    .data()
+                    .len()
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+                    .saturating_add(1),
+                true,  // syscall_parameter_address_restrictions
+                true,  // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
-            ),
+            )
+        };
+
+        assert_matches!(
+            serialized_data,
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
         );
     }
@@ -2505,7 +2463,7 @@ mod tests {
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
-            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
         );
 
         // truncating resize
@@ -2523,7 +2481,7 @@ mod tests {
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
-            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
         );
     }
 }

@@ -1,26 +1,5 @@
-#[cfg(target_os = "linux")]
 use {
-    crate::{
-        device::{NetworkDevice, QueueId},
-        load_xdp_program,
-        route::{RouteTable, Router, RoutingTables},
-        route_monitor::RouteMonitor,
-        set_cpu_affinity,
-        tx_loop::TxPacket,
-        tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder},
-        umem::{OwnedUmem, PageAlignedMemory},
-    },
-    arc_swap::ArcSwap,
-    aya::Ebpf,
-    crossbeam_channel::TryRecvError,
-    log::info,
-    std::{
-        net::{IpAddr, Ipv4Addr},
-        thread::Builder,
-        time::Duration,
-    },
-};
-use {
+    crate::ecn_codepoint::EcnCodepoint,
     bytes::Bytes,
     crossbeam_channel::{Sender, TrySendError},
     std::{
@@ -30,14 +9,51 @@ use {
         thread,
     },
 };
+#[cfg(target_os = "linux")]
+use {
+    crate::{
+        device::{NetworkDevice, QueueId},
+        load_xdp_program,
+        route::{RouteTable, Router, RoutingTables},
+        route_monitor::RouteMonitor,
+        tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
+        umem::{OwnedUmem, PageAlignedMemory},
+    },
+    agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
+    arc_swap::ArcSwap,
+    arrayvec::ArrayVec,
+    aya::Ebpf,
+    crossbeam_channel::TryRecvError,
+    log::info,
+    std::{
+        net::{IpAddr, Ipv4Addr},
+        thread::Builder,
+        time::Duration,
+    },
+};
 
 #[cfg(target_os = "linux")]
 const ROUTE_MONITOR_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Binding of a single NIC hardware TX queue to a CPU core.
+///
+/// Each binding becomes one TX worker thread, pinned to `cpu`, whose AF_XDP
+/// socket is bound to hardware queue `queue` on the configured interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueueCpuBinding {
+    /// NIC hardware TX queue id the AF_XDP socket binds to.
+    pub queue: u32,
+    /// Logical CPU core the worker thread is pinned to.
+    pub cpu: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct XdpConfig {
     pub interface: Option<String>,
-    pub cpus: Vec<usize>,
+    /// NIC-queue -> CPU-core bindings. One TX worker is created per entry, in
+    /// order. The queue id is taken explicitly from the binding rather than
+    /// inferred from position, so callers can target arbitrary hardware queues.
+    pub queues: Vec<QueueCpuBinding>,
     pub zero_copy: bool,
     // The capacity of the channel that sits between senders and each XDP thread that enqueues
     // packets to the NIC.
@@ -53,7 +69,7 @@ impl Default for XdpConfig {
     fn default() -> Self {
         Self {
             interface: None,
-            cpus: vec![],
+            queues: vec![],
             zero_copy: false,
             tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
         }
@@ -61,10 +77,14 @@ impl Default for XdpConfig {
 }
 
 impl XdpConfig {
-    pub fn new(interface: Option<impl Into<String>>, cpus: Vec<usize>, zero_copy: bool) -> Self {
+    pub fn new(
+        interface: Option<impl Into<String>>,
+        queues: Vec<QueueCpuBinding>,
+        zero_copy: bool,
+    ) -> Self {
         Self {
             interface: interface.map(|s| s.into()),
-            cpus,
+            queues,
             zero_copy,
             tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
         }
@@ -77,6 +97,8 @@ impl XdpConfig {
 pub struct BytesTxPacket {
     src_addr: SocketAddrV4,
     dst_addrs: XdpAddrs,
+    ecn: Option<EcnCodepoint>,
+    allow_mtu_overflow: bool,
     payload: Bytes,
 }
 
@@ -85,20 +107,39 @@ pub struct BytesTxPacket;
 
 #[cfg(target_os = "linux")]
 impl BytesTxPacket {
-    pub fn new(src_addr: SocketAddrV4, dst_addrs: impl Into<XdpAddrs>, payload: Bytes) -> Self {
+    pub fn new(
+        src_addr: SocketAddrV4,
+        dst_addrs: impl Into<XdpAddrs>,
+        ecn: Option<EcnCodepoint>,
+        payload: Bytes,
+    ) -> Self {
         Self {
             src_addr,
             dst_addrs: dst_addrs.into(),
+            ecn,
+            allow_mtu_overflow: false,
             payload,
         }
+    }
+
+    /// Sets whether MTU overflow is possible for this packet.
+    pub fn set_allow_mtu_overflow(&mut self, allow: bool) {
+        self.allow_mtu_overflow = allow;
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 impl BytesTxPacket {
-    pub fn new(_src_addr: SocketAddrV4, _dst_addrs: impl Into<XdpAddrs>, _payload: Bytes) -> Self {
+    pub fn new(
+        _src_addr: SocketAddrV4,
+        _dst_addrs: impl Into<XdpAddrs>,
+        _ecn: Option<EcnCodepoint>,
+        _payload: Bytes,
+    ) -> Self {
         Self
     }
+
+    pub fn set_allow_mtu_overflow(&mut self, _allow: bool) {}
 }
 
 #[cfg(target_os = "linux")]
@@ -116,6 +157,14 @@ impl TxPacket for BytesTxPacket {
 
     fn src_addr(&self) -> SocketAddrV4 {
         self.src_addr
+    }
+
+    fn ecn(&self) -> Option<EcnCodepoint> {
+        self.ecn
+    }
+
+    fn allow_mtu_overflow(&self) -> bool {
+        self.allow_mtu_overflow
     }
 }
 
@@ -165,6 +214,14 @@ impl XdpSender {
             .expect("XdpSender::senders should not be empty");
         self.senders[idx].try_send(packet)
     }
+
+    pub fn len(&self) -> usize {
+        self.senders.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.senders.is_empty()
+    }
 }
 
 pub struct Transmitter {
@@ -192,16 +249,13 @@ impl TransmitterBuilder {
     #[cfg(target_os = "linux")]
     pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
         use {
-            caps::{
-                CapSet,
-                Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
-            },
+            caps::Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             log::debug,
-            std::collections::HashSet,
+            std::{collections::HashSet, io},
         };
         let XdpConfig {
             interface: maybe_interface,
-            cpus,
+            queues,
             zero_copy,
             tx_channel_cap,
         } = config;
@@ -216,49 +270,48 @@ impl TransmitterBuilder {
         tx_loop_config_builder.zero_copy(zero_copy);
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
-        let reserved_cores = cpus.iter().cloned().collect::<HashSet<_>>();
-        let available_cores = core_affinity::get_core_ids()
-            .expect("linux provide affine cores")
+        let reserved_cores = queues
+            .iter()
+            .map(|binding| CpuId::new(binding.cpu))
+            .collect::<io::Result<HashSet<_>>>()?;
+        let unreserved_cores = cpu_affinity(None)?
             .into_iter()
-            .map(|core_affinity::CoreId { id }| id)
-            .collect::<HashSet<_>>();
-        let unreserved_cores = available_cores
-            .difference(&reserved_cores)
-            .cloned()
+            .filter(|core| !reserved_cores.contains(core))
             .collect::<Vec<_>>();
 
-        let tx_loop_builders = cpus
-            .into_iter()
-            .zip(std::iter::repeat_with(|| tx_loop_config.clone()))
-            .enumerate()
-            .map(|(i, (cpu_id, config))| {
-                // since we aren't necessarily allocating from the thread that we intend to run on,
-                // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
-                // is allocated to the correct numa node
-                set_cpu_affinity([cpu_id]).unwrap();
-                let tx_loop_builder = TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev);
-                // migrate main thread back off of the last xdp reserved cpu
-                set_cpu_affinity(unreserved_cores.clone()).unwrap();
-                tx_loop_builder
-            })
-            .collect::<Vec<_>>();
+        if unreserved_cores.is_empty() {
+            return Err("all CPUs are reserved; no CPU available for the main thread".into());
+        }
+
+        let mut tx_loop_builders = Vec::with_capacity(queues.len());
+        for binding in queues {
+            // since we aren't necessarily allocating from the thread that we intend to run on,
+            // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
+            // is allocated to the correct numa node
+            let cpu = CpuId::new(binding.cpu)?;
+            set_cpu_affinity(None, [cpu])?;
+            let tx_loop_builder = TxLoopBuilder::new(
+                binding.cpu,
+                QueueId(binding.queue as u64),
+                tx_loop_config.clone(),
+                &dev,
+            );
+            // migrate main thread back off of the last xdp reserved cpu
+            set_cpu_affinity(None, unreserved_cores.iter().copied())?;
+            tx_loop_builders.push(tx_loop_builder);
+        }
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
-        caps::raise(None, CapSet::Effective, CAP_NET_ADMIN)
-            .expect("raise CAP_NET_ADMIN capability");
-        caps::raise(None, CapSet::Effective, CAP_NET_RAW).expect("raise CAP_NET_RAW capability");
+        let _setup_caps =
+            CapGuard::raise([CAP_NET_ADMIN, CAP_NET_RAW]).expect("raise net capabilities");
 
         let maybe_ebpf_result = if zero_copy {
-            caps::raise(None, CapSet::Effective, CAP_BPF).expect("raise CAP_BPF capability");
-            caps::raise(None, CapSet::Effective, CAP_PERFMON)
-                .expect("raise CAP_PERFMON capability");
+            let _ebpf_caps =
+                CapGuard::raise([CAP_BPF, CAP_PERFMON]).expect("raise ebpf capabilities");
 
             let load_result =
                 load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"));
-
-            caps::drop(None, CapSet::Effective, CAP_PERFMON).expect("drop CAP_PERFMON capability");
-            caps::drop(None, CapSet::Effective, CAP_BPF).expect("drop CAP_BPF capability");
 
             Some(load_result)
         } else {
@@ -268,12 +321,9 @@ impl TransmitterBuilder {
         let tx_loops = tx_loop_builders
             .into_iter()
             .map(|tx_loop_builder| tx_loop_builder.build())
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, io::Error>>()?;
 
         let tables_result = RoutingTables::from_netlink(RouteTable::Main);
-
-        caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
-        caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
 
         let tables = tables_result?;
         let router = Router::from_tables(tables)?;
@@ -411,4 +461,39 @@ pub(crate) fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
         );
     }
     None
+}
+
+#[cfg(target_os = "linux")]
+const CAP_GUARD_CAPACITY: usize = 2;
+
+#[cfg(target_os = "linux")]
+#[must_use = "capabilities are dropped when the guard goes out of scope"]
+struct CapGuard {
+    capabilities: ArrayVec<caps::Capability, CAP_GUARD_CAPACITY>,
+}
+
+#[cfg(target_os = "linux")]
+impl CapGuard {
+    fn raise(
+        raised_capabilities: impl IntoIterator<Item = caps::Capability>,
+    ) -> Result<Self, caps::errors::CapsError> {
+        let mut capabilities = ArrayVec::new();
+        for capability in raised_capabilities {
+            capabilities.try_push(capability).unwrap_or_else(|_| {
+                panic!("CapGuard supports at most {CAP_GUARD_CAPACITY} capabilities")
+            });
+            caps::raise(None, caps::CapSet::Effective, capability)?;
+        }
+        Ok(Self { capabilities })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for CapGuard {
+    fn drop(&mut self) {
+        for capability in self.capabilities.iter().rev() {
+            caps::drop(None, caps::CapSet::Effective, *capability)
+                .unwrap_or_else(|err| panic!("drop {capability:?} capability: {err}"));
+        }
+    }
 }

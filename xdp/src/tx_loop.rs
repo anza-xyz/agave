@@ -3,20 +3,25 @@
 use {
     crate::{
         device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
-        gre::{construct_gre_packet, gre_packet_size},
+        ecn_codepoint::EcnCodepoint,
+        gre::{
+            construct_gre_packet, gre_packet_size,
+            packet::{GRE_HEADER_BASE_SIZE, INNER_PACKET_HEADER_SIZE},
+        },
         netlink::MacAddress,
         packet::{
-            ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE, write_eth_header,
-            write_ip_header_for_udp, write_udp_header,
+            IP_HEADER_SIZE, PACKET_HEADER_SIZE, UDP_HEADER_SIZE, VLAN_PACKET_HEADER_SIZE,
+            construct_packet, construct_vlan_packet,
         },
         route::NextHop,
-        set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
+    agave_cpu_utils::set_cpu_affinity,
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
+        io,
         net::{IpAddr, SocketAddr, SocketAddrV4},
         thread,
         time::Duration,
@@ -77,7 +82,6 @@ pub struct TxLoopConfig {
 
 pub struct TxLoopBuilder<U: Umem> {
     cpu_id: usize,
-    queue_id: QueueId,
     zero_copy: bool,
     src_mac: MacAddress,
     queue: DeviceQueue,
@@ -98,6 +102,9 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
             "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
             dev.name()
         );
+
+        // We don't support MTUs larger than page size due to AF_XDP limitations in single-buffer
+        // mode and a possible workaround might be to use multi-buffer TX.
 
         // some drivers require frame_size=page_size
         let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -131,7 +138,6 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
 
         TxLoopBuilder {
             cpu_id,
-            queue_id,
             zero_copy,
             src_mac,
             queue,
@@ -140,10 +146,9 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         }
     }
 
-    pub fn build(self) -> TxLoop<OwnedUmem<PageAlignedMemory>> {
+    pub fn build(self) -> Result<TxLoop<OwnedUmem<PageAlignedMemory>>, io::Error> {
         let TxLoopBuilder {
             cpu_id,
-            queue_id,
             zero_copy,
             src_mac,
             queue,
@@ -151,9 +156,15 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
             umem,
         } = self;
 
-        let Ok((socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-            panic!("failed to create AF_XDP socket on queue {queue_id:?}");
-        };
+        let queue_id = queue.id();
+        let (socket, tx) =
+            Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size).map_err(|err| {
+                log::error!(
+                    "failed to create AF_XDP TX socket for queue {queue_id:?} on CPU {cpu_id}: \
+                     {err}"
+                );
+                err
+            })?;
 
         let Tx {
             // this is where we'll queue frames
@@ -163,13 +174,13 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         } = tx;
         let ring = ring.unwrap();
 
-        TxLoop {
+        Ok(TxLoop {
             cpu_id,
             src_mac,
             socket,
             ring,
             completion,
-        }
+        })
     }
 }
 
@@ -195,6 +206,12 @@ pub trait TxPacket {
 
     /// Source address used when sending the packet.
     fn src_addr(&self) -> SocketAddrV4;
+
+    /// Explicit congestion notification bits to set on the packet.
+    fn ecn(&self) -> Option<EcnCodepoint>;
+
+    /// Returns true when this packet is expected to occasionally exceed the route MTU.
+    fn allow_mtu_overflow(&self) -> bool;
 }
 
 impl<U: Umem> TxLoop<U> {
@@ -223,10 +240,11 @@ impl<U: Umem> TxLoop<U> {
         } = self;
 
         // each queue is bound to its own CPU core
-        set_cpu_affinity([cpu_id]).unwrap();
+        set_cpu_affinity(None, [agave_cpu_utils::CpuId::new(cpu_id).unwrap()]).unwrap();
 
         let umem = socket.umem();
         let umem_tx_capacity = umem.available();
+        let umem_frame_size = umem.frame_size();
 
         // Local buffer where we store packets before sending them.
         let mut batched_items = Vec::with_capacity(BATCH_SIZE);
@@ -272,6 +290,8 @@ impl<U: Umem> TxLoop<U> {
                 let src_addr = item.src_addr();
                 let src_ip = src_addr.ip();
                 let src_port = src_addr.port();
+                let ecn = item.ecn();
+                let can_overflow_mtu = item.allow_mtu_overflow();
                 for addr in item.dst_addrs().as_ref() {
                     if ring.available() == 0 || umem.available() == 0 {
                         commit_pending(&mut ring, &mut written_uncommitted);
@@ -318,7 +338,40 @@ impl<U: Umem> TxLoop<U> {
                     };
 
                     if let Some(gre) = &next_hop.gre {
-                        frame.set_len(gre_packet_size(len));
+                        let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+                        let l3_outer_gre_packet_len =
+                            IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
+
+                        if l3_inner_packet_len > gre.mtu as usize
+                            || l3_outer_gre_packet_len > next_hop.mtu as usize
+                        {
+                            if !can_overflow_mtu {
+                                log::warn!(
+                                    "dropping packet: GRE payload exceeds MTU for {addr}: L3 \
+                                     inner packet length {l3_inner_packet_len}, L3 outer GRE \
+                                     packet length {l3_outer_gre_packet_len}, MTU: {mtu}, \
+                                     underlay_mtu: {underlay_mtu}.",
+                                    mtu = gre.mtu,
+                                    underlay_mtu = next_hop.mtu
+                                );
+                            }
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        let packet_len = gre_packet_size(len);
+                        if packet_len > umem_frame_size {
+                            log::warn!(
+                                "dropping packet: GRE packet size {packet_len} exceeds frame size \
+                                 {umem_frame_size} for {addr}"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        frame.set_len(packet_len);
                         let packet = umem.map_frame_mut(&frame);
                         let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
                         if let Err(err) = construct_gre_packet(
@@ -330,9 +383,76 @@ impl<U: Umem> TxLoop<U> {
                             src_port,
                             addr.port(),
                             payload,
+                            ecn,
                             &gre.tunnel_info,
                         ) {
                             log::warn!("dropping packet: {err}");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+                    } else if let Some(vlan) = &next_hop.vlan {
+                        // we need the MAC address to send the packet
+                        let Some(dest_mac) = next_hop.mac_addr else {
+                            log::warn!(
+                                "dropping packet: peer {addr} must be routed through {} which has \
+                                 no known MAC address",
+                                next_hop.ip_addr
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+
+                        // The 802.1Q tag is added at L2, so the L3 size compared against the MTU
+                        // is the same as the untagged path.
+                        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+                        if l3_packet_len > next_hop.mtu as usize {
+                            if !can_overflow_mtu {
+                                log::warn!(
+                                    "dropping packet: packet size {l3_packet_len} exceeds MTU \
+                                     {mtu} for {addr}",
+                                    mtu = next_hop.mtu
+                                );
+                            }
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        let packet_len = VLAN_PACKET_HEADER_SIZE + len;
+                        if packet_len > umem_frame_size {
+                            log::warn!(
+                                "dropping packet: VLAN packet size {packet_len} exceeds frame \
+                                 size {umem_frame_size} for {addr}"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        frame.set_len(packet_len);
+                        let packet = umem.map_frame_mut(&frame);
+
+                        // The route's preferred src is the IP assigned to the VLAN sub-interface,
+                        // which is the right inner src for traffic egressing this VLAN. Fall back
+                        // to the device's src IP if the route did not carry one.
+                        let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
+
+                        if !construct_vlan_packet(
+                            packet,
+                            &src_mac.0,
+                            &dest_mac.0,
+                            inner_src_ip,
+                            &dst_ip,
+                            src_port,
+                            addr.port(),
+                            vlan.vid,
+                            vlan.pcp,
+                            payload,
+                            ecn,
+                        ) {
+                            log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
                             batched_packets -= 1;
                             umem.release(frame.offset());
                             continue;
@@ -350,33 +470,50 @@ impl<U: Umem> TxLoop<U> {
                             continue;
                         };
 
-                        const PACKET_HEADER_SIZE: usize =
-                            ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                        frame.set_len(PACKET_HEADER_SIZE + len);
+                        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+                        if l3_packet_len > next_hop.mtu as usize {
+                            if !can_overflow_mtu {
+                                log::warn!(
+                                    "dropping packet: packet size {l3_packet_len} exceeds MTU \
+                                     {mtu} for {addr}",
+                                    mtu = next_hop.mtu
+                                );
+                            }
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        let packet_len = PACKET_HEADER_SIZE + len;
+                        if packet_len > umem_frame_size {
+                            log::warn!(
+                                "dropping packet: packet size {packet_len} exceeds frame size \
+                                 {umem_frame_size} for {addr}"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+
+                        frame.set_len(packet_len);
                         let packet = umem.map_frame_mut(&frame);
 
-                        // write the payload first as it's needed for checksum calculation (if enabled)
-                        packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload);
-
-                        write_eth_header(packet, &src_mac.0, &dest_mac.0);
-
-                        write_ip_header_for_udp(
-                            &mut packet[ETH_HEADER_SIZE..],
+                        if !construct_packet(
+                            packet,
+                            &src_mac.0,
+                            &dest_mac.0,
                             src_ip,
                             &dst_ip,
-                            (UDP_HEADER_SIZE + len) as u16,
-                        );
-
-                        write_udp_header(
-                            &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
-                            src_ip,
                             src_port,
-                            &dst_ip,
                             addr.port(),
-                            len as u16,
-                            // don't do checksums
-                            false,
-                        );
+                            payload,
+                            ecn,
+                        ) {
+                            log::warn!("dropping packet: frame did not fit in UMEM slot");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
                     }
 
                     ring.write(frame, 0)

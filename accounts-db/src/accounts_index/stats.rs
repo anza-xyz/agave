@@ -23,7 +23,6 @@ pub struct HeldInMemStats {
     pub age: AtomicU64,
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
-    pub slot_list_cached: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -68,6 +67,10 @@ pub struct Stats {
     bins: u64,
     pub flush_should_evict_us: AtomicU64,
     pub flush_read_lock_us: AtomicU64,
+    pub num_hashmap_reallocates: AtomicU64,
+    pub hashmap_reallocate_us: AtomicU64,
+    pub evict_triggered_by_low_free_entries: AtomicU64,
+    pub evict_triggered_by_high_count: AtomicU64,
 }
 
 impl Stats {
@@ -262,8 +265,6 @@ impl Stats {
             let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
             let held_in_mem_slot_list_len =
                 self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
-            let held_in_mem_slot_list_cached =
-                self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed);
             // If an entry is held in-mem due to ref count or slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
@@ -314,11 +315,6 @@ impl Stats {
                 (
                     "num_not_flushed_slot_list_len",
                     held_in_mem_slot_list_len,
-                    i64
-                ),
-                (
-                    "num_not_flushed_slot_list_cached",
-                    held_in_mem_slot_list_cached,
                     i64
                 ),
                 ("min_in_bin_disk", disk_stats.0, i64),
@@ -436,6 +432,28 @@ impl Stats {
                 (
                     "flush_read_lock_us",
                     self.flush_read_lock_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_hashmap_reallocates",
+                    self.num_hashmap_reallocates.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "hashmap_reallocate_us",
+                    self.hashmap_reallocate_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "evict_triggered_by_low_free_entries",
+                    self.evict_triggered_by_low_free_entries
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "evict_triggered_by_high_count",
+                    self.evict_triggered_by_high_count
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (

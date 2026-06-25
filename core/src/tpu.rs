@@ -11,7 +11,7 @@ use {
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VerifiedVoterSlotsSender, VoteTracker,
+            VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -23,7 +23,10 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
+    agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_votor::event::VotorEventSender,
+    agave_votor_messages::VerifiedVoterSlotsSender,
+    agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -47,6 +50,7 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
+        evicting_sender::EvictingSender,
         quic::{
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_weighted_qos_server,
@@ -55,12 +59,12 @@ use {
         streamer::StakedNodes,
     },
     solana_turbine::{
-        XdpSender,
+        XdpSender as TurbineXdpSender,
         broadcast_stage::{BroadcastStage, BroadcastStageType},
     },
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{Ipv4Addr, UdpSocket},
         num::NonZeroUsize,
         path::PathBuf,
         sync::{Arc, RwLock, atomic::AtomicBool},
@@ -86,6 +90,15 @@ pub const MAX_VOTES_PER_SECOND: u64 = 20;
 /// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
 /// be conservative max of obsersed on mnb during high-load events.
 const TPU_CHANNEL_SIZE: usize = 50_000;
+
+/// Size of the channel between the vote streamer and the TPU sigverify stage.
+/// Chosen based on nominal voting load for a cluster with ~2000 validators + some margin.
+pub(crate) const TPU_VOTE_CHANNEL_SIZE: usize = 4_000;
+
+/// Size of the channel between the TPU forwards streamer and the fetch stage.
+/// Mirrors `TPU_CHANNEL_SIZE`; the streamer uses `try_send`, so an over-full
+/// channel drops packets (tracked via streamer metrics) rather than blocking.
+const TPU_FORWARD_CHANNEL_SIZE: usize = 50_000;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -116,7 +129,9 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
-        turbine_xdp_sender: Option<XdpSender>,
+        leader_schedule_cache: Arc<solana_ledger::leader_schedule_cache::LeaderScheduleCache>,
+        turbine_xdp_sender: Option<TurbineXdpSender>,
+        quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -161,13 +176,16 @@ impl Tpu {
         } = sockets;
 
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
-        let (vote_packet_sender, vote_packet_receiver) = unbounded();
-        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
+        let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
+        let evicting_vote_sender =
+            EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
+        let (forwarded_packet_sender, forwarded_packet_receiver) =
+            bounded(TPU_FORWARD_CHANNEL_SIZE);
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),
             &packet_sender,
-            &vote_packet_sender,
+            &evicting_vote_sender,
             forwarded_packet_receiver,
             poh_recorder,
             None, // coalesce
@@ -212,11 +230,13 @@ impl Tpu {
         )
         .unwrap();
 
+        // We check on validator startup that XDP is not mixed with multihoming, so by construction
+        // at this moment all the transactions_quic_sockets and transactions_forwards_quic_sockets
+        // have the same bind IP:PORT.
+
         // Streamer for TPU
-        let transactions_quic_sockets: Vec<QuicSocket> = transactions_quic_sockets
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let transactions_quic_sockets =
+            into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.clone());
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -235,11 +255,8 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU forward
-        let transactions_forwards_quic_sockets: Vec<QuicSocket> =
-            transactions_forwards_quic_sockets
-                .into_iter()
-                .map(Into::into)
-                .collect();
+        let transactions_forwards_quic_sockets =
+            into_quic_sockets(transactions_forwards_quic_sockets, quic_xdp_sender);
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
@@ -259,6 +276,11 @@ impl Tpu {
 
         let (forward_stage_sender, forward_stage_receiver) = bounded(50_000);
 
+        // Shared between sigverify and scheduler. The scheduler publishes
+        // a priority floor under saturation; sigverify reads it and drops
+        // below-floor packets ahead of signature verification.
+        let scheduler_priority_floor = Arc::new(SchedulerPriorityFloor::new());
+
         let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_receiver,
             vote_packet_receiver,
@@ -268,6 +290,7 @@ impl Tpu {
             tpu_sigverify_threads,
             enable_block_production_forwarding,
             bank_forks.read().unwrap().sharable_banks(),
+            Some(scheduler_priority_floor.clone()),
         );
 
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
@@ -302,6 +325,7 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache,
             filter_keys,
+            scheduler_priority_floor,
         );
 
         #[cfg(unix)]
@@ -344,6 +368,7 @@ impl Tpu {
             exit,
             blockstore,
             bank_forks,
+            leader_schedule_cache,
             shred_version,
             turbine_xdp_sender,
             votor_event_sender,
@@ -401,4 +426,18 @@ impl Tpu {
         }
         Ok(())
     }
+}
+
+fn into_quic_sockets(
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
+) -> impl Iterator<Item = QuicSocket> {
+    sockets
+        .into_iter()
+        .map(move |socket| match &quic_xdp_sender {
+            Some((xdp_sender, fallback_src_ip)) => {
+                QuicSocket::with_xdp(socket, *fallback_src_ip, xdp_sender.clone())
+            }
+            None => QuicSocket::from(socket),
+        })
 }

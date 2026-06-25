@@ -56,6 +56,9 @@ use {
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
+    solana_cost_model::shred_limit::{
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+    },
     solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -122,8 +125,8 @@ pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHRED
 /// An upper bound on maximum number of data shreds we can handle in a slot
 /// 32K shreds would allow ~320K peak TPS
 /// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
-pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
+pub const MAX_DATA_SHREDS_PER_SLOT: usize = DEFAULT_MAX_DATA_SHREDS_PER_SLOT as usize;
+pub const MAX_CODE_SHREDS_PER_SLOT: usize = DEFAULT_MAX_CODE_SHREDS_PER_SLOT as usize;
 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
@@ -349,6 +352,18 @@ impl ErasureSetId {
         self.1
     }
 
+    pub(crate) fn previous_fec_set(&self) -> Option<Self> {
+        self.1
+            .checked_sub(DATA_SHREDS_PER_FEC_BLOCK as u32)
+            .map(|fec_set_index| Self::new(self.0, fec_set_index))
+    }
+
+    pub(crate) fn next_fec_set(&self) -> Option<Self> {
+        self.1
+            .checked_add(DATA_SHREDS_PER_FEC_BLOCK as u32)
+            .map(|fec_set_index| Self::new(self.0, fec_set_index))
+    }
+
     // Storage key for ErasureMeta and MerkleRootMeta in blockstore db.
     // Note: ErasureMeta column uses u64 so this will need to be typecast
     pub(crate) fn store_key(&self) -> (Slot, /*fec_set_index:*/ u32) {
@@ -516,6 +531,7 @@ impl Shred {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn reference_tick(&self) -> u8 {
         match self {
             Self::ShredCode(_) => ShredFlags::SHRED_TICK_REFERENCE_MASK.bits(),

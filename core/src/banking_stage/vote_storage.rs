@@ -5,7 +5,7 @@ use {
     ahash::HashMap,
     itertools::Itertools,
     rand::{Rng, rng},
-    solana_account::from_account,
+    solana_account::ReadableAccount as _,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -146,7 +146,7 @@ impl VoteStorage {
     pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
-            .and_then(|account| from_account::<SlotHashes, _>(&account));
+            .and_then(|account| wincode::deserialize::<SlotHashes>(account.data()).ok());
         if slot_hashes.is_none() {
             error!(
                 "Slot hashes sysvar doesn't exist on bank {}. Including all votes without \
@@ -391,6 +391,7 @@ pub(crate) mod tests {
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
+        solana_runtime_transaction::sanitize_config::sanitize_config,
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
@@ -473,7 +474,7 @@ pub(crate) mod tests {
             &keypairs.vote_keypair,
             None,
         );
-        let mut packet = BytesPacket::from_data(None, vote_tx).unwrap();
+        let mut packet = BytesPacket::from_data(vote_tx).unwrap();
         packet
             .meta_mut()
             .flags
@@ -509,7 +510,7 @@ pub(crate) mod tests {
             authorized_voter,
             None,
         );
-        let mut packet = BytesPacket::from_data(None, vote_tx).unwrap();
+        let mut packet = BytesPacket::from_data(vote_tx).unwrap();
         packet
             .meta_mut()
             .flags
@@ -519,8 +520,11 @@ pub(crate) mod tests {
     }
 
     fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
-        SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), true)
-            .unwrap()
+        SanitizedTransactionView::try_new_sanitized(
+            Arc::new(packet.buffer().to_vec()),
+            &sanitize_config(true),
+        )
+        .unwrap()
     }
 
     #[test]

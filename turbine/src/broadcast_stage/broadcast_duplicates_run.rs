@@ -263,8 +263,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
 
         if !data_shreds.is_empty() {
             let data_shreds = Arc::new(data_shreds);
-            blockstore_sender.send((data_shreds.clone(), None))?;
-
             // 3) Start broadcast step
             info!(
                 "{} Sending good shreds for slot {} to network",
@@ -272,7 +270,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 data_shreds.first().unwrap().slot()
             );
             assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
-            socket_sender.send((data_shreds, None))?;
+            dispatch_shreds(blockstore_sender, socket_sender, data_shreds, None)?;
         }
 
         // Special handling of last shred to cause partition
@@ -294,9 +292,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             let original_last_data_shred = Arc::new(original_last_data_shred);
             let partition_last_data_shred = Arc::new(partition_last_data_shred);
 
-            // Store the original shreds that this node replayed
-            blockstore_sender.send((original_last_data_shred.clone(), None))?;
-
             assert!(
                 original_last_data_shred
                     .iter()
@@ -311,7 +306,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             if let Some(duplicate_slot_sender) = &self.config.duplicate_slot_sender {
                 let _ = duplicate_slot_sender.send(bank.slot());
             }
-            socket_sender.send((original_last_data_shred, None))?;
+            // Store the original shreds that this node replayed;
+            dispatch_shreds(
+                blockstore_sender,
+                socket_sender,
+                original_last_data_shred,
+                None,
+            )?;
+            // the partition shreds go only over the wire to create the duplicate slot.
+            // blocking here is ok since this is only ever used in tests.
             socket_sender.send((partition_last_data_shred, None))?;
         }
 

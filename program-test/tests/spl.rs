@@ -24,12 +24,18 @@ async fn programs_present() {
     let (token_2022_programdata_id, _) =
         Pubkey::find_program_address(&[token_2022_id.as_ref()], &bpf_loader_upgradeable::id());
 
+    let memo_id = spl_memo_interface::v4::id();
+    let (memo_programdata_id, _) =
+        Pubkey::find_program_address(&[memo_id.as_ref()], &bpf_loader_upgradeable::id());
+
     for (program_id, _) in spl_programs(&rent) {
         let program_account = banks_client.get_account(program_id).await.unwrap().unwrap();
         if program_id == token_id
             || program_id == token_programdata_id
             || program_id == token_2022_id
             || program_id == token_2022_programdata_id
+            || program_id == memo_id
+            || program_id == memo_programdata_id
         {
             assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
         } else {

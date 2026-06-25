@@ -15,7 +15,9 @@ use {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_tpu_send_transaction() {
-    let (test_validator, mint_keypair) = TestValidatorGenesis::default().start_async().await;
+    let (test_validator, mint_keypair) = TestValidatorGenesis::default_for_tests()
+        .start_async()
+        .await;
     let rpc_client = Arc::new(test_validator.get_async_rpc_client());
     let mut tpu_client = TpuClient::new(
         "tpu_client_test",
@@ -49,7 +51,9 @@ async fn test_tpu_send_transaction() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_tpu_cache_slot_updates() {
-    let (test_validator, _) = TestValidatorGenesis::default().start_async().await;
+    let (test_validator, _) = TestValidatorGenesis::default_for_tests()
+        .start_async()
+        .await;
     let rpc_client = Arc::new(test_validator.get_async_rpc_client());
     let exit = Arc::new(AtomicBool::new(false));
     let mut leader_tpu_service = LeaderTpuService::new(

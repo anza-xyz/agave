@@ -8,10 +8,16 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = true
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 
 [dependencies]
+agave-cpu-utils = { workspace = true }
 arc-swap = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -21,6 +27,9 @@ thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-xdp-ebpf = { workspace = true }
+arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
-core_affinity = { workspace = true }
+
+[lints]
+workspace = true

@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 default = ["metrics"]
@@ -29,14 +31,13 @@ libsecp256k1 = { workspace = true }
 num-traits = { workspace = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
-solana-big-mod-exp = { workspace = true }
 solana-blake3-hasher = { workspace = true, features = ["blake3"] }
 solana-bls12-381-syscall = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["wincode"] }
 solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
@@ -58,6 +59,7 @@ solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

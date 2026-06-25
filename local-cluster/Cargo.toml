@@ -11,13 +11,15 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
     "solana-core/dev-context-only-utils",
-    "agave-feature-set/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
+    "solana-tpu-client-next/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -53,6 +55,8 @@ solana-ledger = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -72,6 +76,7 @@ solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-turbine = { workspace = true }
@@ -82,7 +87,9 @@ solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -95,3 +102,6 @@ solana-genesis-utils = { path = "../genesis-utils", features = ["agave-unstable-
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

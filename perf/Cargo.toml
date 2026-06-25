@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_perf"
@@ -39,6 +41,7 @@ frozen-abi = [
 [dependencies]
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
+arc-swap = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true, features = ["serde"] }
 log = { workspace = true }
@@ -59,6 +62,7 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode"] }
 solana-pubkey = { workspace = true, default-features = false }
+solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }
@@ -70,6 +74,7 @@ solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-context = { workspace = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
+wincode = { workspace = true }
 
 [target."cfg(target_os = \"linux\")".dependencies]
 caps = { workspace = true }

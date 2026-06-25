@@ -8,6 +8,7 @@ use {
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
+    agave_votor_messages::certificate::Certificate,
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -448,7 +449,7 @@ impl JsonRpcRequestProcessor {
     #[cfg(test)]
     pub fn new_from_bank(bank: Bank, socket_addr_space: SocketAddrSpace) -> Self {
         use {
-            crate::rpc_service::service_runtime,
+            crate::rpc_service::service_runtime, crossbeam_channel::bounded,
             solana_send_transaction_service::test_utils::create_client_for_tests,
         };
 
@@ -467,7 +468,7 @@ impl JsonRpcRequestProcessor {
         });
 
         let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
-        let (transaction_sender, transaction_receiver) = unbounded();
+        let (transaction_sender, transaction_receiver) = bounded(1024);
 
         let config = JsonRpcConfig::default();
         let JsonRpcConfig {
@@ -480,7 +481,7 @@ impl JsonRpcRequestProcessor {
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
-            &bank_forks,
+            bank_forks.clone(),
             transaction_receiver,
             client,
             SendTransactionServiceConfig {
@@ -780,8 +781,10 @@ impl JsonRpcRequestProcessor {
                 first_confirmed_block_in_epoch,
                 &addresses,
                 &|reward_type| -> bool {
+                    let is_staking_reward = reward_type == RewardType::Staking
+                        || reward_type == RewardType::DeactivatedStake;
                     reward_type == RewardType::Voting
-                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
+                        || (!epoch_has_partitioned_rewards && is_staking_reward)
                 },
             )
             .collect()
@@ -861,7 +864,10 @@ impl JsonRpcRequestProcessor {
                     block.rewards,
                     slot,
                     addresses,
-                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                    &|reward_type| -> bool {
+                        reward_type == RewardType::Staking
+                            || reward_type == RewardType::DeactivatedStake
+                    },
                 );
                 reward_map.extend(index_reward_map);
             }
@@ -913,6 +919,11 @@ impl JsonRpcRequestProcessor {
         // fine
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.epoch_schedule().clone()
+    }
+
+    pub fn get_ag_genesis_cert(&self) -> Option<Certificate> {
+        let bank = self.bank(Some(CommitmentConfig::finalized()));
+        bank.get_alpenglow_genesis_certificate()
     }
 
     pub fn get_balance(
@@ -3024,6 +3035,9 @@ pub mod rpc_bank {
             limit: u64,
         ) -> Result<Vec<String>>;
 
+        #[rpc(meta, name = "getAgGenesisCert")]
+        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>>;
+
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
             &self,
@@ -3099,6 +3113,11 @@ pub mod rpc_bank {
                 .collect())
         }
 
+        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>> {
+            debug!("get_ag_genesis_cert rpc request received");
+            Ok(meta.get_ag_genesis_cert())
+        }
+
         fn get_block_production(
             &self,
             meta: Self::Metadata,
@@ -3131,7 +3150,9 @@ pub mod rpc_bank {
                 }
             };
 
-            let slot_history = bank.get_slot_history();
+            let Some(slot_history) = bank.get_slot_history() else {
+                return Err(RpcCustomError::NoSlotHistory.into());
+            };
             if first_slot < slot_history.oldest() {
                 return Err(Error::invalid_params(format!(
                     "firstSlot, {}, is too small; min {}",
@@ -3678,16 +3699,14 @@ pub mod rpc_full {
             debug!("get_cluster_nodes rpc request received");
             let cluster_info = &meta.cluster_info;
             let socket_addr_space = cluster_info.socket_addr_space();
-            let my_shred_version = cluster_info.my_shred_version();
             Ok(cluster_info
                 .all_peers()
                 .iter()
                 .filter_map(|(contact_info, _)| {
-                    if my_shred_version == contact_info.shred_version()
-                        && contact_info
-                            .gossip()
-                            .map(|addr| socket_addr_space.check(&addr))
-                            .unwrap_or_default()
+                    if contact_info
+                        .gossip()
+                        .map(|addr| socket_addr_space.check(&addr))
+                        .unwrap_or_default()
                     {
                         let (version, feature_set, client_id) = if let Some(version) =
                             cluster_info.get_node_version(contact_info.pubkey())
@@ -3729,7 +3748,7 @@ pub mod rpc_full {
                             version,
                             client_id: client_id.map(|id| format!("{id}")),
                             feature_set,
-                            shred_version: Some(my_shred_version),
+                            shred_version: Some(contact_info.shred_version()),
                         })
                     } else {
                         None // Exclude spy nodes
@@ -3783,10 +3802,7 @@ pub mod rpc_full {
             config: Option<RpcRequestAirdropConfig>,
         ) -> Result<String> {
             debug!("request_airdrop rpc request received");
-            trace!(
-                "request_airdrop id={} lamports={} config: {:?}",
-                pubkey_str, lamports, &config
-            );
+            trace!("request_airdrop id={pubkey_str} lamports={lamports} config: {config:?}");
 
             let faucet_addr = meta.config.faucet_addr.ok_or_else(Error::invalid_request)?;
             let pubkey = verify_pubkey(&pubkey_str)?;
@@ -4363,8 +4379,19 @@ fn rpc_perf_sample_from_perf_sample(slot: u64, sample: PerfSample) -> RpcPerfSam
     }
 }
 
+// Base58 encoding is deprecated, not increased for v1 transactions
 const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
-const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
+// Cap base64 based on the largest supported transaction version,
+// which is v1 (4096 bytes).
+const MAX_BASE64_SIZE: usize = 5464; // ceil(4096 / 3) * 4
+// Legacy/v0 transactions are still capped at PACKET_DATA_SIZE (1232 bytes).
+const MAX_BASE64_LEGACY_SIZE: usize = 1644; // ceil(1232 / 3) * 4
+
+// V1+ messages start with 0x81 (or higher). In base64 the top 6 bits of 0x81
+// Comparing the first two chars against "gQ" detects V1+ before decoding.
+// Revisit before V3 which will break this shortcut
+const V1_BASE64_PREFIX_LOWER_BOUND: &[u8] = b"gQ";
+
 fn decode_and_deserialize<T>(
     encoded: String,
     encoding: TransactionBinaryEncoding,
@@ -4372,7 +4399,7 @@ fn decode_and_deserialize<T>(
 where
     T: for<'a> wincode::SchemaRead<'a, wincode::config::DefaultConfig, Dst = T>,
 {
-    let wire_output = match encoding {
+    let (wire_output, max_raw_size) = match encoding {
         TransactionBinaryEncoding::Base58 => {
             inc_new_counter_info!("rpc-base58_encoded_tx", 1);
             if encoded.len() > MAX_BASE58_SIZE {
@@ -4384,32 +4411,44 @@ where
                     PACKET_DATA_SIZE,
                 )));
             }
-            bs58::decode(encoded)
+            let bytes = bs58::decode(encoded)
                 .into_vec()
-                .map_err(|e| Error::invalid_params(format!("invalid base58 encoding: {e:?}")))?
+                .map_err(|e| Error::invalid_params(format!("invalid base58 encoding: {e:?}")))?;
+            // base58 is deprecated, unchanged max size
+            (bytes, PACKET_DATA_SIZE)
         }
         TransactionBinaryEncoding::Base64 => {
             inc_new_counter_info!("rpc-base64_encoded_tx", 1);
-            if encoded.len() > MAX_BASE64_SIZE {
+            let (max_encoded_size, max_raw_size) = if encoded
+                .as_bytes()
+                .get(..2)
+                .is_some_and(|p| p >= V1_BASE64_PREFIX_LOWER_BOUND)
+            {
+                (MAX_BASE64_SIZE, solana_message::v1::MAX_TRANSACTION_SIZE)
+            } else {
+                (MAX_BASE64_LEGACY_SIZE, PACKET_DATA_SIZE)
+            };
+            if encoded.len() > max_encoded_size {
                 return Err(Error::invalid_params(format!(
                     "base64 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
                     type_name::<T>(),
                     encoded.len(),
-                    MAX_BASE64_SIZE,
-                    PACKET_DATA_SIZE,
+                    max_encoded_size,
+                    max_raw_size,
                 )));
             }
-            BASE64_STANDARD
+            let bytes = BASE64_STANDARD
                 .decode(encoded)
-                .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?
+                .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?;
+            (bytes, max_raw_size)
         }
     };
-    if wire_output.len() > PACKET_DATA_SIZE {
+    if wire_output.len() > max_raw_size {
         return Err(Error::invalid_params(format!(
             "decoded {} too large: {} bytes (max: {} bytes)",
             type_name::<T>(),
             wire_output.len(),
-            PACKET_DATA_SIZE
+            max_raw_size
         )));
     }
 
@@ -4418,7 +4457,7 @@ where
             Error::invalid_params(format!(
                 "failed to deserialize {}: {}",
                 type_name::<T>(),
-                &err.to_string()
+                err
             ))
         })
         .map(|output| (wire_output, output))
@@ -4488,6 +4527,8 @@ pub fn populate_blockstore_for_tests(
     blockstore: Arc<Blockstore>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
 ) {
+    use crossbeam_channel::bounded;
+
     let slot = bank.slot();
     let parent_slot = bank.parent_slot();
     let shreds =
@@ -4495,8 +4536,8 @@ pub fn populate_blockstore_for_tests(
     blockstore.insert_shreds(shreds, None, false).unwrap();
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 
-    let (transaction_status_sender, transaction_status_receiver) = unbounded();
-    let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
@@ -4568,6 +4609,7 @@ pub mod tests {
         solana_message::{
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
             v0::{self, MessageAddressTableLookup},
+            v1,
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_program_option::COption,
@@ -6916,7 +6958,7 @@ pub mod tests {
 
         let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
-            &bank_forks,
+            bank_forks.clone(),
             receiver,
             client,
             SendTransactionServiceConfig {
@@ -7228,7 +7270,7 @@ pub mod tests {
         );
 
         SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client,
             SendTransactionServiceConfig {
@@ -9108,17 +9150,21 @@ pub mod tests {
 
     #[test]
     fn test_worst_case_encoded_tx_goldens() {
-        let ff_tx = vec![0xffu8; PACKET_DATA_SIZE];
-        let tx58 = bs58::encode(&ff_tx).into_string();
+        // Base58 is capped at the legacy PACKET_DATA_SIZE since base58 encoding
+        // is deprecated and not extended to v1-sized transactions.
+        let ff_tx58_input = vec![0xffu8; PACKET_DATA_SIZE];
+        let tx58 = bs58::encode(&ff_tx58_input).into_string();
         assert_eq!(tx58.len(), MAX_BASE58_SIZE);
-        let tx64 = BASE64_STANDARD.encode(&ff_tx);
+
+        // Base64 is sized for the largest supported transaction version (v1).
+        let ff_tx64_input = vec![0xffu8; solana_message::v1::MAX_TRANSACTION_SIZE];
+        let tx64 = BASE64_STANDARD.encode(&ff_tx64_input);
         assert_eq!(tx64.len(), MAX_BASE64_SIZE);
     }
 
     #[test]
-    fn test_decode_and_deserialize_too_large_payloads_fail() {
-        // +2 because +1 still fits in base64 encoded worst-case
-        let too_big = PACKET_DATA_SIZE + 2;
+    fn test_decode_and_deserialize_too_large_encoded_base58_payload_fails() {
+        let too_big = PACKET_DATA_SIZE + 1;
         let tx_ser = vec![0xffu8; too_big];
 
         let tx58 = bs58::encode(&tx_ser).into_string();
@@ -9131,6 +9177,14 @@ pub mod tests {
                  encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
             ))
         );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_too_large_encoded_base64_v1_payload_fails() {
+        // +3 because +2 still fits in base64 encoded worst-case
+        let too_big = solana_message::v1::MAX_TRANSACTION_SIZE + 3;
+        let mut tx_ser = vec![0xffu8; too_big];
+        tx_ser[0] = solana_message::v1::V1_PREFIX;
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         let tx64_len = tx64.len();
@@ -9139,10 +9193,34 @@ pub mod tests {
                 .unwrap_err(),
             Error::invalid_params(format!(
                 "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
+                 encoded/raw {MAX_BASE64_SIZE}/{})",
+                solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
+    }
 
+    #[test]
+    fn test_decode_and_deserialize_too_large_encoded_base64_legacy_payload_fails() {
+        // Legacy/v0 payloads must bail out before decoding when they exceed the
+        // legacy base64 cap, even if they would fit under the v1 cap.
+        let too_big = PACKET_DATA_SIZE + 3;
+        let tx_ser = vec![0x00u8; too_big];
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        let tx64_len = tx64.len();
+        assert!(tx64_len > MAX_BASE64_LEGACY_SIZE && tx64_len < MAX_BASE64_SIZE);
+        assert_eq!(
+            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
+            Error::invalid_params(format!(
+                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
+                 encoded/raw {MAX_BASE64_LEGACY_SIZE}/{PACKET_DATA_SIZE})",
+            ))
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_too_large_payloads_fail() {
         let too_big = PACKET_DATA_SIZE + 1;
         let tx_ser = vec![0x00u8; too_big];
         let tx58 = bs58::encode(&tx_ser).into_string();
@@ -9201,6 +9279,46 @@ pub mod tests {
                 "invalid base58 encoding: InvalidCharacter { character: '!', index: 1680 }"
                     .to_string(),
             )
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_v1_sized_payload_passes_size_checks() {
+        // V1-prefixed payload at the V1 max size. Random bytes will fail
+        // wincode deserialization, but should pass the size gates.
+        let mut tx_ser = vec![0xffu8; solana_message::v1::MAX_TRANSACTION_SIZE];
+        tx_ser[0] = solana_message::v1::V1_PREFIX;
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        let err =
+            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(
+            err.message.starts_with(
+                "failed to deserialize solana_transaction::versioned::VersionedTransaction"
+            ),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_decode_and_deserialize_v1_oversize_payload_fails() {
+        // V1-prefixed payload one byte over the V1 max.
+        let too_big = solana_message::v1::MAX_TRANSACTION_SIZE + 1;
+        let mut tx_ser = vec![0xffu8; too_big];
+        tx_ser[0] = solana_message::v1::V1_PREFIX;
+
+        let tx64 = BASE64_STANDARD.encode(&tx_ser);
+        assert_eq!(
+            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
+            Error::invalid_params(format!(
+                "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
+                 bytes (max: {} bytes)",
+                solana_message::v1::MAX_TRANSACTION_SIZE,
+            ))
         );
     }
 
@@ -9329,6 +9447,32 @@ pub mod tests {
             );
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
             assert_eq!(response.value, TEST_SIGNATURE_FEE);
+        }
+
+        {
+            const PRIORITY_FEE: u64 = 42;
+            let v1_msg = VersionedMessage::V1(v1::Message::new(
+                MessageHeader {
+                    num_required_signatures: 1,
+                    ..MessageHeader::default()
+                },
+                v1::TransactionConfig {
+                    priority_fee: Some(PRIORITY_FEE),
+                    ..v1::TransactionConfig::empty()
+                },
+                recent_blockhash,
+                vec![Pubkey::new_unique()],
+                vec![],
+            ));
+
+            let request = create_test_request(
+                "getFeeForMessage",
+                Some(json!([
+                    BASE64_STANDARD.encode(wincode::serialize(&v1_msg).unwrap())
+                ])),
+            );
+            let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
+            assert_eq!(response.value, TEST_SIGNATURE_FEE + PRIORITY_FEE);
         }
     }
 

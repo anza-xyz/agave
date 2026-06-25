@@ -3,7 +3,6 @@
 pub mod data_budget;
 pub mod deduper;
 pub mod packet;
-pub mod perf_libs;
 pub mod recycled_vec;
 pub mod recycler;
 pub mod sigverify;

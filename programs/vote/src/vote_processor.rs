@@ -422,7 +422,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
             instruction_context.check_number_of_instruction_accounts(2)?;
             drop(me);
-            vote_state::deposit_delegator_rewards(invoke_context, deposit)
+            vote_state::deposit_delegator_rewards(invoke_context, 0, 1, deposit, &signers)
         }
     }
 });
@@ -5053,6 +5053,26 @@ mod tests {
                 },
             ],
             Err(InstructionError::InvalidArgument),
+            DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
+        );
+
+        // Fail - source account has fewer lamports than the deposit.
+        let underfunded_source_account =
+            AccountSharedData::new(deposit_amount - 1, 0, &solana_sdk_ids::system_program::id());
+        process_instruction_with_cu_check(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            vec![
+                (vote_pubkey, vote_account_v4.clone()),
+                (source_pubkey, underfunded_source_account),
+                (
+                    solana_sdk_ids::system_program::id(),
+                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                ),
+            ],
+            instruction_accounts.clone(),
+            // SystemError::ResultWithNegativeLamports.
+            Err(InstructionError::Custom(1)),
             DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
         );
 

@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -57,3 +59,6 @@ solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }
+
+[lints]
+workspace = true

@@ -934,24 +934,22 @@ pub fn update_commission_collector<S: std::hash::BuildHasher>(
 }
 
 /// Deposit delegator rewards into a vote account (SIMD-0123).
-pub fn deposit_delegator_rewards(
+pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
     invoke_context: &mut InvokeContext,
+    vote_account_index: IndexOfAccount,
+    sender_account_index: IndexOfAccount,
     deposit: u64,
+    signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    const VOTE_ACCOUNT_INDEX: IndexOfAccount = 0;
-    const SENDER_ACCOUNT_INDEX: IndexOfAccount = 1;
-
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
-    // Source account must be a transaction-level signer.
-    if !instruction_context.is_instruction_account_signer(SENDER_ACCOUNT_INDEX)? {
-        return Err(InstructionError::MissingRequiredSignature);
-    }
-
-    let vote_address = *instruction_context.get_key_of_instruction_account(VOTE_ACCOUNT_INDEX)?;
+    let vote_address = *instruction_context.get_key_of_instruction_account(vote_account_index)?;
     let source_address =
-        *instruction_context.get_key_of_instruction_account(SENDER_ACCOUNT_INDEX)?;
+        *instruction_context.get_key_of_instruction_account(sender_account_index)?;
+
+    // Source account must sign the transfer.
+    verify_authorized_signer(&source_address, signers)?;
 
     // SIMD-0123 states we must validate the vote account deserializes to a v4
     // *before* attempting CPI, then update the `pending_delegator_rewards`
@@ -961,7 +959,7 @@ pub fn deposit_delegator_rewards(
     // later, since we know only lamports will change.
     let mut vote_state = {
         let vote_account =
-            instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+            instruction_context.try_borrow_instruction_account(vote_account_index)?;
 
         // Can't use `get_vote_state_handler_checked`, since it will convert
         // the underlying vote state to v4.
@@ -984,7 +982,7 @@ pub fn deposit_delegator_rewards(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut vote_account =
-        instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
 
     vote_state.add_pending_delegator_rewards(deposit)?;
     vote_state.set_vote_account_state(&mut vote_account)

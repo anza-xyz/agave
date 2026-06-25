@@ -1,10 +1,8 @@
 use {
     crate::{
         contact_info::ContactInfo,
-        deprecated,
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
-        legacy_contact_info::LegacyContactInfo,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
@@ -16,7 +14,12 @@ use {
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_parser,
-    std::collections::BTreeSet,
+    std::{collections::BTreeSet, mem::MaybeUninit},
+    wincode::{
+        ReadError, ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
+        config::Config,
+        io::{Reader, Writer},
+    },
 };
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
@@ -31,31 +34,76 @@ pub const MAX_VOTES: VoteIndex = 12;
 pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 
+// Helper for deprecated types
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite)]
+pub(crate) struct Deprecated {}
+reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
+
+// Wincode schema that reads a u8 and rejects non-zero values, mirroring the
+// serde `reject_nonzero_u8` deserializer used on the LowestSlot index field.
+struct RejectNonzeroU8;
+unsafe impl<C: Config> SchemaWrite<C> for RejectNonzeroU8 {
+    type Src = u8;
+    const TYPE_META: TypeMeta = <u8 as SchemaWrite<C>>::TYPE_META;
+
+    fn size_of(src: &u8) -> WriteResult<usize> {
+        <u8 as SchemaWrite<C>>::size_of(src)
+    }
+    fn write(writer: impl Writer, src: &u8) -> WriteResult<()> {
+        <u8 as SchemaWrite<C>>::write(writer, src)
+    }
+}
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
+    type Dst = u8;
+    const TYPE_META: TypeMeta = <u8 as SchemaRead<'de, C>>::TYPE_META.keep_zero_copy(false);
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<u8>) -> ReadResult<()> {
+        let index = <u8 as SchemaRead<'de, C>>::get(reader)?;
+        if index != 0 {
+            return Err(ReadError::Custom("LowestSlot index must be 0"));
+        }
+        dst.write(index);
+        Ok(())
+    }
+}
+
 /// CrdsData that defines the different types of items CrdsValues can hold
 /// * Merge Strategy - Latest wallclock is picked
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        abi_digest = "Dqsrw64E4ALKusk5cjbckL6vNHw1ESwTzKUqKrMSQCic",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[cfg_attr(test, derive(strum_macros::EnumCount))]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
-    LegacyContactInfo(LegacyContactInfo), // Deprecated
+    LegacyContactInfo(Deprecated), // Deprecated
     Vote(VoteIndex, Vote),
     LowestSlot(
-        #[serde(deserialize_with = "reject_nonzero_u8")] u8, // u8 is deprecated
+        #[serde(deserialize_with = "reject_nonzero_u8")]
+        #[wincode(with = "RejectNonzeroU8")]
+        u8, // u8 is deprecated
         LowestSlot,
     ),
     #[allow(private_interfaces)]
-    LegacySnapshotHashes(LegacySnapshotHashes), // Deprecated
+    LegacySnapshotHashes(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    AccountsHashes(AccountsHashes), // Deprecated
+    AccountsHashes(Deprecated), // Deprecated
     EpochSlots(EpochSlotsIndex, EpochSlots),
     #[allow(private_interfaces)]
-    LegacyVersion(LegacyVersion), // Deprecated
+    LegacyVersion(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    Version(Version), // Deprecated
+    Version(Deprecated), // Deprecated
     #[allow(private_interfaces)]
-    NodeInstance(NodeInstance), // Deprecated
+    NodeInstance(Deprecated), // Deprecated
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
@@ -96,12 +144,12 @@ impl Sanitize for CrdsData {
             CrdsData::RestartLastVotedForkSlots(slots) => slots.sanitize(),
             CrdsData::RestartHeaviestFork(fork) => fork.sanitize(),
             // Deprecated
-            CrdsData::LegacySnapshotHashes(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::LegacyContactInfo(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::AccountsHashes(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::LegacyVersion(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
-            CrdsData::NodeInstance(_) => Err(SanitizeError::InvalidValue),
+            CrdsData::AccountsHashes(_)
+            | CrdsData::LegacySnapshotHashes(_)
+            | CrdsData::LegacyContactInfo(_)
+            | CrdsData::LegacyVersion(_)
+            | CrdsData::NodeInstance(_)
+            | CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
         }
     }
 }
@@ -212,14 +260,16 @@ impl From<&ContactInfo> for CrdsData {
     }
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AccountsHashes {}
-reject_deserialize!(AccountsHashes, "AccountsHashes is deprecated");
-
-type LegacySnapshotHashes = AccountsHashes;
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "EMCUxeoxyA9ATkmZpACEx6a6mPd5nV16g9vpeuFzpyG5",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
     pub full: (Slot, Hash),
@@ -245,24 +295,33 @@ impl Sanitize for SnapshotHashes {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "BjFXktfmwd6TT8kdWVEeMJquARTUe8cUvo2oDwzMfhPi",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct LowestSlot {
     pub(crate) from: Pubkey,
     root: Slot, //deprecated
     pub lowest: Slot,
-    slots: BTreeSet<Slot>,                        //deprecated
-    stash: Vec<deprecated::EpochIncompleteSlots>, //deprecated
+    slots: BTreeSet<Slot>, //deprecated
+    stash: Vec<u8>,        //deprecated
     wallclock: u64,
 }
 
 impl LowestSlot {
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
@@ -325,13 +384,22 @@ where
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        abi_digest = "BuDZ4shsJhBqELG47eMS3cDM8EcqHBGMSVu99JeW6VdM",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, SchemaWrite)]
 pub struct Vote {
     pub(crate) from: Pubkey,
     transaction: Transaction,
     pub(crate) wallclock: u64,
     #[serde(skip_serializing)]
+    #[wincode(skip)]
     slot: Option<Slot>,
 }
 
@@ -368,12 +436,13 @@ impl Vote {
         &self.transaction
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(any(test, feature = "conformance"))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
@@ -403,17 +472,26 @@ impl<'de> Deserialize<'de> for Vote {
     }
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LegacyVersion {}
-reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for Vote {
+    type Dst = Self;
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Version {}
-reject_deserialize!(Version, "Version is deprecated");
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct NodeInstance {}
-reject_deserialize!(NodeInstance, "NodeInstance is deprecated");
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self>) -> ReadResult<()> {
+        #[derive(SchemaRead)]
+        struct VoteLite {
+            from: Pubkey,
+            transaction: Transaction,
+            wallclock: u64,
+        }
+        let lite = <VoteLite as SchemaRead<'de, C>>::get(reader)?;
+        lite.transaction
+            .sanitize()
+            .map_err(|_| ReadError::Custom("Vote: invalid transaction"))?;
+        let vote = Vote::new(lite.from, lite.transaction, lite.wallclock)
+            .ok_or(ReadError::Custom("Vote: invalid vote tx"))?;
+        dst.write(vote);
+        Ok(())
+    }
+}
 
 pub(crate) fn sanitize_wallclock(wallclock: u64) -> Result<(), SanitizeError> {
     if wallclock >= MAX_WALLCLOCK {
@@ -434,9 +512,79 @@ macro_rules! reject_deserialize {
                 Err(serde::de::Error::custom($msg))
             }
         }
+
+        // Mirror the serde rejection for wincode so deprecated types fail to deserialize
+        // by either path, whether read directly or as a CrdsData variant.
+        unsafe impl<'de, C: wincode::config::Config> wincode::SchemaRead<'de, C> for $ty {
+            type Dst = Self;
+            fn read(
+                _reader: impl wincode::io::Reader<'de>,
+                _dst: &mut std::mem::MaybeUninit<Self>,
+            ) -> wincode::ReadResult<()> {
+                Err(wincode::ReadError::Custom($msg))
+            }
+        }
     };
 }
 pub(crate) use reject_deserialize;
+
+// `Vote` derives only `StableAbi` (not `StableAbiSample`): its `slot` field is
+// recomputed from the transaction on deserialize, and the transaction must parse
+// as a vote, so independent per-field sampling can't produce round-trippable
+// values. Building via `Vote::new` with a valid vote transaction does, which lets
+// the digest test use `test_roundtrip = "eq_and_wire"`.
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<Vote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Vote {
+        use {solana_frozen_abi::stable_abi::StableAbi, solana_keypair::Keypair};
+        let node = Keypair::new_from_array(rng.random());
+        let vote = Keypair::new_from_array(rng.random());
+        let authorized_voter = Keypair::new_from_array(rng.random());
+        let transaction = solana_vote::vote_transaction::new_vote_transaction(
+            /*slots:*/ vec![rng.random()],
+            /*bank_hash:*/ <Hash as StableAbi>::random(rng),
+            /*blockhash:*/ <Hash as StableAbi>::random(rng),
+            &node,
+            &vote,
+            &authorized_voter,
+            /*switch_proof_hash:*/ None,
+        );
+        Vote::new(
+            <Pubkey as StableAbi>::random(rng),
+            transaction,
+            rng.random(),
+        )
+        .expect("vote transaction must parse as a vote")
+    }
+}
+
+// `CrdsData` derives only `StableAbi` (not `StableAbiSample`): the auto-derived
+// enum sampler picks a uniform variant including the deprecated ones, which wrap
+// `Deprecated` and reject deserialization. This sampler emits only the
+// non-deprecated, round-trippable variants (with `LowestSlot`'s index pinned to
+// 0), so the digest test can use `test_roundtrip = "eq_and_wire"`.
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsData {
+        use solana_frozen_abi::stable_abi::StableAbi;
+        match rng.random_range(0..8u8) {
+            0 => CrdsData::Vote(rng.random(), <Vote as StableAbi>::random(rng)),
+            1 => CrdsData::LowestSlot(0, <LowestSlot as StableAbi>::random(rng)),
+            2 => CrdsData::EpochSlots(rng.random(), <EpochSlots as StableAbi>::random(rng)),
+            3 => CrdsData::DuplicateShred(rng.random(), <DuplicateShred as StableAbi>::random(rng)),
+            4 => CrdsData::SnapshotHashes(<SnapshotHashes as StableAbi>::random(rng)),
+            5 => CrdsData::ContactInfo(<ContactInfo as StableAbi>::random(rng)),
+            6 => CrdsData::RestartLastVotedForkSlots(
+                <RestartLastVotedForkSlots as StableAbi>::random(rng),
+            ),
+            _ => CrdsData::RestartHeaviestFork(<RestartHeaviestFork as StableAbi>::random(rng)),
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -472,7 +620,7 @@ mod test {
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
 
         let mut o = ls;
-        o.stash.push(deprecated::EpochIncompleteSlots::default());
+        o.stash.push(0);
         let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(0, o));
         assert_eq!(v.sanitize(), Err(SanitizeError::InvalidValue));
     }
@@ -509,14 +657,76 @@ mod test {
         )
         .unwrap();
         assert_eq!(vote.slot, Some(7));
-        let bytes = bincode::serialize(&vote).unwrap();
-        let other = bincode::deserialize(&bytes[..]).unwrap();
+        let bytes = wincode::serialize(&vote).unwrap();
+        assert_eq!(bytes, bincode::serialize(&vote).unwrap());
+        let other = wincode::deserialize(&bytes[..]).unwrap();
+        assert_eq!(other, bincode::deserialize::<Vote>(&bytes[..]).unwrap());
         assert_eq!(vote, other);
         assert_eq!(other.slot, Some(7));
         let bytes = bincode::options().serialize(&vote).unwrap();
         let other = bincode::options().deserialize(&bytes[..]).unwrap();
         assert_eq!(vote, other);
         assert_eq!(other.slot, Some(7));
+    }
+
+    #[test]
+    fn test_wincode_compatibility_lowest_slot() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let lowest_slot = LowestSlot::new_rand(&mut rng, None);
+
+            let bincode_bytes = bincode::serialize(&lowest_slot).unwrap();
+            let wincode_decoded: LowestSlot = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(lowest_slot, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&lowest_slot).unwrap();
+            let bincode_decoded: LowestSlot = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(lowest_slot, bincode_decoded);
+
+            assert_eq!(bincode_bytes, wincode_bytes);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_snapshot_hashes() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let num_incremental = rng.random_range(0usize..5);
+            let snapshot_hashes = SnapshotHashes {
+                from: solana_pubkey::new_rand(),
+                full: (rng.random(), Hash::new_unique()),
+                incremental: (0..num_incremental)
+                    .map(|_| (rng.random(), Hash::new_unique()))
+                    .collect(),
+                wallclock: new_rand_timestamp(&mut rng),
+            };
+
+            let bincode_bytes = bincode::serialize(&snapshot_hashes).unwrap();
+            let wincode_decoded: SnapshotHashes = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(snapshot_hashes, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&snapshot_hashes).unwrap();
+            let bincode_decoded: SnapshotHashes = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(snapshot_hashes, bincode_decoded);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_vote() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let vote =
+                Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
+
+            let bincode_bytes = bincode::serialize(&vote).unwrap();
+            let wincode_decoded: Vote = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(vote, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&vote).unwrap();
+            let bincode_decoded: Vote = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(vote, bincode_decoded);
+        }
     }
 
     #[test]
@@ -534,37 +744,23 @@ mod test {
 
     #[test]
     fn test_deprecated_values_fail_deserialization() {
+        let deprecated_values = [
+            CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+        ];
+
+        for value in &deprecated_values {
+            let bytes = wincode::serialize(value).unwrap();
+            assert_eq!(bytes, bincode::serialize(value).unwrap());
+            assert!(wincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+            assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+        }
+
         let keypair = Keypair::new();
-
-        // NodeInstance
-        let node_instance = CrdsData::NodeInstance(NodeInstance {});
-        let bytes = bincode::serialize(&node_instance).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacyVersion
-        let legacy_version = CrdsData::LegacyVersion(LegacyVersion {});
-        let bytes = bincode::serialize(&legacy_version).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // Version
-        let version = CrdsData::Version(Version {});
-        let bytes = bincode::serialize(&version).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacyContactInfo
-        let legacy_contact_info = CrdsData::LegacyContactInfo(LegacyContactInfo {});
-        let bytes = bincode::serialize(&legacy_contact_info).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // AccountsHashes
-        let accounts_hashes = CrdsData::AccountsHashes(AccountsHashes {});
-        let bytes = bincode::serialize(&accounts_hashes).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-
-        // LegacySnapshotHashes
-        let legacy_snapshot_hashes = CrdsData::LegacySnapshotHashes(LegacySnapshotHashes {});
-        let bytes = bincode::serialize(&legacy_snapshot_hashes).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
 
         // LowestSlot(1, ...)
         let lowest_slot =
@@ -575,7 +771,9 @@ mod test {
         // LowestSlot(0, ...) -> should be deserialized successfully
         let lowest_slot =
             CrdsData::LowestSlot(0, LowestSlot::new(keypair.pubkey(), 0, timestamp()));
-        let bytes = bincode::serialize(&lowest_slot).unwrap();
+        let bytes = wincode::serialize(&lowest_slot).unwrap();
+        assert_eq!(bytes, bincode::serialize(&lowest_slot).unwrap());
+        assert!(wincode::deserialize::<CrdsData>(&bytes[..]).is_ok());
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_ok());
     }
 }

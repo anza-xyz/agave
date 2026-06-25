@@ -100,9 +100,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let cmp_result_ref_mut: &mut i32 = map(cmp_result_addr)?;
+            let cmp_result_ref_mut: (&mut std::mem::MaybeUninit<i32>) = map(cmp_result_addr)?;
         );
-        *cmp_result_ref_mut = result;
+        cmp_result_ref_mut.write(result);
 
         Ok(0)
     }
@@ -126,9 +126,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let s: &mut [u8] = map(dst_addr, n)?;
+            let s: (&mut [MaybeUninit<u8>]) = map(dst_addr, n)?;
         );
-        s.fill(c as u8);
+        s.fill(MaybeUninit::new(c as u8));
         Ok(0)
     }
 );
@@ -141,27 +141,80 @@ fn memmove(
 ) -> Result<u64, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-    translate_mut!(
+    // In a rare exception to the rule we manually translate addresses to a raw pointer rather than
+    // using `translate_mut!` because the src and dst memory regions may overlap for this syscall.
+    touch_slice_mut::<MaybeUninit<u8>>(memory_mapping, dst_addr, n)?;
+    let slice = translate_slice_inner!(
         memory_mapping,
+        AccessType::Store,
+        dst_addr,
+        n,
+        MaybeUninit<u8>,
         check_aligned,
-        let dst_ref_mut: &mut [u8] = map(dst_addr, n)?;
-    );
-    let dst_ptr = dst_ref_mut.as_mut_ptr();
+    )?;
     let src_ptr = translate_slice::<u8>(memory_mapping, src_addr, n, check_aligned)?.as_ptr();
-
-    unsafe { std::ptr::copy(src_ptr, dst_ptr, n as usize) };
+    unsafe { std::ptr::copy(src_ptr.cast(), slice as *mut MaybeUninit<u8>, n as usize) };
     Ok(0)
 }
 
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
-    for i in 0..n {
+    let (s1pre, s1mid, s1end) = unsafe {
+        // SAFETY: Caller is required to guarantee both slices are at least n-long.
+        s1.get_unchecked(..n).align_to::<u128>()
+    };
+    let mut s2ptr = s2.as_ptr();
+    for s1pre_byte in s1pre.iter().copied() {
         unsafe {
-            let a = *s1.get_unchecked(i);
-            let b = *s2.get_unchecked(i);
-            if a != b {
-                return (a as i32).saturating_sub(b as i32);
+            // SAFETY: we are guaranteed to stay in bounds of a slice `s2` by virtue of both slices
+            // containing at least `n` bytes (caller precondition.)
+            let s2pre_byte = *s2ptr;
+            if s1pre_byte != s2pre_byte {
+                return i32::from(s1pre_byte).wrapping_sub(s2pre_byte.into());
+            }
+            s2ptr = s2ptr.add(1);
+        }
+    }
+    for s1mid_value in s1mid.iter().copied() {
+        let s2mid_value = unsafe {
+            // SAFETY: Caller is required to guarantee both slices are at least n-long.
+            // SAFETY: Pointer is guaranteed to be dereferenceable by virtue of being derived from
+            // `s2` slice.
+            s2ptr.cast::<u128>().read_unaligned().to_le()
+        };
+        if s1mid_value != s2mid_value {
+            // It would seem that we could work with u128s directly here and leave it to LLVM to
+            // figure out how to split up the operations to u64s, but it seems to produce notably
+            // worse code than splitting the u64s out manually (even _when_ these splits result in
+            // the values being re-read from "memory").
+            let (s1_word, s2_word) = if s1mid_value as u64 != s2mid_value as u64 {
+                let w1 = s1mid_value as u64;
+                let w2 = s2mid_value as u64;
+                (w1, w2)
+            } else {
+                let w1 = (s1mid_value >> 64) as u64;
+                let w2 = (s2mid_value >> 64) as u64;
+                (w1, w2)
             };
+            let shift = (s1_word ^ s2_word).trailing_zeros() & !7;
+            let b1 = (s1_word >> shift) as u8;
+            let b2 = (s2_word >> shift) as u8;
+            return i32::from(b1).wrapping_sub(b2.into());
+        }
+        unsafe {
+            // SAFETY: we are guaranteed to stay in bounds of a slice `s2` by virtue of both slices
+            // containing at least `n` bytes (caller precondition.)
+            s2ptr = s2ptr.add(std::mem::size_of::<u128>());
+        }
+    }
+    for s1end_byte in s1end.iter().copied() {
+        unsafe {
+            // This is the same as the `pre` slice loop above.
+            let s2end_byte = *s2ptr;
+            if s1end_byte != s2end_byte {
+                return i32::from(s1end_byte).wrapping_sub(s2end_byte.into());
+            }
+            s2ptr = s2ptr.add(1);
         }
     }
     0

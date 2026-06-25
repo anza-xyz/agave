@@ -11,6 +11,11 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+# `all-features` can't be used: remote-wallet-hidraw and remote-wallet-libusb
+# forward to hidapi's mutually-exclusive linux backends. Document the default
+# (hidraw) backend plus the unstable API and dev-only utils.
+features = ["agave-unstable-api", "dev-context-only-utils"]
+rustdoc-args = ["--cfg=docsrs"]
 
 [[bin]]
 name = "solana"
@@ -31,6 +36,7 @@ agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-votor-messages = { workspace = true }
 bincode = { workspace = true }
+bip39 = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
@@ -71,7 +77,7 @@ solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-remote-wallet = { workspace = true }
+solana-remote-wallet = { workspace = true, features = ["keystone"] }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
@@ -80,7 +86,8 @@ solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
-solana-slot-history = { workspace = true }
+solana-signer-store = { workspace = true }
+solana-slot-history = { workspace = true, features = ["wincode"] }
 solana-stake-interface = { workspace = true }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
@@ -92,8 +99,8 @@ solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
-tiny-bip39 = { workspace = true }
 tokio = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -106,6 +113,9 @@ solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }
 solana-sha256-hasher = { workspace = true }
-solana-test-validator = { path = "../test-validator" }
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

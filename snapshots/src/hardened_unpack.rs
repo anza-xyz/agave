@@ -87,7 +87,7 @@ enum UnpackPath<'a> {
 #[allow(clippy::arithmetic_side_effects)]
 fn unpack_archive<'a, C>(
     input: impl Read,
-    mut file_creator: Box<dyn FileCreator>,
+    mut file_creator: Box<dyn FileCreator + '_>,
     apparent_limit_size: u64,
     actual_limit_size: u64,
     limit_count: u64,
@@ -315,7 +315,7 @@ fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
 /// sends entry file paths through the `sender` channel
 pub(super) fn streaming_unpack_snapshot(
     input: impl Read,
-    file_creator: Box<dyn FileCreator>,
+    file_creator: Box<dyn FileCreator + '_>,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
 ) -> Result<()> {
@@ -324,7 +324,7 @@ pub(super) fn streaming_unpack_snapshot(
 
 fn unpack_snapshot_with_processors<F>(
     input: impl Read,
-    file_creator: Box<dyn FileCreator>,
+    file_creator: Box<dyn FileCreator + '_>,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
     mut accounts_path_processor: F,
@@ -417,7 +417,7 @@ fn is_valid_snapshot_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool
 
 pub(super) fn unpack_genesis(
     input: impl Read,
-    file_creator: Box<dyn FileCreator>,
+    file_creator: Box<dyn FileCreator + '_>,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> Result<()> {

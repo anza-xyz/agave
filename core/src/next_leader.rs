@@ -1,11 +1,12 @@
 use {
     crate::banking_stage::LikeClusterInfo,
     itertools::Itertools,
-    solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfoQuery, Protocol},
     },
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_poh::poh_recorder::PohRecorder,
     std::{net::SocketAddr, sync::RwLock},
 };
@@ -46,7 +47,8 @@ pub(crate) fn next_leaders(
     let leader_pubkeys: Vec<_> = (0..max_count)
         .filter_map(|i| {
             recorder.leader_after_n_slots(
-                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET + i * NUM_CONSECUTIVE_LEADER_SLOTS,
+                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
+                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
             )
         })
         .collect();

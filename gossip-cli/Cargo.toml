@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
@@ -22,7 +27,10 @@ agave-logger = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }
 solana-clap-utils = { workspace = true }
-solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
-solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
+solana-gossip = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-pubkey = { version = "=4.2.0", features = ["rand"] }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

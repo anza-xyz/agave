@@ -10,7 +10,9 @@ use {
             writeln_transaction,
         },
     },
+    agave_votor_messages::{certificate::Certificate, migration::AG_MIGRATION_EPOCH_CREDIT},
     base64::{Engine, prelude::BASE64_STANDARD},
+    bitvec::vec::BitVec,
     chrono::{Local, TimeZone, Utc},
     clap::ArgMatches,
     console::{Emoji, style},
@@ -22,10 +24,13 @@ use {
         UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
         parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
     },
+    solana_bls_signatures::Signature as BLSSignature,
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
+    solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::response::{
         RpcAccountBalance, RpcContactInfo, RpcInflationGovernor, RpcInflationRate, RpcKeyedAccount,
@@ -41,12 +46,16 @@ use {
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
     },
-    solana_transaction_status_client_types::UiTransactionError,
+    solana_transaction_status_client_types::{Rewards, UiTransactionError},
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
-        vote_state::{BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+        vote_state::{
+            BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteStateV4,
+        },
     },
     std::{
+        cmp::Ordering,
         collections::{BTreeMap, HashMap},
         fmt,
         str::FromStr,
@@ -690,7 +699,7 @@ impl fmt::Display for CliValidators {
                 "Current Stake:",
                 &format!(
                     "{} ({:0.2}%)",
-                    &build_balance_message(self.total_current_stake, self.use_lamports_unit, true),
+                    build_balance_message(self.total_current_stake, self.use_lamports_unit, true),
                     100. * self.total_current_stake as f64 / self.total_active_stake as f64
                 ),
             )?;
@@ -699,7 +708,7 @@ impl fmt::Display for CliValidators {
                 "Delinquent Stake:",
                 &format!(
                     "{} ({:0.2}%)",
-                    &build_balance_message(
+                    build_balance_message(
                         self.total_delinquent_stake,
                         self.use_lamports_unit,
                         true
@@ -1197,7 +1206,7 @@ impl fmt::Display for CliKeyedEpochRewards {
     }
 }
 
-fn show_votes_and_credits(
+fn show_tower_votes(
     f: &mut fmt::Formatter,
     votes: &[CliLandedVote],
     epoch_voting_history: &[CliEpochVotingHistory],
@@ -1211,7 +1220,7 @@ fn show_votes_and_credits(
 
     writeln!(
         f,
-        "{} Votes (using {}/{} entries):",
+        "{} Tower votes (using {}/{} entries):",
         (if newest_history_entry.is_none() {
             "All"
         } else {
@@ -1233,14 +1242,22 @@ fn show_votes_and_credits(
             writeln!(f, " (latency {})", vote.latency)?;
         }
     }
-    if let Some(newest) = newest_history_entry {
+    if let Some(newest) = newest_history_entry
+        && let CliEpochVotingHistory::Tower(newest) = newest
+    {
         writeln!(
             f,
             "- ... (truncated {} rooted votes, which have been credited)",
             newest.credits
         )?;
     }
+    Ok(())
+}
 
+fn show_epoch_credits(
+    f: &mut fmt::Formatter,
+    epoch_voting_history: &[CliEpochVotingHistory],
+) -> fmt::Result {
     if !epoch_voting_history.is_empty() {
         writeln!(
             f,
@@ -1260,39 +1277,76 @@ fn show_votes_and_credits(
     }
 
     for entry in epoch_voting_history.iter().rev() {
-        writeln!(
-            f, // tame fmt so that this will be folded like following
-            "- epoch: {}",
-            entry.epoch
-        )?;
-        writeln!(
-            f,
-            "  credits range: ({}..{}]",
-            entry.prev_credits, entry.credits
-        )?;
-        writeln!(
-            f,
-            "  credits/max credits: {}/{}",
-            entry.credits_earned,
-            entry.slots_in_epoch * u64::from(entry.max_credits_per_slot)
-        )?;
-    }
-    if let Some(oldest) = epoch_voting_history.iter().next() {
-        if oldest.prev_credits > 0 {
-            // Oldest entry doesn't start with 0. so history must be truncated...
-
-            // count of this combined pseudo credits range: (0..=oldest.prev_credits] like the above
-            // (or this is just [1..=oldest.prev_credits] for human's simpler minds)
-            let count = oldest.prev_credits;
-
-            writeln!(
-                f,
-                "- ... (omitting {count} past rooted votes, which have already been credited)"
-            )?;
+        match entry {
+            CliEpochVotingHistory::Tower(tower) => {
+                writeln!(
+                    f, // tame fmt so that this will be folded like following
+                    "- Tower epoch: {}",
+                    tower.epoch
+                )?;
+                writeln!(
+                    f,
+                    "  credits range: ({}..{}]",
+                    tower.prev_credits, tower.credits
+                )?;
+                writeln!(
+                    f,
+                    "  credits/max credits: {}/{}",
+                    tower.credits_earned,
+                    tower.slots_in_epoch * u64::from(tower.max_credits_per_slot)
+                )?;
+            }
+            CliEpochVotingHistory::Alpenglow(ag) => {
+                writeln!(f, "- Alpenglow epoch: {}", ag.epoch)?;
+                writeln!(
+                    f,
+                    "  lamports range: ({}..{}]",
+                    ag.prev_lamports, ag.lamports
+                )?;
+                writeln!(
+                    f,
+                    "  lamports earned: {} ({:.4} SOL)",
+                    ag.lamports_earned,
+                    ag.lamports_earned as f64 / LAMPORTS_PER_SOL as f64
+                )?;
+            }
         }
+    }
+    if let Some(oldest) = epoch_voting_history.iter().next()
+        && oldest.prev() > 0
+    {
+        // Oldest entry doesn't start with 0. so history must be truncated...
+
+        // count of this combined pseudo credits range: (0..=oldest.prev_credits] like the above
+        // (or this is just [1..=oldest.prev_credits] for human's simpler minds)
+        let count = oldest.prev();
+
+        writeln!(
+            f,
+            "- ... (omitting {count} past rooted votes, which have already been credited)"
+        )?;
     }
 
     Ok(())
+}
+
+fn show_votes_and_credits(
+    f: &mut fmt::Formatter,
+    votes: &VotesObserved,
+    epoch_voting_history: &[CliEpochVotingHistory],
+) -> fmt::Result {
+    match votes {
+        VotesObserved::Tower(votes) => {
+            show_tower_votes(f, votes, epoch_voting_history)?;
+            show_epoch_credits(f, epoch_voting_history)
+        }
+        VotesObserved::Alpenglow(vote) => {
+            if let Some(vote) = vote {
+                writeln!(f, "Latest Alpenglow vote for slot: {}", vote.slot)?;
+            }
+            show_epoch_credits(f, epoch_voting_history)
+        }
+    }
 }
 
 enum Format {
@@ -1747,6 +1801,36 @@ impl fmt::Display for CliValidatorInfo {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum VotesObserved {
+    Alpenglow(Option<CliLandedVote>),
+    Tower(Vec<CliLandedVote>),
+}
+
+impl VotesObserved {
+    pub fn new(vote_state: &VoteStateV4, ag_genesis_cert: &Option<Certificate>) -> Self {
+        match ag_genesis_cert {
+            None => Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect()),
+            Some(cert) => match vote_state.votes.iter().last() {
+                None => Self::Alpenglow(None),
+                Some(vote) => {
+                    if vote.lockout.slot() <= cert.cert_type.slot() {
+                        Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect())
+                    } else {
+                        Self::Alpenglow(Some(CliLandedVote::from(vote)))
+                    }
+                }
+            },
+        }
+    }
+}
+
+impl Default for VotesObserved {
+    fn default() -> Self {
+        Self::Tower(vec![])
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliVoteAccount {
@@ -1759,7 +1843,7 @@ pub struct CliVoteAccount {
     pub commission: u8,
     pub root_slot: Option<Slot>,
     pub recent_timestamp: BlockTimestamp,
-    pub votes: Vec<CliLandedVote>,
+    pub votes_observed: VotesObserved,
     pub epoch_voting_history: Vec<CliEpochVotingHistory>,
     #[serde(skip_serializing)]
     pub use_lamports_unit: bool,
@@ -1833,7 +1917,7 @@ impl fmt::Display for CliVoteAccount {
             unix_timestamp_to_string(self.recent_timestamp.timestamp),
             self.recent_timestamp.slot
         )?;
-        show_votes_and_credits(f, &self.votes, &self.epoch_voting_history)?;
+        show_votes_and_credits(f, &self.votes_observed, &self.epoch_voting_history)?;
         show_epoch_rewards(f, &self.epoch_rewards, self.use_csv)?;
         Ok(())
     }
@@ -1882,9 +1966,25 @@ impl From<&AuthorizedVoters> for CliAuthorizedVoters {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CliEpochVotingHistory {
+pub enum CliEpochVotingHistory {
+    Alpenglow(AgEpochHistory),
+    Tower(TowerEpochHistory),
+}
+
+impl CliEpochVotingHistory {
+    fn prev(&self) -> u64 {
+        match self {
+            Self::Tower(t) => t.prev_credits,
+            Self::Alpenglow(a) => a.prev_lamports,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TowerEpochHistory {
     pub epoch: Epoch,
     pub slots_in_epoch: u64,
     pub credits_earned: u64,
@@ -1893,7 +1993,94 @@ pub struct CliEpochVotingHistory {
     pub max_credits_per_slot: u8,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgEpochHistory {
+    pub epoch: Epoch,
+    pub slots_in_epoch: u64,
+    pub lamports_earned: u64,
+    pub lamports: u64,
+    pub prev_lamports: u64,
+}
+
+pub fn get_epoch_history(
+    epoch_schedule: &EpochSchedule,
+    vote_state: &VoteStateV4,
+    ag_genesis_cert: &Option<Certificate>,
+    tvc_activation_epoch: Option<Epoch>,
+) -> Vec<CliEpochVotingHistory> {
+    let mut ret = vec![];
+    let mut marker_seen = false;
+    for entry in vote_state.epoch_credits.iter().copied() {
+        if entry == AG_MIGRATION_EPOCH_CREDIT {
+            marker_seen = true;
+            continue;
+        }
+        let (epoch, credits, prev_credits) = entry;
+        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+
+        enum TowerOrAg {
+            Tower(Slot),
+            Ag(Slot),
+        }
+
+        let tower_or_ag = match ag_genesis_cert {
+            None => TowerOrAg::Tower(slots_in_epoch),
+            Some(cert) => {
+                let migration_slot = cert.cert_type.slot();
+                let migration_epoch = epoch_schedule.get_epoch(migration_slot);
+                match epoch.cmp(&migration_epoch) {
+                    Ordering::Less => TowerOrAg::Tower(slots_in_epoch),
+                    Ordering::Greater => TowerOrAg::Ag(slots_in_epoch),
+                    Ordering::Equal => {
+                        // +1 because migration slot is still tower
+                        let migration_offset =
+                            migration_slot - epoch_schedule.get_first_slot_in_epoch(epoch) + 1;
+                        if marker_seen {
+                            TowerOrAg::Ag(slots_in_epoch - migration_offset)
+                        } else {
+                            TowerOrAg::Tower(migration_offset)
+                        }
+                    }
+                }
+            }
+        };
+
+        let entry = match tower_or_ag {
+            TowerOrAg::Tower(slots_in_epoch) => {
+                let credits_earned = credits.saturating_sub(prev_credits);
+                let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
+                let max_credits_per_slot = if is_tvc_active {
+                    VOTE_CREDITS_MAXIMUM_PER_SLOT
+                } else {
+                    1
+                };
+                CliEpochVotingHistory::Tower(TowerEpochHistory {
+                    epoch,
+                    slots_in_epoch,
+                    credits_earned,
+                    credits,
+                    prev_credits,
+                    max_credits_per_slot,
+                })
+            }
+            TowerOrAg::Ag(slots_in_epoch) => {
+                let lamports_earned = credits.saturating_sub(prev_credits);
+                CliEpochVotingHistory::Alpenglow(AgEpochHistory {
+                    epoch,
+                    slots_in_epoch,
+                    lamports_earned,
+                    lamports: credits,
+                    prev_lamports: prev_credits,
+                })
+            }
+        };
+        ret.push(entry);
+    }
+    ret
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliLandedVote {
     pub latency: u8,
@@ -1907,6 +2094,57 @@ impl From<&LandedVote> for CliLandedVote {
             latency: landed_vote.latency,
             slot: landed_vote.slot(),
             confirmation_count: landed_vote.confirmation_count(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliAgGenesisInfoPayload {
+    /// Epoch in which the alpenglow feature was activated.
+    pub epoch: Epoch,
+    /// Slot in which migration to alpenglow happened.
+    pub slot: Slot,
+    /// Hash of the block in which migration to alpenglow happened.
+    pub block_id: Hash,
+    /// Bitvec of validators that signed the block.
+    pub bitvec: BitVec<u8>,
+    /// The aggregate signature of the validators.
+    pub signature: BLSSignature,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)]
+pub enum CliAgGenesisInfo {
+    Tower,
+    Ag(CliAgGenesisInfoPayload),
+}
+
+impl QuietDisplay for CliAgGenesisInfo {}
+impl VerboseDisplay for CliAgGenesisInfo {}
+
+impl fmt::Display for CliAgGenesisInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Tower => writeln!(f, "still running tower"),
+            Self::Ag(payload) => {
+                let CliAgGenesisInfoPayload {
+                    epoch,
+                    slot,
+                    block_id: block_hash,
+                    bitvec,
+                    signature,
+                } = payload;
+                writeln!(f, "Alpenglow genesis information:")?;
+                writeln!(f, "  Feature flag activation: Epoch {epoch}")?;
+                writeln!(f, "  Genesis Block - Slot {slot}, Block ID {block_hash}")?;
+                writeln!(
+                    f,
+                    "  Genesis Vote - {} validators participated, Signature {signature}",
+                    bitvec.count_ones(),
+                )
+            }
         }
     }
 }
@@ -2547,8 +2785,8 @@ impl fmt::Display for CliUpgradeableProgramClosed {
         writeln!(
             f,
             "Closed Program Id {}, {} reclaimed",
-            &self.program_id,
-            &build_balance_message(self.lamports, self.use_lamports_unit, true)
+            self.program_id,
+            build_balance_message(self.lamports, self.use_lamports_unit, true)
         )?;
         Ok(())
     }
@@ -2568,7 +2806,7 @@ impl fmt::Display for CliUpgradeableProgramExtended {
         writeln!(
             f,
             "Extended Program Id {} by {} bytes",
-            &self.program_id, self.additional_bytes,
+            self.program_id, self.additional_bytes,
         )?;
         Ok(())
     }
@@ -2868,35 +3106,33 @@ pub struct CliBlock {
     pub slot: Slot,
 }
 
-impl QuietDisplay for CliBlock {}
-impl VerboseDisplay for CliBlock {}
-
-impl fmt::Display for CliBlock {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Slot: {}", self.slot)?;
-        writeln!(
-            f,
-            "Parent Slot: {}",
-            self.encoded_confirmed_block.parent_slot
-        )?;
-        writeln!(f, "Blockhash: {}", self.encoded_confirmed_block.blockhash)?;
-        writeln!(
-            f,
-            "Previous Blockhash: {}",
-            self.encoded_confirmed_block.previous_blockhash
-        )?;
-        if let Some(block_time) = self.encoded_confirmed_block.block_time {
+impl CliBlock {
+    pub fn display_block_meta(
+        f: &mut fmt::Formatter,
+        slot: Slot,
+        parent_slot: Slot,
+        blockhash: &str,
+        previous_blockhash: &str,
+        block_time: Option<i64>,
+        block_height: Option<u64>,
+        rewards: &Rewards,
+    ) -> fmt::Result {
+        writeln!(f, "Slot: {slot}")?;
+        writeln!(f, "Parent Slot: {parent_slot}")?;
+        writeln!(f, "Blockhash: {blockhash}")?;
+        writeln!(f, "Previous Blockhash: {previous_blockhash}")?;
+        if let Some(block_time) = block_time {
             writeln!(
                 f,
                 "Block Time: {:?}",
                 Local.timestamp_opt(block_time, 0).unwrap()
             )?;
         }
-        if let Some(block_height) = self.encoded_confirmed_block.block_height {
+        if let Some(block_height) = block_height {
             writeln!(f, "Block Height: {block_height:?}")?;
         }
-        if !self.encoded_confirmed_block.rewards.is_empty() {
-            let mut rewards = self.encoded_confirmed_block.rewards.clone();
+        if !rewards.is_empty() {
+            let mut rewards = rewards.clone();
             rewards.sort_by(|a, b| a.pubkey.cmp(&b.pubkey));
             let mut total_rewards = 0;
             writeln!(f, "Rewards:")?;
@@ -2951,6 +3187,26 @@ impl fmt::Display for CliBlock {
                 build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
         }
+        Ok(())
+    }
+}
+
+impl QuietDisplay for CliBlock {}
+impl VerboseDisplay for CliBlock {}
+
+impl fmt::Display for CliBlock {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Self::display_block_meta(
+            f,
+            self.slot,
+            self.encoded_confirmed_block.parent_slot,
+            &self.encoded_confirmed_block.blockhash,
+            &self.encoded_confirmed_block.previous_blockhash,
+            self.encoded_confirmed_block.block_time,
+            self.encoded_confirmed_block.block_height,
+            &self.encoded_confirmed_block.rewards,
+        )?;
+
         for (index, transaction_with_meta) in
             self.encoded_confirmed_block.transactions.iter().enumerate()
         {

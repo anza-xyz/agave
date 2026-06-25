@@ -687,7 +687,6 @@ mod tests {
             id,
             file_size,
             AccountsFileProvider::AppendVec,
-            db.storage_access(),
         );
         let storage = Arc::new(data);
         db.storage.insert(storage.clone());

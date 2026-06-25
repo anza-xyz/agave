@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -44,7 +46,6 @@ bv = { workspace = true, features = ["serde"] }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 itertools = { workspace = true }
 log = { workspace = true }
-memmap2 = { workspace = true }
 modular-bitfield = { workspace = true }
 num_cpus = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
@@ -117,6 +118,10 @@ test-case = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
+
+[[bench]]
+name = "accounts_index"
+harness = false
 
 [[bench]]
 name = "bench_accounts_file"

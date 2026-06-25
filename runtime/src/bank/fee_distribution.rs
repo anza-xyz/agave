@@ -12,14 +12,14 @@ use {
         transaction_meta::TransactionConfiguration, transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::incinerator,
-    solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
+    solana_svm::rent_calculator::check_static_account_rent_state_transition,
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,
 };
 
 #[derive(Error, Debug, PartialEq)]
-enum DepositFeeError {
+pub(super) enum DepositFeeError {
     #[error("fee account became rent paying")]
     InvalidRentPayingAccount,
     #[error("lamport overflow")]
@@ -28,6 +28,19 @@ enum DepositFeeError {
     InvalidAccountOwner,
     #[error("collector is a reserved account")]
     ReservedCollector,
+}
+
+/// Helper enum used to distinguish external collector types allowed by
+/// SIMD-0232.
+///
+/// The term "external" is used to exclude the vote account itself, which is a
+/// valid collector.
+pub(super) enum ExternalCollectorType {
+    /// A rent-exempt, non-incinerator, non-reserved account owned by the system
+    /// program
+    SystemAccount,
+    /// Specifically, the incinerator account, denoted by `incinerator::id()`
+    Incinerator,
 }
 
 #[derive(Default)]
@@ -56,10 +69,6 @@ impl Bank {
     // form of transaction fees as well.
     pub(super) fn distribute_transaction_fee_details(&self) {
         let fee_details = self.collector_fee_details.read().unwrap();
-        if fee_details.total_transaction_fee() == 0 {
-            // nothing to distribute, exit early
-            return;
-        }
 
         let FeeDistribution { deposit, burn } =
             self.calculate_reward_and_burn_fee_details(&fee_details);
@@ -90,10 +99,6 @@ impl Bank {
         &self,
         fee_details: &CollectorFeeDetails,
     ) -> FeeDistribution {
-        if fee_details.transaction_fee == 0 {
-            return FeeDistribution::default();
-        }
-
         let burn = fee_details.transaction_fee * self.burn_percent() / 100;
         let deposit = fee_details
             .priority_fee
@@ -188,7 +193,7 @@ impl Bank {
                 .checked_add_lamports(fees)
                 .map_err(|_| DepositFeeError::LamportOverflow)?;
             if collector_id != &self.leader.vote_address {
-                Bank::check_collector_account(
+                Bank::collector_type_checked(
                     collector_id,
                     pre_lamports,
                     &account,
@@ -202,24 +207,24 @@ impl Bank {
                 return Err(DepositFeeError::InvalidAccountOwner);
             }
 
-            let recipient_pre_rent_state = get_account_rent_state(
-                &self.rent_collector().rent,
-                account.lamports(),
-                account.data().len(),
-            );
+            let pre_balance = account.lamports();
             let distribution = account.checked_add_lamports(fees);
             if distribution.is_err() {
                 return Err(DepositFeeError::LamportOverflow);
             }
 
-            let recipient_post_rent_state = get_account_rent_state(
-                &self.rent_collector().rent,
+            // rent state transition must be checked in case the account receiving the distribution
+            // doesn't exist yet.
+            if check_static_account_rent_state_transition(
+                pre_balance,
                 account.lamports(),
                 account.data().len(),
-            );
-            let rent_state_transition_allowed =
-                transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
-            if !rent_state_transition_allowed {
+                &self.rent_collector().rent,
+                0, // account index isn't relevant and only used for error message
+                feature_snapshot.relax_post_exec_min_balance_check,
+            )
+            .is_err()
+            {
                 return Err(DepositFeeError::InvalidRentPayingAccount);
             }
         }
@@ -228,14 +233,20 @@ impl Bank {
         Ok(account.lamports())
     }
 
-    fn check_collector_account(
+    /// Checks if a collector account adheres to the rules outlined in SIMD-0232:
+    /// * system program owned account
+    /// * rent-exempt after depositing inflation rewards commission
+    /// * not a reserved account
+    ///
+    /// Returns the kind of collector
+    pub(super) fn collector_type_checked(
         collector_id: &Pubkey,
         pre_lamports: u64,
         account: &AccountSharedData,
         reserved_account_keys: &ReservedAccountKeys,
         rent: &Rent,
         relax_post_execution_balance_checks: bool,
-    ) -> Result<(), DepositFeeError> {
+    ) -> Result<ExternalCollectorType, DepositFeeError> {
         if !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
@@ -245,15 +256,18 @@ impl Bank {
         }
 
         // Don't perform rent check on the incinerator, so that the deposit
-        // always works. The incinerator is cleaned right after this step
-        if *collector_id != incinerator::id()
-            && !rent.is_exempt(account.lamports(), account.data().len())
-            && (!relax_post_execution_balance_checks || pre_lamports == 0)
-        {
-            return Err(DepositFeeError::InvalidRentPayingAccount);
+        // always works. The incinerator is run at the end of a block
+        if *collector_id == incinerator::id() {
+            Ok(ExternalCollectorType::Incinerator)
+        } else {
+            if !rent.is_exempt(account.lamports(), account.data().len())
+                && (!relax_post_execution_balance_checks || pre_lamports == 0)
+            {
+                Err(DepositFeeError::InvalidRentPayingAccount)
+            } else {
+                Ok(ExternalCollectorType::SystemAccount)
+            }
         }
-
-        Ok(())
     }
 }
 
@@ -501,6 +515,160 @@ pub mod tests {
                 bank.deposit_fees(id, deposit_amount),
                 Err(DepositFeeError::ReservedCollector) | Err(DepositFeeError::InvalidAccountOwner),
             ));
+        }
+    }
+
+    #[test]
+    fn test_deposit_fees_to_nonexistent_account_rent_exempt() {
+        let mut genesis = create_genesis_config(0);
+        let rent = Rent::default();
+        genesis.genesis_config.rent = rent.clone();
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let nonexistent_pubkey = Pubkey::new_unique();
+
+        // Fee is sufficient to make the new account rent-exempt
+        let deposit_amount = rent.minimum_balance(0);
+
+        assert!(
+            bank.get_account(&nonexistent_pubkey).is_none(),
+            "Account should not exist before deposit"
+        );
+
+        assert_eq!(
+            bank.deposit_fees(&nonexistent_pubkey, deposit_amount),
+            Ok(deposit_amount),
+            "Deposit should succeed when fee is sufficient for rent-exemption"
+        );
+
+        let account = bank.get_account(&nonexistent_pubkey).unwrap();
+        assert_eq!(account.lamports(), deposit_amount);
+        assert_eq!(account.owner(), &system_program::id());
+    }
+
+    #[test]
+    fn test_deposit_fees_to_nonexistent_account_not_rent_exempt() {
+        let mut genesis = create_genesis_config(0);
+        let rent = Rent::default();
+        genesis.genesis_config.rent = rent.clone();
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let nonexistent_pubkey = Pubkey::new_unique();
+
+        // Fee is insufficient to make the new account rent-exempt
+        let deposit_amount = rent.minimum_balance(0) - 1;
+
+        assert!(
+            bank.get_account(&nonexistent_pubkey).is_none(),
+            "Account should not exist before deposit"
+        );
+
+        assert_eq!(
+            bank.deposit_fees(&nonexistent_pubkey, deposit_amount),
+            Err(DepositFeeError::InvalidRentPayingAccount),
+            "Deposit should fail when fee is insufficient for rent-exemption"
+        );
+
+        assert!(
+            bank.get_account(&nonexistent_pubkey).is_none(),
+            "Account should still not exist after failed deposit"
+        );
+    }
+
+    #[test_case(true; "custom_commission_collector")]
+    #[test_case(false; "no_custom_commission_collector")]
+    fn test_deposit_or_burn_fee_respects_relaxed_post_exec_min_balance_check(
+        custom_commission_collector: bool,
+    ) {
+        enum CollectorState {
+            InitializedToSubRentExemptMinimum,
+            UninitializedToSubRentExemptMinimum,
+            UninitializedToRentExempt,
+        }
+
+        for collector_state in [
+            CollectorState::InitializedToSubRentExemptMinimum,
+            CollectorState::UninitializedToSubRentExemptMinimum,
+            CollectorState::UninitializedToRentExempt,
+        ] {
+            for relax_post_exec_min_balance_check in [false, true] {
+                let mut genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), 1000);
+                let rent = Rent::default();
+                genesis.genesis_config.rent = rent.clone();
+
+                let initialized_data_len = 64;
+                let rent_exempt_minimum = rent.minimum_balance(initialized_data_len);
+                assert!(rent_exempt_minimum > 1);
+
+                let (pre_balance, deposit, should_succeed) = match collector_state {
+                    CollectorState::InitializedToSubRentExemptMinimum => (
+                        rent_exempt_minimum - 2,
+                        1,
+                        relax_post_exec_min_balance_check,
+                    ),
+                    CollectorState::UninitializedToSubRentExemptMinimum => (0, 1, false),
+                    CollectorState::UninitializedToRentExempt => (0, rent_exempt_minimum, true),
+                };
+                let post_balance = pre_balance + deposit;
+                let maybe_collector_id = if custom_commission_collector {
+                    let mut maybe_collector_id = None;
+                    for account in genesis.genesis_config.accounts.values_mut() {
+                        if account.owner == solana_sdk_ids::vote::id() {
+                            let mut vote_state =
+                                VoteStateV4::deserialize(account.data(), &Pubkey::default())
+                                    .unwrap();
+                            let collector_id = Pubkey::new_unique();
+                            vote_state.block_revenue_collector = collector_id;
+                            maybe_collector_id = Some(collector_id);
+                            let versioned = VoteStateVersions::V4(Box::new(vote_state));
+                            account.set_state(&versioned).unwrap();
+                        }
+                    }
+                    maybe_collector_id
+                } else {
+                    None
+                };
+
+                let mut bank = Bank::new_for_tests(&genesis.genesis_config);
+
+                let mut feature_set = FeatureSet::all_enabled();
+                if !custom_commission_collector {
+                    feature_set.deactivate(&agave_feature_set::custom_commission_collector::id());
+                }
+                if !relax_post_exec_min_balance_check {
+                    feature_set
+                        .deactivate(&agave_feature_set::relax_post_exec_min_balance_check::id());
+                }
+                bank.feature_set = Arc::new(feature_set);
+
+                let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
+                let account = AccountSharedData::new(
+                    pre_balance,
+                    initialized_data_len,
+                    &system_program::id(),
+                );
+                bank.store_account(&collector_id, &account);
+
+                let burned = bank.deposit_or_burn_fee(deposit);
+                let rewards = bank.rewards.read().unwrap();
+
+                // post simd-392, deposits to existing accounts are always valid because
+                // they are rent-exempt before and after the deposit takes place.
+                // Deposits to uninitialized accounts still must make the account rent-exempt.
+                // pre simd-392, if a deposit to a rent-paying account isn't sufficient to
+                // make it rent-exempt then it fails and the deposit is burned.
+                if should_succeed {
+                    assert_eq!(burned, 0);
+                    assert_eq!(bank.get_balance(&collector_id), post_balance);
+                    assert_eq!(rewards.len(), 1, "fee should be distributed to the leader");
+                    assert_eq!(rewards[0].1.post_balance, post_balance);
+                } else {
+                    assert_eq!(burned, deposit);
+                    assert_eq!(bank.get_balance(&collector_id), pre_balance);
+                    assert!(
+                        rewards.is_empty(),
+                        "fee should be burned when the rent transition is invalid"
+                    );
+                }
+            }
         }
     }
 

@@ -25,3 +25,6 @@ solana-program-test = { path = "../../program-test", features = ["agave-unstable
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+
+[lints]
+workspace = true

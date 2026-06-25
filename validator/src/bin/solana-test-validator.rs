@@ -3,6 +3,7 @@ use {
         admin_rpc_service, cli, commands::FromClapArgMatches, dashboard::Dashboard,
         ledger_lockfile, lock_ledger, println_name_value,
     },
+    agave_votor::vote_history_storage::FileVoteHistoryStorage,
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     itertools::Itertools,
@@ -385,6 +386,18 @@ fn main() {
     });
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
+    if matches.is_present("alpenglow")
+        && features_to_deactivate.iter().any(|feature| {
+            *feature == agave_feature_set::alpenglow::id()
+                || *feature == agave_feature_set::validator_admission_ticket::id()
+        })
+    {
+        println!(
+            "Error: --alpenglow requires both the alpenglow and validator_admission_ticket \
+             features to be active"
+        );
+        exit(1);
+    }
 
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
         for (name, long) in &[
@@ -396,6 +409,7 @@ fn main() {
             ("slots_per_epoch", "--slots-per-epoch"),
             ("inflation_fixed", "--inflation-fixed"),
             ("faucet_sol", "--faucet-sol"),
+            ("alpenglow", "--alpenglow"),
             ("deactivate_feature", "--deactivate-feature"),
         ] {
             if matches.is_present(name) {
@@ -418,6 +432,7 @@ fn main() {
     genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
 
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
+    let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
 
     let admin_service_post_init = Arc::new(RwLock::new(None));
     // If geyser_plugin_config value is invalid, the validator will exit when the values are extracted below
@@ -440,6 +455,7 @@ fn main() {
             staked_nodes_overrides: genesis.staked_nodes_overrides.clone(),
             post_init: admin_service_post_init,
             tower_storage: tower_storage.clone(),
+            vote_history_storage: vote_history_storage.clone(),
             rpc_to_plugin_manager_sender,
         },
     );
@@ -490,8 +506,7 @@ fn main() {
         .unwrap_or_else(|e| {
             println!("Error: add_accounts_from_directories failed: {e}");
             exit(1);
-        })
-        .deactivate_features(&features_to_deactivate);
+        });
 
     genesis.rpc_config(JsonRpcConfig {
         enable_rpc_transaction_history: true,
@@ -562,6 +577,12 @@ fn main() {
             exit(1);
         }
     }
+
+    if matches.is_present("alpenglow") {
+        genesis.activate_alpenglow();
+    }
+
+    genesis.deactivate_features(&features_to_deactivate);
 
     if let Some(warp_slot) = warp_slot {
         genesis.warp_slot(warp_slot);

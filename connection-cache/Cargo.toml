@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 
@@ -29,3 +34,6 @@ thiserror = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 rand_chacha = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+
+[lints]
+workspace = true

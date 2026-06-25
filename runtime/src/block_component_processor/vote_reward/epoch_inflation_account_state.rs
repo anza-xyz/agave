@@ -21,6 +21,16 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
     pubkey
 });
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        digest = "DwwQZJF7Epufk6MN9W6bfJ1z1DkjGfMZUsXDMWNv86jb",
+        abi_digest = "CrSvqX8ZAYxjZ6XoTp9Z1ED6McdnqhXq8zYFWBDkCwJs",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 /// The per epoch info stored in the off curve account.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 pub(super) struct EpochInflationState {
@@ -37,13 +47,12 @@ pub(super) struct EpochInflationState {
 impl EpochInflationState {
     fn new_from_bank(
         bank: &Bank,
-        prev_epoch: Epoch,
-        prev_epoch_capitalization: u64,
+        epoch_start_capitalization: u64,
         additional_validator_rewards: u64,
     ) -> Self {
         let max_possible_validator_reward = bank.calculate_epoch_inflation_rewards(
-            prev_epoch_capitalization + additional_validator_rewards,
-            prev_epoch,
+            epoch_start_capitalization + additional_validator_rewards,
+            bank.epoch(),
         );
         EpochInflationState {
             max_possible_validator_reward,
@@ -53,6 +62,16 @@ impl EpochInflationState {
     }
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        digest = "HR1JbQp4gVU7fcsG4ji1fe28j8uNJRmuptdQz4PDkKoC",
+        abi_digest = "FeEFnXTk7DxHkCamcHDpRRjRDfSyMh3DGnefbwSvA8Kc",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 /// The state stored in the off curve account used to store metadata for calculating and paying
 /// voting rewards.
 ///
@@ -121,15 +140,13 @@ impl EpochInflationAccountState {
     /// compute the vote rewards.
     pub(crate) fn new_epoch_update_account(
         bank: &Bank,
-        prev_epoch: Epoch,
-        prev_epoch_capitalization: u64,
+        epoch_start_capitalization: u64,
         additional_validator_rewards: u64,
     ) {
         let prev = Self::new_from_bank(bank).map(|s| s.current);
         let current = EpochInflationState::new_from_bank(
             bank,
-            prev_epoch,
-            prev_epoch_capitalization,
+            epoch_start_capitalization,
             additional_validator_rewards,
         );
         let state = Self { prev, current };
@@ -158,11 +175,15 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
-                create_genesis_config_with_alpenglow_vote_accounts,
+                create_genesis_config_with_alpenglow_vote_accounts, deactivate_features,
             },
+            slot_params::slot_time_feature_ids,
         },
+        agave_feature_set as feature_set,
         rand::Rng,
+        solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::GenesisConfig,
+        solana_inflation::Inflation,
         solana_leader_schedule::SlotLeader,
         std::sync::Arc,
     };
@@ -221,22 +242,90 @@ mod tests {
         assert_eq!(bank_epoch_1.epoch(), 1);
         assert_eq!(bank_epoch_2.epoch(), 2);
 
-        let expected_prev = EpochInflationState::new_from_bank(
-            &bank_epoch_1,
-            bank_epoch_0.epoch(),
-            bank_epoch_0.capitalization(),
-            0,
-        );
-        let expected_current = EpochInflationState::new_from_bank(
-            &bank_epoch_2,
-            bank_epoch_1.epoch(),
-            bank_epoch_1.capitalization(),
-            0,
-        );
+        let expected_prev =
+            EpochInflationState::new_from_bank(&bank_epoch_1, bank_epoch_0.capitalization(), 0);
+        let expected_current =
+            EpochInflationState::new_from_bank(&bank_epoch_2, bank_epoch_1.capitalization(), 0);
         let EpochInflationAccountState { current, prev } =
             EpochInflationAccountState::new_from_bank(&bank_epoch_2).unwrap();
         assert_eq!(current, expected_current);
         assert_eq!(prev.unwrap(), expected_prev);
+    }
+
+    #[test]
+    fn new_epoch_update_account_uses_current_epoch_rewards() {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(1_000_000_000);
+        genesis_config.inflation = Inflation::full();
+        // Warmup is necessary here to give epoch 0 and epoch 1 different reward
+        // budgets.
+        genesis_config.epoch_schedule = EpochSchedule::custom(64, 64, true);
+        deactivate_features(&mut genesis_config, &slot_time_feature_ids().to_vec());
+
+        for (case, genesis_config, activate_slot_time_feature) in [
+            ("current reward budget", genesis_config, false),
+            (
+                "current epoch slot params",
+                GenesisConfig {
+                    inflation: Inflation::full(),
+                    ..GenesisConfig::default()
+                },
+                true,
+            ),
+        ] {
+            let mut bank_epoch_0 = Bank::new_for_tests(&genesis_config);
+            if activate_slot_time_feature {
+                bank_epoch_0.activate_feature(&feature_set::reduce_slot_time_to_350ms::id());
+            }
+            let bank_forks = BankForks::new_rw_arc(bank_epoch_0);
+            let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
+            let epoch_1_first_slot = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
+            let bank_epoch_1 = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank_epoch_0.clone(),
+                SlotLeader::new_unique(),
+                epoch_1_first_slot,
+            );
+
+            assert_eq!(bank_epoch_0.epoch(), 0, "{case}");
+            assert_eq!(bank_epoch_1.epoch(), 1, "{case}");
+            if activate_slot_time_feature {
+                assert_ne!(bank_epoch_0.ns_per_slot, bank_epoch_1.ns_per_slot, "{case}");
+            } else {
+                assert_ne!(
+                    bank_epoch_1.epoch_schedule().get_slots_in_epoch(0),
+                    bank_epoch_1.epoch_schedule().get_slots_in_epoch(1),
+                    "{case}",
+                );
+            }
+
+            let epoch_start_capitalization = bank_epoch_0.capitalization();
+            let expected_current_epoch_rewards = bank_epoch_1.calculate_epoch_inflation_rewards(
+                epoch_start_capitalization,
+                bank_epoch_1.epoch(),
+            );
+            assert_ne!(
+                expected_current_epoch_rewards,
+                bank_epoch_1.calculate_epoch_inflation_rewards(
+                    epoch_start_capitalization,
+                    bank_epoch_0.epoch()
+                ),
+                "{case}",
+            );
+
+            EpochInflationAccountState::new_epoch_update_account(
+                &bank_epoch_1,
+                epoch_start_capitalization,
+                0,
+            );
+            let state = EpochInflationAccountState::new_from_bank(&bank_epoch_1).unwrap();
+            assert_eq!(state.current.epoch, bank_epoch_1.epoch(), "{case}");
+            assert_eq!(
+                state.current.max_possible_validator_reward, expected_current_epoch_rewards,
+                "{case}",
+            );
+        }
     }
 
     #[test]

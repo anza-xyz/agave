@@ -9,7 +9,6 @@ use {
 };
 
 pub(crate) struct NewEpochTimings {
-    pub(crate) thread_pool_time_us: u64,
     pub(crate) apply_feature_activations_time_us: u64,
     pub(crate) calculate_activated_stake_time_us: u64,
     pub(crate) update_epoch_stakes_time_us: u64,
@@ -45,7 +44,14 @@ pub(crate) struct NewBankTimings {
     pub(crate) cache_preparation_time_us: u64,
     pub(crate) update_sysvars_time_us: u64,
     pub(crate) fill_sysvar_cache_time_us: u64,
-    pub(crate) populate_cache_for_accounts_lt_hash_us: u64,
+}
+
+pub(crate) struct PrepareBlockExecutionStats {
+    pub(crate) update_epoch_time_us: u64,
+    pub(crate) distribute_rewards_time_us: u64,
+    pub(crate) cache_preparation_time_us: u64,
+    pub(crate) update_sysvars_time_us: u64,
+    pub(crate) fill_sysvar_cache_time_us: u64,
 }
 
 pub(crate) fn report_new_epoch_metrics(
@@ -60,7 +66,6 @@ pub(crate) fn report_new_epoch_metrics(
         ("epoch", epoch, i64),
         ("slot", slot, i64),
         ("parent_slot", parent_slot, i64),
-        ("thread_pool_creation_us", timings.thread_pool_time_us, i64),
         (
             "apply_feature_activations",
             timings.apply_feature_activations_time_us,
@@ -114,7 +119,6 @@ pub(crate) fn report_new_bank_metrics(
     slot: Slot,
     parent_slot: Slot,
     block_height: u64,
-    num_accounts_modified_this_slot: usize,
     timings: NewBankTimings,
 ) {
     datapoint_info!(
@@ -162,16 +166,6 @@ pub(crate) fn report_new_bank_metrics(
         (
             "fill_sysvar_cache_us",
             timings.fill_sysvar_cache_time_us,
-            i64
-        ),
-        (
-            "num_accounts_modified_this_slot",
-            num_accounts_modified_this_slot,
-            i64
-        ),
-        (
-            "populate_cache_for_accounts_lt_hash_us",
-            timings.populate_cache_for_accounts_lt_hash_us,
             i64
         ),
     );

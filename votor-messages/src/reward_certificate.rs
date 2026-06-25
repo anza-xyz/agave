@@ -5,7 +5,6 @@ use {
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_pubkey::Pubkey,
     solana_short_vec::ShortU16,
     solana_signer_store::EncodeError,
     thiserror::Error,
@@ -117,30 +116,6 @@ impl NotarRewardCertificate {
     }
 }
 
-/// Message to add votes to the rewards container.
-#[derive(Debug)]
-pub struct AddVoteMessage {
-    /// List of [`VoteMessage`]s.
-    pub votes: Vec<VoteMessage>,
-}
-
-/// Request to build reward certificates.
-pub struct BuildRewardCertsRequest {
-    /// The bank slot which will include the built reward certs.
-    pub bank_slot: Slot,
-}
-
-/// Response when the reward certs are built successfully.
-#[derive(Default)]
-pub struct BuildRewardCertsRespSucc {
-    /// Skip reward certificate.  None if no skip votes were registered.
-    pub skip: Option<SkipRewardCertificate>,
-    /// Notar reward certificate.  None if no notar votes were registered.
-    pub notar: Option<NotarRewardCertificate>,
-    /// If at least one of the certs above is present, then this contains the slot for which the reward certs were built and the list of validators in the certs.
-    pub validators: Vec<Pubkey>,
-}
-
 /// Error returned when build reward certs fails.
 #[derive(Debug, Error)]
 pub enum BuildRewardCertsRespError {
@@ -152,5 +127,9 @@ pub enum BuildRewardCertsRespError {
     Encode(EncodeError),
 }
 
-/// A type alias to minimise making changes if the above types change.
-pub type BuildRewardCertsResponse = Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>;
+/// Message to add votes to the rewards container.
+#[derive(Debug)]
+pub struct AddVoteMessage {
+    /// List of [`VoteMessage`]s.
+    pub votes: Vec<VoteMessage>,
+}

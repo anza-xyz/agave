@@ -25,7 +25,7 @@ use {
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
-    solana_metrics::inc_new_counter_error,
+    solana_net_utils::PinnedXdpSender,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
@@ -114,7 +114,10 @@ fn run_check_duplicate(
     duplicate_slots_sender: &DuplicateSlotSender,
     bank_forks: &RwLock<BankForks>,
 ) -> Result<()> {
-    let mut root_bank = bank_forks.read().unwrap().root_bank();
+    let (mut root_bank, migration_status) = {
+        let bank_forks_r = bank_forks.read().unwrap();
+        (bank_forks_r.root_bank(), bank_forks_r.migration_status())
+    };
     let mut last_updated = Instant::now();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
         if last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
@@ -128,14 +131,41 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
+        let validate_chained_block_id_2 = shred::filter::check_feature_activation_from_bank(
+            &feature_set::validate_chained_block_id_2::id(),
+            shred_slot,
+            &root_bank,
+        );
+        let no_verify_chained_merkle_root = shred::filter::check_feature_activation_from_bank(
+            &feature_set::alpenglow::id(),
+            shred_slot,
+            &root_bank,
+        );
+
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict)
             | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-            PossibleDuplicateShred::ChainedMerkleRootConflict(_shred, _conflict) => {
-                if validate_chained_block_id {
+            PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
+                if validate_chained_block_id || validate_chained_block_id_2 {
                     // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
                     // We still need to mark the block as dead for other client teams.
+                    blockstore.set_dead_slot(shred_slot)?;
+                }
+                return Ok(());
+            }
+            PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
+                if validate_chained_block_id_2 {
                     blockstore.set_dead_slot(shred_slot)?;
                 }
                 return Ok(());
@@ -159,10 +189,19 @@ fn run_check_duplicate(
             }
         };
 
-        // Propagate duplicate proof through gossip
-        cluster_info.push_duplicate_shred(&shred1, &shred2)?;
-        // Notify duplicate consensus state machine
-        duplicate_slots_sender.send(shred_slot)?;
+        if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
+            // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
+            // however we do not need to propagate the duplicate proof through gossip.
+            // We still propagate during the mixed migration epoch, to account for other nodes that are stuck
+            // and require a duplicate proof to proceed
+            cluster_info.push_duplicate_shred(&shred1, &shred2)?;
+        }
+
+        if !migration_status.is_alpenglow_enabled() {
+            // The state machine can be exited as soon as alpenglow is enabled.
+            // Notify duplicate consensus state machine. If channel is full we wait.
+            duplicate_slots_sender.send(shred_slot)?;
+        }
 
         Ok(())
     };
@@ -276,6 +315,7 @@ impl WindowService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        repair_xdp_sender: Option<PinnedXdpSender>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -297,6 +337,7 @@ impl WindowService {
             repair_info.clone(),
             outstanding_repair_requests.clone(),
             repair_service_channels,
+            repair_xdp_sender,
         );
 
         let block_id_repair_service = BlockIdRepairService::new(
@@ -349,9 +390,6 @@ impl WindowService {
         duplicate_slots_sender: DuplicateSlotSender,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> JoinHandle<()> {
-        let handle_error = || {
-            inc_new_counter_error!("solana-check-duplicate-error", 1, 1);
-        };
         Builder::new()
             .name("solWinCheckDup".to_string())
             .spawn(move || {
@@ -363,7 +401,7 @@ impl WindowService {
                         &duplicate_slots_sender,
                         &bank_forks,
                     ) {
-                        if Self::should_exit_on_error(e, &handle_error) {
+                        if Self::should_exit_on_error(e) {
                             break;
                         }
                     }
@@ -383,9 +421,6 @@ impl WindowService {
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     ) -> JoinHandle<()> {
-        let handle_error = || {
-            inc_new_counter_error!("solana-window-insert-error", 1, 1);
-        };
         let reed_solomon_cache = ReedSolomonCache::default();
         Builder::new()
             .name("solWinInsert".to_string())
@@ -429,7 +464,7 @@ impl WindowService {
                         completed_data_sets_sender.as_ref(),
                     ) {
                         ws_metrics.record_error(&e);
-                        if Self::should_exit_on_error(e, &handle_error) {
+                        if Self::should_exit_on_error(e) {
                             break;
                         }
                     }
@@ -447,16 +482,19 @@ impl WindowService {
             .unwrap()
     }
 
-    fn should_exit_on_error<H>(e: Error, handle_error: &H) -> bool
-    where
-        H: Fn(),
-    {
+    fn should_exit_on_error(e: Error) -> bool {
         match e {
             Error::RecvTimeout(RecvTimeoutError::Disconnected) => true,
             Error::RecvTimeout(RecvTimeoutError::Timeout) => false,
             Error::Send => true,
             _ => {
-                handle_error();
+                let version = solana_version::version!();
+                datapoint_error!(
+                    "error",
+                    ("thread", thread::current().name().unwrap_or("?"), String),
+                    ("message", format!("{e}"), String),
+                    ("version", version, String)
+                );
                 error!("thread {:?} error {:?}", thread::current().name(), e);
                 false
             }
@@ -475,6 +513,7 @@ impl WindowService {
 mod test {
     use {
         super::*,
+        crossbeam_channel::bounded,
         rand::Rng,
         solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
@@ -534,8 +573,8 @@ mod test {
         let genesis_config = create_genesis_config(10_000).genesis_config;
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (sender, receiver) = unbounded();
-        let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
+        let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let (shreds, _) = make_many_slot_entries(5, 5, 10);
         blockstore
             .insert_shreds(shreds.clone(), None, false)
@@ -584,8 +623,8 @@ mod test {
     fn test_store_duplicate_shreds_same_batch() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (duplicate_shred_sender, duplicate_shred_receiver) = unbounded();
-        let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+        let (duplicate_shred_sender, duplicate_shred_receiver) = bounded(1024);
+        let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());

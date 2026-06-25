@@ -33,7 +33,7 @@ use {
     wincode::{SchemaRead, SchemaWrite, deserialize, serialize, serialized_size},
 };
 #[cfg(feature = "dev-context-only-utils")]
-use {crossbeam_channel::unbounded, std::net::Ipv4Addr, std::thread};
+use {crossbeam_channel::bounded, std::net::Ipv4Addr, std::thread};
 
 #[macro_export]
 macro_rules! socketaddr {
@@ -202,7 +202,7 @@ impl Faucet {
                             )
                         );
                         let memo_instruction = Instruction {
-                            program_id: spl_memo_interface::v3::id(),
+                            program_id: spl_memo_interface::v4::id(),
                             accounts: vec![],
                             data: memo.as_bytes().to_vec(),
                         };
@@ -364,7 +364,7 @@ pub fn run_local_faucet_for_tests(
     per_time_cap: Option<u64>,
     port: u16,
 ) -> SocketAddr {
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = bounded(1024);
     run_local_faucet_with_config(
         sender,
         LocalFaucetConfig {
@@ -675,7 +675,7 @@ mod tests {
             assert_eq!(tx.signatures.len(), 1);
             assert_eq!(
                 message.account_keys,
-                vec![mint_pubkey, spl_memo_interface::v3::id()]
+                vec![mint_pubkey, spl_memo_interface::v4::id()]
             );
             assert_eq!(message.recent_blockhash, blockhash);
 

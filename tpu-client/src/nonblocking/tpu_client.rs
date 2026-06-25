@@ -3,7 +3,7 @@ use {
     crate::tpu_client::{MAX_FANOUT_SLOTS, RecentLeaderSlots, TpuClientConfig},
     futures_util::{future::join_all, stream::StreamExt},
     log::*,
-    solana_clock::{DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_connection_cache::{
         connection_cache::{
@@ -13,6 +13,7 @@ use {
         nonblocking::client_connection::ClientConnection,
     },
     solana_epoch_schedule::EpochSchedule,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -153,8 +154,8 @@ impl LeaderTpuCache {
         // value. Take the greater of the two values to ensure we are reading from the latest
         // leader schedule.
         let current_slot = std::cmp::max(estimated_current_slot, self.first_slot);
-        for leader_slot in (current_slot..current_slot + fanout_slots)
-            .step_by(NUM_CONSECUTIVE_LEADER_SLOTS as usize)
+        for leader_slot in
+            (current_slot..current_slot + fanout_slots).step_by(NUM_CONSECUTIVE_LEADER_SLOTS.get())
         {
             if let Some(leader) = self.get_slot_leader(leader_slot) {
                 if let Some(tpu_socket) = self.leader_tpu_map.get(leader) {

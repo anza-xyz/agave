@@ -2,9 +2,11 @@ use {
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_runtime::bank::Bank,
-    std::{sync::Arc, time::Instant},
+    std::{
+        sync::{Arc, Mutex},
+        time::Instant,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -83,10 +85,25 @@ impl VotorEvent {
             | VotorEvent::SafeToSkip(s)
             | VotorEvent::TimeoutCrashedLeader(s)
             | VotorEvent::FirstShred(s)
-            | VotorEvent::SafeToNotar((s, _))
-            | VotorEvent::Finalized((s, _), _)
-            | VotorEvent::BlockNotarized((s, _))
-            | VotorEvent::BlockNotarFallback((s, _))
+            | VotorEvent::SafeToNotar(Block {
+                slot: s,
+                block_id: _,
+            })
+            | VotorEvent::Finalized(
+                Block {
+                    slot: s,
+                    block_id: _,
+                },
+                _,
+            )
+            | VotorEvent::BlockNotarized(Block {
+                slot: s,
+                block_id: _,
+            })
+            | VotorEvent::BlockNotarFallback(Block {
+                slot: s,
+                block_id: _,
+            })
             | VotorEvent::ParentReady {
                 slot: s,
                 parent_block: _,
@@ -106,15 +123,56 @@ pub type RepairEventReceiver = Receiver<RepairEvent>;
 pub enum RepairEvent {
     /// We require that this block be fetched. This can happen for the following reasons:
     /// - The block has received a NotarizeFallback certificate or stronger
-    /// - TODO(ashwin): An intrawindow block has reached the SafeToNotar threshold, however we need
+    /// - An intrawindow block has reached the SafeToNotar threshold, however we need
     ///   to check that the parent has reached notarize-fallback requiring us to fetch this block
-    FetchBlock { slot: Slot, block_id: Hash },
+    FetchBlock { block: Block },
 }
 
 impl RepairEvent {
     pub fn slot(&self) -> Slot {
         match self {
-            RepairEvent::FetchBlock { slot, .. } => *slot,
+            RepairEvent::FetchBlock { block } => block.slot,
         }
+    }
+}
+
+/// Event sent to replay_stage when a bank needs to be switched as a result of a ParentReady.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SwitchBankEvent {
+    /// We need to switch any existing banks to this bank including ancestors.
+    Switch { block: Block },
+}
+
+impl SwitchBankEvent {
+    pub fn block(&self) -> Block {
+        match self {
+            SwitchBankEvent::Switch { block } => *block,
+        }
+    }
+}
+
+/// Shared single-cell holding the most recent switch-bank request from votor to replay.
+///
+/// Used instead of a channel because replay only ever acts on the latest event — buffering
+/// older events doesn't help, and blocking on a full channel could lead to a stall in Votor.
+/// Writer (votor) advances monotonically via [`Self::try_advance`]; reader (replay) pulls the
+/// current value via [`Self::take`].
+#[derive(Clone, Default)]
+pub struct LatestSwitchRequest(Arc<Mutex<Option<SwitchBankEvent>>>);
+
+impl LatestSwitchRequest {
+    /// Records `event` as the latest pending request, iff it is strictly newer than what's
+    /// currently held. Returns the previous value (if any) when it was overwritten.
+    pub fn try_advance(&self, event: SwitchBankEvent) -> Option<SwitchBankEvent> {
+        let mut guard = self.0.lock().unwrap();
+        match guard.as_ref() {
+            Some(cur) if event <= *cur => None,
+            _ => guard.replace(event),
+        }
+    }
+
+    /// Atomically takes the current request, leaving the cell empty.
+    pub fn take(&self) -> Option<SwitchBankEvent> {
+        self.0.lock().unwrap().take()
     }
 }

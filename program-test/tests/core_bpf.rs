@@ -1,10 +1,7 @@
 use {
-    solana_instruction::Instruction,
     solana_program_test::{ProgramTest, ProgramTestContext},
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
-    solana_signer::Signer,
-    solana_transaction::Transaction,
 };
 
 async fn assert_bpf_program(context: &ProgramTestContext, program_id: &Pubkey) {
@@ -27,34 +24,4 @@ async fn test_vended_core_bpf_programs() {
     assert_bpf_program(&context, &solana_sdk_ids::config::id()).await;
     assert_bpf_program(&context, &solana_sdk_ids::feature::id()).await;
     assert_bpf_program(&context, &solana_sdk_ids::stake::id()).await;
-}
-
-// Note this test has to use an entry from `solana_builtins::BUILTINS` with a
-// `core_bpf_migration_config` set.
-#[tokio::test]
-async fn test_add_core_bpf_program_manually() {
-    // Core BPF program: Slashing.
-    let program_id = Pubkey::from_str_const("S1ashing11111111111111111111111111111111111");
-
-    let mut program_test = ProgramTest::default();
-    program_test.add_upgradeable_program_to_genesis("noop_program", &program_id);
-
-    let context = program_test.start_with_context().await;
-
-    // Assert the program is a BPF Loader Upgradeable program.
-    assert_bpf_program(&context, &program_id).await;
-
-    // Invoke the program.
-    let instruction = Instruction::new_with_bytes(program_id, &[], Vec::new());
-    let transaction = Transaction::new_signed_with_payer(
-        &[instruction],
-        Some(&context.payer.pubkey()),
-        &[&context.payer],
-        context.last_blockhash,
-    );
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
 }

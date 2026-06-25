@@ -11,6 +11,11 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+# `all-features` can't be used: remote-wallet-hidraw and remote-wallet-libusb
+# forward to hidapi's mutually-exclusive linux backends. Document the default
+# (hidraw) backend plus the unstable API.
+features = ["agave-unstable-api"]
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 default = ["remote-wallet-hidraw"]
@@ -47,3 +52,6 @@ solana-version = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

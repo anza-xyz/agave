@@ -12,6 +12,33 @@ use {
     },
 };
 
+/// Open `path` for reading, applying `O_DIRECT` on Linux when `use_direct_io`
+/// is true.
+///
+/// Use this when handing the resulting `File` to a `FileBufRead` reader that
+/// was built with a matching `use_direct_io` setting: opening with `O_DIRECT`
+/// here is what actually engages direct I/O at the kernel level. Reusing an
+/// `&File` opened without `O_DIRECT` will result in cached reads regardless of
+/// the reader's configuration.
+pub fn open_for_reading(path: &Path, use_direct_io: bool) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut flags = libc::O_NOATIME;
+        if use_direct_io {
+            flags |= libc::O_DIRECT;
+        }
+        options.custom_flags(flags);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = use_direct_io;
+    }
+    options.open(path)
+}
+
 /// `buffer` contains `valid_bytes` of data at its end.
 /// Move those valid bytes to the beginning of `buffer`, then read from `offset` to fill the rest of `buffer`.
 /// Update `offset` for the next read and update `valid_bytes` to specify valid portion of `buffer`.

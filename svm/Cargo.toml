@@ -7,10 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -19,8 +21,32 @@ name = "solana_svm"
 [features]
 default = ["metrics"]
 agave-unstable-api = []
-dummy-for-ci-check = ["metrics"]
-dev-context-only-utils = ["dep:qualifier_attr", "solana-program-runtime/dev-context-only-utils"]
+conformance = [
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
+    "dep:bincode",
+    "dep:prost",
+    "dep:protosol",
+    "dep:solana-poseidon",
+    "dep:solana-vote-program",
+    "dep:solana-zk-elgamal-proof-program",
+    "dep:xxhash-rust",
+    "dev-context-only-utils",
+    "solana-instruction-error/serde",
+    "solana-pubkey/default",
+]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "dep:solana-bpf-loader-program",
+    "dep:solana-compute-budget",
+    "dep:solana-compute-budget-program",
+    "dep:solana-instruction-error",
+    "dep:solana-precompile-error",
+    "dep:solana-syscalls",
+    "dep:solana-system-program",
+    "solana-program-runtime/dev-context-only-utils",
+]
+dummy-for-ci-check = ["conformance", "metrics"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -38,13 +64,21 @@ shuttle-test = [
 svm-internal = ["dep:qualifier_attr"]
 
 [dependencies]
+agave-feature-set = { workspace = true, optional = true }
+agave-precompiles = { workspace = true, optional = true }
 ahash = { workspace = true }
+bincode = { workspace = true, optional = true }
 log = { workspace = true }
 percentage = { workspace = true }
+prost = { version = "0.11", optional = true }
+protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true }
+solana-bpf-loader-program = { workspace = true, optional = true }
 solana-clock = { workspace = true }
+solana-compute-budget = { workspace = true, optional = true }
+solana-compute-budget-program = { workspace = true, optional = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -54,12 +88,15 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
+solana-instruction-error = { workspace = true, optional = true }
 solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
+solana-poseidon = { workspace = true, optional = true }
+solana-precompile-error = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -73,12 +110,17 @@ solana-svm-measure = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
+solana-syscalls = { workspace = true, optional = true }
 solana-system-interface = { workspace = true }
+solana-system-program = { workspace = true, optional = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-vote-program = { workspace = true, optional = true }
+solana-zk-elgamal-proof-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
+xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

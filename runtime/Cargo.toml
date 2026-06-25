@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -19,7 +21,6 @@ name = "solana_runtime"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "agave-feature-set/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
     "solana-program-binaries",
@@ -66,8 +67,10 @@ arrayref = { workspace = true }
 assert_matches = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-utils = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 imbl = { workspace = true, features = ["rayon", "serde"] }
 itertools = { workspace = true }
@@ -76,7 +79,6 @@ log = { workspace = true }
 mockall = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
-num_cpus = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -140,7 +142,7 @@ solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
-solana-pubkey = { workspace = true, features = ["rand"] }
+solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-reward-info = { workspace = true }
@@ -153,8 +155,8 @@ solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
-solana-slot-hashes = { workspace = true }
-solana-slot-history = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["wincode"] }
+solana-slot-history = { workspace = true, features = ["wincode"] }
 solana-stake-interface = { workspace = true }
 solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-callback = { workspace = true }
@@ -179,7 +181,6 @@ spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
-symlink = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }

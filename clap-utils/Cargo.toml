@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_clap_utils"
@@ -19,6 +21,8 @@ name = "solana_clap_utils"
 agave-unstable-api = []
 
 [dependencies]
+bip39 = { workspace = true }
+bs58 = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["default"] }
 clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
 rpassword = { workspace = true }
@@ -38,7 +42,6 @@ solana-seed-phrase = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 thiserror = { workspace = true }
-tiny-bip39 = { workspace = true }
 uriparse = { workspace = true }
 url = { workspace = true }
 
@@ -47,3 +50,6 @@ assert_matches = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

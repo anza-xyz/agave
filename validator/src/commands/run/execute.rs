@@ -12,14 +12,13 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
-    agave_xdp::{set_cpu_affinity, transmitter::XdpConfig},
+    bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_file::StorageAccess,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -30,9 +29,7 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{
-        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
-    },
+    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
@@ -84,6 +81,12 @@ use {
         str::{self, FromStr},
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
+};
+#[cfg(target_os = "linux")]
+use {
+    agave_cpu_utils::cpu_affinity,
+    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -149,7 +152,6 @@ pub fn execute(
 
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
 
     let bind_addresses = {
         let parsed = matches
@@ -166,22 +168,11 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
-
-    let xdp_interface = matches
-        .value_of("xdp_interface")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-        || matches.is_present("experimental_retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-        .map(|cpus| {
-            XdpConfig::new(
-                xdp_interface,
-                parse_cpu_ranges(cpus).unwrap(),
-                xdp_zero_copy,
-            )
-        });
+    // XDP is not needed for init — it only initializes the ledger and exits.
+    // Also, init drops all Linux capabilities in main() so XDP setup would fail.
+    #[cfg(target_os = "linux")]
+    let xdp_transmit_config: Option<XdpConfig> =
+        build_xdp_config(matches, &operation, &bind_addresses)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -284,13 +275,14 @@ pub fn execute(
     let _ = config;
 
     #[cfg(target_os = "linux")]
-    let xdp_builder_with_src_addr = {
+    let (xdp_transmit_setup, xdp_network_config_report) = {
         use {
             agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
+            solana_core::system_monitor_service::XdpNetworkConfigReport,
         };
 
         let super::Config { primordial_caps } = config;
@@ -310,7 +302,7 @@ pub fn execute(
         required_caps.extend(primordial_caps.clone());
         retained_caps.extend(primordial_caps.clone());
 
-        if let Some(xdp_config) = retransmit_xdp.as_ref() {
+        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
             required_caps.insert(CAP_NET_RAW);
             if xdp_config.zero_copy {
@@ -366,37 +358,46 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let xdp_builder_with_src_addr = retransmit_xdp.clone().map(|xdp_config| {
-            use {
-                agave_xdp::{default_device_ipv4, interface_ipv4},
-                std::net::SocketAddrV4,
-            };
+        let (xdp_transmit_setup, report) = xdp_transmit_config
+            .clone()
+            .map(|mut xdp_config| {
+                use {
+                    agave_xdp::{device::NetworkDevice, interface_ipv4},
+                    solana_core::validator::XdpTransmitSetup,
+                };
 
-            let src_port = node.sockets.retransmit_sockets[0]
-                .local_addr()
-                .expect("failed to get local address")
-                .port();
-            let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
-                IpAddr::V4(_unspecified) => {
-                    if let Some(interface) = xdp_config.interface.as_ref() {
-                        interface_ipv4(interface).expect(
-                            "configured interface should exist and have an IPv4 address assigned",
-                        )
-                    } else {
-                        default_device_ipv4().expect(
-                            "default route device should exist and have an IPv4 address assigned",
-                        )
-                    }
-                }
-                _ => panic!("IPv6 not supported"),
-            };
-            (
-                TransmitterBuilder::new(xdp_config, exit.clone())
-                    .expect("failed to create xdp transmitter"),
-                SocketAddrV4::new(src_ip, src_port),
-            )
-        });
+                let device = if let Some(interface) = xdp_config.interface.as_ref() {
+                    NetworkDevice::new(interface).expect("configured interface should exist")
+                } else {
+                    NetworkDevice::new_from_default_route()
+                        .expect("default route device should exist")
+                };
+
+                let xdp_interface = device.name().to_string();
+                // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
+                // uses the same interface name, with bond-master fallback.
+                xdp_config.interface = Some(xdp_interface.clone());
+                let zero_copy = xdp_config.zero_copy;
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                    IpAddr::V4(_unspecified) => interface_ipv4(&xdp_interface).expect(
+                        "selected interface should exist and have an IPv4 address assigned",
+                    ),
+                    _ => panic!("IPv6 not supported"),
+                };
+                (
+                    XdpTransmitSetup {
+                        transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
+                            .expect("failed to create xdp transmitter"),
+                        src_ip,
+                    },
+                    XdpNetworkConfigReport {
+                        zero_copy,
+                        interface: xdp_interface,
+                    },
+                )
+            })
+            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
 
         // we're done with caps needed to init xdp now. remove them from our process
         caps::set(None, CapSet::Effective, &retained_caps)
@@ -404,27 +405,19 @@ pub fn execute(
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        xdp_builder_with_src_addr
+        (xdp_transmit_setup, report)
     };
 
     #[cfg(not(target_os = "linux"))]
-    let xdp_builder_with_src_addr = None;
+    let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
 
-    let reserved = retransmit_xdp
-        .map(|xdp| xdp.cpus.clone())
-        .unwrap_or_default()
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    if !reserved.is_empty() {
-        let available = core_affinity::get_core_ids()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|core_id| core_id.id)
-            .collect::<HashSet<_>>();
-        let available = available.difference(&reserved);
-        set_cpu_affinity(available.into_iter().copied()).unwrap();
-    }
+    #[cfg(target_os = "linux")]
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+
+    #[cfg(not(target_os = "linux"))]
+    let poh_pinned_cpu_core = None;
 
     solana_core::validator::report_target_features();
 
@@ -652,52 +645,37 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let account_shrink_paths: Option<Vec<PathBuf>> =
-        values_t!(matches, "account_shrink_path", String)
-            .map(|shrink_paths| shrink_paths.into_iter().map(PathBuf::from).collect())
-            .ok();
-    let account_shrink_paths = account_shrink_paths
-        .as_ref()
-        .map(|paths| {
-            create_and_canonicalize_directories(paths)
-                .map_err(|err| format!("unable to access account shrink path: {err}"))
-        })
-        .transpose()?;
-
-    let (account_shrink_run_paths, account_shrink_snapshot_paths) = account_shrink_paths
-        .map(|paths| {
-            create_all_accounts_run_and_snapshot_dirs(&paths)
-                .map_err(|err| format!("unable to create account subdirectories: {err}"))
-        })
-        .transpose()?
-        .unzip();
-
-    let read_cache_limit_bytes =
-        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
-            match limits.len() {
-                2 => (limits[0], limits[1]),
-                _ => {
-                    // clap will enforce two values are given
-                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+    let read_cache_limit_bytes = if let Some(limits) =
+        values_of::<ByteSize>(matches, "accounts_db_read_cache_limit")
+    {
+        match limits.as_slice() {
+            [lo, hi] => {
+                let lo = usize::try_from(lo.0)?;
+                let hi = usize::try_from(hi.0)?;
+                if lo > hi {
+                    Err(format!(
+                        "invalid --accounts-db-read-cache-limit: LOW ({lo}) must be <= HIGH ({hi})",
+                    ))?;
                 }
+                Some((lo, hi))
             }
-        });
-
-    let storage_access = matches
-        .value_of("accounts_db_access_storages_method")
-        .map(|method| match method {
-            "mmap" => {
-                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
-                #[allow(deprecated)]
-                StorageAccess::Mmap
-            }
-            "file" => StorageAccess::File,
             _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-access-storages-method")
+                // clap will enforce two values are given
+                unreachable!("invalid number of values given to accounts-db-read-cache-limit")
             }
-        })
-        .unwrap_or_default();
+        }
+    } else {
+        None
+    };
+
+    let write_cache_limit_bytes =
+        value_of::<ByteSize>(matches, "accounts_db_write_cache_limit").map(|limit| limit.0);
+    // accounts-db-write-cache-limit-mb was deprecated in v4.2.0
+    let write_cache_limit_mb = value_t!(matches, "accounts_db_cache_limit_mb", u64)
+        .ok()
+        .map(|mb| mb * MB as u64);
+    // clap will enforce only one cli arg is provided, so pick whichever is Some
+    let write_cache_limit_bytes = write_cache_limit_bytes.or(write_cache_limit_mb);
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -716,14 +694,11 @@ pub fn execute(
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
         bank_hash_details_dir: ledger_path.clone(),
-        shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
         read_cache_evict_sample_size: None,
         read_cache_num_shards: None,
-        write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
-            .ok()
-            .map(|mb| mb * MB as u64),
+        write_cache_limit_bytes,
         ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
         ancient_storage_ideal_size: value_t!(
             matches,
@@ -735,7 +710,6 @@ pub fn execute(
         skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
-        storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
@@ -772,17 +746,6 @@ pub fn execute(
         create_all_accounts_run_and_snapshot_dirs(&account_paths)
             .map_err(|err| format!("unable to create account directories: {err}"))?;
 
-    // These snapshot paths are only used for initial clean up, add in shrink paths if they exist.
-    let account_snapshot_paths =
-        if let Some(account_shrink_snapshot_paths) = account_shrink_snapshot_paths {
-            account_snapshot_paths
-                .into_iter()
-                .chain(account_shrink_snapshot_paths)
-                .collect()
-        } else {
-            account_snapshot_paths
-        };
-
     let snapshot_config = new_snapshot_config(
         matches,
         &ledger_path,
@@ -799,6 +762,7 @@ pub fn execute(
     let mut validator_config = ValidatorConfig {
         log_config,
         require_tower: matches.is_present("require_tower"),
+        require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
         vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -845,13 +809,13 @@ pub fn execute(
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
+        xdp_network_config_report,
         no_os_cpu_stats_reporting: matches.is_present("no_os_cpu_stats_reporting"),
         no_os_disk_stats_reporting: matches.is_present("no_os_disk_stats_reporting"),
         // The validator needs to open many files, check that the process has
         // permission to do so in order to fail quickly and give a direct error
         enforce_ulimit_nofile: true,
-        poh_pinned_cpu_core: value_of(matches, "poh_pinned_cpu_core")
-            .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
+        poh_pinned_cpu_core,
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
@@ -875,8 +839,8 @@ pub fn execute(
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         tvu_bls_sigverify_threads,
-        delay_leader_block_for_pending_fork: matches
-            .is_present("delay_leader_block_for_pending_fork"),
+        delay_leader_block_for_pending_fork: !matches
+            .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
@@ -978,6 +942,7 @@ pub fn execute(
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
             tower_storage: validator_config.tower_storage.clone(),
+            vote_history_storage: validator_config.vote_history_storage.clone(),
             staked_nodes_overrides,
             rpc_to_plugin_manager_sender,
         },
@@ -1161,7 +1126,7 @@ pub fn execute(
             sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,
-        xdp_builder_with_src_addr,
+        xdp_transmit_setup,
         exit,
     )
     .map_err(|err| format!("{err:?}"))?;
@@ -1418,4 +1383,151 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
+}
+
+#[cfg(target_os = "linux")]
+fn build_xdp_config(
+    matches: &ArgMatches,
+    operation: &Operation,
+    bind_addresses: &BindIpAddrs,
+) -> Result<Option<XdpConfig>, String> {
+    if matches.is_present("no_xdp") || *operation == Operation::Initialize {
+        return Ok(None);
+    }
+    if bind_addresses.len() > 1 {
+        return Err(
+            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
+        );
+    }
+    let xdp_interface = matches
+        .value_of("xdp_interface")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let xdp_cpu_cores = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
+        let parsed =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if let Some(poh_core) = poh_pinned_cpu_core {
+            if parsed.contains(&poh_core) {
+                return Err(format!(
+                    "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a \
+                     CPU core"
+                ));
+            }
+        }
+        Some(parsed)
+    } else {
+        // Auto-select a single core, avoiding the PoH core.
+        match cpu_affinity(None) {
+            Ok(allowed) => {
+                match allowed
+                    .iter()
+                    .rev()
+                    .map(|cpu| **cpu)
+                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+                {
+                    Some(cpu) => Some(vec![cpu]),
+                    None => {
+                        return Err(format!(
+                            "XDP requires a dedicated CPU core separate from PoH (core \
+                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
+                             disable XDP."
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+                     --xdp-cpu-cores explicitly."
+                ));
+            }
+        }
+    };
+    Ok(cpus.map(|cpus| {
+        info!("XDP enabled on CPU cores: {cpus:?}");
+        // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
+        let queues = cpus
+            .into_iter()
+            .enumerate()
+            .map(|(queue, cpu)| QueueCpuBinding {
+                queue: queue as u32,
+                cpu,
+            })
+            .collect();
+        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
+    }))
+}
+
+#[cfg(all(target_os = "linux", test))]
+mod xdp_tests {
+    use {
+        super::*,
+        crate::{cli::DefaultArgs, commands::run::args::add_args},
+        solana_net_utils::multihomed_sockets::BindIpAddrs,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    fn single_ip_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap()
+    }
+
+    fn multihoming_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn test_no_xdp_flag_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_init_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Initialize, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "init operation must disable XDP");
+    }
+
+    #[test]
+    fn test_multihoming_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &multihoming_bind());
+        assert!(
+            result.unwrap_err().contains("multihoming"),
+            "multihoming context must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_explicit_xdp_core_conflicts_with_poh_core_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE
+            .unwrap_or(0)
+            .to_string();
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("PoH core"),
+            "XDP core overlapping PoH core must produce an error"
+        );
+    }
 }

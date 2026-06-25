@@ -91,7 +91,7 @@ impl SysvarCache {
             }
             sysvar::slot_hashes::ID => {
                 let slot_hashes: SlotHashes =
-                    bincode::deserialize(&data).expect("Failed to deserialize SlotHashes sysvar.");
+                    wincode::deserialize(&data).expect("Failed to deserialize SlotHashes sysvar.");
                 self.slot_hashes = Some(data);
                 self.slot_hashes_obj = Some(Arc::new(slot_hashes));
             }
@@ -229,7 +229,7 @@ impl SysvarCache {
 
         if self.slot_hashes.is_none() {
             get_account_data(&SlotHashes::id(), &mut |data: &[u8]| {
-                if let Ok(obj) = bincode::deserialize::<SlotHashes>(data) {
+                if let Ok(obj) = wincode::deserialize::<SlotHashes>(data) {
                     self.slot_hashes = Some(data.to_vec());
                     self.slot_hashes_obj = Some(Arc::new(obj));
                 }
@@ -366,7 +366,10 @@ pub mod get_sysvar_with_account_check {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, test_case::test_case};
+    use {
+        super::*, solana_stake_interface::stake_history::SIZE as STAKE_HISTORY_ACCOUNT_SIZE,
+        test_case::test_case,
+    };
 
     // sysvar cache provides the full account data of a sysvar
     // the setters MUST NOT be changed to serialize an object representation
@@ -375,17 +378,17 @@ mod tests {
     // * account data is larger than struct sysvar
     // * vector sysvar has fewer than its maximum entries
     // if at any point the data is roundtripped through bincode, the vector will shrink
-    #[test_case(Clock::default(); "clock")]
-    #[test_case(EpochSchedule::default(); "epoch_schedule")]
-    #[test_case(EpochRewards::default(); "epoch_rewards")]
-    #[test_case(Rent::default(); "rent")]
-    #[test_case(SlotHashes::default(); "slot_hashes")]
-    #[test_case(StakeHistory::default(); "stake_history")]
-    #[test_case(LastRestartSlot::default(); "last_restart_slot")]
-    fn test_sysvar_cache_preserves_bytes<T: SysvarSerialize>(_: T) {
+    #[test_case(Clock::default(), 40; "clock")]
+    #[test_case(EpochSchedule::default(), 33; "epoch_schedule")]
+    #[test_case(EpochRewards::default(), 81; "epoch_rewards")]
+    #[test_case(Rent::default(), 17; "rent")]
+    #[test_case(SlotHashes::default(), 20_488; "slot_hashes")]
+    #[test_case(StakeHistory::default(), STAKE_HISTORY_ACCOUNT_SIZE; "stake_history")]
+    #[test_case(LastRestartSlot::default(), 8; "last_restart_slot")]
+    fn test_sysvar_cache_preserves_bytes<T: SysvarId>(_: T, account_size: usize) {
         let id = T::id();
-        let size = T::size_of().saturating_mul(2);
-        let in_buf = vec![0; size];
+        let account_size = account_size.saturating_mul(2);
+        let in_buf = vec![0; account_size];
 
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {

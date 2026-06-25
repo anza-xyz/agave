@@ -5,7 +5,6 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    itertools::Itertools,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
@@ -33,10 +32,9 @@ use {
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
-const SERIALIZED_ENTRIES_OVERHEAD: u64 = {
-    48  // Entry Header
-    + 8 // Vec<Entry> length
-};
+pub(crate) const ENTRY_OVERHEAD_BYTES: u64 = 48;
+
+const SERIALIZED_ENTRIES_OVERHEAD: u64 = ENTRY_OVERHEAD_BYTES + 8; // Vec<Entry> length
 
 #[derive(Debug)]
 pub struct ExecutionFlags {
@@ -134,9 +132,10 @@ impl Consumer {
             txs,
             &pre_results,
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
-        let check_results: Vec<_> = check_results
+        let check_results = check_results
             .into_iter()
             .zip(txs.iter())
             .map(|(result, tx)| match result {
@@ -148,12 +147,12 @@ impl Consumer {
                     }
                 }
                 Err(err) => Err(err),
-            })
-            .collect();
+            });
+
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
-            check_results.into_iter(),
+            check_results,
             ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
@@ -332,6 +331,7 @@ impl Consumer {
                     ),
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
+                    strict_nonce_size_check: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -350,20 +350,20 @@ impl Consumer {
         };
 
         let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
-        let (processed_transactions, processing_results_to_transactions_us) = measure_us!(
-            processing_results
+        let (processed_transactions, processing_results_to_transactions_us) = measure_us!({
+            let mut processed_transactions =
+                Vec::with_capacity(processed_counts.processed_transactions_count as usize);
+            for (processing_result, tx) in processing_results
                 .iter()
                 .zip(batch.sanitized_transactions())
-                .filter_map(|(processing_result, tx)| {
-                    if processing_result.was_processed() {
-                        entry_bytes += tx.serialized_size() as u64;
-                        Some(tx.to_versioned_transaction())
-                    } else {
-                        None
-                    }
-                })
-                .collect_vec()
-        );
+            {
+                if processing_result.was_processed() {
+                    entry_bytes += tx.serialized_size() as u64;
+                    processed_transactions.push(tx.to_versioned_transaction());
+                }
+            }
+            processed_transactions
+        });
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
@@ -491,12 +491,14 @@ impl Consumer {
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(
-            fee_payer,
             &mut fee_payer_account,
             0,
             error_counters,
             &bank.rent_collector().rent,
             fee,
+            bank.feature_set
+                .snapshot()
+                .relax_post_exec_min_balance_check,
         )
     }
 }
@@ -507,13 +509,13 @@ mod tests {
         super::*,
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_account::{AccountSharedData, state_traits::StateMut},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
-        solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+        solana_cost_model::cost_model::CostModel,
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
@@ -576,7 +578,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
@@ -599,7 +601,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
@@ -968,10 +970,9 @@ mod tests {
                 };
 
             let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-            if let TransactionCost::Transaction(ref mut usage_cost) = cost {
-                usage_cost.programs_execution_cost = actual_programs_execution_cost;
-                usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
-            }
+            let usage_cost = cost.usage_cost_details_mut();
+            usage_cost.programs_execution_cost = actual_programs_execution_cost;
+            usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
 
             block_cost + cost.sum()
         };
@@ -1255,7 +1256,7 @@ mod tests {
 
     #[test]
     fn test_write_persist_transaction_status() {
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,
@@ -1326,7 +1327,7 @@ mod tests {
 
     #[test]
     fn test_write_persist_loaded_addresses() {
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {
             sender: transaction_status_sender,
             dependency_tracker: None,

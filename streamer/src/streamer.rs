@@ -40,8 +40,6 @@ use {
 };
 
 pub trait ChannelSend<T>: Send + 'static {
-    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>>;
-
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>>;
 
     fn is_empty(&self) -> bool;
@@ -53,11 +51,6 @@ impl<T> ChannelSend<T> for Sender<T>
 where
     T: Send + 'static,
 {
-    #[inline]
-    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
-        self.send(msg)
-    }
-
     #[inline]
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         self.try_send(msg)
@@ -601,7 +594,7 @@ mod test {
             packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
             streamer::{receiver, responder},
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_perf::recycler::Recycler,
         std::{
@@ -641,7 +634,7 @@ mod test {
         let addr = read.local_addr().unwrap();
         let send = bind_to_localhost_unique().expect("should bind sender");
         let exit = Arc::new(AtomicBool::new(false));
-        let (s_reader, r_reader) = unbounded();
+        let (s_reader, r_reader) = bounded(1024);
         let stats = Arc::new(StreamerReceiveStats::new("test"));
         let t_receiver = receiver(
             "solRcvrTest".to_string(),
@@ -656,7 +649,7 @@ mod test {
         );
         const NUM_PACKETS: usize = 5;
         let t_responder = {
-            let (s_responder, r_responder) = unbounded();
+            let (s_responder, r_responder) = bounded(1024);
             let t_responder = responder(
                 "SendTest",
                 Arc::new(send),

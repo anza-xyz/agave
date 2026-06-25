@@ -22,6 +22,7 @@ pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
 pub const SNAPSHOT_FASTBOOT_VERSION_FILENAME: &str = "fastboot_version";
 pub const SNAPSHOT_ACCOUNTS_HARDLINKS: &str = "accounts_hardlinks";
+pub const SNAPSHOT_STORAGES_LIST_FILENAME: &str = "storages_list";
 pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
 pub const SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME: &str = "obsolete_accounts";
 /// When a snapshot is taken of a bank, the state is serialized under this directory.
@@ -164,7 +165,7 @@ pub fn get_bank_snapshot_dir(bank_snapshots_dir: impl AsRef<Path>, slot: Slot) -
 fn snapshot_archives_iter<T>(
     snapshot_archives_dir: &Path,
     cb: fn(PathBuf) -> Result<T>,
-) -> impl Iterator<Item = T> {
+) -> impl Iterator<Item = T> + use<T> {
     let remote_dir = build_snapshot_archives_remote_dir(snapshot_archives_dir);
 
     [
@@ -192,20 +193,20 @@ fn snapshot_archives_iter<T>(
 
 /// Get an iterator of the full snapshot archives from a directory
 pub fn full_snapshot_archives_iter(
-    full_snapshot_archives_dir: impl AsRef<Path>,
-) -> impl Iterator<Item = FullSnapshotArchiveInfo> {
+    full_snapshot_archives_dir: &Path,
+) -> impl Iterator<Item = FullSnapshotArchiveInfo> + use<> {
     snapshot_archives_iter(
-        full_snapshot_archives_dir.as_ref(),
+        full_snapshot_archives_dir,
         FullSnapshotArchiveInfo::new_from_path,
     )
 }
 
 /// Get the incremental snapshot archives from a directory
 pub fn incremental_snapshot_archives_iter(
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-) -> impl Iterator<Item = IncrementalSnapshotArchiveInfo> {
+    incremental_snapshot_archives_dir: &Path,
+) -> impl Iterator<Item = IncrementalSnapshotArchiveInfo> + use<> {
     snapshot_archives_iter(
-        incremental_snapshot_archives_dir.as_ref(),
+        incremental_snapshot_archives_dir,
         IncrementalSnapshotArchiveInfo::new_from_path,
     )
 }
@@ -235,7 +236,7 @@ pub fn get_highest_incremental_snapshot_archive_slot(
 pub fn get_highest_full_snapshot_archive_info(
     full_snapshot_archives_dir: impl AsRef<Path>,
 ) -> Option<FullSnapshotArchiveInfo> {
-    full_snapshot_archives_iter(full_snapshot_archives_dir).max()
+    full_snapshot_archives_iter(full_snapshot_archives_dir.as_ref()).max()
 }
 
 /// Get the path for the incremental snapshot archive with the highest slot, for a given full
@@ -248,7 +249,7 @@ pub fn get_highest_incremental_snapshot_archive_info(
     // full snapshot slot as the value passed in, perform the filtering before sorting to avoid
     // doing unnecessary work.
     let mut incremental_snapshot_archives =
-        incremental_snapshot_archives_iter(incremental_snapshot_archives_dir)
+        incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.as_ref())
             .filter(|incremental_snapshot_archive_info| {
                 incremental_snapshot_archive_info.base_slot() == full_snapshot_slot
             })

@@ -92,6 +92,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToDelegationFormat {
         let Stakes {
             vote_accounts,
             stake_delegations,
+            delegated_stakes: _,
             unused,
             epoch,
             stake_history,
@@ -112,6 +113,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToStakeFormat {
         let Stakes {
             vote_accounts,
             stake_delegations,
+            delegated_stakes: _,
             unused,
             epoch,
             stake_history,
@@ -235,6 +237,7 @@ mod tests {
         let stake_account_stakes = Stakes {
             vote_accounts: VoteAccounts::default(),
             stake_delegations,
+            delegated_stakes: ImblHashMap::default(),
             unused: 0,
             epoch: 0,
             stake_history: StakeHistory::default(),
@@ -288,7 +291,7 @@ mod tests {
                 &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
-            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
+            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::free();
@@ -299,7 +302,7 @@ mod tests {
                     &rent,
                     rng.random_range(0..1_000_000), // lamports
                 );
-                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
+                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
             }
         }
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();

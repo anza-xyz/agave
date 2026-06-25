@@ -61,11 +61,16 @@ impl TimerManager {
         &self,
         slot: Slot,
         standstill_slot: Option<Slot>,
+        delta_first_slice: Duration,
         delta_block: Duration,
-    ) {
-        self.timers
-            .write()
-            .set_timeouts(slot, Instant::now(), standstill_slot, delta_block);
+    ) -> bool {
+        self.timers.write().set_timeouts(
+            slot,
+            Instant::now(),
+            standstill_slot,
+            delta_first_slice,
+            delta_block,
+        )
     }
 
     pub(crate) fn join(self) {
@@ -81,13 +86,13 @@ impl TimerManager {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::event::VotorEvent, crossbeam_channel::unbounded,
+        super::*, crate::event::VotorEvent, crossbeam_channel::bounded,
         solana_clock::DEFAULT_MS_PER_SLOT, std::time::Duration,
     };
 
     #[test]
     fn test_timer_manager() {
-        let (event_sender, event_receiver) = unbounded();
+        let (event_sender, event_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let timer_manager = TimerManager::new(
             event_sender,
@@ -95,9 +100,11 @@ mod tests {
             Arc::new(MigrationStatus::post_migration_status()),
         );
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
+        let delta_first_slice = delta_block;
         let slot = 52;
         let start = Instant::now();
-        timer_manager.set_timeouts(slot, None, delta_block);
+        assert!(timer_manager.set_timeouts(slot, None, delta_first_slice, delta_block));
+        assert!(!timer_manager.set_timeouts(slot, None, delta_first_slice, delta_block));
         // Should see two timeouts at delta_block and DELTA_TIMEOUT
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
@@ -114,7 +121,10 @@ mod tests {
                     }
                     VotorEvent::TimeoutCrashedLeader(s) => {
                         assert_eq!(s, slot);
-                        assert!(Instant::now().duration_since(start) >= DELTA_TIMEOUT);
+                        assert!(
+                            Instant::now().duration_since(start)
+                                >= DELTA_TIMEOUT + delta_first_slice
+                        );
                         timeouts_received += 1;
                     }
                     _ => panic!("Unexpected event: {event:?}"),

@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -42,3 +44,6 @@ tarpc = { workspace = true, features = ["full"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-serde = { workspace = true, features = ["bincode"] }
 tokio-util = { workspace = true }
+
+[lints]
+workspace = true

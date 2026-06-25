@@ -21,7 +21,7 @@ use {
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
 /// The owner of a programs accounts, thus the loader of a program
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Debug)]
 pub enum ProgramCacheEntryOwner {
     #[default]
     NativeLoader,
@@ -173,6 +173,7 @@ impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
         self.effective_slot == other.effective_slot
             && self.deployment_slot == other.deployment_slot
+            && self.account_owner == other.account_owner
             && self.is_tombstone() == other.is_tombstone()
     }
 }

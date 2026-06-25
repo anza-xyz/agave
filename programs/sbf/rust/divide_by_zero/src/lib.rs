@@ -1,6 +1,6 @@
 //! Example/test program to trigger vm error by dividing by zero
 
-#![feature(asm_experimental_arch)]
+#![cfg_attr(target_os = "solana", feature(asm_experimental_arch))]
 
 use {
     solana_account_info::AccountInfo, solana_program_error::ProgramResult, solana_pubkey::Pubkey,

@@ -1,5 +1,10 @@
 use {
-    crate::{event_handler::PendingBlocks, voting_utils::VotingContext, votor::SharedContext},
+    crate::{
+        commitment::{CommitmentType, update_commitment_cache},
+        event_handler::PendingBlocks,
+        voting_utils::VotingContext,
+        votor::SharedContext,
+    },
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::Sender,
     solana_clock::Slot,
@@ -11,8 +16,8 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
-        snapshot_controller::SnapshotController,
+        bank_forks::BankForks, bank_forks_controller::BankForksController,
+        installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
     },
     solana_time_utils::timestamp,
     std::{
@@ -24,10 +29,8 @@ use {
 /// Structures that are not used in the event loop, but need to be updated
 /// or notified when setting root
 pub(crate) struct RootContext {
-    pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
-    pub(crate) snapshot_controller: Option<Arc<SnapshotController>>,
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
-    pub(crate) drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    pub(crate) bank_forks_controller: Arc<dyn BankForksController>,
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -45,23 +48,14 @@ pub(crate) fn set_root(
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
     *pending_blocks = pending_blocks.split_off(&new_root);
-    *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
+    *finalized_blocks = finalized_blocks.split_off(&Block {
+        slot: new_root,
+        block_id: Hash::default(),
+    });
     *received_shred = received_shred.split_off(&new_root);
 
-    check_and_handle_new_root(
-        new_root,
-        new_root,
-        rctx.snapshot_controller.as_deref(),
-        Some(new_root),
-        &rctx.bank_notification_sender,
-        &rctx.drop_bank_sender,
-        &ctx.blockstore,
-        &rctx.leader_schedule_cache,
-        &ctx.bank_forks,
-        ctx.rpc_subscriptions.as_deref(),
-        my_pubkey,
-        |_| {},
-    );
+    rctx.bank_forks_controller
+        .enqueue_set_root(new_root, new_root, Some(new_root));
 
     // Distinguish between duplicate versions of same slot
     let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
@@ -69,10 +63,13 @@ pub(crate) fn set_root(
         ctx.blockstore
             .insert_optimistic_slot(new_root, &hash, timestamp().try_into().unwrap())
     {
-        error!(
-            "failed to record optimistic slot in blockstore: slot={}: {:?}",
-            new_root, &e
-        );
+        error!("failed to record optimistic slot in blockstore: slot={new_root}: {e:?}");
+    }
+
+    if let Err(err) =
+        update_commitment_cache(CommitmentType::Rooted, new_root, &vctx.commitment_sender)
+    {
+        warn!("failed to update Alpenglow rooted commitment for root {new_root}: {err}");
     }
 
     // It is critical to send the OC notification in order to keep compatibility with

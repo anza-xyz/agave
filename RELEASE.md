@@ -91,34 +91,16 @@ Then proceed with the usual "Miscellaneous Clean up" steps below.
 
 #### Steps
 
-1. Check out the latest commit on `master` branch:
-    ```
-    git fetch --all
-    git checkout upstream/master
-    ```
+1. Update master branch to the next release minor version: dispatch [Bump Version](https://github.com/anza-xyz/agave/actions/workflows/bump-version.yml) pipeline against `master` branch to create the version bump PR. `Version bump level` should be either `minor` or `major`.
+1. Review version bump PR, get all required approvals and merge it.
+1. Determine the last commit **right before the version bump commit**.
 1. Determine the new branch name.  The name should be "v" + the first 2 version fields
-   from Cargo.toml.  For example, a Cargo.toml with version = "0.9.0" implies
+   from Cargo.toml **at the commit right before the version bump commit**. For example, a Cargo.toml with version = "0.9.0" implies
    the next branch name is "v0.9".
 1. Create the new branch and push this branch to the `agave` repository:
     ```
-    git checkout -b <branchname>
-    git push -u origin <branchname>
-    ```
-
-Alternatively use the Github UI.
-
-### Update master branch to the next release minor version
-
-1. After the new branch has been created and pushed, update the Cargo.toml files on **master** to the next semantic version (e.g. 0.9.0 -> 0.10.0) with:
-     ```
-     $ scripts/increment-cargo-version.sh minor
-     ```
-1. Push all the changed Cargo.toml and Cargo.lock files to the `master` branch with something like:
-    ```
-    git co -b version_update
-    git ls-files -m | xargs git add
-    git commit -m 'Bump version to X.Y+1.0'
-    git push -u origin version_update
+    git checkout -b <branchname> <the last commit right before the version bump commit>
+    git push -u upstream <branchname>
     ```
 1. Confirm that your freshly cut release branch is shown as `BETA_CHANNEL` and the previous release branch as `STABLE_CHANNEL`:
     ```

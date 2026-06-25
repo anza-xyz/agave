@@ -296,8 +296,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
+        self.transaction_context.push()?;
         self.memory_contexts.push_placeholder();
-        self.transaction_context.push()
+        Ok(())
     }
 
     /// Pop a stack frame from the invocation stack
@@ -915,7 +916,7 @@ pub fn mock_compile_message<A>(
     accounts: &[(Pubkey, A)],
     program_id: &Pubkey,
     loader_key: &Pubkey,
-) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)>
+) -> (SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)
 where
     AccountSharedData: From<A>,
     A: Clone,
@@ -944,7 +945,7 @@ where
 
     let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
 
-    Some((sanitized_message, transaction_accounts))
+    (sanitized_message, transaction_accounts)
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -976,7 +977,7 @@ pub fn mock_process_instruction_with_feature_set<
     let instruction =
         Instruction::new_with_bytes(*program_id, instruction_data, instruction_account_metas);
     let (sanitized_message, transaction_accounts) =
-        mock_compile_message(&instruction, &accounts, program_id, &native_loader::id()).unwrap();
+        mock_compile_message(&instruction, &accounts, program_id, &native_loader::id());
 
     let program_owner = accounts
         .iter()
@@ -1977,7 +1978,7 @@ mod tests {
         )];
 
         let (message, tx_accounts) =
-            mock_compile_message(&instruction, &accounts, &program_id, &loader_key).unwrap();
+            mock_compile_message(&instruction, &accounts, &program_id, &loader_key);
 
         assert_eq!(message.instructions().len(), 1);
         assert_eq!(tx_accounts.len(), 2);

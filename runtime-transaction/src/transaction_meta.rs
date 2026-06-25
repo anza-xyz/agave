@@ -19,7 +19,13 @@ use {
     },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash,
-    solana_message::TransactionSignatureDetails,
+    solana_message::{
+        SanitizedMessage, SanitizedVersionedMessage, TransactionSignatureDetails, VersionedMessage,
+        v1::TransactionConfig,
+    },
+    solana_program_entrypoint::HEAP_LENGTH,
+    solana_pubkey::Pubkey,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
     solana_transaction::TransactionError,
 };
 
@@ -54,6 +60,14 @@ pub struct TransactionConfiguration {
 }
 
 impl TransactionConfiguration {
+    pub fn try_from_sanitized_message(
+        message: &SanitizedMessage,
+        feature_set: &FeatureSet,
+    ) -> Result<Self, TransactionError> {
+        VersionedTransactionConfiguration::try_from_sanitized_message(message)?
+            .try_into_config(feature_set)
+    }
+
     /// Compute the compute unit price in micro-lamports per compute unit.
     ///
     /// Note: that this will return an effective price according to the actual
@@ -77,6 +91,51 @@ pub(crate) enum VersionedTransactionConfiguration {
 }
 
 impl VersionedTransactionConfiguration {
+    pub(crate) fn try_from_sanitized_message(
+        message: &SanitizedMessage,
+    ) -> Result<Self, TransactionError> {
+        match message {
+            SanitizedMessage::V1(message) => Ok(Self::from_v1_config(&message.message.config)),
+            SanitizedMessage::Legacy(_) | SanitizedMessage::V0(_) => {
+                Self::try_from_legacy_and_v0_instructions(
+                    SVMStaticMessage::program_instructions_iter(message),
+                )
+            }
+        }
+    }
+
+    pub(crate) fn try_from_sanitized_versioned_message(
+        message: &SanitizedVersionedMessage,
+    ) -> Result<Self, TransactionError> {
+        match &message.message {
+            VersionedMessage::V1(message) => Ok(Self::from_v1_config(&message.config)),
+            VersionedMessage::Legacy(_) | VersionedMessage::V0(_) => {
+                Self::try_from_legacy_and_v0_instructions(
+                    message
+                        .program_instructions_iter()
+                        .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+                )
+            }
+        }
+    }
+
+    fn from_v1_config(config: &TransactionConfig) -> Self {
+        Self::V1(TransactionConfiguration {
+            priority_fee_lamports: config.priority_fee.unwrap_or(0),
+            compute_unit_limit: config.compute_unit_limit.unwrap_or(0),
+            loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit.unwrap_or(0),
+            updated_heap_bytes: config.heap_size.unwrap_or(HEAP_LENGTH as u32),
+        })
+    }
+
+    fn try_from_legacy_and_v0_instructions<'a>(
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+    ) -> Result<Self, TransactionError> {
+        Ok(Self::LegacyAndV0(
+            ComputeBudgetInstructionDetails::try_from(instructions)?,
+        ))
+    }
+
     pub(crate) fn try_into_config(
         &self,
         feature_set: &FeatureSet,

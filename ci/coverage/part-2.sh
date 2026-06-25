@@ -15,4 +15,5 @@ echo "--- coverage: root (part 2)"
 "$git_root"/ci/test-coverage.sh \
   --features dev-context-only-utils \
   --lib \
+  --bins \
   "${packages[@]}"

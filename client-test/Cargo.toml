@@ -35,10 +35,8 @@ solana-runtime = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-test-validator = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
-systemstat = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 
@@ -47,3 +45,7 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

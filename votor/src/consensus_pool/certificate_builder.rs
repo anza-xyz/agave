@@ -1,5 +1,8 @@
 use {
-    agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        consensus_message::VoteMessage,
+    },
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
     solana_signer_store::{EncodeError, encode_base2, encode_base3},
@@ -95,20 +98,9 @@ enum BuilderType {
         signature: SignatureProjective,
         bitmap: BitVec<u8, Lsb0>,
     },
-    /// A [`Certificate`] of type Skip will be produced.
-    ///
-    /// It can require two types of [`VoteMessage`]s.
-    /// In order to be able to produce certificates for reward purposes, signature aggregates for the two types are tracked separately.
-    Skip {
-        signature0: SignatureProjective,
-        bitmap0: BitVec<u8, Lsb0>,
-        sig_and_bitmap1: Option<(SignatureProjective, BitVec<u8, Lsb0>)>,
-    },
-    /// A [`Certificate`] of type NotarFallback will be produced.
-    ///
-    /// It can require two types of [`VoteMessage`]s.
-    /// This certificate is not used for rewards so its signature can be aggregated in a single container.
-    NotarFallback {
+
+    /// The produced [`Certificate`] will require two types of [`VoteMessage`]s.
+    DoubleVote {
         signature: SignatureProjective,
         bitmap0: BitVec<u8, Lsb0>,
         bitmap1: Option<BitVec<u8, Lsb0>>,
@@ -119,12 +111,7 @@ impl BuilderType {
     /// Creates a new instance of [`BuilderType`].
     fn new(cert_type: &CertificateType) -> Self {
         match cert_type {
-            CertificateType::Skip(_) => Self::Skip {
-                signature0: SignatureProjective::identity(),
-                bitmap0: default_bitvec(),
-                sig_and_bitmap1: None,
-            },
-            CertificateType::NotarizeFallback(_, _) => Self::NotarFallback {
+            CertificateType::Skip(_) | CertificateType::NotarizeFallback(_) => Self::DoubleVote {
                 signature: SignatureProjective::identity(),
                 bitmap0: default_bitvec(),
                 bitmap1: None,
@@ -144,39 +131,7 @@ impl BuilderType {
     ) -> Result<(), AggregateError> {
         let vote_types = cert_type.limits_and_vote_types().1;
         match self {
-            Self::Skip {
-                signature0,
-                bitmap0,
-                sig_and_bitmap1,
-            } => {
-                assert_eq!(vote_types.len(), 2);
-                for msg in msgs {
-                    let vote_type = msg.vote.get_type();
-                    if vote_type == vote_types[0] {
-                        try_set_bitmap(bitmap0, msg.rank)?;
-                    } else {
-                        assert_eq!(vote_type, vote_types[1]);
-                        let (_, bitmap) = sig_and_bitmap1.get_or_insert_with(|| {
-                            (SignatureProjective::identity(), default_bitvec())
-                        });
-                        try_set_bitmap(bitmap, msg.rank)?;
-                    }
-                }
-                signature0.aggregate_with(msgs.iter().filter_map(|msg| {
-                    (msg.vote.get_type() == vote_types[0]).then_some(&msg.signature)
-                }))?;
-                sig_and_bitmap1
-                    .as_mut()
-                    .map(|(signature, _)| {
-                        signature.aggregate_with(msgs.iter().filter_map(|msg| {
-                            (msg.vote.get_type() == vote_types[1]).then_some(&msg.signature)
-                        }))
-                    })
-                    .unwrap_or(Ok(()))?;
-                Ok(())
-            }
-
-            Self::NotarFallback {
+            Self::DoubleVote {
                 signature,
                 bitmap0,
                 bitmap1,
@@ -212,20 +167,7 @@ impl BuilderType {
             Self::SingleVote { signature, bitmap } => {
                 build_cert_from_bitmap(cert_type, signature, bitmap).map_err(BuildError::Encode)
             }
-            Self::Skip {
-                mut signature0,
-                bitmap0,
-                sig_and_bitmap1,
-            } => match sig_and_bitmap1 {
-                None => build_cert_from_bitmap(cert_type, signature0, bitmap0)
-                    .map_err(BuildError::Encode),
-                Some((signature1, bitmap1)) => {
-                    signature0.aggregate_with([signature1].iter())?;
-                    build_cert_from_bitmaps(cert_type, signature0, bitmap0, bitmap1)
-                        .map_err(BuildError::Encode)
-                }
-            },
-            Self::NotarFallback {
+            Self::DoubleVote {
                 signature,
                 bitmap0,
                 bitmap1,
@@ -271,9 +213,12 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::{
-            consensus_message::{CertificateType, VoteMessage},
+            certificate::CertificateType,
+            consensus_message::{Block, VoteMessage},
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
+        rand::Rng,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, PreparedHashedMessage,
             PubkeyProjective as BLSPubkeyProjective, Signature as BLSSignature,
@@ -285,12 +230,15 @@ mod tests {
 
     #[test]
     fn test_normal_build() {
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::NotarizeFallback(1, hash);
+        let block = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
         // Test building the certificate from Notarize and NotarizeFallback votes
         // Create Notarize on validator 1, 4, 6
-        let vote = Vote::new_notarization_vote(1, hash);
+        let vote = Vote::new_notarization_vote(block);
         let rank_1 = [1, 4, 6];
         let messages_1 = rank_1
             .iter()
@@ -308,7 +256,7 @@ mod tests {
             .aggregate(&messages_1)
             .expect("Failed to aggregate notarization votes");
         // Create NotarizeFallback on validator 2, 3, 5, 7
-        let vote = Vote::new_notarization_fallback_vote(1, hash);
+        let vote = Vote::new_notarization_fallback_vote(block);
         let rank_2 = [2, 3, 5, 7];
         let messages_2 = rank_2
             .iter()
@@ -391,13 +339,16 @@ mod tests {
 
     #[test]
     fn test_builder_with_errors() {
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::NotarizeFallback(1, hash);
+        let block = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
+        let cert_type = CertificateType::NotarizeFallback(block);
         let mut builder = CertificateBuilder::new(cert_type);
 
         // Test with a rank that exceeds the maximum allowed
-        let vote = Vote::new_notarization_vote(1, hash);
-        let vote2 = Vote::new_notarization_fallback_vote(1, hash);
+        let vote = Vote::new_notarization_vote(block);
+        let vote2 = Vote::new_notarization_fallback_vote(block);
         let rank_out_of_bounds = MAXIMUM_VALIDATORS.saturating_add(1); // Exceeds MAXIMUM_VALIDATORS
         let keypair = BLSKeypair::new();
         let signature = keypair.sign(b"fake_vote_message");
@@ -450,17 +401,20 @@ mod tests {
 
     #[test]
     fn test_certificate_verification_base2_encoding() {
-        let slot = 10;
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(slot, hash);
+        let block = Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        };
+        let shred_version = rand::rng().random();
+        let cert_type = CertificateType::Notarize(block);
 
         // 1. Setup: Create keypairs and a single vote object.
         // All validators will sign the same message, resulting in a single bitmap.
         let num_validators = 5;
         let mut keypairs = Vec::new();
         let mut vote_messages = Vec::new();
-        let vote = Vote::new_notarization_vote(slot, hash);
-        let serialized_vote = bincode::serialize(&vote).unwrap();
+        let vote = Vote::new_notarization_vote(block);
+        let serialized_vote = get_vote_payload_to_sign(vote, shred_version);
 
         for i in 0..num_validators {
             let keypair = BLSKeypair::new();
@@ -491,18 +445,21 @@ mod tests {
 
     #[test]
     fn test_certificate_verification_base3_encoding() {
-        let slot = 20;
-        let hash = Hash::new_unique();
+        let block = Block {
+            slot: 20,
+            block_id: Hash::new_unique(),
+        };
         // A NotarizeFallback certificate can be composed of both Notarize and NotarizeFallback
         // votes.
-        let cert_type = CertificateType::NotarizeFallback(slot, hash);
+        let cert_type = CertificateType::NotarizeFallback(block);
+        let shred_version = rand::rng().random();
 
         // 1. Setup: Create two groups of validators signing two different vote types.
         let mut all_vote_messages = Vec::new();
         let mut all_pubkeys = Vec::new();
         // Group 1: Signs a Notarize vote.
-        let notarize_vote = Vote::new_notarization_vote(slot, hash);
-        let serialized_notarize_vote = bincode::serialize(&notarize_vote).unwrap();
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let serialized_notarize_vote = get_vote_payload_to_sign(notarize_vote, shred_version);
         for i in 0..3 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_notarize_vote);
@@ -515,8 +472,9 @@ mod tests {
         }
 
         // Group 2: Signs a NotarizeFallback vote.
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(slot, hash);
-        let serialized_fallback_vote = bincode::serialize(&notarize_fallback_vote).unwrap();
+        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
+        let serialized_fallback_vote =
+            get_vote_payload_to_sign(notarize_fallback_vote, shred_version);
         for i in 3..6 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_fallback_vote);

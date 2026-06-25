@@ -56,23 +56,27 @@ pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, P
                 .ok()
                 .map(|rewards| SysvarAccountType::Rewards(rewards.into()))
         } else if pubkey == &sysvar::slot_hashes::id() {
-            deserialize::<SlotHashes>(data).ok().map(|slot_hashes| {
-                let slot_hashes = slot_hashes
-                    .iter()
-                    .map(|slot_hash| UiSlotHashEntry {
-                        slot: slot_hash.0,
-                        hash: slot_hash.1.to_string(),
-                    })
-                    .collect();
-                SysvarAccountType::SlotHashes(slot_hashes)
-            })
-        } else if pubkey == &sysvar::slot_history::id() {
-            deserialize::<SlotHistory>(data).ok().map(|slot_history| {
-                SysvarAccountType::SlotHistory(UiSlotHistory {
-                    next_slot: slot_history.next_slot,
-                    bits: format!("{:?}", SlotHistoryBits(slot_history.bits)),
+            wincode::deserialize::<SlotHashes>(data)
+                .ok()
+                .map(|slot_hashes| {
+                    let slot_hashes = slot_hashes
+                        .iter()
+                        .map(|slot_hash| UiSlotHashEntry {
+                            slot: slot_hash.0,
+                            hash: slot_hash.1.to_string(),
+                        })
+                        .collect();
+                    SysvarAccountType::SlotHashes(slot_hashes)
                 })
-            })
+        } else if pubkey == &sysvar::slot_history::id() {
+            wincode::deserialize::<SlotHistory>(data)
+                .ok()
+                .map(|slot_history| {
+                    SysvarAccountType::SlotHistory(UiSlotHistory {
+                        next_slot: slot_history.next_slot,
+                        bits: format!("{:?}", SlotHistoryBits(slot_history.bits)),
+                    })
+                })
         } else if pubkey == &sysvar::stake_history::id() {
             deserialize::<StakeHistory>(data).ok().map(|stake_history| {
                 let stake_history = stake_history
@@ -266,8 +270,11 @@ mod test {
     #[allow(deprecated)]
     use solana_sysvar::recent_blockhashes::IterItem;
     use {
-        super::*, solana_account::create_account_for_test, solana_fee_calculator::FeeCalculator,
+        super::*,
+        solana_account::{Account, create_account_for_test},
+        solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
+        solana_stake_interface::stake_history::SIZE,
     };
 
     #[test]
@@ -362,7 +369,8 @@ mod test {
             deactivating: 3,
         };
         stake_history.add(1, stake_history_entry.clone());
-        let stake_history_sysvar = create_account_for_test(&stake_history);
+        let stake_history_sysvar =
+            Account::new_data_with_space(1, &stake_history, SIZE, &sysvar::id()).unwrap();
         assert_eq!(
             parse_sysvar(&stake_history_sysvar.data, &sysvar::stake_history::id()).unwrap(),
             SysvarAccountType::StakeHistory(vec![UiStakeHistoryEntry {
