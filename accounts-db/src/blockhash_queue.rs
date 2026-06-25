@@ -1,12 +1,17 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes;
 use {
+    rand::{Rng, rng},
     serde::{Deserialize, Serialize},
     solana_clock::MAX_RECENT_BLOCKHASHES,
     solana_fee_calculator::FeeCalculator,
     solana_hash::Hash,
     solana_time_utils::timestamp,
-    std::collections::HashMap,
+    std::{
+        collections::HashMap,
+        hash::{BuildHasher, Hasher},
+        mem,
+    },
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
@@ -23,12 +28,64 @@ impl HashInfo {
     }
 }
 
+const BLOCKHASH_HASHER_CHUNK_SIZE: usize = mem::size_of::<u64>();
+const BLOCKHASH_HASHER_MAX_OFFSET: usize = solana_hash::HASH_BYTES - BLOCKHASH_HASHER_CHUNK_SIZE;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BlockhashHasher {
+    offset: usize,
+    hash: u64,
+}
+
+impl Hasher for BlockhashHasher {
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        debug_assert_eq!(bytes.len(), solana_hash::HASH_BYTES);
+        let chunk: &[u8; BLOCKHASH_HASHER_CHUNK_SIZE] = bytes
+            [self.offset..self.offset + BLOCKHASH_HASHER_CHUNK_SIZE]
+            .try_into()
+            .unwrap();
+        self.hash = u64::from_ne_bytes(*chunk);
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        debug_assert_eq!(i, solana_hash::HASH_BYTES);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BlockhashHasherBuilder {
+    offset: usize,
+}
+
+impl Default for BlockhashHasherBuilder {
+    fn default() -> Self {
+        Self {
+            offset: rng().random_range(0..=BLOCKHASH_HASHER_MAX_OFFSET),
+        }
+    }
+}
+
+impl BuildHasher for BlockhashHasherBuilder {
+    type Hasher = BlockhashHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        BlockhashHasher {
+            offset: self.offset,
+            hash: 0,
+        }
+    }
+}
+
 /// Low memory overhead, so can be cloned for every checkpoint
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6",
+        api_digest = "VgVVytg6opR8UzRpssYynnh261wsJNxGyTJf69JHRLG",
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
     )
 )]
@@ -40,7 +97,7 @@ pub struct BlockhashQueue {
     /// last hash to be registered
     last_hash: Option<Hash>,
 
-    hashes: HashMap<Hash, HashInfo, ahash::RandomState>,
+    hashes: HashMap<Hash, HashInfo, BlockhashHasherBuilder>,
 
     /// hashes older than `max_age` will be dropped from the queue
     max_age: usize,
@@ -370,5 +427,42 @@ mod tests {
         for hash in &hashes {
             assert!(!hash_queue.is_hash_valid_for_age(hash, max_age));
         }
+    }
+
+    #[test]
+    fn test_blockhash_hasher_uses_hash_bytes() {
+        let mut bytes = [0; solana_hash::HASH_BYTES];
+        bytes[8..16].copy_from_slice(&42u64.to_ne_bytes());
+        let hash = Hash::new_from_array(bytes);
+        let builder = BlockhashHasherBuilder { offset: 8 };
+        let mut hasher = std::hash::BuildHasher::build_hasher(&builder);
+
+        std::hash::Hash::hash(&hash, &mut hasher);
+
+        assert_eq!(std::hash::Hasher::finish(&hasher), 42);
+    }
+
+    #[test]
+    fn test_blockhash_hasher_collision_uses_full_hash_equality() {
+        let mut valid_hash_bytes = [0; solana_hash::HASH_BYTES];
+        valid_hash_bytes[..8].copy_from_slice(&1u64.to_ne_bytes());
+        valid_hash_bytes[8] = 1;
+
+        let mut colliding_hash_bytes = valid_hash_bytes;
+        colliding_hash_bytes[8] = 2;
+
+        let valid_hash = Hash::new_from_array(valid_hash_bytes);
+        let colliding_hash = Hash::new_from_array(colliding_hash_bytes);
+
+        let mut hash_queue = BlockhashQueue {
+            last_hash_index: 0,
+            last_hash: None,
+            hashes: HashMap::with_hasher(BlockhashHasherBuilder { offset: 0 }),
+            max_age: 10,
+        };
+        hash_queue.register_hash(&valid_hash, 0);
+
+        assert!(hash_queue.is_hash_valid_for_age(&valid_hash, 10));
+        assert!(!hash_queue.is_hash_valid_for_age(&colliding_hash, 10));
     }
 }
