@@ -4350,9 +4350,13 @@ impl AccountsDb {
 
     pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
         assert!(
-            remove_slots
-                .iter()
-                .all(|(slot, _)| !self.accounts_cache.contains_unflushed_root(*slot)),
+            remove_slots.iter().all(|(slot, _)| {
+                debug_assert!(
+                    self.accounts_cache.contains(*slot),
+                    "Trying to remove slot not in cache {slot}"
+                );
+                !self.accounts_cache.contains_unflushed_root(*slot)
+            }),
             "Trying to remove accounts for rooted slots {remove_slots:?}"
         );
 
