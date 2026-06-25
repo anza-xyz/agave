@@ -10,21 +10,27 @@ use {
 // Core consensus types and constants
 pub type Stake = u64;
 
-pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
+pub(crate) const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
     match vote_type {
         VoteType::Finalize => &[
             VoteType::NotarizeFallback,
             VoteType::Skip,
             VoteType::SkipFallback,
+            VoteType::Genesis,
         ],
-        VoteType::Notarize => &[VoteType::Skip, VoteType::NotarizeFallback],
-        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize],
+        VoteType::Notarize => &[
+            VoteType::Skip,
+            VoteType::NotarizeFallback,
+            VoteType::Genesis,
+        ],
+        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize, VoteType::Genesis],
         VoteType::Skip => &[
             VoteType::Finalize,
             VoteType::Notarize,
             VoteType::SkipFallback,
+            VoteType::Genesis,
         ],
-        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize],
+        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize, VoteType::Genesis],
         VoteType::Genesis => &[
             VoteType::Finalize,
             VoteType::Notarize,
