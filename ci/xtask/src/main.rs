@@ -29,7 +29,7 @@ enum Commands {
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
     #[command(about = "Print release channel info")]
-    ChannelInfo,
+    ChannelInfo(commands::channel_info::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -80,8 +80,8 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         Commands::GeneratePipeline(args) => {
             commands::generate_pipeline::run(args).await?;
         }
-        Commands::ChannelInfo => {
-            commands::channel_info::run().await?;
+        Commands::ChannelInfo(args) => {
+            commands::channel_info::run(args).await?;
         }
     }
 
