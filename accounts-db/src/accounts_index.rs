@@ -195,7 +195,6 @@ pub fn default_num_flush_threads() -> NonZeroUsize {
 #[derive(Debug, Default)]
 pub struct AccountsIndexRootsStats {
     pub roots_len: Option<usize>,
-    pub uncleaned_roots_len: Option<usize>,
     pub roots_range: Option<u64>,
     pub rooted_cleaned_count: usize,
     pub unrooted_cleaned_count: usize,
@@ -1140,14 +1139,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         w_roots_tracker.alive_roots.insert(slot);
     }
 
-    pub fn max_root_inclusive(&self) -> Slot {
-        self.roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .max_inclusive()
-    }
-
     pub(crate) fn clean_dead_slots<'a>(
         &'a self,
         dead_slots_iter: impl Iterator<Item = &'a Slot>,
@@ -1307,7 +1298,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1375,7 +1366,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1431,7 +1422,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1441,7 +1432,7 @@ mod tests {
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1463,7 +1454,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1473,7 +1464,7 @@ mod tests {
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1814,7 +1805,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1823,7 +1814,7 @@ mod tests {
         assert!(index.contains_with(&key, &ancestors));
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1844,7 +1835,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1913,7 +1904,7 @@ mod tests {
         let mut found_key = false;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |pubkey, _index| {
                 if pubkey == &key {
                     found_key = true
@@ -1969,7 +1960,7 @@ mod tests {
         let mut scanned_keys = HashSet::new();
         index.scan_accounts(
             &Ancestors::default(),
-            index.max_root_inclusive(),
+            0,
             |pubkey, _index| {
                 scanned_keys.insert(*pubkey);
             },
@@ -2004,7 +1995,7 @@ mod tests {
         assert!(gc.is_empty());
 
         index.add_root(0);
-        let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
+        let ancestors = Ancestors::from(vec![0]);
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
@@ -2091,6 +2082,7 @@ mod tests {
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = ReclaimsSlotList::new();
+        let max_root = 3;
         index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
         assert!(gc.is_empty());
         index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::PopulateReclaims);
@@ -2098,13 +2090,13 @@ mod tests {
         index.upsert(3, 3, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
         index.add_root(0);
         index.add_root(1);
-        index.add_root(3);
+        index.add_root(max_root);
         index.upsert(4, 4, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
 
         // Updating index should not purge older roots, only purges
         // previous updates within the same slot
         assert_eq!(gc, ReclaimsSlotList::new());
-        let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
+        let ancestors = Ancestors::from(vec![max_root]);
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 3);
@@ -2116,7 +2108,7 @@ mod tests {
         let mut found_key = false;
         index.scan_accounts(
             &Ancestors::default(),
-            index.max_root_inclusive(),
+            max_root,
             |pubkey, index| {
                 if pubkey == &key {
                     found_key = true;

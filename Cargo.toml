@@ -315,7 +315,7 @@ proptest = "1.11"
 prost = "0.14.4"
 prost-types = "0.14.4"
 protobuf-src = "1.1.0"
-protosol = "=8.2.0"
+protosol = "=9.0.1"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.11"
 rand = "0.9.4"
@@ -403,7 +403,7 @@ solana-fee = { path = "fee", version = "=4.2.0-alpha.0", features = ["agave-unst
 solana-fee-calculator = "3.2.2"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.4"
-solana-frozen-abi = "3.6.0"
+solana-frozen-abi = "3.7.0"
 solana-frozen-abi-macro = "3.6.0"
 solana-genesis = { path = "genesis", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.0.0"
@@ -487,7 +487,7 @@ solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
 solana-signer-store = "0.1.0"
-solana-slot-hashes = "3.0.2"
+solana-slot-hashes = "3.1.0"
 solana-slot-history = "3.0.1"
 solana-stable-layout = "3.0.1"
 solana-stake-interface = "4.2.0"
@@ -525,7 +525,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "vote", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-vote-interface = "6.0.1"
+solana-vote-interface = "6.0.2"
 solana-vote-program = { path = "programs/vote", version = "=4.2.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-wincode-varint = "1.0.0"
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

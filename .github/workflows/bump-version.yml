@@ -86,6 +86,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `Bump version to ${process.env.NEW_VERSION}`,
+              draft: true,
               head: `version-bump-${process.env.NEW_VERSION}`,
               base: process.env.TARGET_BRANCH
             })

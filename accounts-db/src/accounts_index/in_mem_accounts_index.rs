@@ -1616,8 +1616,6 @@ struct DiskFlushStats {
     num_not_flushed_ref_count: u64,
     /// Number of entries not flushed because slot list len != 1
     num_not_flushed_slot_list_len: u64,
-    /// Number of entries not flushed because slot list contained a cached entry
-    num_not_flushed_slot_list_cached: u64,
 }
 
 impl DiskFlushStats {
@@ -1640,10 +1638,6 @@ impl DiskFlushStats {
         Self::update_stat(
             &stats.held_in_mem.slot_list_len,
             self.num_not_flushed_slot_list_len,
-        );
-        Self::update_stat(
-            &stats.held_in_mem.slot_list_cached,
-            self.num_not_flushed_slot_list_cached,
         );
     }
 

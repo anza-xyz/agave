@@ -1104,6 +1104,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("allow_private_addr")
             .long("allow-private-addr")
             .takes_value(false)
+            .requires("no_xdp")
             .help("Allow contacting private ip addresses")
             .hidden(hidden_unless_forced()),
     )
@@ -1849,7 +1850,7 @@ mod tests {
         };
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
-            vec!["--allow-private-addr"],
+            vec!["--allow-private-addr", "--no-xdp"],
             expected_args,
         );
     }
