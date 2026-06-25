@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         contact_info::ContactInfo,
@@ -20,8 +22,6 @@ use {
     },
     wincode::{ReadError, ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(
