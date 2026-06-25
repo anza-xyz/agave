@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
 pub use solana_client::connection_cache::Protocol;
 use {
     crate::{
@@ -22,8 +24,6 @@ use {
     thiserror::Error,
     wincode::{ReadError, ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::{field_qualifiers, qualifiers};
 
 const DEFAULT_RPC_PORT: u16 = 8899;
 const DEFAULT_RPC_PUBSUB_PORT: u16 = 8900;

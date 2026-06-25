@@ -1,4 +1,6 @@
 //! Definitions for the base of all Gossip protocol messages
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         crds_data::{CrdsData, MAX_WALLCLOCK},
@@ -20,8 +22,6 @@ use {
     },
     wincode::{SchemaRead, SchemaWrite},
 };
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::{field_qualifiers, qualifiers};
 
 pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
 /// Max size of serialized crds-values in a Protocol::PushMessage packet. This

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
@@ -18,8 +20,6 @@ use {
     thiserror::Error,
     wincode::{ReadError, SchemaRead, SchemaWrite, WriteError},
 };
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 
 const DUPLICATE_SHRED_HEADER_SIZE: usize = 63;
 

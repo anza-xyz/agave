@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         contact_info::ContactInfo,
@@ -21,8 +23,6 @@ use {
         io::{Reader, Writer},
     },
 };
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
 pub(crate) const MAX_SLOT: u64 = 1_000_000_000_000_000;
