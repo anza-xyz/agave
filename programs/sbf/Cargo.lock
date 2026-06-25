@@ -853,6 +853,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "array-bytes"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ad284aeb45c13f2fb4f084de4a420ebf447423bdf9386c0540ce33cb3ef4b8c"
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7021,7 +7027,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef3bc859fc036ed490146793557386cbfae614ebba4adc704c37d94350824ed4"
 dependencies = [
  "solana-address 2.6.1",
- "solana-define-syscall 5.1.0",
+ "solana-define-syscall 5.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "solana-program-error",
 ]
 
@@ -8471,6 +8477,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-rust-big-mod-exp"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "array-bytes",
+ "serde",
+ "serde_json",
+ "solana-big-mod-exp",
+ "solana-msg",
+ "solana-program-entrypoint",
+]
+
+[[package]]
 name = "solana-sbf-rust-call-args"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -9565,6 +9583,7 @@ dependencies = [
  "num-traits",
  "solana-account 4.3.1",
  "solana-account-info",
+ "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
  "solana-bn254",
