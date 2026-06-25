@@ -95,9 +95,8 @@ impl NotarVoteEntry {
                 entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
-                // TODO: initial VoteEntry so that we do not have to modify it.
-                let mut entry = VoteEntry::new(self.max_validators);
-                let stake = entry.add_vote(batch)?;
+                let entry = VoteEntry::new_with_batch(self.max_validators, batch);
+                let stake = entry.stake;
                 e.insert(entry);
                 stake
             }
@@ -135,9 +134,8 @@ impl GenesisVoteEntry {
                 entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
-                // TODO: initial VoteEntry so that we do not have to modify it.
-                let mut entry = VoteEntry::new(self.max_validators);
-                let stake = entry.add_vote(batch)?;
+                let entry = VoteEntry::new_with_batch(self.max_validators, batch);
+                let stake = entry.stake;
                 e.insert(entry);
                 stake
             }
@@ -188,9 +186,8 @@ impl NotarFallbackVoteEntry {
                 entry.add_vote(batch)?
             }
             HashMapEntry::Vacant(e) => {
-                // TODO: initial VoteEntry so that we do not have to modify it.
-                let mut entry = VoteEntry::new(self.max_validators);
-                let stake = entry.add_vote(batch)?;
+                let entry = VoteEntry::new_with_batch(self.max_validators, batch);
+                let stake = entry.stake;
                 e.insert(entry);
                 stake
             }
@@ -222,6 +219,16 @@ impl VoteEntry {
         }
     }
 
+    fn new_with_batch(max_validators: usize, batch: &SigVerifiedVoteBatch) -> Self {
+        let mut ranks = default_bitvec(max_validators);
+        ranks |= batch.ranks();
+        Self {
+            ranks,
+            signature: *batch.signature(),
+            stake: batch.stake().get(),
+        }
+    }
+
     fn add_vote(&mut self, batch: &SigVerifiedVoteBatch) -> Result<u64, VotePoolAddVoteError> {
         if has_common_bits(&self.ranks, batch.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
@@ -248,7 +255,6 @@ impl VoteEntry {
             return Ok(None);
         }
         let new_len = self.ranks.last_one().map_or(0, |i| i.saturating_add(1));
-        // TODO: can we avoid the clone somehow?
         let mut ranks = self.ranks.clone();
         ranks.resize(new_len, false);
         let bitmap = encode_base2(&ranks).map_err(VotePoolAddVoteError::EncodingFailed)?;
@@ -515,7 +521,6 @@ fn try_build_from_entries(
     if observed_fraction < cert_type.threshold() {
         return Ok(None);
     }
-    // TODO: can we avoid the clones somehow?
     let mut bitmap0 = entry0.ranks.clone();
     let mut bitmap1 = entry1.ranks.clone();
     let last_one_0 = bitmap0.last_one().map_or(0, |i| i.saturating_add(1));
