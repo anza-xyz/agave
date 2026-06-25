@@ -27,22 +27,17 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
     BitVec::repeat(false, max_validators)
 }
 
-// TODO: return an iterator maybe?
-fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> Vec<Pubkey> {
+fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> impl Iterator<Item = Pubkey> {
     let epoch_stakes = root_bank
         .epoch_stakes_from_slot(batch.vote().slot())
         .unwrap();
     let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-    batch
-        .ranks()
-        .iter_ones()
-        .map(|ind| {
-            bls_pubkey_to_rank_map
-                .get_pubkey_stake_entry(ind)
-                .unwrap()
-                .vote_account_pubkey
-        })
-        .collect()
+    batch.ranks().iter_ones().map(|ind| {
+        bls_pubkey_to_rank_map
+            .get_pubkey_stake_entry(ind)
+            .unwrap()
+            .vote_account_pubkey
+    })
 }
 
 #[derive(Debug, PartialEq, Eq, Error)]
@@ -65,7 +60,7 @@ impl NotarVoteEntry {
         Self {
             slot,
             max_validators,
-            entries: HashMap::new(),
+            entries: HashMap::with_capacity(MAX_NOTAR_FALLBACK_PER_VALIDATOR),
             ranks: default_bitvec(max_validators),
         }
     }
@@ -106,7 +101,7 @@ impl GenesisVoteEntry {
         Self {
             slot,
             max_validators,
-            entries: HashMap::new(),
+            entries: HashMap::with_capacity(MAX_NOTAR_FALLBACK_PER_VALIDATOR),
             ranks: default_bitvec(max_validators),
         }
     }
@@ -147,7 +142,7 @@ impl NotarFallbackVoteEntry {
         Self {
             slot,
             max_validators,
-            entries: HashMap::new(),
+            entries: HashMap::with_capacity(MAX_NOTAR_FALLBACK_PER_VALIDATOR),
             validators: HashMap::with_capacity(max_validators),
             ranks: default_bitvec(max_validators),
         }
@@ -190,6 +185,7 @@ impl NotarFallbackVoteEntry {
     }
 }
 
+#[derive(Debug)]
 struct VoteEntry {
     ranks: BitVec<u8>,
     signature: SignatureProjective,
@@ -281,29 +277,26 @@ impl VotePool {
         total_stake: NonZero<u64>,
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+    ) -> Option<Certificate> {
         let cert_type = CertificateType::NotarizeFallback(block);
-        if completed_certs.contains_key(&cert_type) {
-            return Ok(None);
-        }
         match (
             self.notar.entries.get(&block.block_id),
             self.notar_fallback.entries.get(&block.block_id),
         ) {
-            (None, None) => Ok(None),
+            (None, None) => None,
             (Some(entry), None) | (None, Some(entry)) => {
                 if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
-                    return Ok(Some(cert));
+                    return Some(cert);
                 }
-                Ok(None)
+                None
             }
             (Some(notar_entry), Some(nf_entry)) => {
                 if let Some(cert) =
                     try_build_from_entries(cert_type, total_stake, notar_entry, nf_entry)
                 {
-                    return Ok(Some(cert));
+                    return Some(cert);
                 }
-                Ok(None)
+                None
             }
         }
     }
@@ -325,12 +318,10 @@ impl VotePool {
         total_stake: NonZero<u64>,
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
-        let Some(entry) = self.notar.entries.get(&block.block_id) else {
-            return Ok(None);
-        };
+    ) -> Option<Certificate> {
+        let entry = self.notar.entries.get(&block.block_id)?;
         let cert_type = CertificateType::FinalizeFast(block);
-        Ok(entry.try_build_cert(cert_type, total_stake, completed_certs))
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_notar_cert(
@@ -338,15 +329,13 @@ impl VotePool {
         total_stake: NonZero<u64>,
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+    ) -> Option<Certificate> {
         let cert_type = CertificateType::Notarize(block);
-        let Some(entry) = self.notar.entries.get(&block.block_id) else {
-            return Ok(None);
-        };
+        let entry = self.notar.entries.get(&block.block_id)?;
         if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
-            return Ok(Some(cert));
+            return Some(cert);
         }
-        Ok(None)
+        None
     }
 
     fn try_produce_skip_cert(
@@ -356,11 +345,8 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Option<Certificate> {
         let cert_type = CertificateType::Skip(batch.vote().slot());
-        if completed_certs.contains_key(&cert_type) {
-            return None;
-        }
-        match (self.skip.stake == 0, self.skip_fallback.stake == 0) {
-            (true, true) => None,
+        match (self.skip.stake > 0, self.skip_fallback.stake > 0) {
+            (false, false) => None,
             (true, false) => self
                 .skip
                 .try_build_cert(cert_type, total_stake, completed_certs),
@@ -368,7 +354,7 @@ impl VotePool {
                 self.skip_fallback
                     .try_build_cert(cert_type, total_stake, completed_certs)
             }
-            (false, false) => {
+            (true, true) => {
                 try_build_from_entries(cert_type, total_stake, &self.skip, &self.skip_fallback)
             }
         }
@@ -398,15 +384,15 @@ impl VotePool {
     ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
         match batch.vote() {
             Vote::Notarize(notar) => Ok([
-                self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs)?,
-                self.try_produce_notar_cert(total_stake, notar.block, completed_certs)?,
-                self.try_produce_finalize_fast_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs),
+                self.try_produce_notar_cert(total_stake, notar.block, completed_certs),
+                self.try_produce_finalize_fast_cert(total_stake, notar.block, completed_certs),
             ]
             .into_iter()
             .flatten()
             .collect()),
             Vote::NotarizeFallback(nf) => Ok(self
-                .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)?
+                .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)
                 .into_iter()
                 .collect()),
             Vote::Finalize(_) => Ok(self
