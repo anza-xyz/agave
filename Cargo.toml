@@ -487,7 +487,7 @@ solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
 solana-signer-store = "0.1.0"
-solana-slot-hashes = "3.0.2"
+solana-slot-hashes = "3.1.0"
 solana-slot-history = "3.0.1"
 solana-stable-layout = "3.0.1"
 solana-stake-interface = "4.2.0"

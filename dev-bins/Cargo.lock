@@ -6863,6 +6863,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-get-sysvar"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef3bc859fc036ed490146793557386cbfae614ebba4adc704c37d94350824ed4"
+dependencies = [
+ "solana-address 2.6.1",
+ "solana-define-syscall 5.1.0",
+ "solana-program-error",
+]
+
+[[package]]
 name = "solana-geyser-plugin-manager"
 version = "4.2.0-alpha.0"
 dependencies = [
@@ -8309,12 +8320,13 @@ dependencies = [
 
 [[package]]
 name = "solana-slot-hashes"
-version = "3.0.2"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a57c158c35629f9e302ab385f16b15813f4927a31c27dda72f3df828bb08d93"
+checksum = "5c7ce2b4b8911bf2db3de7b6266e67bfc21a6a9f8c566fb096d9782ca2ad16ee"
 dependencies = [
  "serde",
  "serde_derive",
+ "solana-get-sysvar",
  "solana-hash 4.4.0",
  "solana-sdk-ids",
  "solana-sysvar-id",
