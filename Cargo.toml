@@ -566,7 +566,7 @@ trees = "0.4.2"
 trezor-client = { version = "0.1.5", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
 unwrap_none = "0.1.2"
-ur-parse-lib = { version = "1.0.3", default-features = false, features = ["std"] }
+ur-parse-lib = { version = "1.0.4", default-features = false, features = ["std"] }
 ur-registry = { version = "1.0.3", default-features = false, features = ["std"] }
 uriparse = "0.6.4"
 url = "2.5.8"
