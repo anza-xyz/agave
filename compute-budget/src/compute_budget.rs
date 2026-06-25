@@ -211,8 +211,7 @@ impl ComputeBudget {
             alt_bn128_pairing_one_pair_cost_first: cost.alt_bn128_pairing_one_pair_cost_first,
             alt_bn128_pairing_one_pair_cost_other: cost.alt_bn128_pairing_one_pair_cost_other,
             big_modular_exponentiation_base_cost: cost.big_modular_exponentiation_base_cost,
-            big_modular_exponentiation_cost_divisor: cost
-                .big_modular_exponentiation_cost_divisor,
+            big_modular_exponentiation_cost_divisor: cost.big_modular_exponentiation_cost_divisor,
             poseidon_cost_coefficient_a: cost.poseidon_cost_coefficient_a,
             poseidon_cost_coefficient_c: cost.poseidon_cost_coefficient_c,
             get_remaining_compute_units_cost: cost.get_remaining_compute_units_cost,
