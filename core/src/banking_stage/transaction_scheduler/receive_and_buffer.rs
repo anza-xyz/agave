@@ -272,7 +272,7 @@ impl TransactionViewReceiveAndBuffer {
                             .get_transaction(priority_id.id)
                             .expect("transaction must exist")
                     }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
+                    working_bank.check_transactions_without_status_cache::<RuntimeTransaction<_>>(
                         &transactions,
                         &lock_results[..transactions.len()],
                         working_bank.max_processing_age(),
@@ -1014,6 +1014,37 @@ mod tests {
         assert_eq!(num_dropped_on_capacity, 0);
         assert_eq!(num_buffered, 1);
 
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_buffers_already_processed() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+
+        let bank = bank_forks.read().unwrap().root_bank();
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        bank.process_transaction(&transaction).unwrap();
+        drop(bank);
+
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_age, 0);
+        assert_eq!(stats.num_dropped_on_already_processed, 0);
+        assert_eq!(stats.num_buffered, 1);
         verify_container(&mut container, 1);
     }
 

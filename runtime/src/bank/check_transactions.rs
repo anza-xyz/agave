@@ -65,6 +65,27 @@ impl Bank {
         .0
     }
 
+    /// Checks a batch of sanitized transactions against the bank for age and
+    /// compute-budget limits, without checking the status cache.
+    pub fn check_transactions_without_status_cache<Tx: TransactionWithMeta>(
+        &self,
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
+        lock_results: &[TransactionResult<()>],
+        max_age: usize,
+        strict_nonce_size_check: bool,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> Vec<TransactionCheckResult> {
+        let lock_results = self.filter_v1_transactions(sanitized_txs, lock_results);
+
+        self.check_age_and_compute_budget_limits(
+            sanitized_txs,
+            lock_results,
+            max_age,
+            strict_nonce_size_check,
+            error_counters,
+        )
+    }
+
     pub fn check_transactions_with_processed_slots<Tx: TransactionWithMeta>(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
@@ -321,8 +342,11 @@ mod tests {
             v1,
         },
         solana_nonce::{state::State as NonceState, versions::Versions as NonceVersions},
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
+        },
         solana_signer::Signer,
+        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_system_interface::{
             instruction::{self as system_instruction, SystemInstruction},
             program as system_program,
@@ -520,15 +544,23 @@ mod tests {
     }
 
     fn make_test_tx(version: TransactionVersion) -> impl TransactionWithMeta {
+        make_test_tx_with_blockhash(version, Hash::new_unique())
+    }
+
+    fn make_test_tx_with_blockhash(
+        version: TransactionVersion,
+        recent_blockhash: Hash,
+    ) -> impl TransactionWithMeta {
         let payer = Keypair::new();
         let recipient = Pubkey::new_unique();
-        let recent_blockhash = Hash::new_unique();
         let ix = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
 
         let message = match version {
-            TransactionVersion::LEGACY => {
-                VersionedMessage::Legacy(Message::new(&[ix], Some(&payer.pubkey())))
-            }
+            TransactionVersion::LEGACY => VersionedMessage::Legacy(Message::new_with_blockhash(
+                &[ix],
+                Some(&payer.pubkey()),
+                &recent_blockhash,
+            )),
             TransactionVersion::Number(0) => VersionedMessage::V0(
                 v0::Message::try_compile(&payer.pubkey(), &[ix], &[], recent_blockhash).unwrap(),
             ),
@@ -556,6 +588,45 @@ mod tests {
             true,
         );
         rt.unwrap()
+    }
+
+    #[test]
+    fn test_check_transactions_without_status_cache_allows_already_processed() {
+        let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let tx = make_test_tx_with_blockhash(TransactionVersion::LEGACY, bank.last_blockhash());
+
+        bank.status_cache.write().unwrap().insert(
+            tx.recent_blockhash(),
+            tx.message_hash(),
+            bank.slot(),
+            Ok(()),
+        );
+
+        let txs = [tx];
+        let lock_results = [Ok(())];
+        let mut error_counters = TransactionErrorMetrics::default();
+        let check_results = bank.check_transactions(
+            &txs,
+            &lock_results,
+            bank.max_processing_age(),
+            true,
+            &mut error_counters,
+        );
+        assert!(matches!(
+            check_results.as_slice(),
+            [Err(TransactionError::AlreadyProcessed)]
+        ));
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let check_results = bank.check_transactions_without_status_cache(
+            &txs,
+            &lock_results,
+            bank.max_processing_age(),
+            true,
+            &mut error_counters,
+        );
+        assert!(matches!(check_results.as_slice(), [Ok(_)]));
     }
 
     #[test]
