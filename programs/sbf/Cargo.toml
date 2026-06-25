@@ -108,7 +108,7 @@ solana-account-view = "=2.0.0"
 solana-address = "=2.6.1"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
-solana-clock = { version = "=3.1.0", features = ["serde", "sysvar"] }
+solana-clock = { version = "=3.1.1", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.2.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.2.0-alpha.0" }
 solana-cpi = "=3.1.0"
