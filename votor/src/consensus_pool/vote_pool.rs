@@ -539,3 +539,129 @@ fn try_build_from_entries(
         bitmap,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{
+            common::conflicting_types,
+            consensus_pool::{get_total_stake, tests::create_bank_forks},
+        },
+        agave_votor_messages::{
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            vote::VoteType,
+            wire::get_vote_payload_to_sign,
+        },
+        solana_bls_signatures::Keypair as BLSKeypair,
+        solana_runtime::{bank_forks::BankForks, genesis_utils::ValidatorVoteKeypairs},
+        std::sync::RwLock,
+    };
+
+    fn create_new_vote(vote_type: VoteType, slot: Slot, block_id: Hash) -> Vote {
+        match vote_type {
+            VoteType::Notarize => Vote::new_notarization_vote(Block { slot, block_id }),
+            VoteType::NotarizeFallback => {
+                Vote::new_notarization_fallback_vote(Block { slot, block_id })
+            }
+            VoteType::Skip => Vote::new_skip_vote(slot),
+            VoteType::SkipFallback => Vote::new_skip_fallback_vote(slot),
+            VoteType::Finalize => Vote::new_finalization_vote(slot),
+            VoteType::Genesis => Vote::new_genesis_vote(Block { slot, block_id }),
+        }
+    }
+
+    struct TestContext {
+        validators: Vec<ValidatorVoteKeypairs>,
+        _bank_forks: Arc<RwLock<BankForks>>,
+        bank: Arc<Bank>,
+        pool: VotePool,
+        total_stake: NonZero<u64>,
+        slot: Slot,
+        block_id: Hash,
+        shred_version: u16,
+    }
+
+    impl TestContext {
+        fn new() -> Self {
+            let max_validators = 10;
+            let validators = (0..max_validators)
+                .map(|_| ValidatorVoteKeypairs::new_rand())
+                .collect::<Vec<_>>();
+            let bank_forks = create_bank_forks(&validators);
+            let bank = bank_forks.read().unwrap().root_bank();
+            let slot = 12;
+            let total_stake = get_total_stake(&bank, slot).unwrap();
+            let block_id = Hash::new_unique();
+            let pool = VotePool::new(slot, max_validators);
+            let shred_version = 1233;
+            Self {
+                validators,
+                _bank_forks: bank_forks,
+                bank,
+                pool,
+                slot,
+                block_id,
+                shred_version,
+                total_stake,
+            }
+        }
+
+        fn new_vote(&self, vote_type: VoteType, rank: u16) -> VoteAggregate {
+            let vote = create_new_vote(vote_type, self.slot, self.block_id);
+            let bls_keypair = BLSKeypair::derive_from_signer(
+                &self.validators[rank as usize].vote_keypair,
+                BLS_KEYPAIR_DERIVE_SEED,
+            )
+            .unwrap();
+            let payload = get_vote_payload_to_sign(vote, self.shred_version);
+            let signature = bls_keypair.sign(&payload).into();
+            let msg = VoteMessage {
+                vote,
+                signature,
+                rank,
+            };
+            VoteAggregate::new_from_verified_vote(&self.bank, msg)
+        }
+    }
+
+    #[test]
+    fn validate_conflicting_votes() {
+        for src in [
+            VoteType::Finalize,
+            VoteType::Notarize,
+            VoteType::NotarizeFallback,
+            VoteType::Skip,
+            VoteType::SkipFallback,
+            VoteType::Genesis,
+        ] {
+            for conflicting in conflicting_types(src) {
+                let mut ctx = TestContext::new();
+                let conflicting = ctx.new_vote(*conflicting, 1);
+                let src = ctx.new_vote(src, 1);
+                ctx.pool
+                    .add_vote(&ctx.bank, ctx.total_stake, &conflicting, &BTreeMap::new())
+                    .unwrap();
+                let err = ctx
+                    .pool
+                    .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                    .unwrap_err();
+                assert!(matches!(err, VotePoolAddVoteError::Invalid));
+            }
+
+            let mut ctx = TestContext::new();
+            let src = ctx.new_vote(src, 1);
+            ctx.pool
+                .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                .unwrap();
+            let err = ctx
+                .pool
+                .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                .unwrap_err();
+            assert!(
+                matches!(err, VotePoolAddVoteError::Duplicate)
+                    || matches!(err, VotePoolAddVoteError::Invalid)
+            );
+        }
+    }
+}
