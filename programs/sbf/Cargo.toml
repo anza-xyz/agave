@@ -211,7 +211,7 @@ solana-system-interface = { workspace = true }
 solana-sysvar = "4.0.0"
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = "4.1.0"
-solana-transaction-error = "3.2.0"
+solana-transaction-error = "3.3.0"
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
