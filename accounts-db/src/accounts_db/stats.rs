@@ -163,78 +163,14 @@ impl StoreAccountsForShrinkStats {
 /// Stats from storing accounts for flush (i.e. flushing the write cache to a storage file)
 #[derive(Debug, Default)]
 pub struct StoreAccountsForFlushStats {
-    pub last_report: AtomicInterval,
-    pub write_to_storage_us: AtomicU64,
-    pub update_index_us: AtomicU64,
-    pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
-    pub handle_reclaims_us: AtomicU64,
-    pub num_accounts_stored: AtomicU64,
-    pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
-    pub num_reclaims: AtomicU64,
-    pub num_obsolete_slots_removed: AtomicUsize,
-    pub num_obsolete_bytes_removed: AtomicU64,
-}
-
-impl StoreAccountsForFlushStats {
-    const REPORT_INTERVAL_MS: u64 = Duration::from_secs(1).as_millis() as u64;
-
-    pub fn report(&self) {
-        let should_report = self.last_report.should_update(Self::REPORT_INTERVAL_MS);
-        if !should_report {
-            return;
-        }
-
-        datapoint_info!(
-            "accounts_db_store_accounts_for_flush",
-            (
-                "write_to_storage_us",
-                self.write_to_storage_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "update_index_us",
-                self.update_index_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "mark_zero_lamport_single_ref_accounts_us",
-                self.mark_zero_lamport_single_ref_accounts_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "handle_reclaims_us",
-                self.handle_reclaims_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_accounts_stored",
-                self.num_accounts_stored.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_zero_lamport_single_ref_accounts_marked",
-                self.num_zero_lamport_single_ref_accounts_marked
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_reclaims",
-                self.num_reclaims.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_obsolete_slots_removed",
-                self.num_obsolete_slots_removed.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_obsolete_bytes_removed",
-                self.num_obsolete_bytes_removed.swap(0, Ordering::Relaxed),
-                i64
-            ),
-        );
-    }
+    pub write_accounts_us: u64,
+    pub update_index_us: u64,
+    pub handle_reclaims_us: u64,
+    pub mark_zero_lamport_single_ref_accounts_us: u64,
+    pub num_zero_lamport_single_ref_accounts_marked: u64,
+    pub num_reclaims: u64,
+    pub num_obsolete_slots_removed: u64,
+    pub num_obsolete_bytes_removed: u64,
 }
 
 #[derive(Debug, Default)]
@@ -344,21 +280,54 @@ pub struct FlushStats {
     pub num_bytes_flushed: Saturating<u64>,
     pub num_accounts_purged: Saturating<usize>,
     pub num_bytes_purged: Saturating<u64>,
-    pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
+    pub write_accounts_us: Saturating<u64>,
+    pub update_index_us: Saturating<u64>,
+    pub handle_reclaims_us: Saturating<u64>,
+    pub mark_zero_lamport_single_ref_accounts_us: Saturating<u64>,
+    pub num_zero_lamport_single_ref_accounts_marked: Saturating<u64>,
+    pub num_reclaims: Saturating<u64>,
+    pub num_obsolete_slots_removed: Saturating<u64>,
+    pub num_obsolete_bytes_removed: Saturating<u64>,
     pub select_pubkeys_us: Saturating<u64>,
     pub disk_index_write_through_us: Saturating<u64>,
 }
 
 impl FlushStats {
+    pub fn accumulate_store_accounts_for_flush(
+        &mut self,
+        store_accounts_stats: StoreAccountsForFlushStats,
+    ) {
+        self.write_accounts_us += Saturating(store_accounts_stats.write_accounts_us);
+        self.update_index_us += Saturating(store_accounts_stats.update_index_us);
+        self.handle_reclaims_us += Saturating(store_accounts_stats.handle_reclaims_us);
+        self.mark_zero_lamport_single_ref_accounts_us +=
+            Saturating(store_accounts_stats.mark_zero_lamport_single_ref_accounts_us);
+        self.num_zero_lamport_single_ref_accounts_marked +=
+            Saturating(store_accounts_stats.num_zero_lamport_single_ref_accounts_marked);
+        self.num_reclaims += Saturating(store_accounts_stats.num_reclaims);
+        self.num_obsolete_slots_removed +=
+            Saturating(store_accounts_stats.num_obsolete_slots_removed);
+        self.num_obsolete_bytes_removed +=
+            Saturating(store_accounts_stats.num_obsolete_bytes_removed);
+    }
+
     pub fn accumulate(&mut self, other: &Self) {
         self.num_accounts_flushed += other.num_accounts_flushed;
         self.num_bytes_flushed += other.num_bytes_flushed;
         self.num_accounts_purged += other.num_accounts_purged;
         self.num_bytes_purged += other.num_bytes_purged;
-        self.store_accounts_timing
-            .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
+        self.write_accounts_us += other.write_accounts_us;
+        self.update_index_us += other.update_index_us;
+        self.handle_reclaims_us += other.handle_reclaims_us;
+        self.mark_zero_lamport_single_ref_accounts_us +=
+            other.mark_zero_lamport_single_ref_accounts_us;
+        self.num_zero_lamport_single_ref_accounts_marked +=
+            other.num_zero_lamport_single_ref_accounts_marked;
+        self.num_reclaims += other.num_reclaims;
+        self.num_obsolete_slots_removed += other.num_obsolete_slots_removed;
+        self.num_obsolete_bytes_removed += other.num_obsolete_bytes_removed;
         self.select_pubkeys_us += other.select_pubkeys_us;
         self.disk_index_write_through_us += other.disk_index_write_through_us;
     }
