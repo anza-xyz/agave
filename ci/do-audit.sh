@@ -99,6 +99,16 @@ cargo_audit_ignores=(
   #
   # AGAVE OK: vendored the upstream fix again
   --ignore RUSTSEC-2026-0104
+
+  # Crate:     quinn-proto
+  # Version:   0.11.14
+  # Title:     Remote memory exhaustion in quinn-proto from unbounded out-of-order stream reassembly
+  # Date:      2026-06-22
+  # ID:        RUSTSEC-2026-0185
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0185
+  # Severity:  7.5 (high)
+  # Solution:  Upgrade to >=0.11.15
+  --ignore RUSTSEC-2026-0185
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
