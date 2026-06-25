@@ -19,16 +19,16 @@ bench = false
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-gossip/dev-context-only-utils"]
+dev-context-only-utils = []
 dummy-for-ci-check = ["ffi"]
-ffi = ["dep:prost", "dep:protosol", "agave-unstable-api", "dev-context-only-utils"]
+ffi = ["dep:prost", "dep:protosol", "agave-unstable-api"]
 
 [dependencies]
 bv = { workspace = true, features = ["serde"] }
 prost = { version = "0.11", optional = true }
 protosol = { workspace = true, optional = true }
 solana-bloom = { workspace = true }
-solana-gossip = { workspace = true }
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
