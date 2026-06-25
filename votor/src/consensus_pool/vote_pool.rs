@@ -607,8 +607,7 @@ mod tests {
             }
         }
 
-        fn new_vote(&self, vote_type: VoteType, rank: u16) -> VoteAggregate {
-            let vote = create_new_vote(vote_type, self.slot, self.block_id);
+        fn new_vote(&self, vote: Vote, rank: u16) -> VoteAggregate {
             let bls_keypair = BLSKeypair::derive_from_signer(
                 &self.validators[rank as usize].vote_keypair,
                 BLS_KEYPAIR_DERIVE_SEED,
@@ -637,7 +636,9 @@ mod tests {
         ] {
             for conflicting in conflicting_types(src) {
                 let mut ctx = TestContext::new();
-                let conflicting = ctx.new_vote(*conflicting, 1);
+                let conflicting = create_new_vote(*conflicting, ctx.slot, ctx.block_id);
+                let conflicting = ctx.new_vote(conflicting, 1);
+                let src = create_new_vote(src, ctx.slot, ctx.block_id);
                 let src = ctx.new_vote(src, 1);
                 ctx.pool
                     .add_vote(&ctx.bank, ctx.total_stake, &conflicting, &BTreeMap::new())
@@ -650,6 +651,7 @@ mod tests {
             }
 
             let mut ctx = TestContext::new();
+            let src = create_new_vote(src, ctx.slot, ctx.block_id);
             let src = ctx.new_vote(src, 1);
             ctx.pool
                 .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
@@ -663,5 +665,24 @@ mod tests {
                     || matches!(err, VotePoolAddVoteError::Invalid)
             );
         }
+    }
+
+    #[test]
+    fn validate_max_notar_votes_per_validator() {
+        let mut ctx = TestContext::new();
+        for _ in 0..MAX_NOTAR_FALLBACK_PER_VALIDATOR {
+            let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
+            let notar = ctx.new_vote(notar, 1);
+            ctx.pool
+                .add_vote(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
+                .unwrap();
+        }
+        let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
+        let notar = ctx.new_vote(notar, 1);
+        let err = ctx
+            .pool
+            .add_vote(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
+            .unwrap_err();
+        assert!(matches!(err, VotePoolAddVoteError::Invalid));
     }
 }
