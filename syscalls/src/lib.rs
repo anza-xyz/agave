@@ -2448,7 +2448,7 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let result_ref_mut: &mut [u8] = map(result_addr, params.modulus_len)?;
+            let result_ref_mut: (&mut [u8]) = map(result_addr, params.modulus_len)?;
         );
         result_ref_mut.copy_from_slice(value.as_slice());
 
