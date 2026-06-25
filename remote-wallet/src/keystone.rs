@@ -362,11 +362,11 @@ impl KeystoneWallet {
         let message_str = String::from_utf8_lossy(&message);
 
         // Extract JSON from response
-        if let (Some(start), Some(end)) = (message_str.find('{'), message_str.rfind('}')) {
-            if start < end {
-                let json_str = &message_str[start..=end];
-                return Ok(json_str.to_string());
-            }
+        if let (Some(start), Some(end)) = (message_str.find('{'), message_str.rfind('}'))
+            && start < end
+        {
+            let json_str = &message_str[start..=end];
+            return Ok(json_str.to_string());
         }
 
         Ok(message_str.to_string())
@@ -378,10 +378,10 @@ impl KeystoneWallet {
         let json = serde_json::from_str::<serde_json::Value>(&json_str)
             .map_err(|_| RemoteWalletError::Protocol(ERROR_INVALID_JSON))?;
 
-        if let Some(device_error) = json.get(JSON_FIELD_ERROR).and_then(|v| v.as_str()) {
-            if !device_error.trim().is_empty() {
-                return Err(RemoteWalletError::KeystoneError(device_error.to_string()));
-            }
+        if let Some(device_error) = json.get(JSON_FIELD_ERROR).and_then(|v| v.as_str())
+            && !device_error.trim().is_empty()
+        {
+            return Err(RemoteWalletError::KeystoneError(device_error.to_string()));
         }
 
         // Parse firmware version
@@ -604,10 +604,10 @@ fn parse_json_field(json_str: &str, field_name: &str) -> Result<String, RemoteWa
     let json = serde_json::from_str::<serde_json::Value>(json_str)
         .map_err(|_| RemoteWalletError::Protocol(ERROR_INVALID_JSON))?;
 
-    if let Some(device_error) = json.get(JSON_FIELD_ERROR).and_then(|v| v.as_str()) {
-        if !device_error.trim().is_empty() {
-            return Err(RemoteWalletError::KeystoneError(device_error.to_string()));
-        }
+    if let Some(device_error) = json.get(JSON_FIELD_ERROR).and_then(|v| v.as_str())
+        && !device_error.trim().is_empty()
+    {
+        return Err(RemoteWalletError::KeystoneError(device_error.to_string()));
     }
 
     json.get(field_name)

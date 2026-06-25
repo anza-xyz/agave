@@ -187,11 +187,10 @@ pub fn wait_for_duplicate_proof(ledger_path: &Path, dup_slot: Slot) -> Option<Du
         let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
         if let Some((found_dup_slot, found_duplicate_proof)) =
             duplicate_fork_validator_blockstore.get_first_duplicate_proof()
+            && found_dup_slot == dup_slot
         {
-            if found_dup_slot == dup_slot {
-                return Some(found_duplicate_proof);
-            };
-        }
+            return Some(found_duplicate_proof);
+        };
 
         sleep(Duration::from_millis(1000));
     }

@@ -2136,15 +2136,14 @@ fn confirm_slot_entries(
             }
 
             // If bank is in vote-only mode, validate that entries contain only vote transactions
-            if let EntryType::Transactions(ref transactions) = entry {
-                if transactions
+            if let EntryType::Transactions(ref transactions) = entry
+                && transactions
                     .iter()
                     .any(|tx| !is_valid_vote_only_transaction(tx))
-                {
-                    return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
-                        bank.slot(),
-                    ));
-                }
+            {
+                return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
+                    bank.slot(),
+                ));
             }
             Ok(ReplayEntry {
                 entry,
@@ -2632,16 +2631,15 @@ fn load_frozen_forks(
                 root_retain_us += m.as_us();
 
                 // If this root bank activated the feature flag, update migration status
-                if migration_status.is_pre_feature_activation() {
-                    if let Some(slot) = bank_forks
+                if migration_status.is_pre_feature_activation()
+                    && let Some(slot) = bank_forks
                         .read()
                         .unwrap()
                         .root_bank()
                         .feature_set
                         .activated_slot(&agave_feature_set::alpenglow::id())
-                    {
-                        migration_status.record_feature_activation(slot);
-                    }
+                {
+                    migration_status.record_feature_activation(slot);
                 }
             }
 

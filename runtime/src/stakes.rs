@@ -286,30 +286,28 @@ impl Stakes<StakeAccount> {
             }
 
             if solana_vote_program::check_id(account.owner()) {
-                if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-                    if let Ok(vote_account) =
+                if VoteStateVersions::is_correct_size_and_initialized(account.data())
+                    && let Ok(vote_account) =
                         VoteAccount::try_from(create_account_shared_data(account))
-                    {
-                        vote_accounts.insert(*pubkey, (0, vote_account));
-                    }
-                }
-            } else if stake_program::check_id(account.owner()) {
-                if let Ok(stake_account) =
-                    StakeAccount::try_from(create_account_shared_data(account))
                 {
-                    let delegation = stake_account.delegation();
-                    let stake = delegation_effective_stake(
-                        delegation,
-                        epoch,
-                        &stake_history,
-                        new_rate_activation_epoch,
-                        use_fixed_point_stake_math,
-                    );
-                    if stake != 0 {
-                        *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
-                    }
-                    stake_delegations.insert(*pubkey, stake_account);
+                    vote_accounts.insert(*pubkey, (0, vote_account));
                 }
+            } else if stake_program::check_id(account.owner())
+                && let Ok(stake_account) =
+                    StakeAccount::try_from(create_account_shared_data(account))
+            {
+                let delegation = stake_account.delegation();
+                let stake = delegation_effective_stake(
+                    delegation,
+                    epoch,
+                    &stake_history,
+                    new_rate_activation_epoch,
+                    use_fixed_point_stake_math,
+                );
+                if stake != 0 {
+                    *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                }
+                stake_delegations.insert(*pubkey, stake_account);
             }
         }
 
@@ -354,15 +352,13 @@ impl Stakes<StakeAccount> {
                 // Assert that all valid vote-accounts referenced in stake delegations are already
                 // contained in `stakes.vote_account`.
                 let voter_pubkey = &delegation.voter_pubkey;
-                if stakes.vote_accounts.get(voter_pubkey).is_none() {
-                    if let Some(account) = get_account(voter_pubkey) {
-                        if VoteStateVersions::is_correct_size_and_initialized(account.data())
-                            && VoteAccount::try_from(account.clone()).is_ok()
-                        {
-                            error!("vote account not cached: {voter_pubkey}, {account:?}");
-                            return Err(Error::VoteAccountNotCached(*voter_pubkey));
-                        }
-                    }
+                if stakes.vote_accounts.get(voter_pubkey).is_none()
+                    && let Some(account) = get_account(voter_pubkey)
+                    && VoteStateVersions::is_correct_size_and_initialized(account.data())
+                    && VoteAccount::try_from(account.clone()).is_ok()
+                {
+                    error!("vote account not cached: {voter_pubkey}, {account:?}");
+                    return Err(Error::VoteAccountNotCached(*voter_pubkey));
                 }
 
                 let stake_account = StakeAccount::try_from(stake_account)?;

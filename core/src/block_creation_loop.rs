@@ -823,8 +823,8 @@ fn process_parent_ready(
     }
 
     if info.start_slot == bank_slot {
-        if let Some(optimistic_parent_block) = optimistic_parent.take() {
-            if handle_parent_ready(
+        if let Some(optimistic_parent_block) = optimistic_parent.take()
+            && handle_parent_ready(
                 ctx,
                 info,
                 optimistic_parent_block,
@@ -832,9 +832,8 @@ fn process_parent_ready(
                 block_timer,
             )?
             .is_some()
-            {
-                *records_shutdown = false;
-            }
+        {
+            *records_shutdown = false;
         }
         return Ok(false);
     }

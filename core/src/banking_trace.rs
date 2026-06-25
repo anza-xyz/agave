@@ -250,11 +250,11 @@ impl BankingTracer {
     }
 
     fn trace_event(&self, on_trace: impl Fn() -> TimedTracedEvent) {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                // Ignore errors in sending to tracer - it is a non-critical component.
-                let _ = trace_sender.try_send(on_trace());
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            // Ignore errors in sending to tracer - it is a non-critical component.
+            let _ = trace_sender.try_send(on_trace());
         }
     }
 
@@ -397,14 +397,14 @@ impl TracedSender {
     /// room; in that case `Ok(n)` is returned where `n` is the number of
     /// evicted packets. On channel disconnect returns `Err(SendError)`.
     pub fn send(&self, batch: BankingPacketBatch) -> Result<usize, SendError<BankingPacketBatch>> {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                // Ignore errors in sending to tracer - it is a non-critical component.
-                let _ = trace_sender.try_send(TimedTracedEvent(
-                    SystemTime::now(),
-                    TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
-                ));
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            // Ignore errors in sending to tracer - it is a non-critical component.
+            let _ = trace_sender.try_send(TimedTracedEvent(
+                SystemTime::now(),
+                TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
+            ));
         }
         match self.sender.try_send(batch) {
             Ok(()) => Ok(0),

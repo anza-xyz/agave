@@ -1381,12 +1381,12 @@ impl Blockstore {
             _ => return false,
         };
         while let Some(slot) = next_slots.pop_front() {
-            if let Ok(Some(slot_meta)) = self.meta(slot) {
-                if slot_meta.is_full() {
-                    match slot.cmp(&ending_slot) {
-                        cmp::Ordering::Less => next_slots.extend(slot_meta.next_slots),
-                        _ => return true,
-                    }
+            if let Ok(Some(slot_meta)) = self.meta(slot)
+                && slot_meta.is_full()
+            {
+                match slot.cmp(&ending_slot) {
+                    cmp::Ordering::Less => next_slots.extend(slot_meta.next_slots),
+                    _ => return true,
                 }
             }
         }
@@ -1850,34 +1850,33 @@ impl Blockstore {
             }
 
             // Encompassing forward check for SIMD-0340
-            if let Some(next_erasure_set) = erasure_set.next_fec_set() {
-                if !self.check_forward_chained_merkle_root_consistency(
+            if let Some(next_erasure_set) = erasure_set.next_fec_set()
+                && !self.check_forward_chained_merkle_root_consistency(
                     shred,
                     next_erasure_set,
                     &shred_insertion_tracker.just_inserted_shreds,
                     &shred_insertion_tracker.merkle_root_metas,
-                ) {
-                    shred_insertion_tracker.duplicate_shreds.push(
-                        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
-                    );
-                    continue;
-                }
+                )
+            {
+                shred_insertion_tracker.duplicate_shreds.push(
+                    PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
+                );
+                continue;
             }
 
             // Encompassing backward check for SIMD-0340
             if let Some(prev_shred_id) = self
                 .previous_fec_set_shred_id(erasure_set, &shred_insertion_tracker.merkle_root_metas)
-            {
-                if !self.check_backwards_chained_merkle_root_consistency(
+                && !self.check_backwards_chained_merkle_root_consistency(
                     shred,
                     prev_shred_id,
                     &shred_insertion_tracker.just_inserted_shreds,
-                ) {
-                    shred_insertion_tracker.duplicate_shreds.push(
-                        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
-                    );
-                    continue;
-                }
+                )
+            {
+                shred_insertion_tracker.duplicate_shreds.push(
+                    PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
+                );
+                continue;
             }
         }
     }
@@ -2633,10 +2632,9 @@ impl Blockstore {
 
         if let HashMapEntry::Vacant(entry) =
             merkle_root_metas.entry((BlockLocation::Original, erasure_set))
+            && let Some(meta) = self.merkle_root_meta(erasure_set).unwrap()
         {
-            if let Some(meta) = self.merkle_root_meta(erasure_set).unwrap() {
-                entry.insert(WorkingEntry::Clean(meta));
-            }
+            entry.insert(WorkingEntry::Clean(meta));
         }
 
         // This gives the index of first coding shred in this FEC block
@@ -2785,10 +2783,9 @@ impl Blockstore {
             } else if let Some(potential_shred) = {
                 let key = ShredId::new(slot, u32::try_from(coding_index).unwrap(), ShredType::Code);
                 just_received_shreds.get(&(BlockLocation::Original, key))
-            } {
-                if shred.erasure_mismatch(potential_shred).unwrap() {
-                    return Some(Cow::Borrowed(potential_shred.payload()));
-                }
+            } && shred.erasure_mismatch(potential_shred).unwrap()
+            {
+                return Some(Cow::Borrowed(potential_shred.payload()));
             }
         }
         None
@@ -2858,13 +2855,12 @@ impl Blockstore {
 
         let slot_meta = &mut slot_meta_entry.new_slot_meta.borrow_mut();
         let erasure_set = shred.erasure_set();
-        if let HashMapEntry::Vacant(entry) = merkle_root_metas.entry((location, erasure_set)) {
-            if let Some(meta) = self
+        if let HashMapEntry::Vacant(entry) = merkle_root_metas.entry((location, erasure_set))
+            && let Some(meta) = self
                 .merkle_root_meta_from_location(erasure_set, location)
                 .unwrap()
-            {
-                entry.insert(WorkingEntry::Clean(meta));
-            }
+        {
+            entry.insert(WorkingEntry::Clean(meta));
         }
 
         if !is_trusted {
@@ -2964,10 +2960,10 @@ impl Blockstore {
         just_inserted_shreds.insert((location, shred.id()), shred);
         index_meta_working_set_entry.did_insert_occur = true;
         slot_meta_entry.did_insert_occur = true;
-        if let BTreeMapEntry::Vacant(entry) = erasure_metas.entry(erasure_set) {
-            if let Some(meta) = self.erasure_meta(erasure_set).unwrap() {
-                entry.insert(WorkingEntry::Clean(meta));
-            }
+        if let BTreeMapEntry::Vacant(entry) = erasure_metas.entry(erasure_set)
+            && let Some(meta) = self.erasure_meta(erasure_set).unwrap()
+        {
+            entry.insert(WorkingEntry::Clean(meta));
         }
         Ok(())
     }
@@ -4943,10 +4939,10 @@ impl Blockstore {
                 .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end)
         );
         let maybe_panic = |index: u64| {
-            if let Some(slot_meta) = slot_meta {
-                if slot > self.lowest_cleanup_slot() {
-                    panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
-                }
+            if let Some(slot_meta) = slot_meta
+                && slot > self.lowest_cleanup_slot()
+            {
+                panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
             }
         };
         let Some((&Range { start, .. }, &Range { end, .. })) =
@@ -5077,13 +5073,14 @@ impl Blockstore {
     }
 
     pub fn insert_bank_hash(&self, slot: Slot, frozen_hash: Hash, is_duplicate_confirmed: bool) {
-        if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap() {
-            if prev_value.frozen_hash() == frozen_hash && prev_value.is_duplicate_confirmed() {
-                // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
-                // which may happen on startup when processing from blockstore processor because the
-                // blocks may not reflect earlier observed gossip votes from before the restart.
-                return;
-            }
+        if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap()
+            && prev_value.frozen_hash() == frozen_hash
+            && prev_value.is_duplicate_confirmed()
+        {
+            // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
+            // which may happen on startup when processing from blockstore processor because the
+            // blocks may not reflect earlier observed gossip votes from before the restart.
+            return;
         }
         let data = FrozenHashVersioned::Current(FrozenHashStatus {
             frozen_hash,
@@ -5240,10 +5237,10 @@ impl Blockstore {
             ShredType::Code => self.get_coding_shred(slot, u64::from(index)),
         }
         .expect("fetch from DuplicateSlots column family failed")?;
-        if let Ok(signature) = shred.retransmitter_signature() {
-            if let Err(err) = shred::layout::set_retransmitter_signature(&mut other, &signature) {
-                error!("set retransmitter signature failed: {err:?}");
-            }
+        if let Ok(signature) = shred.retransmitter_signature()
+            && let Err(err) = shred::layout::set_retransmitter_signature(&mut other, &signature)
+        {
+            error!("set retransmitter signature failed: {err:?}");
         }
         (other != **shred.payload()).then_some(other)
     }

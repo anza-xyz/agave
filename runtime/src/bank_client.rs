@@ -191,10 +191,10 @@ impl SyncClient for BankClient {
         let now = Instant::now();
         loop {
             let response = self.bank.get_signature_status(signature);
-            if let Some(res) = response {
-                if res.is_ok() {
-                    break;
-                }
+            if let Some(res) = response
+                && res.is_ok()
+            {
+                break;
             }
             if now.elapsed().as_secs() > 15 {
                 return Err(TransportError::IoError(io::Error::other(format!(

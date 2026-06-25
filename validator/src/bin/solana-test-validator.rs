@@ -517,65 +517,65 @@ fn main() {
         ..JsonRpcConfig::default_for_test()
     });
 
-    if !accounts_to_clone.is_empty() {
-        if let Err(e) = genesis.clone_accounts(
+    if !accounts_to_clone.is_empty()
+        && let Err(e) = genesis.clone_accounts(
             accounts_to_clone,
             cluster_rpc_client
                 .as_ref()
                 .expect("--clone-account requires --json-rpc-url argument"),
             false,
-        ) {
-            println!("Error: clone_accounts failed: {e}");
-            exit(1);
-        }
+        )
+    {
+        println!("Error: clone_accounts failed: {e}");
+        exit(1);
     }
 
-    if !alt_accounts_to_clone.is_empty() {
-        if let Err(e) = genesis.deep_clone_address_lookup_table_accounts(
+    if !alt_accounts_to_clone.is_empty()
+        && let Err(e) = genesis.deep_clone_address_lookup_table_accounts(
             alt_accounts_to_clone,
             cluster_rpc_client
                 .as_ref()
                 .expect("--deep-clone-address-lookup-table requires --json-rpc-url argument"),
-        ) {
-            println!("Error: alt_accounts_to_clone failed: {e}");
-            exit(1);
-        }
+        )
+    {
+        println!("Error: alt_accounts_to_clone failed: {e}");
+        exit(1);
     }
 
-    if !accounts_to_maybe_clone.is_empty() {
-        if let Err(e) = genesis.clone_accounts(
+    if !accounts_to_maybe_clone.is_empty()
+        && let Err(e) = genesis.clone_accounts(
             accounts_to_maybe_clone,
             cluster_rpc_client
                 .as_ref()
                 .expect("--maybe-clone requires --json-rpc-url argument"),
             true,
-        ) {
-            println!("Error: clone_accounts failed: {e}");
-            exit(1);
-        }
+        )
+    {
+        println!("Error: clone_accounts failed: {e}");
+        exit(1);
     }
 
-    if !upgradeable_programs_to_clone.is_empty() {
-        if let Err(e) = genesis.clone_upgradeable_programs(
+    if !upgradeable_programs_to_clone.is_empty()
+        && let Err(e) = genesis.clone_upgradeable_programs(
             upgradeable_programs_to_clone,
             cluster_rpc_client
                 .as_ref()
                 .expect("--clone-upgradeable-program requires --json-rpc-url argument"),
-        ) {
-            println!("Error: clone_upgradeable_programs failed: {e}");
-            exit(1);
-        }
+        )
+    {
+        println!("Error: clone_upgradeable_programs failed: {e}");
+        exit(1);
     }
 
-    if clone_feature_set {
-        if let Err(e) = genesis.clone_feature_set(
+    if clone_feature_set
+        && let Err(e) = genesis.clone_feature_set(
             cluster_rpc_client
                 .as_ref()
                 .expect("--clone-feature-set requires --json-rpc-url argument"),
-        ) {
-            println!("Error: clone_feature_set failed: {e}");
-            exit(1);
-        }
+        )
+    {
+        println!("Error: clone_feature_set failed: {e}");
+        exit(1);
     }
 
     if matches.is_present("alpenglow") {

@@ -3045,10 +3045,10 @@ impl Bank {
         self.freeze();
         let computed_hash = self.hash();
 
-        if let Some(expected_hash) = self.expected_bank_hash() {
-            if expected_hash != computed_hash {
-                return Err((expected_hash, computed_hash));
-            }
+        if let Some(expected_hash) = self.expected_bank_hash()
+            && expected_hash != computed_hash
+        {
+            return Err((expected_hash, computed_hash));
         }
         Ok(())
     }
@@ -5103,10 +5103,10 @@ impl Bank {
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
         let just_self: Ancestors = Ancestors::from(vec![self.slot()]);
-        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey) {
-            if slot == self.slot() {
-                return Some((account, slot));
-            }
+        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey)
+            && slot == self.slot()
+        {
+            return Some((account, slot));
         }
         None
     }
@@ -5210,10 +5210,10 @@ impl Bank {
         &self,
         signature: &Signature,
     ) -> Option<Result<()>> {
-        if let Some((slot, status)) = self.get_signature_status_slot(signature) {
-            if slot <= self.slot() {
-                return Some(status);
-            }
+        if let Some((slot, status)) = self.get_signature_status_slot(signature)
+            && slot <= self.slot()
+        {
+            return Some(status);
         }
         None
     }
@@ -6044,14 +6044,14 @@ impl Bank {
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
-            if let Some(mut account) = self.get_account_with_fixed_root(feature_id) {
-                if let Some(mut feature) = feature::state::from_account(&account) {
-                    feature.activated_at = Some(self.slot());
-                    if feature::state::to_account(&feature, &mut account).is_some() {
-                        self.store_account(feature_id, &account);
-                    }
-                    info!("Feature {} activated at slot {}", feature_id, self.slot());
+            if let Some(mut account) = self.get_account_with_fixed_root(feature_id)
+                && let Some(mut feature) = feature::state::from_account(&account)
+            {
+                feature.activated_at = Some(self.slot());
+                if feature::state::to_account(&feature, &mut account).is_some() {
+                    self.store_account(feature_id, &account);
                 }
+                info!("Feature {} activated at slot {}", feature_id, self.slot());
             }
         }
 
@@ -6129,40 +6129,40 @@ impl Bank {
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
-        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
-            if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
+        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id())
+            && let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
                 &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
                 self.feature_set
                     .snapshot()
                     .relax_programdata_account_check_migration,
                 "replace_spl_token_with_p_token",
-            ) {
-                warn!(
-                    "Failed to replace SPL Token with p-token buffer '{}': {e}",
-                    feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
-                );
-            }
+            )
+        {
+            warn!(
+                "Failed to replace SPL Token with p-token buffer '{}': {e}",
+                feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
+            );
         }
 
-        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id()) {
-            if let Err(e) = self.upgrade_core_bpf_program(
+        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id())
+            && let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
                 &feature_set::upgrade_bpf_stake_program_to_v5::buffer::id(),
                 "upgrade_stake_program_to_v5",
-            ) {
-                error!("Failed to upgrade Core BPF Stake program: {e}");
-            }
+            )
+        {
+            error!("Failed to upgrade Core BPF Stake program: {e}");
         }
 
-        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5_1::id()) {
-            if let Err(e) = self.upgrade_core_bpf_program(
+        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5_1::id())
+            && let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
                 &feature_set::upgrade_bpf_stake_program_to_v5_1::buffer::id(),
                 "upgrade_stake_program_to_v5_1",
-            ) {
-                error!("Failed to upgrade Core BPF Stake program: {e}");
-            }
+            )
+        {
+            error!("Failed to upgrade Core BPF Stake program: {e}");
         }
     }
 
@@ -6171,37 +6171,37 @@ impl Bank {
         new_feature_activations: &AHashSet<Pubkey>,
     ) {
         for builtin in BUILTINS.iter() {
-            if let Some(feature_id) = builtin.enable_feature_id {
-                if new_feature_activations.contains(&feature_id) {
-                    self.add_builtin(
-                        builtin.program_id,
-                        builtin.name,
-                        ProgramCacheEntry::new_builtin(
-                            self.feature_set.activated_slot(&feature_id).unwrap_or(0),
-                            builtin.name.len(),
-                            builtin.register_fn,
-                        ),
-                    );
-                }
+            if let Some(feature_id) = builtin.enable_feature_id
+                && new_feature_activations.contains(&feature_id)
+            {
+                self.add_builtin(
+                    builtin.program_id,
+                    builtin.name,
+                    ProgramCacheEntry::new_builtin(
+                        self.feature_set.activated_slot(&feature_id).unwrap_or(0),
+                        builtin.name.len(),
+                        builtin.register_fn,
+                    ),
+                );
             }
 
             if let Some(core_bpf_migration_config) = &builtin.core_bpf_migration_config {
                 // If the builtin is set to be migrated to Core BPF on feature
                 // activation, perform the migration which will remove it from
                 // the builtins list and the cache.
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
+                if new_feature_activations.contains(&core_bpf_migration_config.feature_id)
+                    && let Err(e) = self.migrate_builtin_to_core_bpf(
                         &builtin.program_id,
                         core_bpf_migration_config,
                         self.feature_set
                             .snapshot()
                             .relax_programdata_account_check_migration,
-                    ) {
-                        warn!(
-                            "Failed to migrate builtin {} to Core BPF: {}",
-                            builtin.name, e
-                        );
-                    }
+                    )
+                {
+                    warn!(
+                        "Failed to migrate builtin {} to Core BPF: {}",
+                        builtin.name, e
+                    );
                 }
             };
         }
@@ -6210,29 +6210,28 @@ impl Bank {
         // Stateless builtins do not have an `enable_feature_id` since they
         // do not exist on-chain.
         for stateless_builtin in STATELESS_BUILTINS.iter() {
-            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config {
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
-                        &stateless_builtin.program_id,
-                        core_bpf_migration_config,
-                        self.feature_set
-                            .snapshot()
-                            .relax_programdata_account_check_migration,
-                    ) {
-                        warn!(
-                            "Failed to migrate stateless builtin {} to Core BPF: {}",
-                            stateless_builtin.name, e
-                        );
-                    }
-                }
+            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config
+                && new_feature_activations.contains(&core_bpf_migration_config.feature_id)
+                && let Err(e) = self.migrate_builtin_to_core_bpf(
+                    &stateless_builtin.program_id,
+                    core_bpf_migration_config,
+                    self.feature_set
+                        .snapshot()
+                        .relax_programdata_account_check_migration,
+                )
+            {
+                warn!(
+                    "Failed to migrate stateless builtin {} to Core BPF: {}",
+                    stateless_builtin.name, e
+                );
             }
         }
 
         for precompile in get_precompiles() {
-            if let Some(feature_id) = &precompile.feature {
-                if new_feature_activations.contains(feature_id) {
-                    self.add_precompile(&precompile.program_id);
-                }
+            if let Some(feature_id) = &precompile.feature
+                && new_feature_activations.contains(feature_id)
+            {
+                self.add_precompile(&precompile.program_id);
             }
         }
     }
@@ -6254,20 +6253,20 @@ impl Bank {
 
         for feature_id in self.feature_set.inactive() {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id) {
-                if let Some(feature) = feature::state::from_account(&account) {
-                    match feature.activated_at {
-                        None if include_pending => {
-                            // Feature activation is pending
-                            pending.insert(*feature_id);
-                            activated = Some(slot);
-                        }
-                        Some(activation_slot) if slot >= activation_slot => {
-                            // Feature has been activated already
-                            activated = Some(activation_slot);
-                        }
-                        _ => {}
+            if let Some(account) = self.get_account_with_fixed_root(feature_id)
+                && let Some(feature) = feature::state::from_account(&account)
+            {
+                match feature.activated_at {
+                    None if include_pending => {
+                        // Feature activation is pending
+                        pending.insert(*feature_id);
+                        activated = Some(slot);
                     }
+                    Some(activation_slot) if slot >= activation_slot => {
+                        // Feature has been activated already
+                        activated = Some(activation_slot);
+                    }
+                    _ => {}
                 }
             }
             if let Some(slot) = activated {
@@ -6420,10 +6419,10 @@ impl Bank {
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {
-        if slot < &self.slot {
-            if let Ok(slot_hashes) = self.transaction_processor.sysvar_cache().get_slot_hashes() {
-                return slot_hashes.get(slot).is_some();
-            }
+        if slot < &self.slot
+            && let Ok(slot_hashes) = self.transaction_processor.sysvar_cache().get_slot_hashes()
+        {
+            return slot_hashes.get(slot).is_some();
         }
         false
     }

@@ -345,16 +345,16 @@ async fn initialize_state(
                 .ok();
         }
 
-        if let Some(epoch_info) = &epoch_info {
-            if slot_leaders.is_none() {
-                slot_leaders = SlotLeaders::new(
-                    cluster_info,
-                    slot_receiver.slot(),
-                    epoch_info.slots_in_epoch,
-                )
-                .await
-                .ok();
-            }
+        if let Some(epoch_info) = &epoch_info
+            && slot_leaders.is_none()
+        {
+            slot_leaders = SlotLeaders::new(
+                cluster_info,
+                slot_receiver.slot(),
+                epoch_info.slots_in_epoch,
+            )
+            .await
+            .ok();
         }
         if leader_tpu_map.is_some() && epoch_info.is_some() && slot_leaders.is_some() {
             return Ok((

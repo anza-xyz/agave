@@ -651,17 +651,15 @@ where
                     {
                         let statuses = result.value;
                         for (signature, status) in pending_signatures_chunk.iter().zip(statuses) {
-                            if let Some(status) = status {
-                                if status.satisfies_commitment(self.rpc_client.commitment()) {
-                                    if let Some((i, _)) = pending_transactions.remove(signature) {
-                                        progress.confirmed_transactions += 1;
-                                        if status.err.is_some() {
-                                            progress_bar
-                                                .println(format!("Failed transaction: {status:?}"));
-                                        }
-                                        transaction_errors[i] = status.err;
-                                    }
+                            if let Some(status) = status
+                                && status.satisfies_commitment(self.rpc_client.commitment())
+                                && let Some((i, _)) = pending_transactions.remove(signature)
+                            {
+                                progress.confirmed_transactions += 1;
+                                if status.err.is_some() {
+                                    progress_bar.println(format!("Failed transaction: {status:?}"));
                                 }
+                                transaction_errors[i] = status.err;
                             }
                         }
                     }

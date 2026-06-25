@@ -3715,14 +3715,14 @@ fn setup_scan(
                 bank_id,
                 |maybe_account| {
                     ready_.store(true, Ordering::Relaxed);
-                    if let Some((pubkey, _, _)) = maybe_account {
-                        if *pubkey == stall_key {
-                            loop {
-                                if exit_.load(Ordering::Relaxed) {
-                                    break;
-                                } else {
-                                    sleep(Duration::from_millis(10));
-                                }
+                    if let Some((pubkey, _, _)) = maybe_account
+                        && *pubkey == stall_key
+                    {
+                        loop {
+                            if exit_.load(Ordering::Relaxed) {
+                                break;
+                            } else {
+                                sleep(Duration::from_millis(10));
                             }
                         }
                     }

@@ -1184,15 +1184,14 @@ impl SystemMonitorService {
                     Self::process_net_stats(&mut udp_stats);
                 }
             }
-            if let Some(xdp_network_config_report) = &config.xdp_network_config_report {
-                if xdp_network_config_timer
+            if let Some(xdp_network_config_report) = &config.xdp_network_config_report
+                && xdp_network_config_timer
                     .should_update_ext(SAMPLE_INTERVAL_XDP_NETWORK_CONFIG_MS, false)
-                {
-                    let metrics = xdp_network_config_metrics.get_or_insert_with(|| {
-                        Self::load_xdp_network_config_metrics(xdp_network_config_report)
-                    });
-                    Self::report_xdp_network_config(xdp_network_config_report, metrics);
-                }
+            {
+                let metrics = xdp_network_config_metrics.get_or_insert_with(|| {
+                    Self::load_xdp_network_config_metrics(xdp_network_config_report)
+                });
+                Self::report_xdp_network_config(xdp_network_config_report, metrics);
             }
             if config.report_os_memory_stats && mem_timer.should_update(SAMPLE_INTERVAL_MEM_MS) {
                 Self::report_mem_stats();

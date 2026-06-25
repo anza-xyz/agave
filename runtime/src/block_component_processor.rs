@@ -416,21 +416,21 @@ impl BlockComponentProcessor {
         )?;
 
         // Send finalization cert(s) to consensus pool
-        if let Some((finalize_cert, notarize_cert)) = pool_input {
-            if let Some(sender) = finalization_cert_sender {
-                if let Some(notarize_cert) = notarize_cert {
-                    let cert = ConsensusMessage::Certificate(notarize_cert);
-                    // TODO blocking send.
-                    let _ = sender
-                        .send(cert)
-                        .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
-                }
-                let cert = ConsensusMessage::Certificate(finalize_cert);
+        if let Some((finalize_cert, notarize_cert)) = pool_input
+            && let Some(sender) = finalization_cert_sender
+        {
+            if let Some(notarize_cert) = notarize_cert {
+                let cert = ConsensusMessage::Certificate(notarize_cert);
                 // TODO blocking send.
                 let _ = sender
                     .send(cert)
                     .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
             }
+            let cert = ConsensusMessage::Certificate(finalize_cert);
+            // TODO blocking send.
+            let _ = sender
+                .send(cert)
+                .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
         }
 
         self.has_footer = true;

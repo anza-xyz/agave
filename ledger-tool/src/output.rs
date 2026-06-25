@@ -812,10 +812,10 @@ impl AccountsScanner {
                 // output_config.data_slice_config will have been created to
                 // yield an empty slice which will make data.empty() below true
                 let account_data = cli_account.keyed_account.account.data.decode();
-                if let Some(data) = account_data {
-                    if !data.is_empty() {
-                        println!("{:?}", data.hex_dump());
-                    }
+                if let Some(data) = account_data
+                    && !data.is_empty()
+                {
+                    println!("{:?}", data.hex_dump());
                 }
             }
         }
@@ -884,10 +884,10 @@ impl fmt::Display for CliAccounts {
         for account in &self.accounts {
             write!(f, "{account}")?;
             let account_data = account.keyed_account.account.data.decode();
-            if let Some(data) = account_data {
-                if !data.is_empty() {
-                    writeln!(f, "{:?}", data.hex_dump())?;
-                }
+            if let Some(data) = account_data
+                && !data.is_empty()
+            {
+                writeln!(f, "{:?}", data.hex_dump())?;
             }
         }
         Ok(())

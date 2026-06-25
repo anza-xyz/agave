@@ -106,11 +106,11 @@ fn test_rpc_send_tx() {
 
         let result: Option<TransactionStatus> =
             serde_json::from_value(json["result"]["value"][0].clone()).unwrap();
-        if let Some(result) = result.as_ref() {
-            if result.err.is_none() {
-                confirmed_tx = true;
-                break;
-            }
+        if let Some(result) = result.as_ref()
+            && result.err.is_none()
+        {
+            confirmed_tx = true;
+            break;
         }
 
         sleep(Duration::from_millis(500));
