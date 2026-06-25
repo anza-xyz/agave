@@ -4104,7 +4104,9 @@ impl AccountsDb {
 
     /// Purges each slot in `removed_slots` from the write cache (and the accounts index). Slots
     /// no longer present in the cache are skipped. This never touches backing storage, so it
-    /// cannot delete a flushed (rooted) slot's data. Returns whether any slot was in the cache.
+    /// cannot delete a flushed (rooted) slot's data. Returns whether any slot was actually
+    /// removed from the cache. This allows the snapshot minimizer to determine whether
+    /// it should purge the storage as well
     fn purge_slots_from_cache<'a>(
         &self,
         removed_slots: impl Iterator<Item = &'a Slot>,
