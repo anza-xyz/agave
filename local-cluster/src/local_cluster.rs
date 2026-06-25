@@ -1276,7 +1276,7 @@ fn create_connection_cache(
     tpu_connection_pool_size: usize,
 ) -> Arc<ConnectionCache> {
     Arc::new(ConnectionCache::new_with_client_options(
-        "connection_cache_local_cluster_quic_staked",
+        solana_metrics::names::connection_cache::CONNECTION_CACHE_LOCAL_CLUSTER_QUIC_STAKED,
         tpu_connection_pool_size,
         Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
         Some((

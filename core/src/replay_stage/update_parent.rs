@@ -319,7 +319,7 @@ pub(super) fn handle_abandoned_bank(
     };
 
     datapoint_info!(
-        "replay-stage-update-parent",
+        solana_metrics::names::replay::REPLAY_STAGE_UPDATE_PARENT,
         ("slot", bank_slot, i64),
         ("old_parent_slot", bank.parent_slot(), i64),
         ("new_parent_slot", new_parent_slot, i64),

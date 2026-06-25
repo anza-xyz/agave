@@ -253,7 +253,7 @@ impl CostTracker {
         let number_of_contended_accounts = self.find_number_of_contended_accounts();
 
         datapoint_info!(
-            "cost_tracker_stats",
+            solana_metrics::names::cost_model::COST_TRACKER_STATS,
             "is_leader" => is_leader.to_string(),
             ("bank_slot", bank_slot, i64),
             ("block_cost", self.block_cost(), i64),

@@ -455,7 +455,7 @@ impl Tower {
                 );
                 debug!("observed root {}", vote_state.root_slot.unwrap_or(0) as i64);
                 datapoint_info!(
-                    "tower-observed",
+                    solana_metrics::names::consensus::TOWER_OBSERVED,
                     (
                         "slot",
                         vote_state
@@ -624,7 +624,7 @@ impl Tower {
             // If the previous vote did not send a timestamp due to clock error,
             // use the last good timestamp + 1
             datapoint_info!(
-                "refresh-timestamp-missing",
+                solana_metrics::names::consensus::REFRESH_TIMESTAMP_MISSING,
                 ("heaviest-slot", heaviest_slot_on_same_fork, i64),
                 ("last-timestamp", self.last_timestamp.timestamp, i64),
                 ("last-slot", self.last_timestamp.slot, i64),
@@ -723,7 +723,7 @@ impl Tower {
         let new_root = self.root();
 
         datapoint_info!(
-            "tower-vote",
+            solana_metrics::names::consensus::TOWER_VOTE,
             ("latest", vote_slot, i64),
             ("root", new_root, i64)
         );
@@ -779,7 +779,7 @@ impl Tower {
                 return Some(timestamp);
             } else {
                 datapoint_info!(
-                    "backwards-timestamp",
+                    solana_metrics::names::consensus::BACKWARDS_TIMESTAMP,
                     ("slot", current_slot, i64),
                     ("timestamp", timestamp, i64),
                     ("last-timestamp", self.last_timestamp.timestamp, i64),
@@ -999,7 +999,10 @@ impl Tower {
                      ledger."
                 );
                 warn!("{message}");
-                datapoint_warn!("tower_warn", ("warn", message, String));
+                datapoint_warn!(
+                    solana_metrics::names::consensus::TOWER_WARN,
+                    ("warn", message, String)
+                );
             }
             &empty_ancestors
         };
@@ -1512,7 +1515,10 @@ impl Tower {
                      ROOTED by us; VOTING will be SUSPENDED UNTIL {last_voted_slot}!",
                 );
                 error!("{message}");
-                datapoint_error!("tower_error", ("error", message, String));
+                datapoint_error!(
+                    solana_metrics::names::validator::TOWER_ERROR,
+                    ("error", message, String)
+                );
 
                 // Let's pass-through adjust_lockouts_with_slot_history just for sanitization,
                 // using a synthesized SlotHistory.

@@ -130,7 +130,7 @@ impl SentNotificationStats {
     fn maybe_report(&self) {
         if self.last_report.should_update(METRICS_REPORT_INTERVAL_MS) {
             datapoint_info!(
-                "rpc_pubsub-sent_notifications",
+                solana_metrics::names::rpc::RPC_PUBSUB_SENT_NOTIFICATIONS,
                 (
                     "num_account",
                     self.num_account.swap(0, Ordering::Relaxed) as i64,
@@ -445,7 +445,7 @@ async fn listen(
             return Err(e);
         }
     };
-    let counter = TokenCounter::new("rpc_pubsub_connections");
+    let counter = TokenCounter::new(solana_metrics::names::rpc::RPC_PUBSUB_CONNECTIONS);
     loop {
         select! {
             result = listener.accept() => match result {

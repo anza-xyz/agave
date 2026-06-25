@@ -917,15 +917,15 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         request: ReadRowsRequest,
     ) -> Result<tonic::Response<tonic::Streaming<ReadRowsResponse>>> {
         let datapoint_bigtable = if table_name == "blocks" {
-            "bigtable_blocks"
+            solana_metrics::names::storage_bigtable::BIGTABLE_BLOCKS
         } else if table_name == "tx" {
-            "bigtable_tx"
+            solana_metrics::names::storage_bigtable::BIGTABLE_TX
         } else if table_name == "tx-by-addr" {
-            "bigtable_tx-by-addr"
+            solana_metrics::names::storage_bigtable::BIGTABLE_TX_BY_ADDR
         } else if table_name == "entries" {
-            "bigtable_entries"
+            solana_metrics::names::storage_bigtable::BIGTABLE_ENTRIES
         } else {
-            "bigtable_unknown"
+            solana_metrics::names::storage_bigtable::BIGTABLE_UNKNOWN
         };
         datapoint_info!(datapoint_bigtable, ("read_rows", 1, i64));
         tokio::time::timeout(

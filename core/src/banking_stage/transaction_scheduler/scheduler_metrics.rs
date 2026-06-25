@@ -96,7 +96,8 @@ impl IntervalSchedulerCountMetrics {
         const REPORT_INTERVAL_MS: u64 = 1000;
         if self.interval.should_update(REPORT_INTERVAL_MS) {
             if should_report {
-                self.metrics.report("banking_stage_scheduler_counts", None);
+                self.metrics
+                    .report(solana_metrics::names::banking::SCHEDULER_COUNTS, None);
             }
             self.metrics.reset();
         }
@@ -108,8 +109,10 @@ impl SlotSchedulerCountMetrics {
         if self.slot != slot {
             // Only report if there was an assigned slot.
             if self.slot.is_some() {
-                self.metrics
-                    .report("banking_stage_scheduler_slot_counts", self.slot);
+                self.metrics.report(
+                    solana_metrics::names::banking::SCHEDULER_SLOT_COUNTS,
+                    self.slot,
+                );
             }
             self.metrics.reset();
             self.slot = slot;
@@ -308,7 +311,8 @@ impl IntervalSchedulerTimingMetrics {
         const REPORT_INTERVAL_MS: u64 = 1000;
         if self.interval.should_update(REPORT_INTERVAL_MS) {
             if should_report {
-                self.metrics.report("banking_stage_scheduler_timing", None);
+                self.metrics
+                    .report(solana_metrics::names::banking::SCHEDULER_TIMING, None);
             }
             self.metrics.reset();
         }
@@ -320,8 +324,10 @@ impl SlotSchedulerTimingMetrics {
         if self.slot != slot {
             // Only report if there was an assigned slot.
             if self.slot.is_some() {
-                self.metrics
-                    .report("banking_stage_scheduler_slot_timing", self.slot);
+                self.metrics.report(
+                    solana_metrics::names::banking::SCHEDULER_SLOT_TIMING,
+                    self.slot,
+                );
             }
             self.metrics.reset();
             self.slot = slot;
@@ -443,7 +449,7 @@ impl SchedulingDetails {
                     .checked_div(self.num_schedule_calls),
             ) {
                 let datapoint = create_datapoint!(
-                    @point "scheduling_details",
+                    @point solana_metrics::names::banking::SCHEDULING_DETAILS,
                     ("num_schedule_calls", self.num_schedule_calls, i64),
                     ("min_starting_queue_size", self.min_starting_queue_size, i64),
                     ("max_starting_queue_size", self.max_starting_queue_size, i64),

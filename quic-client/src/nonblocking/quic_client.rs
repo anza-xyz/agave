@@ -574,7 +574,10 @@ impl ClientConnection for QuicClientConnection {
                     self.server_addr(),
                     e
                 );
-                datapoint_warn!("send-wire-async", ("failure", 1, i64),);
+                datapoint_warn!(
+                    solana_metrics::names::quic_client::SEND_WIRE_ASYNC,
+                    ("failure", 1, i64),
+                );
                 self.connection_stats
                     .add_client_stats(&stats, num_packets, false);
                 e.into()

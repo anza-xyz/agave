@@ -238,7 +238,7 @@ pub fn archive_snapshot(
     );
 
     datapoint_info!(
-        "archive-snapshot-package",
+        solana_metrics::names::snapshots::ARCHIVE_SNAPSHOT_PACKAGE,
         ("slot", snapshot_slot, i64),
         ("archive_format", archive_format.to_string(), String),
         ("duration_ms", timer.as_ms(), i64),

@@ -148,7 +148,7 @@ impl ClusterSlotsService {
             const REPORT_INTERVAL: Duration = Duration::from_secs(2);
             if last_stats.elapsed() > REPORT_INTERVAL {
                 datapoint_info!(
-                    "cluster_slots_service-timing",
+                    solana_metrics::names::cluster_slots::CLUSTER_SLOTS_SERVICE_TIMING,
                     (
                         "lowest_slot_elapsed",
                         cluster_slots_service_timing.lowest_slot_elapsed,

@@ -3161,10 +3161,15 @@ async fn send_deploy_messages(
 
             let connection_cache = {
                 #[cfg(feature = "dev-context-only-utils")]
-                let cache =
-                    ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
+                let cache = ConnectionCache::new_quic_for_tests(
+                    solana_metrics::names::connection_cache::CONNECTION_CACHE_CLI_PROGRAM_QUIC,
+                    1,
+                );
                 #[cfg(not(feature = "dev-context-only-utils"))]
-                let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
+                let cache = ConnectionCache::new_quic(
+                    solana_metrics::names::connection_cache::CONNECTION_CACHE_CLI_PROGRAM_QUIC,
+                    1,
+                );
                 cache
             };
             let transaction_errors = match connection_cache {

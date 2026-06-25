@@ -580,7 +580,7 @@ fn slot_meta_is_full(last_index: Option<u64>, consumed: u64) -> bool {
     // Should never happen
     if last_index.map(|ix| consumed > ix + 1).unwrap_or_default() {
         datapoint_error!(
-            "blockstore_error",
+            solana_metrics::names::ledger::BLOCKSTORE_ERROR,
             (
                 "error",
                 format!(

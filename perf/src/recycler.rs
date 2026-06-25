@@ -163,7 +163,7 @@ impl<T: Default + Reset> RecyclerX<T> {
         let reuse = self.stats.reuse.load(Ordering::Relaxed);
         let freed = self.stats.freed.load(Ordering::Relaxed);
         datapoint_debug!(
-            "recycler",
+            solana_metrics::names::perf::RECYCLER,
             ("gc_len", len as i64, i64),
             ("total", total as i64, i64),
             ("freed", freed as i64, i64),

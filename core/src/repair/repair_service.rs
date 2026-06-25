@@ -373,7 +373,7 @@ impl RepairStats {
         if repair_total > 0 {
             let nonzero_num = |x| if x == 0 { None } else { Some(x) };
             datapoint_info!(
-                "repair_service-my_requests",
+                solana_metrics::names::repair::REPAIR_SERVICE_MY_REQUESTS,
                 ("repair-total", repair_total, i64),
                 ("shred-count", self.shred.count, i64),
                 ("highest-shred-count", self.highest_shred.count, i64),
@@ -408,7 +408,7 @@ pub struct RepairTiming {
 impl RepairTiming {
     fn report(&self) {
         datapoint_info!(
-            "repair_service-repair_timing",
+            solana_metrics::names::repair::REPAIR_SERVICE_REPAIR_TIMING,
             ("set-root-us", self.set_root_us, i64),
             ("dump-slots-us", self.dump_slots_us, i64),
             ("get-votes-us", self.get_votes_us, i64),
@@ -486,7 +486,7 @@ impl BestRepairsStats {
 
     fn report(&self) {
         datapoint_info!(
-            "serve_repair-best-repairs",
+            solana_metrics::names::repair::SERVE_REPAIR_BEST_REPAIRS,
             ("call-count", self.call_count, i64),
             ("orphan-slots", self.num_orphan_slots, i64),
             ("orphan-repairs", self.num_orphan_repairs, i64),

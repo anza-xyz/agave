@@ -227,15 +227,15 @@ impl Stats {
         // sum of elapsed time in each thread
         let thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
         let datapoint_name = if startup || was_startup {
-            "accounts_index_startup"
+            solana_metrics::names::accounts_db::ACCOUNTS_INDEX_STARTUP
         } else {
-            "accounts_index"
+            solana_metrics::names::accounts_db::ACCOUNTS_INDEX
         };
         if storage.is_disk_index_enabled() {
             if was_startup {
                 // these stats only apply at startup
                 datapoint_info!(
-                    "accounts_index_startup",
+                    solana_metrics::names::accounts_db::ACCOUNTS_INDEX_STARTUP,
                     (
                         "entries_created",
                         disk.map(|disk| disk

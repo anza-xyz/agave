@@ -606,10 +606,13 @@ impl StandardBroadcastRun {
 
     fn report_and_reset_stats(&mut self, was_interrupted: bool) {
         let (name, slot_broadcast_time) = if was_interrupted {
-            ("broadcast-process-shreds-interrupted-stats", None)
+            (
+                solana_metrics::names::turbine::BROADCAST_PROCESS_SHREDS_INTERRUPTED_STATS,
+                None,
+            )
         } else {
             (
-                "broadcast-process-shreds-stats",
+                solana_metrics::names::turbine::BROADCAST_PROCESS_SHREDS_STATS,
                 Some(self.slot_broadcast_start.elapsed()),
             )
         };

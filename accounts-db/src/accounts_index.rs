@@ -250,13 +250,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             account_maps,
             bin_calculator,
             program_id_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
-                "program_id_index_stats",
+                solana_metrics::names::accounts_db::PROGRAM_ID_INDEX_STATS,
             ),
             spl_token_mint_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
-                "spl_token_mint_index_stats",
+                solana_metrics::names::accounts_db::SPL_TOKEN_MINT_INDEX_STATS,
             ),
             spl_token_owner_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
-                "spl_token_owner_index_stats",
+                solana_metrics::names::accounts_db::SPL_TOKEN_OWNER_INDEX_STATS,
             ),
             roots_tracker: RwLock::<RootsTracker>::default(),
             storage,
@@ -595,7 +595,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                         locked_entry.slot_list_read_lock()
                                     );
                                     datapoint_warn!(
-                                        "accounts_db-unexpected-unref-zero",
+                                        solana_metrics::names::accounts_db::ACCOUNTS_DB_UNEXPECTED_UNREF_ZERO,
                                         ("old_ref", old_ref, i64),
                                         ("pubkey", pubkey.to_string(), String),
                                     );

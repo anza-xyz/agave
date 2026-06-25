@@ -1261,7 +1261,7 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
         start.stop();
 
         datapoint_info!(
-            "compute_bank_stats-best_slot",
+            solana_metrics::names::consensus::COMPUTE_BANK_STATS_BEST_SLOT,
             ("computed_slot", bank.slot(), i64),
             ("overall_best_slot", best_overall_slot, i64),
             ("overall_best_hash", best_overall_hash.to_string(), String),

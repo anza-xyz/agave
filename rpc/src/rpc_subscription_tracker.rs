@@ -208,7 +208,7 @@ impl SubscriptionControl {
             subscriber_count: AtomicUsize::new(0),
             sender,
             broadcast_sender,
-            counter: TokenCounter::new("rpc_pubsub_total_subscriptions"),
+            counter: TokenCounter::new(solana_metrics::names::rpc::RPC_PUBSUB_TOTAL_SUBSCRIPTIONS),
         }))
     }
 
@@ -225,7 +225,10 @@ impl SubscriptionControl {
         // not per deduplicated upstream stream, so duplicate subscribes to the
         // same params each consume their own slot.
         let subscriber_guard = SubscriberCountGuard::try_reserve(&self.0).ok_or_else(|| {
-            inc_new_counter_info!("rpc-subscription-refused-limit-reached", 1);
+            inc_new_counter_info!(
+                solana_metrics::names::rpc::RPC_SUBSCRIPTION_REFUSED_LIMIT_REACHED,
+                1
+            );
             Error::TooManySubscriptions
         })?;
 
@@ -268,7 +271,7 @@ impl SubscriptionControl {
                     .send(NotificationEntry::Subscribed(inner.params.clone(), id).into());
                 entry.insert(weak_ref);
                 datapoint_info!(
-                    "rpc-subscription",
+                    solana_metrics::names::rpc::RPC_SUBSCRIPTION,
                     ("total", self.0.subscriptions.len(), i64)
                 );
                 Ok(SubscriptionToken(
@@ -580,7 +583,7 @@ impl Drop for SubscriptionTokenInner {
                     .send(NotificationEntry::Unsubscribed(self.params.clone(), self.id).into());
                 entry.remove();
                 datapoint_info!(
-                    "rpc-subscription",
+                    solana_metrics::names::rpc::RPC_SUBSCRIPTION,
                     ("total", self.control.subscriptions.len(), i64)
                 );
             }

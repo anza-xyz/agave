@@ -62,7 +62,7 @@ pub(crate) fn report_new_epoch_metrics(
     metrics: RewardsMetrics,
 ) {
     datapoint_info!(
-        "bank-new_from_parent-new_epoch_timings",
+        solana_metrics::names::runtime::BANK_NEW_FROM_PARENT_NEW_EPOCH_TIMINGS,
         ("epoch", epoch, i64),
         ("slot", slot, i64),
         ("parent_slot", parent_slot, i64),
@@ -122,7 +122,7 @@ pub(crate) fn report_new_bank_metrics(
     timings: NewBankTimings,
 ) {
     datapoint_info!(
-        "bank-new_from_parent-heights",
+        solana_metrics::names::runtime::BANK_NEW_FROM_PARENT_HEIGHTS,
         ("slot", slot, i64),
         ("block_height", block_height, i64),
         ("parent_slot", parent_slot, i64),
@@ -187,7 +187,7 @@ pub(crate) struct RewardsStoreMetrics {
 
 pub(crate) fn report_partitioned_reward_metrics(bank: &Bank, timings: RewardsStoreMetrics) {
     datapoint_info!(
-        "bank-partitioned_epoch_rewards_credit",
+        solana_metrics::names::runtime::BANK_PARTITIONED_EPOCH_REWARDS_CREDIT,
         ("slot", bank.slot(), i64),
         ("epoch", bank.epoch(), i64),
         ("block_height", bank.block_height(), i64),
@@ -232,7 +232,7 @@ pub(crate) fn report_loaded_programs_stats<T: ForkGraph>(cache: &ProgramCache<T>
     let empty_entries = stats.empty_entries.load(Ordering::Relaxed);
     let water_level = stats.water_level.load(Ordering::Relaxed);
     datapoint_info!(
-        "loaded-programs-cache-stats",
+        solana_metrics::names::runtime::LOADED_PROGRAMS_CACHE_STATS,
         ("slot", slot, i64),
         ("hits", hits, i64),
         ("misses", misses, i64),

@@ -528,7 +528,7 @@ type StorageSizeAndCountList = Vec<(AccountsFileId, StorageSizeAndCount)>;
 impl GenerateIndexTimings {
     pub fn report(&self, startup_stats: &StartupStats) {
         datapoint_info!(
-            "generate_index",
+            solana_metrics::names::accounts_db::GENERATE_INDEX,
             ("overall_us", self.total_time_us, i64),
             ("index_time_us", self.index_time, i64),
             // we cannot accurately measure index insertion time because of many threads and lock contention
@@ -2085,7 +2085,7 @@ impl AccountsDb {
 
         self.clean_accounts_stats.report();
         datapoint_info!(
-            "clean_accounts",
+            solana_metrics::names::accounts_db::CLEAN_ACCOUNTS,
             ("max_clean_root", max_clean_root_inclusive, Option<i64>),
             ("total_us", measure_all.as_us(), i64),
             (
@@ -2798,7 +2798,7 @@ impl AccountsDb {
                              during shrink"
                         );
                         datapoint_warn!(
-                            "accounts_db-shink_pubkey_missing_from_index",
+                            solana_metrics::names::accounts_db::ACCOUNTS_DB_SHINK_PUBKEY_MISSING_FROM_INDEX,
                             ("store_slot", slot, i64),
                             ("pubkey", pubkey.to_string(), String),
                         );
@@ -3347,7 +3347,7 @@ impl AccountsDb {
         }
 
         datapoint_info!(
-            "shrink_candidate_slots",
+            solana_metrics::names::accounts_db::SHRINK_CANDIDATE_SLOTS,
             ("select_time_us", select_time_us, i64),
             ("shrink_all_us", shrink_all_us, i64),
             ("candidates_count", candidates_count, i64),
@@ -3884,7 +3884,10 @@ impl AccountsDb {
                      slot: {slot}, storage_location: {storage_location:?}, load_hint: \
                      {load_hint:?}",
                 );
-                datapoint_warn!("accounts_db-do_load_warn", ("warn", message, String));
+                datapoint_warn!(
+                    solana_metrics::names::accounts_db::ACCOUNTS_DB_DO_LOAD_WARN,
+                    ("warn", message, String)
+                );
                 true
             } else {
                 false
@@ -4326,8 +4329,10 @@ impl AccountsDb {
             .safety_checks_elapsed
             .fetch_add(safety_checks_elapsed.as_us(), Ordering::Relaxed);
         self.purge_slots_from_cache_and_store(non_roots, &self.external_purge_slots_stats);
-        self.external_purge_slots_stats
-            .report("external_purge_slots_stats", Some(1000));
+        self.external_purge_slots_stats.report(
+            solana_metrics::names::accounts_db::EXTERNAL_PURGE_SLOTS_STATS,
+            Some(1000),
+        );
     }
 
     pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
@@ -4354,7 +4359,10 @@ impl AccountsDb {
             remove_slots.iter().map(|(slot, _)| slot),
             &remove_unrooted_purge_stats,
         );
-        remove_unrooted_purge_stats.report("remove_unrooted_slots_purge_slots_stats", None);
+        remove_unrooted_purge_stats.report(
+            solana_metrics::names::accounts_db::REMOVE_UNROOTED_SLOTS_PURGE_SLOTS_STATS,
+            None,
+        );
     }
 
     /// Calculates the `AccountLtHash` of `account`
@@ -4462,7 +4470,7 @@ impl AccountsDb {
         flush_stats.accumulate(&flush_stats_aggressively);
 
         datapoint_info!(
-            "accounts_db-flush_accounts_cache",
+            solana_metrics::names::accounts_db::ACCOUNTS_DB_FLUSH_ACCOUNTS_CACHE,
             ("total_new_cleaned_roots", total_new_cleaned_roots, i64),
             ("num_cleaned_roots_flushed", num_cleaned_roots_flushed, i64),
             ("total_new_excess_roots", total_new_excess_roots, i64),
@@ -4780,7 +4788,7 @@ impl AccountsDb {
         };
 
         datapoint_info!(
-            "accounts_db-stores",
+            solana_metrics::names::accounts_db::ACCOUNTS_DB_STORES,
             ("total_count", total_count, i64),
             ("total_bytes", total_bytes, i64),
             ("total_alive_bytes", total_alive_bytes, i64),
@@ -5944,7 +5952,7 @@ impl AccountsDb {
         if self.stats.last_store_report.should_update(1000) {
             let read_cache_stats = self.read_only_accounts_cache.get_and_reset_stats();
             datapoint_info!(
-                "accounts_db_store_timings",
+                solana_metrics::names::accounts_db::ACCOUNTS_DB_STORE_TIMINGS,
                 (
                     "stakes_cache_check_and_store_us",
                     self.stats
@@ -6011,7 +6019,7 @@ impl AccountsDb {
             );
 
             datapoint_info!(
-                "accounts_db_store_timings2",
+                solana_metrics::names::accounts_db::ACCOUNTS_DB_STORE_TIMINGS2,
                 (
                     "create_store_count",
                     self.stats.create_store_count.swap(0, Ordering::Relaxed),

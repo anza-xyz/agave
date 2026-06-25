@@ -112,7 +112,7 @@ impl Bank {
             );
 
             datapoint_info!(
-                "epoch-rewards-status-update",
+                solana_metrics::names::runtime::EPOCH_REWARDS_STATUS_UPDATE,
                 ("slot", self.slot(), i64),
                 ("block_height", height, i64),
                 ("partition_us", partition_us, i64),
@@ -150,7 +150,7 @@ impl Bank {
 
         if height.saturating_add(1) >= distribution_end_exclusive {
             datapoint_info!(
-                "epoch-rewards-status-update",
+                solana_metrics::names::runtime::EPOCH_REWARDS_STATUS_UPDATE,
                 ("slot", self.slot(), i64),
                 ("block_height", height, i64),
                 ("active", 0, i64),

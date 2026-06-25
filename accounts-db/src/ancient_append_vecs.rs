@@ -171,7 +171,7 @@ impl AncientSlotInfos {
                 if aligned_capacity < item.alive_bytes {
                     // should not happen, but if it does, submit warn log it and continue
                     datapoint_warn!(
-                        "aligned_capacity_less_than_alive_bytes",
+                        solana_metrics::names::accounts_db::ALIGNED_CAPACITY_LESS_THAN_ALIVE_BYTES,
                         ("aligned_capacity", aligned_capacity, i64),
                         ("alive_bytes", item.alive_bytes, i64)
                     );
@@ -472,7 +472,10 @@ impl AccountsDb {
             &accounts_to_combine.target_slots_sorted,
             &tuning,
         ) {
-            datapoint_info!("shrink_ancient_stats", ("high_slot", 1, i64));
+            datapoint_info!(
+                solana_metrics::names::accounts_db::SHRINK_ANCIENT_STATS,
+                ("high_slot", 1, i64)
+            );
             log::info!(
                 "unable to ancient pack: highest available slot: {:?}, lowest required slot: {:?}",
                 accounts_to_combine.target_slots_sorted.last(),

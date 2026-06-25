@@ -224,7 +224,7 @@ impl VoteStorage {
             });
         self.num_unprocessed_votes -= total_evicted;
         datapoint_info!(
-            "latest_unprocessed_votes-epoch-boundary",
+            solana_metrics::names::banking::LATEST_UNPROCESSED_VOTES_EPOCH_BOUNDARY,
             ("epoch", bank.epoch(), i64),
             ("evicted_unstaked_votes", unstaked_votes, i64),
             (

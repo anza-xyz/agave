@@ -170,7 +170,7 @@ impl ConsensusPoolStats {
             last_request_time: _,
         } = self;
         datapoint_info!(
-            "consensus_pool",
+            solana_metrics::names::votor::CONSENSUS_POOL,
             ("conflicting_votes", *conflicting_votes as i64, i64),
             ("event_safe_to_skip", *event_safe_to_skip as i64, i64),
             (
@@ -185,9 +185,9 @@ impl ConsensusPoolStats {
             ("out_of_range_votes", *out_of_range_votes as i64, i64),
             ("out_of_range_certs", *out_of_range_certs as i64, i64),
         );
-        ingested_votes.record("consensus_pool_ingested_votes");
-        certs_ingested.record("consensus_pool_ingested_certs");
-        certs_generated.record("consensus_pool_generated_certs");
+        ingested_votes.record(solana_metrics::names::votor::CONSENSUS_POOL_INGESTED_VOTES);
+        certs_ingested.record(solana_metrics::names::votor::CONSENSUS_POOL_INGESTED_CERTS);
+        certs_generated.record(solana_metrics::names::votor::CONSENSUS_POOL_GENERATED_CERTS);
     }
 
     pub(super) fn maybe_report(&mut self) {

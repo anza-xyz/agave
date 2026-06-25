@@ -288,7 +288,11 @@ impl BroadcastStage {
                 Error::RecvTimeout(RecvTimeoutError::Timeout)
                 | Error::ClusterInfo(ClusterInfoError::NoPeers) => (), // TODO: Why are the unit-tests throwing hundreds of these?
                 _ => {
-                    inc_new_counter_error!("streamer-broadcaster-error", 1, 1);
+                    inc_new_counter_error!(
+                        solana_metrics::names::turbine::STREAMER_BROADCASTER_ERROR,
+                        1,
+                        1
+                    );
                     error!("{name} broadcaster error: {e:?}");
                 }
             }
@@ -503,7 +507,10 @@ fn update_peer_stats(
     last_datapoint_submit: &AtomicInterval,
 ) {
     if last_datapoint_submit.should_update(1000) {
-        cluster_nodes.submit_metrics("cluster_nodes_broadcast", timestamp());
+        cluster_nodes.submit_metrics(
+            solana_metrics::names::turbine::CLUSTER_NODES_BROADCAST,
+            timestamp(),
+        );
     }
 }
 

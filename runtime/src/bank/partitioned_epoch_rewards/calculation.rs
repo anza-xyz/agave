@@ -209,7 +209,7 @@ impl Bank {
         );
 
         datapoint_info!(
-            "epoch-rewards-status-update",
+            solana_metrics::names::runtime::EPOCH_REWARDS_STATUS_UPDATE,
             ("start_slot", slot, i64),
             ("calculation_block_height", self.block_height(), i64),
             ("active", 1, i64),
@@ -353,7 +353,7 @@ impl Bank {
         };
 
         datapoint_info!(
-            "epoch_rewards",
+            solana_metrics::names::runtime::EPOCH_REWARDS,
             ("slot", self.slot, i64),
             ("epoch", prev_epoch, i64),
             ("validator_rewards", distributed_lamports, i64),

@@ -90,11 +90,15 @@ impl SlotStats {
     }
 
     fn report(&self, slot: Slot) {
-        self.report_location(slot, "slot_stats_tracking_complete", &self.original);
+        self.report_location(
+            slot,
+            solana_metrics::names::ledger::SLOT_STATS_TRACKING_COMPLETE,
+            &self.original,
+        );
         if Self::should_report(&self.alternate) {
             self.report_location(
                 slot,
-                "slot_stats_tracking_complete_alternate",
+                solana_metrics::names::ledger::SLOT_STATS_TRACKING_COMPLETE_ALTERNATE,
                 &self.alternate,
             );
         }
@@ -184,7 +188,7 @@ impl SlotsStats {
                 .unwrap_or(-1);
             match location {
                 BlockLocation::Original => datapoint_info!(
-                    "shred_insert_is_full",
+                    solana_metrics::names::ledger::SHRED_INSERT_IS_FULL,
                     ("slot", slot, i64),
                     ("total_time_ms", total_time_ms, i64),
                     ("last_index", last_index, i64),
@@ -192,7 +196,7 @@ impl SlotsStats {
                     ("num_recovered", num_recovered, i64),
                 ),
                 BlockLocation::Alternate { .. } => datapoint_info!(
-                    "shred_insert_is_full_alternate",
+                    solana_metrics::names::ledger::SHRED_INSERT_IS_FULL_ALTERNATE,
                     ("slot", slot, i64),
                     ("total_time_ms", total_time_ms, i64),
                     ("last_index", last_index, i64),

@@ -57,14 +57,14 @@ impl DeadSlotLogLevel {
         match self {
             Self::Info => {
                 datapoint_info!(
-                    "replay-stage-mark_dead_slot",
+                    solana_metrics::names::replay::REPLAY_STAGE_MARK_DEAD_SLOT,
                     ("error", err, String),
                     ("slot", slot, i64)
                 );
             }
             Self::Error => {
                 datapoint_error!(
-                    "replay-stage-mark_dead_slot",
+                    solana_metrics::names::replay::REPLAY_STAGE_MARK_DEAD_SLOT,
                     ("error", err, String),
                     ("slot", slot, i64)
                 );
@@ -190,7 +190,7 @@ fn mark_soft_dead_slot(
 ) {
     let slot = bank.slot();
     datapoint_info!(
-        "replay-stage-soft_dead_slot",
+        solana_metrics::names::replay::REPLAY_STAGE_SOFT_DEAD_SLOT,
         ("error", format!("error: {err:?}"), String),
         ("slot", slot, i64),
     );

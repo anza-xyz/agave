@@ -45,7 +45,7 @@ impl BroadcastStats for TransmitShredsStats {
     fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
         if was_interrupted {
             datapoint_info!(
-                "broadcast-transmit-shreds-interrupted-stats",
+                solana_metrics::names::turbine::BROADCAST_TRANSMIT_SHREDS_INTERRUPTED_STATS,
                 "is_xdp" => self.is_xdp.to_string(),
                 ("slot", slot as i64, i64),
                 ("transmit_elapsed", self.transmit_elapsed as i64, i64),
@@ -59,7 +59,7 @@ impl BroadcastStats for TransmitShredsStats {
             );
         } else {
             datapoint_info!(
-                "broadcast-transmit-shreds-stats",
+                solana_metrics::names::turbine::BROADCAST_TRANSMIT_SHREDS_STATS,
                 "is_xdp" => self.is_xdp.to_string(),
                 ("slot", slot as i64, i64),
                 (
@@ -95,7 +95,7 @@ impl BroadcastStats for InsertShredsStats {
     fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
         if was_interrupted {
             datapoint_info!(
-                "broadcast-insert-shreds-interrupted-stats",
+                solana_metrics::names::turbine::BROADCAST_INSERT_SHREDS_INTERRUPTED_STATS,
                 ("slot", slot as i64, i64),
                 (
                     "insert_shreds_elapsed",
@@ -106,7 +106,7 @@ impl BroadcastStats for InsertShredsStats {
             );
         } else {
             datapoint_info!(
-                "broadcast-insert-shreds-stats",
+                solana_metrics::names::turbine::BROADCAST_INSERT_SHREDS_STATS,
                 ("slot", slot as i64, i64),
                 (
                     "end_to_end_elapsed",

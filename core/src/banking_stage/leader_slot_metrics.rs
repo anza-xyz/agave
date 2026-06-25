@@ -195,7 +195,7 @@ impl LeaderSlotPacketCountMetrics {
             end_of_slot_unprocessed_buffer_len,
         } = self;
         datapoint_info!(
-            "banking_stage-vote_slot_packet_counts",
+            solana_metrics::names::banking::BANKING_STAGE_VOTE_SLOT_PACKET_COUNTS,
             ("slot", slot, i64),
             ("total_new_valid_packets", total_new_valid_packets, i64),
             (
@@ -287,7 +287,7 @@ impl LeaderSlotPacketCountMetrics {
 
 fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, slot: Slot) {
     datapoint_info!(
-        "banking_stage-vote_slot_transaction_errors",
+        solana_metrics::names::banking::BANKING_STAGE_VOTE_SLOT_TRANSACTION_ERRORS,
         ("slot", slot as i64, i64),
         ("total", errors.total.0 as i64, i64),
         ("account_in_use", errors.account_in_use.0 as i64, i64),
@@ -458,7 +458,7 @@ impl VotePacketCountMetrics {
 
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-vote_packet_counts",
+            solana_metrics::names::banking::BANKING_STAGE_VOTE_PACKET_COUNTS,
             ("slot", slot, i64),
             ("dropped_gossip_votes", self.dropped_gossip_votes, i64),
             ("dropped_tpu_votes", self.dropped_tpu_votes, i64)

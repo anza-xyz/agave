@@ -89,7 +89,7 @@ impl Bank {
 
         let seen_accounts_freelist_stats = seen_accounts_freelist().stats();
         datapoint_info!(
-            "bank-accounts_lt_hash",
+            solana_metrics::names::runtime::BANK_ACCOUNTS_LT_HASH,
             ("slot", self.slot(), i64),
             ("num_jobs", num_jobs_total, i64),
             ("finish_us", finish_time.as_micros(), i64),

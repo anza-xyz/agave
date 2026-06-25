@@ -154,7 +154,7 @@ impl AggregateCommitmentService {
             aggregate_commitment_time.stop();
 
             datapoint_info!(
-                "block-commitment-cache",
+                solana_metrics::names::core::BLOCK_COMMITMENT_CACHE,
                 (
                     "aggregate-commitment-ms",
                     aggregate_commitment_time.as_ms() as i64,

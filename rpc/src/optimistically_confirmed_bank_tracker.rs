@@ -323,7 +323,7 @@ impl OptimisticallyConfirmedBankTracker {
                 } else if slot > bank_forks.read().unwrap().root() {
                     pending_optimistically_confirmed_banks.insert(slot);
                 } else {
-                    inc_new_counter_info!("dropped-already-rooted-optimistic-bank-notification", 1);
+                    inc_new_counter_info!(solana_metrics::names::rpc::DROPPED_ALREADY_ROOTED_OPTIMISTIC_BANK_NOTIFICATION, 1);
                 }
 
                 // Send slot notification regardless of whether the bank is replayed
