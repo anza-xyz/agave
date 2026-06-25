@@ -119,13 +119,8 @@ pub struct Tvu {
     bls_sigverifier: JoinHandle<()>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
-    /// Owns the votor QUIC datagram endpoint for Tvu's lifetime. Dropping it
-    /// cancels the endpoint's inbound/outbound loops (see `Drop` for
-    /// `QuicDatagramEndpoint`); declared before `_votor_runtime` so the loops
-    /// are signalled to stop before the runtime they run on is torn down.
     _votor_endpoint: QuicDatagramEndpoint,
-    /// Owns the votor QUIC datagram runtime for Tvu's lifetime. `None` when
-    /// running on an ambient runtime (test-validator).
+    // `None` when running on an ambient runtime (test-validator).
     _votor_runtime: Option<TokioRuntime>,
 }
 
