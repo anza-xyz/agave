@@ -680,6 +680,7 @@ mod tests {
             LegacyMessage, Message, MessageHeader, SanitizedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{LoadedAddresses, LoadedMessage},
+            v1,
         },
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
@@ -2270,6 +2271,66 @@ mod tests {
         assert!(matches!(
             load_result,
             TransactionLoadResult::NotLoaded(TransactionError::InvalidWritableAccount),
+        ));
+    }
+
+    #[test]
+    fn test_load_accounts_v1_instructions_sysvar_overflow() {
+        const NUM_INSTRUCTIONS: usize = 64;
+        const ACCOUNTS_PER_INSTRUCTION: usize = 31;
+
+        let fee_payer = Pubkey::new_unique();
+        let instructions_sysvar = sysvar::instructions::id();
+        let program = native_loader::id();
+        let message = v1::Message::new(
+            MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 2,
+            },
+            v1::TransactionConfig::empty(),
+            Hash::default(),
+            vec![fee_payer, instructions_sysvar, program],
+            vec![
+                CompiledInstruction {
+                    program_id_index: 2,
+                    accounts: vec![1; ACCOUNTS_PER_INSTRUCTION],
+                    data: vec![],
+                };
+                NUM_INSTRUCTIONS
+            ],
+        );
+        message.validate().unwrap();
+        assert!(
+            1 + message.size() + Signature::default().as_ref().len() <= v1::MAX_TRANSACTION_SIZE
+        );
+
+        let sanitized_message =
+            SanitizedMessage::V1(v1::CachedMessage::new(message, &HashSet::new()));
+        let mock_bank = TestCallbacks::default();
+        let mut account_loader = (&mock_bank).into();
+
+        let fee_payer_account = AccountSharedData::new(200, 0, &Pubkey::default());
+        let load_result = load_transaction(
+            &mut account_loader,
+            &sanitized_message,
+            Ok(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: fee_payer_account,
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
+                },
+                ..ValidatedTransactionDetails::default()
+            }),
+            &mut TransactionErrorMetrics::default(),
+            &Rent::default(),
+        );
+
+        assert!(matches!(
+            load_result,
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::InstructionsSysvarOverflow,
+                ..
+            }),
         ));
     }
 
