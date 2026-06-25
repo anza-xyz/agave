@@ -20,9 +20,8 @@ bench = false
 [features]
 agave-unstable-api = []
 dev-context-only-utils = ["solana-gossip/dev-context-only-utils"]
-dummy-for-ci-check = ["agave-unstable-api", "ffi"]
-ffi = ["dep:prost", "dep:protosol", "dev-context-only-utils"]
-frozen-abi = []
+dummy-for-ci-check = ["ffi"]
+ffi = ["dep:prost", "dep:protosol", "agave-unstable-api", "dev-context-only-utils"]
 
 [dependencies]
 bv = { workspace = true, features = ["serde"] }
