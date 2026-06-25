@@ -701,7 +701,9 @@ mod tests {
             signature,
             rank: rank as u16,
         };
-        SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_verified(bank, msg)])
+        SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_verified_vote(
+            bank, msg,
+        )])
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {

@@ -12,6 +12,7 @@ use {
         },
     },
     agave_votor_messages::{
+        consensus_message::VoteMessage,
         metric_types::ConsensusMetricsEvent,
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
@@ -67,8 +68,13 @@ impl UnverifiedVotePayload {
                 .verify_signature(&self.vote_message.signature, &payload)
                 .is_ok()
         };
+        let vote_msg = VoteMessage {
+            vote: self.vote_message.vote,
+            signature: self.vote_message.signature,
+            rank: self.vote_message.rank,
+        };
         let sig_verified_vote_batch =
-            SigVerifiedVoteBatch::new_from_unverified_vote(root_bank, self.vote_message)?;
+            SigVerifiedVoteBatch::new_from_verified_vote(root_bank, vote_msg);
         is_verified.then_some(VerifiedVotePayload {
             vote_message: sig_verified_vote_batch,
             sender_vote_account_pubkeys: vec![self.sender_vote_account_pubkey],
@@ -224,7 +230,7 @@ fn verify_votes(
         thread_pool,
     );
     if let Some(aggregate_signature) = optimistic_result {
-        let Some(sig_verified_vote_batch) = SigVerifiedVoteBatch::new_from_unverified_votes(
+        let Some(sig_verified_vote_batch) = SigVerifiedVoteBatch::new_from_verified_votes(
             root_bank,
             vote_payload_to_sign,
             unverified_votes.iter().map(|v| v.vote_message.rank),

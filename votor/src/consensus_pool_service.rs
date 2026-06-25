@@ -18,7 +18,8 @@ use {
         voting_service::BLSOp,
     },
     agave_bls_sigverify::{
-        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
+        generated_cert_types::GeneratedCertTypes,
+        sig_verified_messages::{SigVerifiedBatch, SigVerifiedVoteBatch},
     },
     agave_votor_messages::{
         certificate::Certificate,
@@ -629,7 +630,13 @@ impl ConsensusPoolService {
         let receiver = ctx.own_message_receiver.clone();
         for batch in std::iter::once(first)
             .chain(receiver.try_iter())
-            .map(|m| SigVerifiedBatch::new_verified(root_bank, m))
+            .map(|m| match m {
+                ConsensusMessage::Certificate(c) => SigVerifiedBatch::Certificates(vec![c]),
+                ConsensusMessage::Vote(v) => {
+                    let msg = SigVerifiedVoteBatch::new_from_verified_vote(root_bank, v);
+                    SigVerifiedBatch::Votes(vec![msg])
+                }
+            })
         {
             Self::process_batch(ctx, batch, consensus_pool, events, standstill_timer, stats)?;
         }
@@ -785,14 +792,15 @@ mod tests {
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
-            let message = SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_verified(
-                &root_bank,
-                VoteMessage {
-                    vote: notarize_vote,
-                    signature: bls_keypair.sign(&vote_serialized).into(),
-                    rank: my_rank as u16,
-                },
-            )]);
+            let message =
+                SigVerifiedBatch::Votes(vec![SigVerifiedVoteBatch::new_from_verified_vote(
+                    &root_bank,
+                    VoteMessage {
+                        vote: notarize_vote,
+                        signature: bls_keypair.sign(&vote_serialized).into(),
+                        rank: my_rank as u16,
+                    },
+                )]);
 
             let mut stats = ConsensusPoolServiceStats::new();
             let (new_finalized_slot, new_certificates_to_send) = ConsensusPoolService::add_batch(

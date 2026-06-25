@@ -1,9 +1,6 @@
 use {
     agave_votor_messages::{
-        certificate::Certificate,
-        consensus_message::{ConsensusMessage, VoteMessage},
-        unverified_vote_message::UnverifiedVoteMessage,
-        vote::Vote,
+        certificate::Certificate, consensus_message::VoteMessage, vote::Vote,
         wire::VotePayloadToSign,
     },
     bitvec::vec::BitVec,
@@ -23,15 +20,6 @@ pub enum SigVerifiedBatch {
 }
 
 impl SigVerifiedBatch {
-    pub fn new_verified(bank: &Bank, msg: ConsensusMessage) -> Self {
-        match msg {
-            ConsensusMessage::Certificate(cert) => Self::Certificates(vec![cert]),
-            ConsensusMessage::Vote(msg) => {
-                Self::Votes(vec![SigVerifiedVoteBatch::new_verified(bank, msg)])
-            }
-        }
-    }
-
     /// Returns the length of the batch
     pub fn len(&self) -> usize {
         match self {
@@ -66,7 +54,12 @@ pub struct SigVerifiedVoteBatch {
 }
 
 impl SigVerifiedVoteBatch {
-    pub fn new_verified(bank: &Bank, msg: VoteMessage) -> Self {
+    /// Creates a sig verified vote batch from a VoteMessage.
+    ///
+    /// WARN: this is only public to enable handling already verified votes that are sent within
+    /// the validator.  Think carefully before using this in production code.
+    pub fn new_from_verified_vote(bank: &Bank, msg: VoteMessage) -> Self {
+        // Since the `msg` is supposed to be verified, the unwraps below should be safe.
         let rank_map = bank
             .epoch_stakes_from_slot(msg.vote.slot())
             .unwrap()
@@ -87,29 +80,11 @@ impl SigVerifiedVoteBatch {
         }
     }
 
-    pub(crate) fn new_from_unverified_vote(
-        bank: &Bank,
-        msg: UnverifiedVoteMessage,
-    ) -> Option<Self> {
-        let rank_map = bank
-            .epoch_stakes_from_slot(msg.vote.slot())?
-            .bls_pubkey_to_rank_map();
-        let stake = rank_map.get_pubkey_stake_entry(msg.rank as usize)?.stake;
-        let max_validators = rank_map.len();
-        if msg.rank as usize >= max_validators {
-            return None;
-        }
-        let mut ranks = BitVec::repeat(false, max_validators);
-        ranks.set(msg.rank as usize, true);
-        Some(Self {
-            vote: msg.vote,
-            signature: msg.signature.try_as_projective().ok()?,
-            stake,
-            ranks,
-        })
-    }
-
-    pub(crate) fn new_from_unverified_votes(
+    /// Creates a sig verified vote batch from a list of verified votes.
+    ///
+    /// WARN: this function should not be exposed outside of this crate.  This crate uses it after
+    /// it has verified the votes.
+    pub(crate) fn new_from_verified_votes(
         bank: &Bank,
         vote_payload_to_sign: VotePayloadToSign,
         ranks_iter: impl Iterator<Item = u16>,
@@ -122,13 +97,13 @@ impl SigVerifiedVoteBatch {
         let mut ranks = BitVec::repeat(false, max_validators);
         let mut total_stake = None;
         for rank in ranks_iter {
+            if *ranks.get(rank as usize)? {
+                continue;
+            }
             let stake = rank_map.get_pubkey_stake_entry(rank as usize)?.stake;
             match total_stake {
                 None => total_stake = Some(stake),
                 Some(t) => total_stake = Some(t.saturating_add(stake.get())),
-            }
-            if rank as usize >= max_validators {
-                return None;
             }
             ranks.set(rank as usize, true);
         }
