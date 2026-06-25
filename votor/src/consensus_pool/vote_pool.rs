@@ -354,29 +354,24 @@ impl VotePool {
         total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+    ) -> Option<Certificate> {
         let cert_type = CertificateType::Skip(batch.vote().slot());
         if completed_certs.contains_key(&cert_type) {
-            return Ok(None);
+            return None;
         }
-        if let Some(cert) = self
-            .skip
-            .try_build_cert(cert_type, total_stake, completed_certs)
-        {
-            return Ok(Some(cert));
+        match (self.skip.stake == 0, self.skip_fallback.stake == 0) {
+            (true, true) => None,
+            (true, false) => self
+                .skip
+                .try_build_cert(cert_type, total_stake, completed_certs),
+            (false, true) => {
+                self.skip_fallback
+                    .try_build_cert(cert_type, total_stake, completed_certs)
+            }
+            (false, false) => {
+                try_build_from_entries(cert_type, total_stake, &self.skip, &self.skip_fallback)
+            }
         }
-        if let Some(cert) =
-            self.skip_fallback
-                .try_build_cert(cert_type, total_stake, completed_certs)
-        {
-            return Ok(Some(cert));
-        }
-        if let Some(cert) =
-            try_build_from_entries(cert_type, total_stake, &self.skip, &self.skip_fallback)
-        {
-            return Ok(Some(cert));
-        }
-        Ok(None)
     }
 
     fn try_produce_genesis_cert(
@@ -419,7 +414,7 @@ impl VotePool {
                 .into_iter()
                 .collect()),
             Vote::Skip(_) | Vote::SkipFallback(_) => Ok(self
-                .try_produce_skip_cert(total_stake, batch, completed_certs)?
+                .try_produce_skip_cert(total_stake, batch, completed_certs)
                 .into_iter()
                 .collect()),
             Vote::Genesis(genesis) => Ok(self
