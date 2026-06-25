@@ -3808,6 +3808,30 @@ impl ReplayStage {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn mark_replay_result_dead_slot(
+        process_active_banks_context: &ProcessActiveBanksContext,
+        bank: &BankWithScheduler,
+        err: &BlockstoreProcessorError,
+        progress: &mut ProgressMap,
+        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
+        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
+        tbft_structs: &mut Option<&mut TowerBFTStructures>,
+    ) {
+        let root = process_active_banks_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .root();
+        let mut dead_slot_context = process_active_banks_context.dead_slot_context(
+            root,
+            duplicate_slots_to_repair,
+            purge_repair_slot_counter,
+            tbft_structs.as_deref_mut(),
+        );
+        mark_replay_dead_slot(bank, err, progress, &mut dead_slot_context);
+    }
+
     fn process_replay_results(
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
@@ -3854,14 +3878,15 @@ impl ReplayStage {
                         continue;
                     }
                     Err(err) => {
-                        let root = bank_forks.read().unwrap().root();
-                        let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-                            root,
+                        Self::mark_replay_result_dead_slot(
+                            process_active_banks_context,
+                            bank,
+                            err,
+                            progress,
                             duplicate_slots_to_repair,
                             purge_repair_slot_counter,
-                            tbft_structs.as_deref_mut(),
+                            &mut tbft_structs,
                         );
-                        mark_replay_dead_slot(bank, err, progress, &mut dead_slot_context);
                         // don't try to run the below logic to check if the bank is completed
                         continue;
                     }
@@ -3930,14 +3955,15 @@ impl ReplayStage {
                     },
                 );
                 if let Err(err) = replay_res.and(verify_res) {
-                    let root = bank_forks.read().unwrap().root();
-                    let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-                        root,
+                    Self::mark_replay_result_dead_slot(
+                        process_active_banks_context,
+                        bank,
+                        &err,
+                        progress,
                         duplicate_slots_to_repair,
                         purge_repair_slot_counter,
-                        tbft_structs.as_deref_mut(),
+                        &mut tbft_structs,
                     );
-                    mark_replay_dead_slot(bank, &err, progress, &mut dead_slot_context);
                     // don't try to run the remaining normal processing for the completed bank
                     continue;
                 }
@@ -3994,14 +4020,8 @@ impl ReplayStage {
                         warn!("Unable to write bank hash details file: {err}");
                     }
 
-                    let root = bank_forks.read().unwrap().root();
-                    let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-                        root,
-                        duplicate_slots_to_repair,
-                        purge_repair_slot_counter,
-                        tbft_structs.as_deref_mut(),
-                    );
-                    mark_replay_dead_slot(
+                    Self::mark_replay_result_dead_slot(
+                        process_active_banks_context,
                         bank,
                         &BlockstoreProcessorError::BankHashMismatch(
                             bank_slot,
@@ -4009,7 +4029,9 @@ impl ReplayStage {
                             computed_hash,
                         ),
                         progress,
-                        &mut dead_slot_context,
+                        duplicate_slots_to_repair,
+                        purge_repair_slot_counter,
+                        &mut tbft_structs,
                     );
 
                     continue;
