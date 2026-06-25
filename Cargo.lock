@@ -8691,7 +8691,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef3bc859fc036ed490146793557386cbfae614ebba4adc704c37d94350824ed4"
 dependencies = [
  "solana-address 2.6.1",
- "solana-define-syscall 5.1.0",
+ "solana-define-syscall 5.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "solana-program-error",
 ]
 
