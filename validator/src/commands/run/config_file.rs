@@ -234,7 +234,7 @@ pub(crate) fn parse_config_file(path: &Path) -> Result<ConfigFile, ConfigFileErr
 
 fn parse_str(text: &str) -> Result<ConfigFile, ConfigFileError> {
     let raw: RawFile = toml::from_str(text)?;
-    let xdp = raw.xdp.map(build_xdp_from_raw).transpose()?;
+    let xdp = raw.xdp.map(xdp_config_from_raw).transpose()?;
     let threads = raw
         .threads
         .iter()
@@ -243,7 +243,7 @@ fn parse_str(text: &str) -> Result<ConfigFile, ConfigFileError> {
     Ok(ConfigFile { xdp, threads })
 }
 
-fn build_xdp_from_raw(raw: RawXdp) -> Result<XdpConfig, ConfigFileError> {
+fn xdp_config_from_raw(raw: RawXdp) -> Result<XdpConfig, ConfigFileError> {
     let entries = raw.queue_to_cpu_mapping.into_vec();
     if entries.is_empty() {
         return Err(ConfigFileError::Mapping("must not be empty".to_string()));
@@ -267,7 +267,10 @@ fn build_xdp_from_raw(raw: RawXdp) -> Result<XdpConfig, ConfigFileError> {
         queues.push(QueueCpuBinding { queue, cpu });
     }
 
-    Ok(XdpConfig::new(raw.interface, queues, raw.zero_copy))
+    // An empty interface string means "unset"; auto-detect rather than try to bind
+    // an interface named "".
+    let interface = raw.interface.filter(|name| !name.is_empty());
+    Ok(XdpConfig::new(interface, queues, raw.zero_copy))
 }
 
 #[cfg(test)]
@@ -288,6 +291,13 @@ mod tests {
         assert_eq!(c.interface, None);
         assert!(!c.zero_copy);
         assert_eq!(c.queues, vec![QueueCpuBinding { queue: 0, cpu: 8 }]);
+    }
+
+    #[test]
+    fn empty_interface_is_auto_detect() {
+        // An empty string is treated as unset, not a literal interface named "".
+        let c = xdp("[xdp]\ninterface = \"\"\nqueue_to_cpu_mapping = \"0:8\"\n");
+        assert_eq!(c.interface, None);
     }
 
     #[test]

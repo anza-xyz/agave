@@ -1471,10 +1471,12 @@ fn resolve_poh_pinned_cpu_core(file_config: &ConfigFile) -> Option<usize> {
     file_config.thread("poh").map(|thread| thread.cpu)
 }
 
-/// Build the effective XDP config by layering the CLI flags over `file_xdp`
-/// (precedence cli > config), or `None` when XDP is disabled (`--no-xdp` or init).
-/// Auto-selection avoids the CPUs in `exclusive`, and the resolved XDP queue CPUs
-/// are recorded back into it (they are exclusive too), erroring on any overlap.
+/// Build the effective XDP config from the CLI flags or `file_xdp`, or `None` when
+/// XDP is disabled (`--no-xdp` or init). The CLI overrides at section granularity:
+/// if any XDP flag is given, the CLI fully defines the config and the file's
+/// `[xdp]` section is ignored. Auto-selection avoids the CPUs in `exclusive`, and
+/// the resolved XDP queue CPUs are recorded back into it (they are exclusive too),
+/// erroring on any overlap.
 #[cfg(target_os = "linux")]
 fn build_xdp_config(
     matches: &ArgMatches,
@@ -1493,9 +1495,6 @@ fn build_xdp_config(
         );
     }
 
-    // Configuration is layered with precedence cli > config: the base is the
-    // optional `[xdp]` config section, which the CLI flags below override field by
-    // field.
     let cli_interface = matches
         .value_of("xdp_interface")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
@@ -1505,16 +1504,25 @@ fn build_xdp_config(
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
 
-    // Interface: the CLI flag wins, else the config file's value, else auto-detect.
+    // Any XDP flag on the CLI means the CLI fully owns the XDP config; the file's
+    // `[xdp]` section is ignored rather than merged field by field (the CLI cannot
+    // express every field, so a partial merge would be surprising).
+    let file_xdp = if cli_interface.is_some() || cli_zero_copy || cli_cpu_cores.is_some() {
+        None
+    } else {
+        file_xdp
+    };
+
+    // Interface: the CLI flag, else the config file's value, else auto-detect.
     let interface = cli_interface
         .map(str::to_string)
         .or_else(|| file_xdp.and_then(|x| x.interface.clone()));
 
-    // Zero-copy: a CLI flag can only turn it on; otherwise inherit the config file.
+    // Zero-copy: enabled by the CLI flag, else inherited from the config file.
     let zero_copy = cli_zero_copy || file_xdp.is_some_and(|x| x.zero_copy);
 
-    // Queue -> CPU bindings: --xdp-cpu-cores overrides the config file, which
-    // overrides a single auto-selected core.
+    // Queue -> CPU bindings: --xdp-cpu-cores, else the config file, else a single
+    // auto-selected core.
     let queues: Vec<QueueCpuBinding> = if let Some(cpu_str) = cli_cpu_cores {
         // The CLI only expresses a CPU list; map it onto queues sequentially
         // (queue i -> cpus[i]).
@@ -1853,16 +1861,34 @@ mod xdp_tests {
     fn test_config_file_values_used_without_cli_overrides() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        // No interface or CPU flags: those come from the file; --xdp-zero-copy
-        // only adds zero-copy on top.
-        let file_config = parse_file("[xdp]\nqueue_to_cpu_mapping = \"2:5\"\n");
-        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-zero-copy"]);
+        // With no XDP CLI flags, every value comes from the file.
+        let file_config = parse_file("[xdp]\nzero_copy = true\nqueue_to_cpu_mapping = \"2:5\"\n");
+        let matches = app.get_matches_from(vec!["agave-validator"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
             .unwrap()
             .expect("config file must enable XDP");
         assert_eq!(config.interface, None);
         assert!(config.zero_copy);
         assert_eq!(config.queues, vec![QueueCpuBinding { queue: 2, cpu: 5 }]);
+    }
+
+    #[test]
+    fn test_any_xdp_cli_flag_ignores_file_xdp_section() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // The file sets interface, zero-copy and queues, but a single XDP CLI flag
+        // means the CLI fully owns XDP, so the whole [xdp] section is ignored.
+        let file_config = parse_file(
+            "[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = [\"0:3\", \
+             \"1:4\"]\n",
+        );
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5"]);
+        let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(config.interface, None, "file interface must be ignored");
+        assert!(!config.zero_copy, "file zero_copy must be ignored");
+        assert_eq!(config.queues, vec![QueueCpuBinding { queue: 0, cpu: 5 }]);
     }
 
     #[test]
