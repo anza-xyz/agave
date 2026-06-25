@@ -19,7 +19,7 @@ use {
         ConfirmationProgress, ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks,
         process_bank_0,
     },
-    crossbeam_channel::bounded,
+    crossbeam_channel::{bounded, unbounded},
     itertools::Itertools,
     solana_account::{ReadableAccount, state_traits::StateMut},
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -662,6 +662,51 @@ fn test_handle_new_root_ahead_of_highest_super_majority_root() {
     assert!(progress.get(&root).is_some());
     assert!(progress.get(&confirmed_root).is_some());
     assert!(progress.get(&fork).is_none());
+}
+
+#[test]
+fn test_process_set_root_command_prunes_progress() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        leader_schedule_cache,
+        my_pubkey,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0) / (tr(1)) / (tr(2))), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    assert!(bank_forks.read().unwrap().get(2).is_some());
+    assert!(progress.get(&2).is_some());
+
+    let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+    let context = ProcessBankForksContext {
+        bank_forks: bank_forks.clone(),
+        blockstore,
+        snapshot_controller: None,
+        bank_notification_sender: None,
+        rpc_subscriptions: None,
+        drop_bank_sender,
+        leader_schedule_cache,
+    };
+    ReplayStage::process_set_root_command(
+        SetRootCommand {
+            parent_slot: 0,
+            new_root: 1,
+            highest_super_majority_root: None,
+        },
+        &context,
+        &my_pubkey,
+        &mut progress,
+    );
+
+    assert_eq!(bank_forks.read().unwrap().root(), 1);
+    assert!(bank_forks.read().unwrap().get(2).is_none());
+    assert!(progress.get(&1).is_some());
+    assert!(progress.get(&2).is_none());
 }
 
 #[test]
