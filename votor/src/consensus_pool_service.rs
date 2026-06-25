@@ -792,15 +792,14 @@ mod tests {
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
-            let message =
-                SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
-                    &root_bank,
-                    VoteMessage {
-                        vote: notarize_vote,
-                        signature: bls_keypair.sign(&vote_serialized).into(),
-                        rank: my_rank as u16,
-                    },
-                )]);
+            let message = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
+                &root_bank,
+                VoteMessage {
+                    vote: notarize_vote,
+                    signature: bls_keypair.sign(&vote_serialized).into(),
+                    rank: my_rank as u16,
+                },
+            )]);
 
             let mut stats = ConsensusPoolServiceStats::new();
             let (new_finalized_slot, new_certificates_to_send) = ConsensusPoolService::add_batch(

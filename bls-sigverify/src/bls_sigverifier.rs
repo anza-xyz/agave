@@ -766,12 +766,10 @@ mod tests {
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
         // Both messages were eventually delivered (no silent drop).
         let bank = ctx.verifier.sharable_banks.root();
-        let msg1 = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
-            &bank, msg1,
-        )]);
-        let msg2 = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
-            &bank, msg2,
-        )]);
+        let msg1 =
+            SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(&bank, msg1)]);
+        let msg2 =
+            SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(&bank, msg2)]);
         assert_eq!(m1_recv, msg1);
         assert_eq!(m2_recv, msg2);
         // pool_sent counts every message that made it onto the channel,

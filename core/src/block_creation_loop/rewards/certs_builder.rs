@@ -2,9 +2,7 @@ use {
     crate::block_creation_loop::rewards::msg_types::{
         RewardRequest, RewardRespSucc, RewardResponse,
     },
-    agave_bls_sigverify::{
-        rewards::rewards_wants_vote, sig_verified_messages::VoteAggregate,
-    },
+    agave_bls_sigverify::{rewards::rewards_wants_vote, sig_verified_messages::VoteAggregate},
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
     crossbeam_channel::RecvError,
     entry::Entry,
