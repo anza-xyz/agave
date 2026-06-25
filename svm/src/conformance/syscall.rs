@@ -3,7 +3,7 @@
 use {
     crate::conformance::{
         callback::DefaultCallback,
-        fd_err_map::{UnpackedResult, unpack_stable_result},
+        err::{UnpackedResult, unpack_stable_result},
         instr::context::InstrContext,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         serialization::{SerializedParameters, push_and_serialize_parameters},

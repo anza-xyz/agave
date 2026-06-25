@@ -2,7 +2,7 @@
 
 use {
     crate::conformance::{
-        fd_err_map::FiredancerErrorCode,
+        err::elf_error_code,
         fd_hash::{fd_hash_u64_without_seed, fd_hash_without_seed},
         feature_set::feature_set_from_proto,
     },
@@ -39,7 +39,7 @@ pub fn execute_elf_loader(input: &ProtoElfLoaderCtx) -> ProtoElfLoaderEffects {
         Ok(executable) => executable,
         Err(err) => {
             return ProtoElfLoaderEffects {
-                err_code: err.error_code() as u32,
+                err_code: elf_error_code(&err),
                 ..Default::default()
             };
         }
