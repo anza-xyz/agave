@@ -544,9 +544,9 @@ fn try_build_from_entries(
 mod tests {
     use {
         super::*,
-        crate::{
-            common::conflicting_types,
-            consensus_pool::{get_total_stake, tests::create_bank_forks},
+        crate::consensus_pool::{
+            get_total_stake,
+            tests::{conflicting_types, create_bank_forks},
         },
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},

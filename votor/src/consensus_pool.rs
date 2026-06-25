@@ -572,7 +572,7 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
-        crate::{common::conflicting_types, tests::get_cluster_info},
+        crate::tests::get_cluster_info,
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             vote::{Vote, VoteType},
@@ -598,6 +598,39 @@ mod tests {
         std::sync::{Arc, RwLock},
         test_case::test_case,
     };
+
+    pub(crate) fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
+        match vote_type {
+            VoteType::Finalize => &[
+                VoteType::NotarizeFallback,
+                VoteType::Skip,
+                VoteType::SkipFallback,
+                VoteType::Genesis,
+            ],
+            VoteType::Notarize => &[
+                VoteType::Skip,
+                VoteType::NotarizeFallback,
+                VoteType::Genesis,
+            ],
+            VoteType::NotarizeFallback => {
+                &[VoteType::Finalize, VoteType::Notarize, VoteType::Genesis]
+            }
+            VoteType::Skip => &[
+                VoteType::Finalize,
+                VoteType::Notarize,
+                VoteType::SkipFallback,
+                VoteType::Genesis,
+            ],
+            VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize, VoteType::Genesis],
+            VoteType::Genesis => &[
+                VoteType::Finalize,
+                VoteType::Notarize,
+                VoteType::NotarizeFallback,
+                VoteType::Skip,
+                VoteType::SkipFallback,
+            ],
+        }
+    }
 
     fn get_key(bank: &Bank, slot: Slot, rank: u16) -> Pubkey {
         let epoch_stakes = bank.epoch_stakes_from_slot(slot).unwrap();
