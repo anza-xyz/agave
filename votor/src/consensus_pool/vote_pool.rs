@@ -7,12 +7,12 @@ use {
         vote::Vote,
     },
     bitvec::vec::BitVec,
-    solana_bls_signatures::{Signature as BLSSignature, SignatureProjective},
+    solana_bls_signatures::{BlsError, Signature as BLSSignature, SignatureProjective},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_signer_store::{encode_base2, encode_base3},
+    solana_signer_store::{EncodeError, encode_base2, encode_base3},
     std::{
         collections::{BTreeMap, HashMap, HashSet, hash_map::Entry as HashMapEntry},
         num::NonZero,
@@ -27,17 +27,27 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
     BitVec::repeat(false, max_validators)
 }
 
-fn get_validators(root_bank: &Bank, batch: &SigVerifiedVoteBatch) -> impl Iterator<Item = Pubkey> {
-    let epoch_stakes = root_bank
-        .epoch_stakes_from_slot(batch.vote().slot())
-        .unwrap();
-    let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-    batch.ranks().iter_ones().map(|ind| {
-        bls_pubkey_to_rank_map
-            .get_pubkey_stake_entry(ind)
-            .unwrap()
-            .vote_account_pubkey
-    })
+fn get_validators(
+    root_bank: &Bank,
+    batch: &SigVerifiedVoteBatch,
+) -> Result<impl Iterator<Item = Result<Pubkey, VotePoolAddVoteError>>, VotePoolAddVoteError> {
+    let vote_slot = batch.vote().slot();
+    let rank_map = match root_bank.epoch_stakes_from_slot(vote_slot) {
+        None => {
+            return Err(VotePoolAddVoteError::NoEpochStakes {
+                root_slot: root_bank.slot(),
+                vote_slot,
+            });
+        }
+        Some(epoch_stakes) => epoch_stakes.bls_pubkey_to_rank_map(),
+    };
+    Ok(batch
+        .ranks()
+        .iter_ones()
+        .map(|rank| match rank_map.get_pubkey_stake_entry(rank) {
+            None => Err(VotePoolAddVoteError::NoRankFound),
+            Some(e) => Ok(e.vote_account_pubkey),
+        }))
 }
 
 #[derive(Debug, PartialEq, Eq, Error)]
@@ -46,6 +56,14 @@ pub(crate) enum VotePoolAddVoteError {
     Duplicate,
     #[error("invalid votes")]
     Invalid,
+    #[error("Signature aggregation failed with {0}")]
+    SignatureAggregationFailed(BlsError),
+    #[error("in root_slot:{root_slot}, didn't find epoch stakes for vote_slot:{vote_slot}")]
+    NoEpochStakes { root_slot: Slot, vote_slot: Slot },
+    #[error("could not find rank")]
+    NoRankFound,
+    #[error("encoding failed with {0:?}")]
+    EncodingFailed(EncodeError),
 }
 
 struct NotarVoteEntry {
@@ -154,12 +172,15 @@ impl NotarFallbackVoteEntry {
         batch: &SigVerifiedVoteBatch,
     ) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, batch.vote().slot());
-        for validator in get_validators(root_bank, batch) {
+        let mut validators = vec![];
+        for validator in get_validators(root_bank, batch)? {
+            let validator = validator?;
             if let Some(set) = self.validators.get(&validator)
                 && set.len() >= MAX_NOTAR_FALLBACK_PER_VALIDATOR
             {
                 return Err(VotePoolAddVoteError::Invalid);
             }
+            validators.push(validator);
         }
         let stake = match self.entries.entry(*batch.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
@@ -174,7 +195,7 @@ impl NotarFallbackVoteEntry {
                 stake
             }
         };
-        for validator in get_validators(root_bank, batch) {
+        for validator in validators {
             self.validators
                 .entry(validator)
                 .or_default()
@@ -205,11 +226,10 @@ impl VoteEntry {
         if has_common_bits(&self.ranks, batch.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
         }
-        self.ranks |= batch.ranks();
-        // TODO: handle signature error
         self.signature
             .aggregate_with(std::iter::once(batch.signature()))
-            .unwrap();
+            .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
+        self.ranks |= batch.ranks();
         self.stake = self.stake.saturating_add(batch.stake().get());
         Ok(self.stake)
     }
@@ -219,25 +239,25 @@ impl VoteEntry {
         cert_type: CertificateType,
         total_stake: NonZero<u64>,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Option<Certificate> {
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         if completed_certs.contains_key(&cert_type) {
-            return None;
+            return Ok(None);
         }
         let observed_fraction = Fraction::new(self.stake, total_stake);
         if observed_fraction < cert_type.threshold() {
-            return None;
+            return Ok(None);
         }
         let new_len = self.ranks.last_one().map_or(0, |i| i.saturating_add(1));
         // TODO: can we avoid the clone somehow?
         let mut ranks = self.ranks.clone();
         ranks.resize(new_len, false);
-        let bitmap = encode_base2(&ranks).unwrap();
+        let bitmap = encode_base2(&ranks).map_err(VotePoolAddVoteError::EncodingFailed)?;
         let signature = BLSSignature::from(self.signature);
-        Some(Certificate {
+        Ok(Some(Certificate {
             cert_type,
             signature,
             bitmap,
-        })
+        }))
     }
 }
 
@@ -277,26 +297,18 @@ impl VotePool {
         total_stake: NonZero<u64>,
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Option<Certificate> {
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::NotarizeFallback(block);
         match (
             self.notar.entries.get(&block.block_id),
             self.notar_fallback.entries.get(&block.block_id),
         ) {
-            (None, None) => None,
+            (None, None) => Ok(None),
             (Some(entry), None) | (None, Some(entry)) => {
-                if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
-                    return Some(cert);
-                }
-                None
+                entry.try_build_cert(cert_type, total_stake, completed_certs)
             }
             (Some(notar_entry), Some(nf_entry)) => {
-                if let Some(cert) =
-                    try_build_from_entries(cert_type, total_stake, notar_entry, nf_entry)
-                {
-                    return Some(cert);
-                }
-                None
+                try_build_from_entries(cert_type, total_stake, notar_entry, nf_entry)
             }
         }
     }
@@ -308,9 +320,8 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Finalize(batch.vote().slot());
-        Ok(self
-            .finalize
-            .try_build_cert(cert_type, total_stake, completed_certs))
+        self.finalize
+            .try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_finalize_fast_cert(
@@ -318,8 +329,10 @@ impl VotePool {
         total_stake: NonZero<u64>,
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Option<Certificate> {
-        let entry = self.notar.entries.get(&block.block_id)?;
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let Some(entry) = self.notar.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
         let cert_type = CertificateType::FinalizeFast(block);
         entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
@@ -329,13 +342,12 @@ impl VotePool {
         total_stake: NonZero<u64>,
         block: Block,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Option<Certificate> {
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Notarize(block);
-        let entry = self.notar.entries.get(&block.block_id)?;
-        if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
-            return Some(cert);
-        }
-        None
+        let Some(entry) = self.notar.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_skip_cert(
@@ -343,10 +355,10 @@ impl VotePool {
         total_stake: NonZero<u64>,
         batch: &SigVerifiedVoteBatch,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Option<Certificate> {
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Skip(batch.vote().slot());
         match (self.skip.stake > 0, self.skip_fallback.stake > 0) {
-            (false, false) => None,
+            (false, false) => Ok(None),
             (true, false) => self
                 .skip
                 .try_build_cert(cert_type, total_stake, completed_certs),
@@ -370,10 +382,7 @@ impl VotePool {
         let Some(entry) = self.genesis.entries.get(&block.block_id) else {
             return Ok(None);
         };
-        if let Some(cert) = entry.try_build_cert(cert_type, total_stake, completed_certs) {
-            return Ok(Some(cert));
-        }
-        Ok(None)
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_certs(
@@ -384,15 +393,15 @@ impl VotePool {
     ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
         match batch.vote() {
             Vote::Notarize(notar) => Ok([
-                self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs),
-                self.try_produce_notar_cert(total_stake, notar.block, completed_certs),
-                self.try_produce_finalize_fast_cert(total_stake, notar.block, completed_certs),
+                self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_notar_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_finalize_fast_cert(total_stake, notar.block, completed_certs)?,
             ]
             .into_iter()
             .flatten()
             .collect()),
             Vote::NotarizeFallback(nf) => Ok(self
-                .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)
+                .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)?
                 .into_iter()
                 .collect()),
             Vote::Finalize(_) => Ok(self
@@ -400,7 +409,7 @@ impl VotePool {
                 .into_iter()
                 .collect()),
             Vote::Skip(_) | Vote::SkipFallback(_) => Ok(self
-                .try_produce_skip_cert(total_stake, batch, completed_certs)
+                .try_produce_skip_cert(total_stake, batch, completed_certs)?
                 .into_iter()
                 .collect()),
             Vote::Genesis(genesis) => Ok(self
@@ -501,10 +510,10 @@ fn try_build_from_entries(
     total_stake: NonZero<u64>,
     entry0: &VoteEntry,
     entry1: &VoteEntry,
-) -> Option<Certificate> {
+) -> Result<Option<Certificate>, VotePoolAddVoteError> {
     let observed_fraction = Fraction::new(entry0.stake.saturating_add(entry1.stake), total_stake);
     if observed_fraction < cert_type.threshold() {
-        return None;
+        return Ok(None);
     }
     // TODO: can we avoid the clones somehow?
     let mut bitmap0 = entry0.ranks.clone();
@@ -514,14 +523,14 @@ fn try_build_from_entries(
     let new_length = last_one_0.max(last_one_1);
     bitmap0.resize(new_length, false);
     bitmap1.resize(new_length, false);
-    let bitmap = encode_base3(&bitmap0, &bitmap1).unwrap();
+    let bitmap = encode_base3(&bitmap0, &bitmap1).map_err(VotePoolAddVoteError::EncodingFailed)?;
     let mut signature = entry0.signature;
     signature
         .aggregate_with(std::iter::once(&entry1.signature))
-        .unwrap();
-    Some(Certificate {
+        .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
+    Ok(Some(Certificate {
         cert_type,
         signature: signature.into(),
         bitmap,
-    })
+    }))
 }
