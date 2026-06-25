@@ -11,6 +11,8 @@
 //! with random hash functions.  So each subsequent request will have a different distribution
 //! of false positives.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         cluster_info_metrics::GossipStats,
@@ -50,8 +52,6 @@ use {
     },
     wincode::{SchemaRead, SchemaWrite},
 };
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
 // Retention period of hashes of received outdated values.
