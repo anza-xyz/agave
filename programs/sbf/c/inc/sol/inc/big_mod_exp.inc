@@ -21,11 +21,11 @@ typedef struct {
 /**
  * Big integer modular exponentiation
  *
- * @param params Pointer to SolBigModExpParams struct
+ * @param params Pointer to SolBigModExpParams bytes
  * @param result Pointer to writable result buffer, at least params->modulus_len bytes
  * @return 0 if executed successfully
  */
-@SYSCALL uint64_t sol_big_mod_exp(const SolBigModExpParams *, uint8_t *);
+@SYSCALL uint64_t sol_big_mod_exp(const uint8_t *, uint8_t *);
 
 #ifdef __cplusplus
 }

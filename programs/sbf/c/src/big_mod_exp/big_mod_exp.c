@@ -21,7 +21,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     params.modulus = modulus;
     params.modulus_len = sizeof(modulus);
 
-    uint64_t result_code = sol_big_mod_exp(&params, result);
+    uint64_t result_code = sol_big_mod_exp((const uint8_t *)&params, result);
 
     sol_assert(0 == result_code);
     sol_assert(0 == sol_memcmp(result, expected, sizeof(expected)));
