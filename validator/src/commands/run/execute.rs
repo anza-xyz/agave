@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use {
     crate::commands::run::config_file::{
-        FileConfig, Reservation, ThreadConfig, claim_exclusive, parse_config_file,
+        ConfigFile, Reservation, ThreadConfig, claim_exclusive, parse_config_file,
     },
     agave_cpu_utils::cpu_affinity,
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
@@ -179,10 +179,11 @@ pub fn execute(
     let mut file_config = match matches.value_of("config") {
         Some(path) => parse_config_file(Path::new(path))
             .map_err(|e| format!("invalid config file `{path}`: {e}"))?,
-        None => FileConfig::default(),
+        None => ConfigFile::default(),
     };
     #[cfg(target_os = "linux")]
     {
+        validate_supported_threads(&file_config)?;
         apply_poh_defaults(&mut file_config, matches);
         // Collect exclusive CPUs into one map (threads, then XDP queue CPUs, which
         // build_xdp_config registers itself); a duplicate insert is a conflict.
@@ -205,7 +206,7 @@ pub fn execute(
     }
 
     #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = resolve_poh_pinned_cpu_core(&file_config)?;
+    let poh_pinned_cpu_core = resolve_poh_pinned_cpu_core(&file_config);
 
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<XdpConfig> = file_config.xdp;
@@ -1416,12 +1417,32 @@ fn new_snapshot_config(
     Ok(snapshot_config)
 }
 
+/// Thread names the validator understands in `[threads.<name>]` blocks. The
+/// parser accepts any name, so we reject unsupported ones here rather than
+/// silently ignoring them.
+#[cfg(target_os = "linux")]
+const SUPPORTED_THREADS: &[&str] = &["poh"];
+
+/// Reject `[threads.<name>]` blocks naming a thread the validator does not manage.
+#[cfg(target_os = "linux")]
+fn validate_supported_threads(file_config: &ConfigFile) -> Result<(), String> {
+    for name in file_config.thread_names() {
+        if !SUPPORTED_THREADS.contains(&name) {
+            return Err(format!(
+                "unsupported thread `[threads.{name}]` in config file; supported threads: {}",
+                SUPPORTED_THREADS.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Ensure `[threads.poh]` reflects the effective PoH pinning. A CLI-set core
 /// (`--poh-pinned-cpu-core`) and the built-in default are pinned exclusively (as
 /// before `--config` existed, so XDP avoids them); an explicit `[threads.poh]`
 /// from the file is left as-is and honors its own `reservation`.
 #[cfg(target_os = "linux")]
-fn apply_poh_defaults(file_config: &mut FileConfig, matches: &ArgMatches) {
+fn apply_poh_defaults(file_config: &mut ConfigFile, matches: &ArgMatches) {
     let cli = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"));
     let cpu = match cli {
@@ -1435,7 +1456,7 @@ fn apply_poh_defaults(file_config: &mut FileConfig, matches: &ArgMatches) {
         file_config.set_thread(
             "poh",
             ThreadConfig {
-                cpus: vec![cpu],
+                cpu,
                 reservation: Reservation::Exclusive,
             },
         );
@@ -1446,16 +1467,8 @@ fn apply_poh_defaults(file_config: &mut FileConfig, matches: &ArgMatches) {
 /// [`apply_poh_defaults`], `[threads.poh]` is absent only when the platform has no
 /// default core, in which case PoH is not pinned.
 #[cfg(target_os = "linux")]
-fn resolve_poh_pinned_cpu_core(file_config: &FileConfig) -> Result<Option<usize>, String> {
-    match file_config.thread("poh") {
-        Some(thread) => {
-            let cpu = thread
-                .single_cpu()
-                .map_err(|e| format!("[threads.poh]: {e}"))?;
-            Ok(Some(cpu))
-        }
-        None => Ok(None),
-    }
+fn resolve_poh_pinned_cpu_core(file_config: &ConfigFile) -> Option<usize> {
+    file_config.thread("poh").map(|thread| thread.cpu)
 }
 
 /// Build the effective XDP config by layering the CLI flags over `file_xdp`
@@ -1586,7 +1599,7 @@ mod xdp_tests {
         file
     }
 
-    fn parse_file(contents: &str) -> FileConfig {
+    fn parse_file(contents: &str) -> ConfigFile {
         let file = write_config(contents);
         parse_config_file(file.path()).expect("config must parse")
     }
@@ -1597,7 +1610,7 @@ mod xdp_tests {
         matches: &ArgMatches,
         operation: &Operation,
         bind_addresses: &BindIpAddrs,
-        file_config: FileConfig,
+        file_config: ConfigFile,
     ) -> Result<Option<XdpConfig>, String> {
         let mut file_config = file_config;
         apply_poh_defaults(&mut file_config, matches);
@@ -1615,7 +1628,7 @@ mod xdp_tests {
 
     /// Mirror `execute`'s PoH resolution: fold the CLI override into the config,
     /// then read the merged `[threads.poh]` block.
-    fn resolve_poh(matches: &ArgMatches, file_config: FileConfig) -> Result<Option<usize>, String> {
+    fn resolve_poh(matches: &ArgMatches, file_config: ConfigFile) -> Option<usize> {
         let mut file_config = file_config;
         apply_poh_defaults(&mut file_config, matches);
         resolve_poh_pinned_cpu_core(&file_config)
@@ -1630,7 +1643,7 @@ mod xdp_tests {
             &matches,
             &Operation::Run,
             &single_ip_bind(),
-            FileConfig::default(),
+            ConfigFile::default(),
         );
         assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
     }
@@ -1642,8 +1655,7 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
-            "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = \
-             [\"0:3\"]\n",
+            "[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = [\"0:3\"]\n",
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1668,7 +1680,7 @@ mod xdp_tests {
             &matches,
             &Operation::Initialize,
             &single_ip_bind(),
-            FileConfig::default(),
+            ConfigFile::default(),
         );
         assert!(result.unwrap().is_none(), "init operation must disable XDP");
     }
@@ -1682,7 +1694,7 @@ mod xdp_tests {
             &matches,
             &Operation::Run,
             &multihoming_bind(),
-            FileConfig::default(),
+            ConfigFile::default(),
         );
         assert!(
             result.unwrap_err().contains("multihoming"),
@@ -1695,8 +1707,7 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // PoH owns core 6 exclusively; an XDP worker mapped onto it must error.
-        let file_config =
-            parse_file("version = 1\n[threads.poh]\ncpus = [6]\nreservation = \"exclusive\"\n");
+        let file_config = parse_file("[threads.poh]\ncpu = 6\nreservation = \"exclusive\"\n");
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "6"]);
         let result = build(&matches, &Operation::Run, &single_ip_bind(), file_config);
         assert!(
@@ -1722,7 +1733,7 @@ mod xdp_tests {
             &matches,
             &Operation::Run,
             &single_ip_bind(),
-            FileConfig::default(),
+            ConfigFile::default(),
         );
         assert!(
             result.unwrap_err().contains("exclusively reserved"),
@@ -1736,7 +1747,7 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // PoH on core 6 with the default `none` reservation does not own it, so an
         // XDP worker is allowed to share it.
-        let file_config = parse_file("version = 1\n[threads.poh]\ncpus = [6]\n");
+        let file_config = parse_file("[threads.poh]\ncpu = 6\n");
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "6"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
             .unwrap()
@@ -1759,7 +1770,7 @@ mod xdp_tests {
             &matches,
             &Operation::Run,
             &single_ip_bind(),
-            FileConfig::default(),
+            ConfigFile::default(),
         );
         assert!(
             result.unwrap_err().contains("exclusively reserved"),
@@ -1772,8 +1783,8 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file_config = parse_file(
-            "version = 1\n[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = \
-             [\"0:3\", \"1:4\", \"2:5\"]\n",
+            "[xdp]\ninterface = \"eth0\"\nzero_copy = true\nqueue_to_cpu_mapping = [\"0:3\", \
+             \"1:4\", \"2:5\"]\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
@@ -1797,8 +1808,8 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // PoH owns core 6 exclusively; the [xdp] mapping puts a worker on it too.
         let file_config = parse_file(
-            "version = 1\n[xdp]\nqueue_to_cpu_mapping = \"0:6\"\n[threads.poh]\ncpus = \
-             [6]\nreservation = \"exclusive\"\n",
+            "[xdp]\nqueue_to_cpu_mapping = \"0:6\"\n[threads.poh]\ncpu = 6\nreservation = \
+             \"exclusive\"\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let result = build(&matches, &Operation::Run, &single_ip_bind(), file_config);
@@ -1813,9 +1824,8 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // Config sets interface eth0, no zero-copy, queues on cores 3/4.
-        let file_config = parse_file(
-            "version = 1\n[xdp]\ninterface = \"eth0\"\nqueue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n",
-        );
+        let file_config =
+            parse_file("[xdp]\ninterface = \"eth0\"\nqueue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n");
         // CLI overrides the interface, the CPU mapping, and turns on zero-copy.
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1845,7 +1855,7 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // No interface or CPU flags: those come from the file; --xdp-zero-copy
         // only adds zero-copy on top.
-        let file_config = parse_file("version = 1\n[xdp]\nqueue_to_cpu_mapping = \"2:5\"\n");
+        let file_config = parse_file("[xdp]\nqueue_to_cpu_mapping = \"2:5\"\n");
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-zero-copy"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
             .unwrap()
@@ -1859,12 +1869,12 @@ mod xdp_tests {
     fn test_poh_core_from_config_file() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file_config = parse_file("version = 1\n[threads.poh]\ncpus = [6]\n");
+        let file_config = parse_file("[threads.poh]\ncpu = 6\n");
         let matches = app.get_matches_from(vec!["agave-validator"]);
         assert_eq!(
-            resolve_poh(&matches, file_config).unwrap(),
+            resolve_poh(&matches, file_config),
             Some(6),
-            "[threads.poh] cpus must set the PoH pinned core"
+            "[threads.poh] cpu must set the PoH pinned core"
         );
     }
 
@@ -1872,10 +1882,10 @@ mod xdp_tests {
     fn test_cli_poh_core_overrides_config_file() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file_config = parse_file("version = 1\n[threads.poh]\ncpus = [6]\n");
+        let file_config = parse_file("[threads.poh]\ncpu = 6\n");
         let matches = app.get_matches_from(vec!["agave-validator", "--poh-pinned-cpu-core", "9"]);
         assert_eq!(
-            resolve_poh(&matches, file_config).unwrap(),
+            resolve_poh(&matches, file_config),
             Some(9),
             "--poh-pinned-cpu-core must override the config file"
         );
@@ -1883,14 +1893,27 @@ mod xdp_tests {
 
     #[test]
     fn test_poh_multiple_cpus_is_error() {
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file_config = parse_file("version = 1\n[threads.poh]\ncpus = [6, 7]\n");
-        let matches = app.get_matches_from(vec!["agave-validator"]);
-        let err = resolve_poh(&matches, file_config).unwrap_err();
+        // `[threads.poh]` accepts a single `cpu` only; a list must fail to parse.
+        let file = write_config("[threads.poh]\ncpu = [6, 7]\n");
         assert!(
-            err.contains("exactly one cpu"),
-            "PoH with multiple cpus must error, got: {err}"
+            parse_config_file(file.path()).is_err(),
+            "PoH with multiple cpus must error"
+        );
+    }
+
+    #[test]
+    fn test_supported_thread_is_accepted() {
+        let file_config = parse_file("[threads.poh]\ncpu = 6\n");
+        assert!(validate_supported_threads(&file_config).is_ok());
+    }
+
+    #[test]
+    fn test_unsupported_thread_is_rejected() {
+        let file_config = parse_file("[threads.bogus]\ncpu = 6\n");
+        let err = validate_supported_threads(&file_config).unwrap_err();
+        assert!(
+            err.contains("bogus"),
+            "an unsupported thread name must be rejected, got: {err}"
         );
     }
 }
