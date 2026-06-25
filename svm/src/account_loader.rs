@@ -581,7 +581,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     // Attempt to load and collect remaining non-fee payer accounts.
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
         let loaded_account =
-            load_transaction_account(account_loader, message, account_key, account_index, rent);
+            load_transaction_account(account_loader, message, account_key, account_index, rent)?;
         collect_loaded_account(account_loader, account_key, loaded_account)?;
     }
 
@@ -607,33 +607,33 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_key: &Pubkey,
     account_index: usize,
     rent: &Rent,
-) -> LoadedTransactionAccount {
+) -> Result<LoadedTransactionAccount> {
     let is_writable = message.is_writable(account_index);
     if solana_sdk_ids::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
         // for each transaction instruction, it cannot be loaded.
-        LoadedTransactionAccount {
+        Ok(LoadedTransactionAccount {
             loaded_size: 0,
-            account: construct_instructions_account(message),
-        }
+            account: construct_instructions_account(message)?,
+        })
     } else if let Some(mut loaded_account) =
         account_loader.load_transaction_account(account_key, is_writable)
     {
         if is_writable {
             update_rent_exempt_status_for_account(rent, &mut loaded_account.account);
         }
-        loaded_account
+        Ok(loaded_account)
     } else {
         let mut default_account = AccountSharedData::default();
         default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-        LoadedTransactionAccount {
+        Ok(LoadedTransactionAccount {
             loaded_size: default_account.data().len(),
             account: default_account,
-        }
+        })
     }
 }
 
-fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
+fn construct_instructions_account(message: &impl SVMMessage) -> Result<AccountSharedData> {
     let account_keys = message.account_keys();
     let mut decompiled_instructions = Vec::with_capacity(message.num_instructions());
     for (program_id, instruction) in message.program_instructions_iter() {
@@ -657,11 +657,12 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
         });
     }
 
-    AccountSharedData::from(Account {
-        data: construct_instructions_data(&decompiled_instructions),
+    Ok(AccountSharedData::from(Account {
+        data: construct_instructions_data(&decompiled_instructions)
+            .map_err(|_err| TransactionError::InstructionsSysvarOverflow)?,
         owner: sysvar::id(),
         ..Account::default()
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -1464,9 +1465,9 @@ mod tests {
             is_writable_account_cache: vec![false],
         };
         let message = SanitizedMessage::V0(loaded_message);
-        let shared_data = construct_instructions_account(&message);
+        let shared_data = construct_instructions_account(&message).unwrap();
         let expected = AccountSharedData::from(Account {
-            data: construct_instructions_data(&message.decompile_instructions()),
+            data: construct_instructions_data(&message.decompile_instructions()).unwrap(),
             owner: sysvar::id(),
             ..Account::default()
         });
