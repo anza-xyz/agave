@@ -39,6 +39,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::LeaderSchedule,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
         blockstore_meta::PerfSample,
@@ -231,6 +232,70 @@ impl Default for RpcBigtableConfig {
             timeout: None,
             max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE,
         }
+    }
+}
+
+struct SlotLeadersIterator {
+    leader_schedules_and_indexes: Vec<(Arc<LeaderSchedule>, u64)>,
+    limit: u64,
+}
+
+impl SlotLeadersIterator {
+    fn new(
+        start_slot: Slot,
+        limit: u64,
+        bank: &Bank,
+        leader_schedule_cache: &LeaderScheduleCache,
+    ) -> Result<Self> {
+        if limit == 0 {
+            return Ok(Self {
+                leader_schedules_and_indexes: vec![],
+                limit: 0,
+            });
+        }
+
+        // `leader_schedule.get_slot_leaders()` yields leaders from the start
+        // of the epoch; `slot_index` will tell us how many slots to skip if
+        // `start_slot` is not the first slot of an epoch
+        let (start_epoch, mut slot_index) =
+            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
+
+        let end_slot = start_slot + limit;
+        let end_epoch = bank.epoch_schedule().get_epoch(end_slot);
+
+        let mut leader_schedules_and_indexes = vec![];
+        for epoch in start_epoch..=end_epoch {
+            let Some(leader_schedule) = leader_schedule_cache.get_epoch_leader_schedule(epoch)
+            else {
+                return Err(Error::invalid_params(format!(
+                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
+                )));
+            };
+
+            leader_schedules_and_indexes.push((leader_schedule, slot_index));
+
+            // If `limit` dictates that leaders are reported from multiple
+            // epochs, the first epoch may have an offset but subsequent epochs
+            // will be started from no beginning
+            slot_index = 0;
+        }
+
+        Ok(SlotLeadersIterator {
+            leader_schedules_and_indexes,
+            limit,
+        })
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Pubkey> {
+        self.leader_schedules_and_indexes
+            .iter()
+            .flat_map(|(leader_schedule, start_index)| {
+                leader_schedule
+                    .get_slot_leaders()
+                    .map(|slot_leader| &slot_leader.id)
+                    .skip(*start_index as usize)
+            })
+            .take(self.limit as usize)
     }
 }
 
@@ -981,40 +1046,14 @@ impl JsonRpcRequestProcessor {
         Ok(bank.leader_id().to_string())
     }
 
-    fn get_slot_leaders(
+    fn get_slot_leaders_iterator(
         &self,
         commitment: Option<CommitmentConfig>,
         start_slot: Slot,
-        limit: usize,
-    ) -> Result<Vec<Pubkey>> {
+        limit: u64,
+    ) -> Result<SlotLeadersIterator> {
         let bank = self.bank(commitment);
-
-        let (mut epoch, mut slot_index) =
-            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
-
-        let mut slot_leaders = Vec::with_capacity(limit);
-        while slot_leaders.len() < limit {
-            if let Some(leader_schedule) =
-                self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
-            {
-                slot_leaders.extend(
-                    leader_schedule
-                        .get_slot_leaders()
-                        .map(|slot_leader| slot_leader.id)
-                        .skip(slot_index as usize)
-                        .take(limit.saturating_sub(slot_leaders.len())),
-                );
-            } else {
-                return Err(Error::invalid_params(format!(
-                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
-                )));
-            }
-
-            epoch += 1;
-            slot_index = 0;
-        }
-
-        Ok(slot_leaders)
+        SlotLeadersIterator::new(start_slot, limit, &bank, &self.leader_schedule_cache)
     }
 
     fn minimum_ledger_slot(&self) -> Result<Slot> {
@@ -3099,16 +3138,15 @@ pub mod rpc_bank {
         ) -> Result<Vec<String>> {
             debug!("get_slot_leaders rpc request received (start: {start_slot} limit: {limit})");
 
-            let limit = limit as usize;
-            if limit > MAX_GET_SLOT_LEADERS {
+            if limit > MAX_GET_SLOT_LEADERS as u64 {
                 return Err(Error::invalid_params(format!(
                     "Invalid limit; max {MAX_GET_SLOT_LEADERS}"
                 )));
             }
 
             Ok(meta
-                .get_slot_leaders(None, start_slot, limit)?
-                .into_iter()
+                .get_slot_leaders_iterator(None, start_slot, limit)?
+                .iter()
                 .map(|identity| identity.to_string())
                 .collect())
         }
@@ -3168,18 +3206,18 @@ pub mod rpc_bank {
                 )));
             }
 
-            let slot_leaders = meta.get_slot_leaders(
+            let slot_leaders_iterator = meta.get_slot_leaders_iterator(
                 config.commitment,
                 first_slot,
-                last_slot.saturating_sub(first_slot) as usize + 1, // +1 because last_slot is inclusive
+                last_slot.saturating_sub(first_slot) + 1, // +1 because last_slot is inclusive
             )?;
 
             let mut block_production: HashMap<_, (usize, usize)> = HashMap::new();
 
             let mut slot = first_slot;
-            for identity in slot_leaders {
+            for identity in slot_leaders_iterator.iter() {
                 if let Some(ref filter_by_identity) = filter_by_identity {
-                    if identity != *filter_by_identity {
+                    if identity != filter_by_identity {
                         slot += 1;
                         continue;
                     }
