@@ -599,6 +599,7 @@ impl PartialEq for Bank {
         let Self {
             rc: _,
             status_cache: _,
+            disable_transaction_signatures_in_status_cache,
             blockhash_queue,
             max_processing_age,
             partitioned_rewards_stake_account_stores_per_block,
@@ -671,7 +672,9 @@ impl PartialEq for Bank {
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
-        *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
+        *disable_transaction_signatures_in_status_cache
+            == other.disable_transaction_signatures_in_status_cache
+            && *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
             && *max_processing_age == other.max_processing_age
             && *partitioned_rewards_stake_account_stores_per_block
                 == other.partitioned_rewards_stake_account_stores_per_block
@@ -821,6 +824,9 @@ pub struct Bank {
 
     /// A cache of signature statuses
     pub status_cache: Arc<RwLock<BankStatusCache>>,
+
+    /// Mirrors RuntimeConfig::disable_transaction_signatures_in_status_cache.
+    disable_transaction_signatures_in_status_cache: bool,
 
     /// FIFO queue of `recent_blockhash` items
     blockhash_queue: RwLock<BlockhashQueue>,
@@ -1172,6 +1178,8 @@ impl Bank {
         let mut bank = Self {
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            disable_transaction_signatures_in_status_cache: RuntimeConfig::default()
+                .disable_transaction_signatures_in_status_cache,
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             max_processing_age: MAX_PROCESSING_AGE,
             partitioned_rewards_stake_account_stores_per_block,
@@ -1277,6 +1285,8 @@ impl Bank {
         let mut bank = Self::default_with_accounts(accounts);
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.compute_budget = runtime_config.compute_budget;
+        bank.disable_transaction_signatures_in_status_cache =
+            runtime_config.disable_transaction_signatures_in_status_cache;
         if let Some(compute_budget) = &bank.compute_budget {
             bank.transaction_processor
                 .set_execution_cost(compute_budget.to_cost());
@@ -1416,6 +1426,8 @@ impl Bank {
         let mut new = Self {
             rc,
             status_cache,
+            disable_transaction_signatures_in_status_cache: parent
+                .disable_transaction_signatures_in_status_cache,
             slot,
             bank_id,
             epoch,
@@ -2091,6 +2103,8 @@ impl Bank {
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            disable_transaction_signatures_in_status_cache: runtime_config
+                .disable_transaction_signatures_in_status_cache,
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             max_processing_age: MAX_PROCESSING_AGE,
             partitioned_rewards_stake_account_stores_per_block,
@@ -3498,15 +3512,16 @@ impl Bank {
                     self.slot(),
                     processed_tx.status(),
                 );
-                // Add the transaction signature to the status cache so that transaction status
-                // can be queried by transaction signature over RPC. In the future, this should
-                // only be added for API nodes because voting validators don't need to do this.
-                status_cache.insert(
-                    tx.recent_blockhash(),
-                    tx.signature(),
-                    self.slot(),
-                    processed_tx.status(),
-                );
+                if !self.disable_transaction_signatures_in_status_cache {
+                    // Add the transaction signature to the status cache so that transaction
+                    // status can be queried by transaction signature over RPC.
+                    status_cache.insert(
+                        tx.recent_blockhash(),
+                        tx.signature(),
+                        self.slot(),
+                        processed_tx.status(),
+                    );
+                }
             }
         }
     }
