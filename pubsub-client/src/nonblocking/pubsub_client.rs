@@ -668,25 +668,29 @@ impl PubsubClient {
                     // Notification, example:
                     // `{"jsonrpc":"2.0","method":"logsNotification","params":{"result":{...},"subscription":3114862}}`
                     if let Some(Value::Object(params)) = json.get_mut("params")
-                        && let Some(sid) = params.get("subscription").and_then(Value::as_u64) {
-                            let mut unsubscribe_required = false;
+                        && let Some(sid) = params.get("subscription").and_then(Value::as_u64)
+                    {
+                        let mut unsubscribe_required = false;
 
-                            if let Some(notifications_sender) = subscriptions.get(&sid) {
-                                if let Some(result) = params.remove("result")
-                                    && notifications_sender.send(result).is_err() {
-                                        unsubscribe_required = true;
-                                    }
-                            } else {
+                        if let Some(notifications_sender) = subscriptions.get(&sid) {
+                            if let Some(result) = params.remove("result")
+                                && notifications_sender.send(result).is_err()
+                            {
                                 unsubscribe_required = true;
                             }
-
-                            if unsubscribe_required
-                                && let Some(Value::String(method)) = json.remove("method")
-                                    && let Some(operation) = method.strip_suffix("Notification") {
-                                        let (response_sender, _response_receiver) = oneshot::channel();
-                                        let _ = unsubscribe_sender.send((operation.to_string(), sid, response_sender));
-                                    }
+                        } else {
+                            unsubscribe_required = true;
                         }
+
+                        if unsubscribe_required
+                            && let Some(Value::String(method)) = json.remove("method")
+                            && let Some(operation) = method.strip_suffix("Notification")
+                        {
+                            let (response_sender, _response_receiver) = oneshot::channel();
+                            let _ = unsubscribe_sender
+                                .send((operation.to_string(), sid, response_sender));
+                        }
+                    }
                 }
             }
         }
