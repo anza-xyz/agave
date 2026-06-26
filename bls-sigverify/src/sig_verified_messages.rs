@@ -131,4 +131,9 @@ impl VoteAggregate {
     pub fn stake(&self) -> NonZero<u64> {
         self.stake
     }
+
+    /// Returns number of votes in the aggregate.
+    pub fn num_votes(&self) -> usize {
+        self.ranks.count_ones()
+    }
 }
