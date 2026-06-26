@@ -1,7 +1,7 @@
 //! ELF loader conformance harness.
 
 use {
-    crate::conformance::{
+    crate::{
         err::elf_error_code,
         fd_hash::{fd_hash_u64_without_seed, fd_hash_without_seed},
         feature_set::feature_set_from_proto,

@@ -1,8 +1,8 @@
 //! Instruction effects (output).
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 use {
-    crate::conformance::{account_state::account_to_proto, err::instruction_error_code},
+    crate::{account_state::account_to_proto, err::instruction_error_code},
     protosol::protos::InstrEffects as ProtoInstrEffects,
 };
 use {solana_account::Account, solana_instruction::error::InstructionError, solana_pubkey::Pubkey};
@@ -27,7 +27,7 @@ impl InstrEffects {
     }
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 impl From<InstrEffects> for ProtoInstrEffects {
     fn from(value: InstrEffects) -> Self {
         let InstrEffects {

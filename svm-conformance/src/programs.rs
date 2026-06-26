@@ -1,20 +1,19 @@
 //! Program helpers: builtins, keyed accounts, and program cache.
 
-#[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
-    crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
         program_cache_entry::ProgramCacheEntry,
+        program_metrics::LoadProgramMetrics,
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
+    solana_svm::program_loader::load_program_with_pubkey,
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
@@ -54,13 +53,13 @@ static SVM_BUILTINS: &[SvmBuiltinPrototype] = &[
         name: "compute_budget_program",
         register_fn: solana_compute_budget_program::Entrypoint::register,
     },
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "ffi")]
     SvmBuiltinPrototype {
         program_id: solana_vote_program::id(),
         name: "vote_program",
         register_fn: solana_vote_program::vote_processor::Entrypoint::register,
     },
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "ffi")]
     SvmBuiltinPrototype {
         program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
         name: "zk_elgamal_proof_program",
@@ -131,7 +130,6 @@ pub fn add_program_to_program_cache(
         0, // effective_slot
         elf,
         elf.len(),
-        #[cfg(feature = "metrics")]
         &mut LoadProgramMetrics::default(),
     )
     .unwrap();
