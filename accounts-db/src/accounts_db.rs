@@ -108,7 +108,7 @@ const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 const DEFAULT_NUM_DIRS: u32 = 4;
 
 // This value reflects recommended memory lock limit documented in the validator's
-// setup instructions at docs/src/operations/guides/validator-start.md allowing use of
+// setup instructions at https://docs.anza.xyz/operations/guides/validator-start allowing use of
 // several io_uring instances with fixed buffers for large disk IO operations.
 pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 
