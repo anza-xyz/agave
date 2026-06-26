@@ -15,7 +15,6 @@ use {
         blockstore_options::{
             BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions, LedgerColumnOptions,
         },
-        leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats,
@@ -756,7 +755,7 @@ impl Blockstore {
                 if let Some(last_shred) = shreds.last() {
                     merkle_roots.insert(slot, last_shred.merkle_root().unwrap());
                 }
-                self.insert_shreds(shreds, None, false).unwrap();
+                self.insert_shreds(shreds, false).unwrap();
             }
             walk.forward();
         }
@@ -1556,7 +1555,6 @@ impl Blockstore {
             IntoIter: ExactSizeIterator,
         >,
         is_trusted: bool,
-        leader_schedule: Option<&LeaderScheduleCache>,
         shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
@@ -1577,7 +1575,6 @@ impl Blockstore {
                         location,
                         shred_insertion_tracker,
                         is_trusted,
-                        leader_schedule,
                         shred_source,
                     ) {
                         Err(InsertDataShredError::Exists) => {
@@ -1718,7 +1715,6 @@ impl Blockstore {
     /// Note: We only perform recovery for the Original shred column
     fn handle_shred_recovery(
         &self,
-        leader_schedule: Option<&LeaderScheduleCache>,
         shred_recovery_context: &mut ShredRecoveryContext,
         shred_insertion_tracker: &mut ShredInsertionTracker,
         is_trusted: bool,
@@ -1741,7 +1737,6 @@ impl Blockstore {
                 BlockLocation::Original,
                 shred_insertion_tracker,
                 is_trusted,
-                leader_schedule,
                 ShredSource::Recovered,
             ) {
                 Err(InsertDataShredError::Exists) => &mut metrics.num_recovered_exists,
@@ -2177,7 +2172,6 @@ impl Blockstore {
     /// Arguments:
     ///  - `shreds`: the shreds to be inserted, alongside their repaired flag and
     ///    insertion location.
-    ///  - `leader_schedule`: the leader schedule
     ///  - `is_trusted`: whether the shreds come from a trusted source. If this
     ///    is set to true, then the function will skip the shred duplication and
     ///    integrity checks.
@@ -2194,7 +2188,6 @@ impl Blockstore {
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
             IntoIter: ExactSizeIterator,
         >,
-        leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         // When inserting own shreds during leader slots, we shouldn't try to
         // recover shreds. If shreds are not to be recovered we don't need the
@@ -2215,7 +2208,6 @@ impl Blockstore {
         let result = self.do_insert_shreds_locked(
             &lock,
             shreds,
-            leader_schedule,
             is_trusted,
             shred_recovery_context,
             metrics,
@@ -2236,7 +2228,6 @@ impl Blockstore {
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
             IntoIter: ExactSizeIterator,
         >,
-        leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         shred_recovery_context: Option<&mut ShredRecoveryContext>,
         metrics: &mut BlockstoreInsertionMetrics,
@@ -2245,16 +2236,9 @@ impl Blockstore {
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
 
-        self.attempt_shred_insertion(
-            shreds,
-            is_trusted,
-            leader_schedule,
-            &mut shred_insertion_tracker,
-            metrics,
-        );
+        self.attempt_shred_insertion(shreds, is_trusted, &mut shred_insertion_tracker, metrics);
         if let Some(shred_recovery_context) = shred_recovery_context {
             self.handle_shred_recovery(
-                leader_schedule,
                 shred_recovery_context,
                 &mut shred_insertion_tracker,
                 is_trusted,
@@ -2309,7 +2293,6 @@ impl Blockstore {
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool),
             IntoIter: ExactSizeIterator,
         >,
-        leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
         handle_duplicate: &F,
@@ -2322,7 +2305,6 @@ impl Blockstore {
             shreds
                 .into_iter()
                 .map(|(shred, is_repaired)| (shred, is_repaired, BlockLocation::Original)),
-            leader_schedule,
             is_trusted,
             shred_recovery_context,
             handle_duplicate,
@@ -2341,7 +2323,6 @@ impl Blockstore {
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
             IntoIter: ExactSizeIterator,
         >,
-        leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
         handle_duplicate: &F,
@@ -2353,13 +2334,7 @@ impl Blockstore {
         let InsertResults {
             completed_data_set_infos,
             duplicate_shreds,
-        } = self.do_insert_shreds(
-            shreds,
-            leader_schedule,
-            is_trusted,
-            Some(shred_recovery_context),
-            metrics,
-        )?;
+        } = self.do_insert_shreds(shreds, is_trusted, Some(shred_recovery_context), metrics)?;
 
         for shred in duplicate_shreds {
             handle_duplicate(shred);
@@ -2446,7 +2421,6 @@ impl Blockstore {
         self.do_insert_shreds_locked(
             lock,
             shreds,
-            None, // leader_schedule
             true, // is_trusted
             None, // should_recover_shreds
             &mut BlockstoreInsertionMetrics::default(),
@@ -2540,7 +2514,6 @@ impl Blockstore {
     pub fn insert_cow_shreds<'a>(
         &self,
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
-        leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let shreds = shreds
@@ -2548,7 +2521,6 @@ impl Blockstore {
             .map(|shred| (shred, /*is_repaired:*/ false, BlockLocation::Original));
         let insert_results = self.do_insert_shreds(
             shreds,
-            leader_schedule,
             is_trusted,
             None, // Skip recovery for locally produced shreds.
             &mut BlockstoreInsertionMetrics::default(),
@@ -2560,19 +2532,14 @@ impl Blockstore {
     pub fn insert_shreds(
         &self,
         shreds: impl IntoIterator<Item = Shred, IntoIter: ExactSizeIterator>,
-        leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let shreds = shreds.into_iter().map(Cow::Owned);
-        self.insert_cow_shreds(shreds, leader_schedule, is_trusted)
+        self.insert_cow_shreds(shreds, is_trusted)
     }
 
     #[cfg(test)]
-    fn insert_shred_return_duplicate(
-        &self,
-        shred: Shred,
-        leader_schedule: &LeaderScheduleCache,
-    ) -> Vec<PossibleDuplicateShred> {
+    fn insert_shred_return_duplicate(&self, shred: Shred) -> Vec<PossibleDuplicateShred> {
         let insert_results = self
             .do_insert_shreds(
                 [(
@@ -2580,7 +2547,6 @@ impl Blockstore {
                     /*is_repaired:*/ false,
                     BlockLocation::Original,
                 )],
-                Some(leader_schedule),
                 false,
                 None, // Skip recovery for this direct insertion path.
                 &mut BlockstoreInsertionMetrics::default(),
@@ -2826,18 +2792,13 @@ impl Blockstore {
     ///   data.
     /// - `is_trusted`: if false, this function will check whether the
     ///   input shred is duplicate.
-    /// - `handle_duplicate`: the function that handles duplication.
-    /// - `leader_schedule`: the leader schedule will be used to check
-    ///   whether it is okay to insert the input shred.
     /// - `shred_source`: the source of the shred.
-    #[allow(clippy::too_many_arguments)]
     fn check_insert_data_shred<'a>(
         &self,
         shred: Cow<'a, Shred>,
         location: BlockLocation,
         shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
         is_trusted: bool,
-        leader_schedule: Option<&LeaderScheduleCache>,
         shred_source: ShredSource,
     ) -> std::result::Result<(), InsertDataShredError> {
         let slot = shred.slot();
@@ -2903,7 +2864,6 @@ impl Blockstore {
                 slot_meta,
                 just_inserted_shreds,
                 self.max_root(),
-                leader_schedule,
                 shred_source,
                 duplicate_shreds,
             ) {
@@ -3261,7 +3221,6 @@ impl Blockstore {
         slot_meta: &SlotMeta,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         max_root: Slot,
-        _leader_schedule: Option<&LeaderScheduleCache>,
         shred_source: ShredSource,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
@@ -3839,7 +3798,7 @@ impl Blockstore {
         // `write_entries` is a test helper that synthesizes local shreds.
         // Insert as trusted to avoid dead-slot marking from untrusted-path
         // filters (for example slot-0 coding shred checks).
-        self.insert_shreds(all_shreds, None, true)?;
+        self.insert_shreds(all_shreds, true)?;
         Ok(num_data)
     }
 
@@ -6147,7 +6106,7 @@ impl Blockstore {
     pub fn insert_shreds_for_bank(&self, bank: Arc<Bank>) {
         let entries = create_ticks(bank.ticks_per_slot(), 1, Hash::new_unique());
         let shreds = entries_to_test_shreds(&entries, bank.slot(), bank.parent_slot(), true, 0);
-        self.insert_shreds(shreds, None, false).unwrap();
+        self.insert_shreds(shreds, false).unwrap();
     }
 }
 
@@ -6375,7 +6334,7 @@ pub fn create_new_ledger(
     );
     assert!(shreds.last().unwrap().last_in_slot());
 
-    blockstore.insert_shreds(shreds, None, false)?;
+    blockstore.insert_shreds(shreds, false)?;
     blockstore.set_roots(std::iter::once(&0))?;
     // Explicitly close the blockstore before we create the archived genesis file
     drop(blockstore);

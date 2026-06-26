@@ -205,7 +205,7 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
         assert!(source_meta.is_full());
 
         let shreds = source.get_data_shreds_for_slot(slot, 0).unwrap();
-        dest.insert_shreds(shreds, None, is_trusted).unwrap();
+        dest.insert_shreds(shreds, is_trusted).unwrap();
 
         let dest_meta = dest.meta(slot).unwrap().unwrap();
         assert!(dest_meta.is_full());

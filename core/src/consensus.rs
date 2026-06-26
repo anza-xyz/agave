@@ -3333,11 +3333,11 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(4, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
         assert!(!blockstore.is_root(3));
@@ -3369,11 +3369,11 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(4, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         blockstore.set_roots(std::iter::once(&3)).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
@@ -3397,9 +3397,9 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
         assert!(!blockstore.is_root(3));

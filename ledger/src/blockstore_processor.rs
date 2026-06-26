@@ -6122,7 +6122,7 @@ pub mod tests {
         let mut all_shreds = header_shreds;
         all_shreds.extend(entry_shreds);
         all_shreds.extend(footer_shreds);
-        blockstore.insert_shreds(all_shreds, None, true).unwrap();
+        blockstore.insert_shreds(all_shreds, true).unwrap();
 
         let replay_tx_thread_pool = create_thread_pool(1);
 
@@ -6278,7 +6278,7 @@ pub mod tests {
                     )
                     .filter(Shred::is_data)
                     .collect();
-                blockstore.insert_shreds(shreds, None, true).unwrap();
+                blockstore.insert_shreds(shreds, true).unwrap();
             };
 
         // Create a genesis bank (slot 0) with all features active.

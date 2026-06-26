@@ -2857,7 +2857,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                let _ = backup_blockstore.insert_cow_shreds(shreds, None, true);
+                let _ = backup_blockstore.insert_cow_shreds(shreds, true);
                 num_slots_copied += 1;
 
                 if print_timer.elapsed() > PRINT_INTERVAL {
@@ -3375,7 +3375,7 @@ mod tests {
                 true,  // is_full_slot
                 1,     // version
             );
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // No check as all blockstore data is newer than latest hard fork
@@ -3466,7 +3466,7 @@ mod tests {
                 true,  // is_full_slot
                 1,     // version
             );
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // this purges and compacts all slots greater than or equal to 5

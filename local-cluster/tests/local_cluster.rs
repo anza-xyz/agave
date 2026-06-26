@@ -4771,7 +4771,7 @@ fn test_duplicate_with_pruned_ancestor() {
         );
         let shreds =
             entries_to_test_shreds(&entries, last_majority_vote, last_minority_vote, true, 0);
-        our_blockstore.insert_shreds(shreds, None, false).unwrap();
+        our_blockstore.insert_shreds(shreds, false).unwrap();
     }
 
     // Actual test, `our_node` will replay the minority fork, then the majority fork which will

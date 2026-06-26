@@ -2445,7 +2445,7 @@ mod test {
 
         // Simulate repair on 6 and 5
         for (shreds, _) in make_chaining_slot_entries(&[5, 6], 100, 0) {
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // Verify orphans properly updated and chained

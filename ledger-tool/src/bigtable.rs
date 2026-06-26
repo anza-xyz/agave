@@ -392,7 +392,7 @@ async fn shreds(
             )
             .filter(Shred::is_data)
             .collect();
-        blockstore.insert_shreds(data_shreds, None, false)?;
+        blockstore.insert_shreds(data_shreds, false)?;
     }
     Ok(())
 }

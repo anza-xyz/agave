@@ -4540,7 +4540,7 @@ pub fn populate_blockstore_for_tests(
     let parent_slot = bank.parent_slot();
     let shreds =
         solana_ledger::blockstore::entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 
     let (transaction_status_sender, transaction_status_receiver) = bounded(1024);

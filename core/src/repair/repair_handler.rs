@@ -333,7 +333,6 @@ mod tests {
                     .into_iter()
                     .chain(parent_coding_shreds)
                     .collect::<Vec<_>>(),
-                None,
                 true,
             )
             .unwrap();
@@ -356,7 +355,6 @@ mod tests {
                     .into_iter()
                     .chain(coding_shreds)
                     .collect::<Vec<_>>(),
-                None,
                 true, // is_trusted
             )
             .unwrap();

@@ -300,7 +300,7 @@ mod tests {
         let total_num_shreds = shreds.len() as u64;
         let shreds_per_slot = (shreds.len() / num_slots as usize) as u64;
         assert!(shreds_per_slot > 1);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         // Initiate a flush so inserted shreds found by find_slots_to_clean()
         let blockstore = Arc::new(flush_blockstore_contents_to_disk(blockstore));
@@ -418,7 +418,7 @@ mod tests {
         let (sender, receiver) = bounded(1);
 
         let (shreds, _) = make_many_slot_entries(0, 50, 5);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         // Initiate a flush so inserted shreds found by maybe_generate_automatic_cleanup_request()
         let blockstore = Arc::new(flush_blockstore_contents_to_disk(blockstore));
