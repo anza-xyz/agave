@@ -548,6 +548,9 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
+        agave_banking_stage_ingress_types::{
+            to_banking_packet_batch, to_single_banking_packet_batch,
+        },
         crossbeam_channel::{Receiver, bounded},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -556,7 +559,7 @@ mod tests {
             AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage, v0,
         },
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch, to_packet_batches},
+        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
@@ -681,7 +684,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -731,7 +734,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let mut packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let mut packet_batch = to_single_banking_packet_batch(&transaction);
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
@@ -823,7 +826,7 @@ mod tests {
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
         let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -871,7 +874,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -934,7 +937,7 @@ mod tests {
             &[&mint_keypair],
         )
         .unwrap();
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -982,7 +985,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -1034,7 +1037,7 @@ mod tests {
         bank.process_transaction(&transaction).unwrap();
         drop(bank);
 
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let stats = receive_and_buffer
@@ -1065,7 +1068,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let stats = receive_and_buffer
@@ -1096,7 +1099,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let stats = receive_and_buffer
@@ -1126,7 +1129,7 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batch = Arc::new(to_packet_batches(&[transaction], 1).pop().unwrap());
+        let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
         let stats = receive_and_buffer
@@ -1156,11 +1159,7 @@ mod tests {
             )
         }));
 
-        let packet_batch = Arc::new(
-            to_packet_batches(&transactions, transactions.len())
-                .pop()
-                .unwrap(),
-        );
+        let packet_batch = to_banking_packet_batch(&transactions);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -1240,11 +1239,7 @@ mod tests {
         let bad_tx = create_tx_with_n_keys(&mint_keypair, transaction_account_lock_limit + 1);
         let transactions = [bad_tx];
 
-        let packet_batch = Arc::new(
-            to_packet_batches(&transactions, transactions.len())
-                .pop()
-                .unwrap(),
-        );
+        let packet_batch = to_banking_packet_batch(&transactions);
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {

@@ -831,7 +831,9 @@ mod tests {
             banking_trace::{BankingTracer, Channels},
             validator::SchedulerPacing,
         },
-        agave_banking_stage_ingress_types::BankingPacketBatch,
+        agave_banking_stage_ingress_types::{
+            to_banking_packet_batch, to_single_banking_packet_batch,
+        },
         crossbeam_channel::bounded,
         itertools::Itertools,
         solana_entry::{
@@ -847,7 +849,6 @@ mod tests {
             },
             get_tmp_ledger_path_auto_delete,
         },
-        solana_perf::packet::to_packet_batches,
         solana_poh::{
             poh_recorder::{PohRecorderError, create_test_recorder},
             record_channels::record_channels,
@@ -997,10 +998,8 @@ mod tests {
         let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
         // send 'em over
-        let mut packet_batch = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3)
-            .pop()
-            .unwrap();
-        packet_batch
+        let mut packet_batch = to_banking_packet_batch(&[tx_no_ver, tx_anf, tx]);
+        Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
             .meta_mut()
@@ -1010,7 +1009,7 @@ mod tests {
         assert_eq!(packet_batch.len(), 3);
 
         non_vote_sender // no_ver, anf, tx
-            .send(BankingPacketBatch::new(packet_batch))
+            .send(packet_batch)
             .unwrap();
 
         // capture the entry receiver until we've received all our entries.
@@ -1089,18 +1088,14 @@ mod tests {
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
 
-        let packet_batches = to_packet_batches(&[tx], 1).pop().unwrap();
-        non_vote_sender
-            .send(BankingPacketBatch::new(packet_batches))
-            .unwrap();
+        let packet_batches = to_single_banking_packet_batch(&tx);
+        non_vote_sender.send(packet_batches).unwrap();
 
         // Process a second batch that uses the same from account, so conflicts with above TX
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_packet_batches(&[tx], 1).pop().unwrap();
-        non_vote_sender
-            .send(BankingPacketBatch::new(packet_batches))
-            .unwrap();
+        let packet_batches = to_single_banking_packet_batch(&tx);
+        non_vote_sender.send(packet_batches).unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
@@ -1344,13 +1339,9 @@ mod tests {
             })
             .collect_vec();
 
-        let non_vote_packet_batches = to_packet_batches(&txs, txs.len()).pop().unwrap();
-        let tpu_packet_batches = to_packet_batches(&tpu_votes, tpu_votes.len())
-            .pop()
-            .unwrap();
-        let gossip_packet_batches = to_packet_batches(&gossip_votes, gossip_votes.len())
-            .pop()
-            .unwrap();
+        let non_vote_packet_batches = to_banking_packet_batch(&txs);
+        let tpu_packet_batches = to_banking_packet_batch(&tpu_votes);
+        let gossip_packet_batches = to_banking_packet_batch(&gossip_votes);
 
         // Send em all
         [
@@ -1361,11 +1352,7 @@ mod tests {
         .into_iter()
         .map(|(packet_batches, sender)| {
             Builder::new()
-                .spawn(move || {
-                    sender
-                        .send(BankingPacketBatch::new(packet_batches))
-                        .unwrap()
-                })
+                .spawn(move || sender.send(packet_batches).unwrap())
                 .unwrap()
         })
         .for_each(|handle| {

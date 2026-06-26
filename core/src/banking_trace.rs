@@ -439,13 +439,12 @@ impl TracedSender {
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub mod for_test {
     use {
-        super::*,
-        solana_perf::{packet::to_packet_batches, test_tx::test_tx},
-        tempfile::TempDir,
+        super::*, agave_banking_stage_ingress_types::to_banking_packet_batch,
+        solana_perf::test_tx::test_tx, tempfile::TempDir,
     };
 
     pub fn sample_packet_batch() -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(&vec![test_tx(); 4], 10).pop().unwrap())
+        to_banking_packet_batch(&vec![test_tx(); 4])
     }
 
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
