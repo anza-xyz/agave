@@ -1,0 +1,11 @@
+# Alpenglow Consensus Modules
+# Owner: Richard Patterson (@De-ASI-INTERFACE)
+# Orgs: DeASI-INTERFACE · QuantumTradingInfinity · richy.ai
+
+core/src/consensus/votor.rs              @De-ASI-INTERFACE
+core/src/consensus/rotor.rs              @De-ASI-INTERFACE
+core/src/consensus/alpenglow.rs          @De-ASI-INTERFACE
+core/src/consensus/entrypoint.rs         @De-ASI-INTERFACE
+core/src/metrics/consensus_alpenglow.rs  @De-ASI-INTERFACE
+core/src/config/alpenglow.rs             @De-ASI-INTERFACE
+docs/consensus/alpenglow-rollout.md      @De-ASI-INTERFACE
