@@ -87,7 +87,6 @@ impl ClientConnection {
     async fn dial(&self) -> Result<Connection, Error> {
         let server_name = socket_addr_to_quic_server_name(self.addr);
         let connection = self.endpoint.connect(self.addr, &server_name)?.await?;
-        // Server identity must match the pubkey the caller targeted.
         let attested = get_remote_pubkey(&connection).ok_or(Error::InvalidIdentity(self.addr))?;
         if attested != self.peer {
             close_codes::INVALID_IDENTITY.close(&connection);

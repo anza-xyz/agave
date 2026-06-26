@@ -130,8 +130,6 @@ impl QuicDatagramEndpoint {
         };
         outbound_endpoint.set_default_client_config(client_config);
 
-        // Independent stats instances: each loop owns one and reports it under
-        // its own datapoint, so the two directions share no atomics.
         let client_stats = Arc::default();
         let server_stats: Arc<QuicDatagramStats> = Arc::default();
         // The egress buffer must absorb an entire standstill-refresh broadcast

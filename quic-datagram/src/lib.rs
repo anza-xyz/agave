@@ -1,4 +1,3 @@
-#![doc = include_str!("../README.md")]
 #![cfg(feature = "agave-unstable-api")]
 
 pub mod allowlist;

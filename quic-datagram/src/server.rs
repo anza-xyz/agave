@@ -238,7 +238,6 @@ fn accept_incoming(incoming: Incoming, stats: &QuicDatagramStats) -> Option<Conn
         incoming.ignore();
         return None;
     }
-    // TODO: add Retry challenge here.
     match incoming.accept() {
         Ok(connecting) => Some(connecting),
         Err(e) => {
@@ -564,10 +563,7 @@ impl InboundLoop {
         }
     }
 
-    /// Admission checks for a freshly handshaked inbound (we-accepted,
-    /// receive-only) connection. The split-direction model has no lex-pubkey
-    /// tiebreaker: we accept an inbound from any admitted peer regardless of
-    /// pubkey ordering, and install it into the receive-only `peer_state` map.
+    /// Admission checks for a freshly handshaked inbound connection.
     fn maybe_admit_connection(&mut self, peer: Pubkey, connection: Connection) {
         if self.banlist.is_banned(&peer) {
             close_codes::BANNED.close(&connection);
