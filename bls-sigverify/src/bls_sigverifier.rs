@@ -10,6 +10,7 @@ use {
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
     },
+    agave_quic_datagram::endpoint::Datagram,
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         certificate::CertificateType,
@@ -31,7 +32,6 @@ use {
     solana_net_utils::banlist::Banlist,
     solana_perf::packet::{BytesPacket, Meta, PacketBatch, packet_config},
     solana_pubkey::Pubkey,
-    agave_quic_datagram::endpoint::Datagram,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
         collections::{HashMap, HashSet},

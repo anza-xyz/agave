@@ -5,6 +5,10 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
+    agave_quic_datagram::{
+        allowlist::AllowAll,
+        endpoint::{Datagram, QuicDatagramEndpoint},
+    },
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -35,10 +39,6 @@ use {
     solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    agave_quic_datagram::{
-        allowlist::AllowAll,
-        endpoint::{Datagram, QuicDatagramEndpoint},
-    },
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,

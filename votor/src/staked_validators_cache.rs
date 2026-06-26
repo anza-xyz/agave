@@ -1,11 +1,11 @@
 #[cfg(feature = "dev-context-only-utils")]
 use arc_swap::ArcSwap;
 use {
+    agave_quic_datagram::allowlist::StakedNodesAllowlist,
     lazy_lru::LruCache,
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
-    agave_quic_datagram::allowlist::StakedNodesAllowlist,
     solana_runtime::bank_forks::SharableBanks,
     std::{
         collections::HashMap,

@@ -687,7 +687,7 @@ mod tests {
             }
         });
 
-        // --- Client dials the proxy, so it sends but never hears back. ---
+        // --- Client connects to the proxy, so it sends but never hears back. ---
         let client_kp = Keypair::new();
         let cid = IdentitySnapshot::from_keypair(&client_kp);
         let client_cfg = new_client_config(cid.cert, cid.key, ALPENGLOW_ALPN);

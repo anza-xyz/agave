@@ -17,7 +17,7 @@ pub struct QuicDatagramStats {
     /// A connection ended through an expected teardown path.
     pub(crate) connection_lost: AtomicU64,
     /// Egress dropped because the connection for the peer is not ready.
-    pub(crate) egress_dropped_dial_in_progress: AtomicU64,
+    pub(crate) egress_dropped_connect_in_progress: AtomicU64,
 
     // --- Offered load (inbound accept / handshake) ---
     /// Inbound handshakes we began TLS work for.
@@ -33,12 +33,12 @@ pub struct QuicDatagramStats {
     /// Live inbound connection closed because the periodic allowlist recheck
     /// found the peer no longer admitted (e.g. evicted at an epoch boundary).
     pub(crate) connection_evicted_allowlist: AtomicU64,
-    /// The dialer evicted a cached outbound connection because the caller
+    /// The outbound side evicted a cached connection because the caller
     /// supplied a new socket addr for the same pubkey (peer moved).
     pub(crate) connection_evicted_peer_moved: AtomicU64,
 
     // --- Error buckets ---
-    /// A connection failed abnormally: dial setup error, protocol-level
+    /// A connection failed abnormally: connect setup error, protocol-level
     /// connection fault, or a non-transient `send_datagram` failure. All are
     /// local/config/protocol faults that should not occur in prod for a
     /// well-behaved peer.
@@ -130,8 +130,8 @@ pub(crate) fn report_client(stats: &QuicDatagramStats, live_connections: u64) {
         ("connect_failed", swap!(stats.connect_failed), i64),
         ("connection_lost", swap!(stats.connection_lost), i64),
         (
-            "egress_dropped_dial_in_progress",
-            swap!(stats.egress_dropped_dial_in_progress),
+            "egress_dropped_connect_in_progress",
+            swap!(stats.egress_dropped_connect_in_progress),
             i64
         ),
         (

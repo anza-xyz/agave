@@ -3,6 +3,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
+    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::Datagram},
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
@@ -12,7 +13,6 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
-    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::Datagram},
     solana_runtime::{
         bank_forks::BankForks, validated_block_finalization::ValidatedBlockFinalizationCert,
     },
@@ -458,6 +458,10 @@ mod tests {
         crate::vote_history_storage::{
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
+        agave_quic_datagram::{
+            allowlist::{AllowAll, Allowlist},
+            endpoint::{Datagram, QuicDatagramEndpoint},
+        },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
@@ -470,10 +474,6 @@ mod tests {
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
-        agave_quic_datagram::{
-            allowlist::{AllowAll, Allowlist},
-            endpoint::{Datagram, QuicDatagramEndpoint},
-        },
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,

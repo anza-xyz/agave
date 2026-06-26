@@ -30,6 +30,7 @@ use {
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
     },
+    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::QuicDatagramEndpoint},
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
@@ -61,7 +62,6 @@ use {
     solana_net_utils::{PinnedXdpSender, banlist::Banlist},
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
-    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::QuicDatagramEndpoint},
     solana_rpc::{
         max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,

@@ -65,11 +65,11 @@ impl QuicDatagramEndpoint {
     /// Construct a datagram-only QUIC endpoint. `server_sockets` back the
     /// inbound (we-accept) direction and are expected to be SO_REUSEPORT
     /// siblings bound to the same address to load-balance inbound datagrams
-    /// across them. The outbound (we-dial, send-only) direction runs on a
+    /// across them. The outbound (send-only) direction runs on a
     /// dedicated `client_socket` bound to its own port — NOT a member of the
-    /// SO_REUSEPORT accept group. A dialing socket sharing the group's port
+    /// SO_REUSEPORT accept group. A client Endpoint sharing the group's port
     /// would have peers' handshake replies load-balanced by the kernel across
-    /// the sibling sockets.
+    /// the other sockets, making connections time out.
     ///
     /// Spawns the inbound and outbound loops on `runtime`; dropping the handle
     /// cancels them. Received datagrams flow into `ingress` via `try_send`;
@@ -114,11 +114,12 @@ impl QuicDatagramEndpoint {
                     .map_err(Error::Endpoint)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            // The outbound (we-dial, send-only) direction runs on its own
-            // client-only endpoint bound to `client_socket`.
+            // The outbound direction runs on its own
+            // client-only endpoint bound to `client_socket`, so inbound
+            // traffic does not interfere with egress.
             let outbound_endpoint = Endpoint::new(
                 EndpointConfig::default(),
-                None,
+                None, // No server_config on this endpoint
                 client_socket,
                 Arc::new(TokioRuntime),
             )

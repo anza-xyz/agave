@@ -1,4 +1,4 @@
-//! Outbound (client) direction: we-dial, send-only.
+//! Outbound (client) direction: we initiate, send-only.
 use {
     crate::{
         ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, MAX_ALPENGLOW_VOTE_ACCOUNTS, METRICS_INTERVAL,
@@ -43,13 +43,14 @@ pub(crate) enum PeerState {
     },
 }
 
-/// Dial result reported by a dial task to the outbound control loop.
+/// Connect result reported by a connect task to the outbound control loop.
 pub(crate) struct ConnectEvent {
     pub(crate) peer: Pubkey,
     pub(crate) generation: u64,
     pub(crate) outcome: Result<Connection, ()>,
 }
 
+/// Task for the outbound connection.
 pub(crate) struct ClientConnection {
     pub(crate) endpoint: Endpoint,
     pub(crate) peer: Pubkey,
@@ -61,7 +62,18 @@ pub(crate) struct ClientConnection {
 
 impl ClientConnection {
     async fn run(self) {
-        let outcome = match self.dial().await {
+        let connect = async {
+            let server_name = socket_addr_to_quic_server_name(self.addr);
+            let connection = self.endpoint.connect(self.addr, &server_name)?.await?;
+            let attested =
+                get_remote_pubkey(&connection).ok_or(Error::InvalidIdentity(self.addr))?;
+            if attested != self.peer {
+                close_codes::INVALID_IDENTITY.close(&connection);
+                return Err(Error::InvalidIdentity(self.addr));
+            }
+            Ok(connection)
+        };
+        let outcome = match connect.await {
             Ok(connection) => Ok(connection),
             Err(e) => {
                 error!(
@@ -72,8 +84,8 @@ impl ClientConnection {
                 Err(())
             }
         };
-        // Blocking send to make sure we clear the `Connecting` placeholder. If the
-        // send fails there is nothing left to do.
+        // Report back to the OutboundLoop. If send fails
+        // the OutboundLoop must have exited.
         let _ = self
             .events
             .send(ConnectEvent {
@@ -83,21 +95,10 @@ impl ClientConnection {
             })
             .await;
     }
-
-    async fn dial(&self) -> Result<Connection, Error> {
-        let server_name = socket_addr_to_quic_server_name(self.addr);
-        let connection = self.endpoint.connect(self.addr, &server_name)?.await?;
-        let attested = get_remote_pubkey(&connection).ok_or(Error::InvalidIdentity(self.addr))?;
-        if attested != self.peer {
-            close_codes::INVALID_IDENTITY.close(&connection);
-            return Err(Error::InvalidIdentity(self.addr));
-        }
-        Ok(connection)
-    }
 }
 
-/// Outbound control loop: client egress (we-dial, send-only). Owns the per-peer
-/// send-only connection state and the dial-task event channel.
+/// Outbound control loop: client egress (we-connect, send-only). Owns the per-peer
+/// send-only connection state and the connect-task event channel.
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
@@ -173,9 +174,9 @@ impl OutboundLoop {
                         self.apply_identity_change(snap);
                     }
                 }
-                // Dial outcomes must come ahead of egress to ensure new
+                // Connect outcomes must come ahead of egress to ensure new
                 // connections are registered even when egress is busy.
-                Some(event) = self.events_rx.recv() => self.handle_dial_event(event),
+                Some(event) = self.events_rx.recv() => self.handle_connect_event(event),
                 // Egress
                 maybe_datagram = self.egress_rx.recv() => {
                     let Some(datagram) = maybe_datagram else { break };
@@ -192,14 +193,14 @@ impl OutboundLoop {
     }
 
     /// Rebuild the client TLS config against the new identity, swap it into the
-    /// quinn endpoint, evict the peer-state table so peers are re-dialed, and
+    /// quinn endpoint, evict the peer-state table so peers are re-connected, and
     /// adopt the new pubkey.
     fn apply_identity_change(&mut self, snap: Arc<IdentitySnapshot>) {
         let client_config =
             new_client_config(snap.cert.clone(), snap.key.clone_key(), ALPENGLOW_ALPN);
         self.local_pubkey = snap.pubkey;
         self.endpoint.set_default_client_config(client_config);
-        // Bump first so any in-flight dial that completes after this point is
+        // Bump first so any in-flight connect that completes after this point is
         // dropped at the event boundary (its event carries the old generation).
         self.generation = self.generation.wrapping_add(1);
         let evicted = self
@@ -241,7 +242,7 @@ impl OutboundLoop {
                     // Newer datagrams replace older ones.
                     *initial_buffer = bytes;
                     self.stats
-                        .egress_dropped_dial_in_progress
+                        .egress_dropped_connect_in_progress
                         .fetch_add(1, Ordering::Relaxed);
                     return;
                 }
@@ -284,12 +285,12 @@ impl OutboundLoop {
                         self.stats
                             .connection_evicted_peer_moved
                             .fetch_add(1, Ordering::Relaxed);
-                        info!("peer {peer} moved; re-dialing at {addr}");
+                        info!("peer {peer} moved; re-connecting at {addr}");
                     }
                 }
             }
         } else {
-            // Register a dialing placeholder and proceed to dial.
+            // Register a connecting placeholder and proceed to connect.
             // If this overflows the LRU it evicts the least-recently-used entry;
             // any displaced `Connection` is closed when it is dropped.
             // Any connection idle long enough to fall out of the LRU should
@@ -316,7 +317,7 @@ impl OutboundLoop {
     }
 
     /// Cleans up Connecting placeholder (if still there), then registers the connection.
-    fn handle_dial_event(&mut self, event: ConnectEvent) {
+    fn handle_connect_event(&mut self, event: ConnectEvent) {
         let ConnectEvent {
             peer,
             generation,
@@ -352,8 +353,8 @@ impl OutboundLoop {
                         .record_connection_count(self.peer_state.len() as u64);
                 }
                 _ => {
-                    // Dial succeeded but the slot is no longer waiting for it
-                    // (peer LRU-evicted mid-dial, or a newer dial already
+                    // Connect succeeded but the slot is no longer waiting for it
+                    // (peer LRU-evicted mid-connect, or a newer connect already
                     // installed a connection). The connection is redundant;
                     // close it. This is vanishingly rare and not worth a metric.
                     close_codes::IDENTITY_ROTATED.close(&connection);
