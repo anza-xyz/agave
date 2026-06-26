@@ -12,7 +12,6 @@ use {
     log::{error, info, warn},
     lru::LruCache,
     quinn::{Connection, Endpoint, SendDatagramError},
-    solana_net_utils::banlist::Banlist,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::{get_remote_pubkey, socket_addr_to_quic_server_name},
     std::{
@@ -105,7 +104,6 @@ pub(crate) struct OutboundLoop {
     /// Identity-rotation counter, local to this loop.
     pub(crate) generation: u64,
     pub(crate) egress_rx: mpsc::Receiver<Datagram>,
-    pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     /// Per-peer send-only connection state.
     /// Idle connections are reclaimed lazily: `peer_state` is the sole owner of
@@ -131,7 +129,6 @@ impl OutboundLoop {
         endpoint: Endpoint,
         local_pubkey: Pubkey,
         egress_rx: mpsc::Receiver<Datagram>,
-        banlist: Arc<Banlist<Pubkey>>,
         identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         shutdown: CancellationToken,
         stats: Arc<ClientStats>,
@@ -142,7 +139,6 @@ impl OutboundLoop {
             local_pubkey,
             generation: 0,
             egress_rx,
-            banlist,
             identity_rx,
             peer_state: LruCache::with_hasher(Self::LRU_SIZE, PubkeyHasherBuilder::default()),
             events_tx,
@@ -232,9 +228,6 @@ impl OutboundLoop {
             message: bytes,
         } = datagram;
         debug_assert_ne!(self.local_pubkey, peer, "egress to self is a caller bug");
-        if self.banlist.is_banned(&peer) {
-            return;
-        }
 
         if let Some(entry) = self.peer_state.get_mut(&peer) {
             match entry {

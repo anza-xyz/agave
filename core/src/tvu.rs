@@ -30,7 +30,7 @@ use {
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
     },
-    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::QuicDatagramEndpoint},
+    agave_quic_datagram::endpoint::QuicDatagramEndpoint,
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
@@ -59,7 +59,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
     },
-    solana_net_utils::{PinnedXdpSender, banlist::Banlist},
+    solana_net_utils::PinnedXdpSender,
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -78,13 +78,16 @@ use {
     solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         net::UdpSocket,
         num::NonZeroUsize,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
-    tokio::runtime::{Handle, Runtime as TokioRuntime},
+    tokio::{
+        runtime::{Handle, Runtime as TokioRuntime},
+        sync::{mpsc, watch},
+    },
 };
 
 /// Sets the upper bound on the number of batches stored in the retransmit
@@ -298,25 +301,28 @@ impl Tvu {
             }
         };
         let (ingress_tx, votor_ingress) = bounded(MAX_ALPENGLOW_PACKET_NUM);
-        let votor_banlist = Arc::new(Banlist::default());
+        // Inbound bans flow from the sig-verifier to the endpoint over this
+        // channel; sized to tolerate banning the whole validator set at once.
+        let (votor_ban_tx, votor_ban_rx) = mpsc::channel(MAX_ALPENGLOW_PACKET_NUM);
         // Seed the allowlist from the last rooted bank so inbound votor
         // connections from staked peers are admitted during ledger replay and
-        // wait_for_supermajority.
-        let votor_allowlist = Arc::new(StakedNodesAllowlist::new(HashMap::new()));
-        {
+        // wait_for_supermajority. The voting service republishes it on its
+        // heartbeat; the endpoint sweeps connections on each change.
+        let allowlist_seed = {
             let root_bank = bank_forks.read().unwrap().root_bank();
-            if let Some(epoch_staked_nodes) = root_bank.epoch_staked_nodes(root_bank.epoch()) {
-                votor_allowlist.swap(epoch_staked_nodes);
-            }
-        }
+            root_bank
+                .epoch_staked_nodes(root_bank.epoch())
+                .unwrap_or_default()
+        };
+        let (votor_allowlist_tx, votor_allowlist_rx) = watch::channel(allowlist_seed);
         let endpoint = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
             &cluster_info.keypair(),
             alpenglow_sockets,
             alpenglow_client_socket,
             ingress_tx,
-            votor_allowlist.clone(),
-            votor_banlist.clone(),
+            Some(votor_allowlist_rx),
+            votor_ban_rx,
             VOTOR_RATE_LIMIT_PPS as f64,
         )
         .map_err(|e| format!("alpenglow endpoint: {e:?}"))?;
@@ -330,7 +336,7 @@ impl Tvu {
             exit.clone(),
             SigVerifierContext {
                 migration_status: migration_status.clone(),
-                banlist: votor_banlist,
+                ban_sender: votor_ban_tx,
                 sharable_banks,
                 cluster_info: cluster_info.clone(),
                 leader_schedule: leader_schedule_cache.clone(),
@@ -597,7 +603,7 @@ impl Tvu {
             cluster_info.clone(),
             vote_history_storage,
             votor_egress,
-            votor_allowlist,
+            votor_allowlist_tx,
             bank_forks.clone(),
             highest_finalized,
             #[cfg(feature = "dev-context-only-utils")]

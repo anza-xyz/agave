@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
+        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, SigVerifierChannels, request_ban},
         errors::SigVerifyVoteError,
         rewards::rewards_wants_vote,
         sig_verified_messages::SigVerifiedBatch,
@@ -11,6 +11,7 @@ use {
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
     },
+    agave_quic_datagram::endpoint::BanCommand,
     agave_votor_messages::{
         consensus_message::VoteMessage,
         metric_types::ConsensusMetricsEvent,
@@ -19,7 +20,6 @@ use {
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
     },
-    log::info,
     rayon::{
         ThreadPool,
         iter::{Either, IntoParallelIterator, ParallelIterator},
@@ -31,10 +31,10 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::{measure::Measure, measure_us},
-    solana_net_utils::banlist::Banlist,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::collections::HashMap,
+    tokio::sync::mpsc,
 };
 
 fn into_vote_msg(msg: UnverifiedVoteMessage) -> VoteMessage {
@@ -85,7 +85,7 @@ pub(super) fn verify_and_send_votes(
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
-    banlist: &Banlist<Pubkey>,
+    ban_sender: &mpsc::Sender<BanCommand>,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
@@ -105,7 +105,7 @@ pub(super) fn verify_and_send_votes(
             vote_payload_to_sign,
             unverified_votes,
             &mut stats,
-            banlist,
+            ban_sender,
             thread_pool,
         );
         stats.sig_verified_votes += verified_votes.len() as u64;
@@ -206,7 +206,7 @@ fn verify_votes(
     vote_payload_to_sign: VotePayloadToSign,
     unverified_votes: Vec<UnverifiedVotePayload>,
     stats: &mut SigVerifyVoteStats,
-    banlist: &Banlist<Pubkey>,
+    ban_sender: &mpsc::Sender<BanCommand>,
     thread_pool: &ThreadPool,
 ) -> Vec<VerifiedVotePayload> {
     // Filter votes too far in the future.
@@ -219,14 +219,7 @@ fn verify_votes(
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));
     for sender_identity_pubkey in invalid_remote_pubkeys {
-        if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
-            stats.already_banned += 1;
-        } else {
-            info!(
-                "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
-                 verification"
-            );
-        }
+        request_ban(ban_sender, sender_identity_pubkey);
     }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
 

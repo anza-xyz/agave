@@ -2,13 +2,11 @@
 
 use {
     crate::{
-        ALLOWLIST_CHECK_INTERVAL, ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, HANDSHAKE_BURST,
+        ALPENGLOW_ALPN, AllowlistReceiver, BANLIST_PRUNE_INTERVAL, HANDSHAKE_BURST,
         HANDSHAKE_GLOBAL_RATE, HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER,
         MAX_INFLIGHT_HANDSHAKES, METRICS_INTERVAL, PEER_RATE_LIMIT_BURST,
-        PEER_RATE_LIMIT_BURST_DOS,
-        allowlist::Allowlist,
-        close_codes,
-        endpoint::Datagram,
+        PEER_RATE_LIMIT_BURST_DOS, close_codes,
+        endpoint::{BanCommand, Datagram},
         error::Error,
         stats::{self, ServerStats, record_server_error},
         transport::{IdentitySnapshot, new_server_config},
@@ -65,14 +63,6 @@ pub(crate) enum InboundEvent {
 /// Accept loop: pulls connection attempts off every endpoint, and drives the
 /// TLS handshakes. `Incoming::accept()` runs the server side of the handshake
 /// (ECDHE + certificate signature) synchronously, thus a separate task.
-///
-/// Several SO_REUSEPORT endpoints can share one accept loop: the kernel
-/// load-balances inbound datagrams across the sibling sockets, and a single
-/// connection's 4-tuple sticks to whichever socket the kernel hashed it to. We
-/// drive `accept()` on all of them through one [`FuturesUnordered`] so the
-/// global handshake rate-limiter and the in-flight-handshake cap stay shared
-/// across the fan-out, and forward every admitted connection into the one
-/// [`InboundLoop`] table.
 pub(crate) struct AcceptLoop {
     endpoints: Vec<Endpoint>,
     /// Identity-rotation counter
@@ -299,7 +289,6 @@ pub(crate) struct ConnectionReader {
     pub(crate) peer: Pubkey,
     pub(crate) remote_addr: SocketAddr,
     pub(crate) ingress: Sender<Datagram>,
-    pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) rate_limiter: Arc<TokenBucket>,
     pub(crate) events: mpsc::Sender<InboundEvent>,
     pub(crate) stats: Arc<ServerStats>,
@@ -312,7 +301,6 @@ impl ConnectionReader {
             peer,
             remote_addr,
             ingress,
-            banlist,
             rate_limiter,
             events,
             stats,
@@ -323,13 +311,9 @@ impl ConnectionReader {
         loop {
             match connection.read_datagram().await {
                 Ok(bytes) => {
-                    // Banlist check happens AFTER the read so a ban that lands
-                    // while we're awaiting can't let a follow-up datagram leak
-                    // through to ingress.
-                    if banlist.is_banned(&peer) {
-                        close_codes::BANNED.close(&connection);
-                        break;
-                    }
+                    // No per-datagram banlist check: a ban arrives on the
+                    // control loop's command channel and force-closes this
+                    // connection promptly, so the read path stays lookup-free.
                     match rate_limiter.consume_tokens(1) {
                         // normal operation
                         Ok(remaining) if remaining > RATE_LIMIT_WATERMARK => {}
@@ -384,10 +368,15 @@ impl ConnectionReader {
 /// connections handed over by [`AcceptLoop`]. Does no handshake work itself.
 pub(crate) struct InboundLoop {
     pub(crate) ingress: Sender<Datagram>,
-    /// Policy to instantly ban all packets from a Pubkey
-    pub(crate) banlist: Arc<Banlist<Pubkey>>,
-    /// Policy for which peers may occupy a slot or retain a connection.
-    pub(crate) allowlist: Arc<dyn Allowlist>,
+    /// Temporary per-peer ban set, owned solely by this loop. Bans arrive as
+    /// commands on `ban_rx`; a ban force-closes the peer's open connections and
+    /// bounces re-handshakes at admission until it expires.
+    pub(crate) banlist: Banlist<Pubkey>,
+    /// Inbound ban commands `(peer, duration)` from the sig-verifier.
+    pub(crate) ban_rx: mpsc::Receiver<BanCommand>,
+    /// Latest admitted-peer snapshot, or `None` to admit all peers (dev/test).
+    /// A change publishes a new snapshot and triggers one eviction sweep.
+    pub(crate) allowlist_rx: Option<AllowlistReceiver>,
     /// Per-peer accepted receive-only connection state, owned solely by this
     /// loop.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
@@ -405,8 +394,8 @@ impl InboundLoop {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         ingress: Sender<Datagram>,
-        banlist: Arc<Banlist<Pubkey>>,
-        allowlist: Arc<dyn Allowlist>,
+        ban_rx: mpsc::Receiver<BanCommand>,
+        allowlist_rx: Option<AllowlistReceiver>,
         events_tx: mpsc::Sender<InboundEvent>,
         events_rx: mpsc::Receiver<InboundEvent>,
         stats: Arc<ServerStats>,
@@ -415,14 +404,24 @@ impl InboundLoop {
     ) -> Self {
         Self {
             ingress,
-            banlist,
-            allowlist,
+            banlist: Banlist::default(),
+            ban_rx,
+            allowlist_rx,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_tx,
             events_rx,
             stats,
             shutdown,
             max_datagrams_per_second_per_peer,
+        }
+    }
+
+    /// Whether `peer` is currently admitted. With no allowlist (dev/test), all
+    /// peers are admitted.
+    fn is_allowed(&self, peer: &Pubkey) -> bool {
+        match &self.allowlist_rx {
+            Some(rx) => rx.borrow().contains_key(peer),
+            None => true,
         }
     }
 
@@ -452,9 +451,12 @@ impl InboundLoop {
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        // Periodic table-wide admission sweep for dormant peers
-        let mut allowlist_check = interval(ALLOWLIST_CHECK_INTERVAL);
-        allowlist_check.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // The allowlist arm is only armed when an allowlist was supplied. With
+        // no allowlist (dev/test) all peers are admitted and there is nothing
+        // to sweep. A separate receiver clone tracks change-notifications; the
+        // snapshot reads in `is_allowed` go through `self.allowlist_rx`.
+        let mut allowlist_rx = self.allowlist_rx.clone();
+        let mut allowlist_closed = allowlist_rx.is_none();
 
         loop {
             tokio::select! {
@@ -462,12 +464,30 @@ impl InboundLoop {
                 // Admission, lifecycle, and rotation events from the accept loop
                 // and the per-connection read tasks.
                 Some(event) = self.events_rx.recv() => self.handle_event(event),
+                // A peer was banned by the sig-verifier: apply it and close any
+                // open connections from that peer right away.
+                Some((peer, timeout)) = self.ban_rx.recv() => self.handle_ban(peer, timeout),
+                // The admitted-peer set changed: sweep the table once and close
+                // every connection whose peer is no longer in the set.
+                changed = async {
+                    match allowlist_rx.as_mut() {
+                        Some(rx) => rx.changed().await,
+                        None => std::future::pending().await,
+                    }
+                }, if !allowlist_closed => {
+                    match changed {
+                        Ok(()) => self.evict_not_allowed(),
+                        Err(_) => {
+                            warn!(
+                                "allowlist channel closed; inbound admission frozen at last \
+                                 snapshot"
+                            );
+                            allowlist_closed = true;
+                        }
+                    }
+                }
                 // Metrics are quite handy to have even if we are flooded with incoming.
                 _ = metrics.tick() => stats::report_server(&self.stats, self.connection_count()),
-                // Close connections whose peer fell out of the allowlist or
-                // landed on the banlist while idle. One pass over the table,
-                // one membership check per peer.
-                _ = allowlist_check.tick() => self.evict_disallowed(),
                 // When idle we can take care of bookkeeping.
                 _ = prune.tick() => {
                     self.banlist.prune();
@@ -499,42 +519,57 @@ impl InboundLoop {
         info!("inbound identity rotated ({evicted} connection(s) evicted)");
     }
 
-    /// Periodic table-wide admission sweep. Closes every connection whose peer
-    /// has dropped out of the allowlist or landed on the banlist while idle.
+    /// Table-wide admission sweep, driven by an allowlist change. Closes every
+    /// connection whose peer is no longer admitted.
     ///
     /// Connections are drained but the (now empty) `PeerEntry` is kept so the
     /// peer's rate limiter survives a reconnect.
-    fn evict_disallowed(&mut self) {
-        // Disjoint field borrows so the membership checks can read `allowlist`
-        // and `banlist` while iterating `peer_state` mutably.
+    fn evict_not_allowed(&mut self) {
+        // Disjoint field borrows so the membership check can read `allowlist_rx`
+        // while iterating `peer_state` mutably.
         let Self {
             peer_state,
-            allowlist,
-            banlist,
+            allowlist_rx,
             stats,
             ..
         } = self;
+        // `None` means admit-all; nothing to evict.
+        let Some(allowlist_rx) = allowlist_rx.as_ref() else {
+            return;
+        };
+        let allowlist = allowlist_rx.borrow();
         let mut evicted_allowlist = 0u64;
         for (peer, entry) in peer_state.iter_mut() {
-            if entry.connections.is_empty() {
+            if entry.connections.is_empty() || allowlist.contains_key(peer) {
                 continue;
             }
-            if banlist.is_banned(peer) {
-                for connection in entry.connections.drain(..) {
-                    close_codes::BANNED.close(&connection);
-                }
-            } else if !allowlist.allow(peer) {
-                let closed = entry
-                    .connections
-                    .drain(..)
-                    .inspect(|connection| close_codes::NOT_ADMITTED.close(connection))
-                    .count() as u64;
-                evicted_allowlist = evicted_allowlist.saturating_add(closed);
-            }
+            let closed = entry
+                .connections
+                .drain(..)
+                .inspect(|connection| close_codes::NOT_ADMITTED.close(connection))
+                .count() as u64;
+            evicted_allowlist = evicted_allowlist.saturating_add(closed);
         }
         stats
             .connection_evicted_allowlist
             .fetch_add(evicted_allowlist, Ordering::Relaxed);
+    }
+
+    /// Apply an inbound ban command and immediately close any open connections
+    /// from that peer. The `PeerEntry` is kept so the rate limiter survives a
+    /// reconnect (which admission will then bounce while the ban holds).
+    fn handle_ban(&mut self, peer: Pubkey, timeout: Duration) {
+        self.banlist.ban(peer, timeout);
+        if let Some(entry) = self.peer_state.get_mut(&peer) {
+            let closed = entry
+                .connections
+                .drain(..)
+                .inspect(|connection| close_codes::BANNED.close(connection))
+                .count() as u64;
+            self.stats
+                .connection_evicted_banned
+                .fetch_add(closed, Ordering::Relaxed);
+        }
     }
 
     /// Apply an admission or connection-lifecycle event.
@@ -570,7 +605,7 @@ impl InboundLoop {
             record_server_error(&Error::Banned(peer), &self.stats);
             return;
         }
-        if !self.allowlist.allow(&peer) {
+        if !self.is_allowed(&peer) {
             close_codes::NOT_ADMITTED.close(&connection);
             record_server_error(&Error::NotAdmitted(peer), &self.stats);
             return;
@@ -612,7 +647,6 @@ impl InboundLoop {
                 peer,
                 remote_addr,
                 ingress: self.ingress.clone(),
-                banlist: self.banlist.clone(),
                 rate_limiter,
                 events: self.events_tx.clone(),
                 stats: self.stats.clone(),

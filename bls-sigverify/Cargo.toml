@@ -47,6 +47,7 @@ solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-streamer = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]

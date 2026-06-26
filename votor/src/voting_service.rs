@@ -3,7 +3,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::Datagram},
+    agave_quic_datagram::{AllowlistSender, endpoint::Datagram},
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
@@ -217,7 +217,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
         egress: mpsc::Sender<Datagram>,
-        allowlist: Arc<StakedNodesAllowlist>,
+        allowlist: AllowlistSender,
         bank_forks: Arc<RwLock<BankForks>>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
         #[cfg(feature = "dev-context-only-utils")] test_override: Option<VotingServiceOverride>,
@@ -458,10 +458,7 @@ mod tests {
         crate::vote_history_storage::{
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
-        agave_quic_datagram::{
-            allowlist::{AllowAll, Allowlist},
-            endpoint::{Datagram, QuicDatagramEndpoint},
-        },
+        agave_quic_datagram::endpoint::{Datagram, QuicDatagramEndpoint},
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
@@ -473,7 +470,7 @@ mod tests {
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
-        solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -483,7 +480,10 @@ mod tests {
         },
         solana_signer::Signer,
         test_case::test_case,
-        tokio::runtime::{Builder, Runtime},
+        tokio::{
+            runtime::{Builder, Runtime},
+            sync::watch,
+        },
     };
 
     fn test_vote_message(
@@ -584,11 +584,11 @@ mod tests {
         assert_eq!(queue.next_messages(10), vec![(7, vote_7)]);
     }
 
-    /// Spin up an in-process quic-datagram endpoint with the given keypair
-    /// and allowlist. Returns (endpoint, ingress_rx, bound_addr, runtime).
-    fn spawn_endpoint<A: Allowlist>(
+    /// Spin up an in-process quic-datagram endpoint with the given keypair.
+    /// Admits all peers (no allowlist) and never bans. Returns (endpoint,
+    /// ingress_rx, bound_addr, runtime).
+    fn spawn_endpoint(
         keypair: Keypair,
-        allowlist: Arc<A>,
     ) -> (
         QuicDatagramEndpoint,
         Receiver<Datagram>,
@@ -603,15 +603,17 @@ mod tests {
         let addr = socket.local_addr().expect("local addr");
         let client_socket = bind_to_localhost_unique().expect("bind client UDP");
         let (ingress_tx, ingress_rx) = bounded(4096);
-        let banlist = Arc::new(Banlist::<Pubkey>::default());
+        // No allowlist (admit all) and a ban channel whose sender we drop, so
+        // no bans ever arrive.
+        let (_ban_tx, ban_rx) = mpsc::channel(1);
         let endpoint = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
             vec![socket],
             client_socket,
             ingress_tx,
-            allowlist,
-            banlist,
+            None,
+            ban_rx,
             VOTOR_RATE_LIMIT_PPS as f64,
         )
         .expect("QuicDatagramEndpoint::spawn");
@@ -647,7 +649,7 @@ mod tests {
                 cluster_info.clone(),
                 Arc::new(NullVoteHistoryStorage::default()),
                 egress,
-                Arc::new(StakedNodesAllowlist::new(HashMap::new())),
+                watch::channel(Arc::new(HashMap::new())).0,
                 bank_forks,
                 Arc::new(RwLock::new(None)),
                 Some(VotingServiceOverride {
@@ -689,11 +691,10 @@ mod tests {
 
         let listener_kp = Keypair::new();
         let listener_pubkey = listener_kp.pubkey();
-        let (endpoint, ingress_rx, listener_addr, _rt) =
-            spawn_endpoint(listener_kp, Arc::new(AllowAll));
+        let (endpoint, ingress_rx, listener_addr, _rt) = spawn_endpoint(listener_kp);
 
         let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) =
-            spawn_endpoint(Keypair::new(), Arc::new(AllowAll));
+            spawn_endpoint(Keypair::new());
         let egress = client_endpoint.egress.clone();
 
         let (bls_sender, bls_receiver) = unbounded();

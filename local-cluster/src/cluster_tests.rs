@@ -5,10 +5,7 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    agave_quic_datagram::{
-        allowlist::AllowAll,
-        endpoint::{Datagram, QuicDatagramEndpoint},
-    },
+    agave_quic_datagram::endpoint::{Datagram, QuicDatagramEndpoint},
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -36,7 +33,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
-    solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -605,7 +602,9 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         .build()
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    let banlist = Arc::new(Banlist::<Pubkey>::default());
+    // Listener admits all peers (no allowlist) and never bans; the ban sender
+    // is dropped so no commands ever arrive.
+    let (_ban_tx, ban_rx) = tokio::sync::mpsc::channel(1);
     // Listener never dials, but the endpoint requires a dedicated egress socket.
     let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
     let endpoint = QuicDatagramEndpoint::spawn(
@@ -614,8 +613,8 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         vec![vote_listener_socket],
         client_socket,
         sender,
-        Arc::new(AllowAll),
-        banlist,
+        None,
+        ban_rx,
         agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS as f64,
     )
     .expect("alpenglow datagram listener");

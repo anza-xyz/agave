@@ -1,8 +1,7 @@
 //! QUIC datagram endpoint
 use {
     crate::{
-        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, MAX_ALPENGLOW_VOTE_ACCOUNTS,
-        allowlist::Allowlist,
+        ALPENGLOW_ALPN, AllowlistReceiver, CONN_EVENT_CHANNEL_CAP, MAX_ALPENGLOW_VOTE_ACCOUNTS,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundEvent, InboundLoop},
@@ -13,12 +12,12 @@ use {
     crossbeam_channel::Sender,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
-    solana_net_utils::banlist::Banlist,
     solana_pubkey::Pubkey,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::Arc,
+        time::Duration,
     },
     tokio::{
         runtime::Handle,
@@ -26,6 +25,11 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+
+/// Command to temporarily ban a peer, sent from the sig-verifier to the
+/// endpoint over a channel. The endpoint owns the banlist; this channel is the
+/// only way to mutate it.
+pub type BanCommand = (Pubkey, Duration);
 
 /// Handle for caller-driven identity rotation. Cloneable and thread-safe.
 pub struct KeyUpdater {
@@ -76,17 +80,27 @@ impl QuicDatagramEndpoint {
     /// full ingress channel results in a drop
     /// (counted in `datagram_ingress_dropped_channel_full`).
     ///
-    /// `allowlist` and `banlist` define admission policy.
+    /// Admission policy is event-driven: `allowlist_rx` carries whole-set
+    /// snapshots of admitted peers (a change triggers an eviction sweep), and
+    /// `ban_rx` carries temporary per-peer ban commands (each force-closes the
+    /// peer's open connections). `allowlist_rx` is `None` only in dev/test
+    /// builds, where it admits all peers.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
         server_sockets: Vec<UdpSocket>,
         client_socket: UdpSocket,
         ingress: Sender<Datagram>,
-        allowlist: Arc<dyn Allowlist>,
-        banlist: Arc<Banlist<Pubkey>>,
+        allowlist_rx: Option<AllowlistReceiver>,
+        ban_rx: mpsc::Receiver<BanCommand>,
         max_datagrams_per_second_per_peer: f64,
     ) -> Result<Self, Error> {
+        // A release build must gate inbound admission on a real allowlist;
+        // `None` (admit-all) is only legitimate in dev/test builds.
+        assert!(
+            cfg!(feature = "dev-context-only-utils") || allowlist_rx.is_some(),
+            "allowlist receiver must be set in release builds",
+        );
         if server_sockets.is_empty() {
             return Err(Error::NoSockets);
         }
@@ -149,7 +163,6 @@ impl QuicDatagramEndpoint {
             outbound_endpoint,
             local_pubkey,
             egress_rx,
-            banlist.clone(),
             identity_rx.clone(),
             shutdown.clone(),
             client_stats,
@@ -169,8 +182,8 @@ impl QuicDatagramEndpoint {
         runtime.spawn(accept.run());
         let inbound = InboundLoop::new(
             ingress,
-            banlist,
-            allowlist,
+            ban_rx,
+            allowlist_rx,
             events_tx,
             events_rx,
             server_stats.clone(),

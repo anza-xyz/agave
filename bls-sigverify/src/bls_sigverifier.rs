@@ -10,7 +10,7 @@ use {
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
     },
-    agave_quic_datagram::endpoint::Datagram,
+    agave_quic_datagram::endpoint::{BanCommand, Datagram},
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         certificate::CertificateType,
@@ -22,14 +22,13 @@ use {
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
-    log::error,
+    log::{error, info, warn},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
-    solana_net_utils::banlist::Banlist,
     solana_perf::packet::{BytesPacket, Meta, PacketBatch, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
@@ -42,7 +41,22 @@ use {
         thread::{self, Builder},
         time::Duration,
     },
+    tokio::sync::mpsc,
 };
+
+/// Best-effort request to the endpoint to ban `peer` for [`BAN_TIMEOUT`]. The
+/// verifier runs on its own thread and must never block on the endpoint, so a
+/// full or closed channel drops the request (logged); the endpoint owns the
+/// banlist and acts on whatever commands it receives.
+pub(super) fn request_ban(ban_sender: &mpsc::Sender<BanCommand>, peer: Pubkey) {
+    match ban_sender.try_send((peer, BAN_TIMEOUT)) {
+        Ok(()) => info!("requested ban for sender={peer}"),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            warn!("ban channel full; dropping ban request for sender={peer}")
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {}
+    }
+}
 
 /// If a cert or vote is so many slots in the future relative to the root slot, it is considered
 /// invalid and discarded.
@@ -56,7 +70,9 @@ pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
-    pub banlist: Arc<Banlist<Pubkey>>,
+    /// Channel to request peer bans from the datagram endpoint (which owns the
+    /// banlist and force-closes banned peers' connections).
+    pub ban_sender: mpsc::Sender<BanCommand>,
     pub sharable_banks: SharableBanks,
     pub cluster_info: Arc<ClusterInfo>,
     pub leader_schedule: Arc<LeaderScheduleCache>,
@@ -88,7 +104,7 @@ pub fn spawn_service(
 
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
-    banlist: Arc<Banlist<Pubkey>>,
+    ban_sender: mpsc::Sender<BanCommand>,
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
@@ -108,7 +124,7 @@ impl SigVerifier {
     fn new(context: SigVerifierContext, channels: SigVerifierChannels) -> Self {
         let SigVerifierContext {
             migration_status,
-            banlist,
+            ban_sender,
             sharable_banks,
             cluster_info,
             leader_schedule,
@@ -123,7 +139,7 @@ impl SigVerifier {
         let root_slot = sharable_banks.root().slot();
         Self {
             migration_status,
-            banlist,
+            ban_sender,
             channels,
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
@@ -177,7 +193,7 @@ impl SigVerifier {
                     &root_bank,
                     &self.cluster_info,
                     &self.leader_schedule,
-                    &self.banlist,
+                    &self.ban_sender,
                     &self.thread_pool,
                     &self.channels,
                 )
@@ -188,7 +204,7 @@ impl SigVerifier {
                     certs_to_verify,
                     &root_bank,
                     &self.channels.channel_to_pool,
-                    &self.banlist,
+                    &self.ban_sender,
                     &self.thread_pool,
                 )
             },
@@ -414,14 +430,10 @@ mod tests {
         solana_signer_store::encode_base2,
     };
 
-    fn new_test_banlist() -> Arc<Banlist<Pubkey>> {
-        Arc::new(Banlist::<Pubkey>::default())
-    }
-
     struct TestContext {
         verifier: SigVerifier,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        banlist: Arc<Banlist<Pubkey>>,
+        ban_receiver: mpsc::Receiver<BanCommand>,
 
         _packet_sender: Sender<Datagram>,
         repair_receiver: VerifiedVoterSlotsReceiver,
@@ -435,6 +447,15 @@ mod tests {
         fn new() -> Self {
             let (channel_to_pool, pool_receiver) = bounded(1024);
             Self::new_with_pool_channel(channel_to_pool, pool_receiver)
+        }
+
+        /// Drain pending ban requests and collect the banned pubkeys.
+        fn banned_pubkeys(&mut self) -> HashSet<Pubkey> {
+            let mut banned = HashSet::new();
+            while let Ok((peer, _timeout)) = self.ban_receiver.try_recv() {
+                banned.insert(peer);
+            }
+            banned
         }
 
         fn new_with_pool_channel(
@@ -473,11 +494,11 @@ mod tests {
             let (channel_to_metrics, metrics_receiver) = bounded(1024);
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
-            let banlist = new_test_banlist();
+            let (ban_sender, ban_receiver) = mpsc::channel(1024);
             let verifier = SigVerifier::new(
                 SigVerifierContext {
                     migration_status: Arc::new(MigrationStatus::default()),
-                    banlist: banlist.clone(),
+                    ban_sender,
                     sharable_banks,
                     cluster_info,
                     leader_schedule,
@@ -495,7 +516,7 @@ mod tests {
             Self {
                 validator_keypairs,
                 verifier,
-                banlist,
+                ban_receiver,
                 _packet_sender: packet_sender,
                 repair_receiver,
                 _reward_receiver: reward_receiver,
@@ -1476,10 +1497,11 @@ mod tests {
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let (_packet_sender, packet_receiver) = bounded(1024);
+        let (ban_sender, _ban_receiver) = mpsc::channel(1024);
         let mut sig_verifier = SigVerifier::new(
             SigVerifierContext {
                 migration_status: Arc::new(MigrationStatus::default()),
-                banlist: new_test_banlist(),
+                ban_sender,
                 sharable_banks,
                 cluster_info,
                 leader_schedule,
@@ -1633,8 +1655,9 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
-        assert!(!ctx.banlist.is_banned(&vote_sender));
-        assert!(!ctx.banlist.is_banned(&cert_sender));
+        let banned = ctx.banned_pubkeys();
+        assert!(!banned.contains(&vote_sender));
+        assert!(!banned.contains(&cert_sender));
     }
 
     #[test]
@@ -1684,15 +1707,16 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
+        let banned = ctx.banned_pubkeys();
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
                 assert!(
-                    ctx.banlist.is_banned(sender),
+                    banned.contains(sender),
                     "invalid sender {i} should be banned"
                 );
             } else {
                 assert!(
-                    !ctx.banlist.is_banned(sender),
+                    !banned.contains(sender),
                     "valid sender {i} should not be banned"
                 );
             }
@@ -1739,15 +1763,16 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
+        let banned = ctx.banned_pubkeys();
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
                 assert!(
-                    ctx.banlist.is_banned(sender),
+                    banned.contains(sender),
                     "invalid sender {i} should be banned"
                 );
             } else {
                 assert!(
-                    !ctx.banlist.is_banned(sender),
+                    !banned.contains(sender),
                     "valid sender {i} should not be banned"
                 );
             }

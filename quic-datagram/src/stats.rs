@@ -57,6 +57,8 @@ pub struct ServerStats {
     /// Connections closed because the peer is no longer
     /// admitted (e.g. evicted at an epoch boundary).
     pub(crate) connection_evicted_allowlist: AtomicU64,
+    /// Connections closed because the peer was banned by the sig-verifier.
+    pub(crate) connection_evicted_banned: AtomicU64,
     /// Connections closed because the local identity (TLS cert / pubkey) was
     /// rotated.
     pub(crate) connection_evicted_identity_rotated: AtomicU64,
@@ -229,6 +231,11 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
         (
             "connection_evicted_allowlist",
             swap!(stats.connection_evicted_allowlist),
+            i64
+        ),
+        (
+            "connection_evicted_banned",
+            swap!(stats.connection_evicted_banned),
             i64
         ),
         (

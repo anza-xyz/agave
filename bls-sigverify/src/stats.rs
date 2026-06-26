@@ -192,8 +192,6 @@ pub(super) struct SigVerifyCertStats {
     /// Number of certs that were verified unnecessarily because another cert of the same
     /// `CertificateType` was already verified.
     pub(super) unnecessary_certs_verified: Saturating<u64>,
-    /// Number of times we are banning a validator that was already banned.
-    pub(super) already_banned: Saturating<u64>,
 
     /// Number of times cert verification failed.
     pub(super) certificate_verification_failed: Saturating<u64>,
@@ -217,7 +215,6 @@ impl SigVerifyCertStats {
             certs_to_sig_verify,
             sig_verified_certs,
             unnecessary_certs_verified,
-            already_banned,
             certificate_verification_failed,
             too_far_in_future,
             pool_outstanding_msgs,
@@ -228,7 +225,6 @@ impl SigVerifyCertStats {
         self.certs_to_sig_verify += certs_to_sig_verify;
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
-        self.already_banned += already_banned;
         self.certificate_verification_failed += certificate_verification_failed;
         self.too_far_in_future += too_far_in_future;
         self.pool_outstanding_msgs += pool_outstanding_msgs;
@@ -243,7 +239,6 @@ impl SigVerifyCertStats {
             certs_to_sig_verify,
             sig_verified_certs,
             unnecessary_certs_verified,
-            already_banned,
             certificate_verification_failed,
             too_far_in_future,
             pool_outstanding_msgs,
@@ -261,7 +256,6 @@ impl SigVerifyCertStats {
                 unnecessary_certs_verified.0,
                 i64
             ),
-            ("already_banned", already_banned.0, i64),
             (
                 "certificate_verification_failed",
                 certificate_verification_failed.0,
@@ -296,8 +290,6 @@ pub(super) struct SigVerifyVoteStats {
 
     /// Number of times the cert was too far in the future and discarded.
     pub(super) too_far_in_future: Saturating<u64>,
-    /// Number of times we are banning a validator that was already banned.
-    pub(super) already_banned: Saturating<u64>,
 
     /// Number of votes sent successfully over the channel to metrics.
     pub(super) metrics_sent: Saturating<u64>,
@@ -333,7 +325,6 @@ impl SigVerifyVoteStats {
             votes_to_sig_verify,
             sig_verified_votes,
             too_far_in_future,
-            already_banned,
             metrics_sent,
             metrics_channel_full,
             rewards_sent,
@@ -350,7 +341,6 @@ impl SigVerifyVoteStats {
         self.votes_to_sig_verify += votes_to_sig_verify;
         self.sig_verified_votes += sig_verified_votes;
         self.too_far_in_future += too_far_in_future;
-        self.already_banned += already_banned;
         self.metrics_sent += metrics_sent;
         self.metrics_channel_full += metrics_channel_full;
         self.rewards_sent += rewards_sent;
@@ -372,7 +362,6 @@ impl SigVerifyVoteStats {
             votes_to_sig_verify,
             sig_verified_votes,
             too_far_in_future,
-            already_banned,
             metrics_sent,
             metrics_channel_full,
             rewards_sent,
@@ -391,7 +380,6 @@ impl SigVerifyVoteStats {
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
             ("sig_verified_votes", sig_verified_votes.0, i64),
             ("too_far_in_future", too_far_in_future.0, i64),
-            ("already_banned", already_banned.0, i64),
             ("metrics_sent", metrics_sent.0, i64),
             ("metrics_channel_full", metrics_channel_full.0, i64),
             ("rewards_sent", rewards_sent.0, i64),

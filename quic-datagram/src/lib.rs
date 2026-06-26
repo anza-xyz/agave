@@ -1,6 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
 
-pub mod allowlist;
 pub mod error;
 
 pub(crate) mod client;
@@ -10,7 +9,20 @@ pub(crate) mod server;
 pub(crate) mod stats;
 pub(crate) mod transport;
 
-use std::time::Duration;
+use {
+    solana_pubkey::Pubkey,
+    std::{collections::HashMap, sync::Arc, time::Duration},
+    tokio::sync::watch,
+};
+
+/// Snapshot of admitted peers for inbound admission. The value is the peer's
+/// epoch stake, which we keep since in most cases the original data structure
+/// comes with it already.
+pub type AllowlistSnapshot = Arc<HashMap<Pubkey, u64>>;
+
+pub type AllowlistSender = watch::Sender<AllowlistSnapshot>;
+
+pub type AllowlistReceiver = watch::Receiver<AllowlistSnapshot>;
 
 /// Maximum number of unique peer pubkeys we expect in steady state.
 /// Used to size buffers and channels, actual peer count is controlled
@@ -27,6 +39,7 @@ pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 
 /// Capacity of each task -> control-loop connection-event channel.
+/// Picked to absorb several slots worth of work.
 pub(crate) const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Per-peer receive side burst limit.
@@ -57,10 +70,6 @@ pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 /// may be kept alive, this explicit cap (mirroring the streamer transport)
 /// reclaims the handshake slots regardless of what the peer sends.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// How often each connection's read loop re-checks whether the peer is still
-/// in the allowlist and closes any remaining connections.
-pub const ALLOWLIST_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
 /// How often expired banlist entries are pruned.
 pub(crate) const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);

@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use arc_swap::ArcSwap;
 use {
-    agave_quic_datagram::allowlist::StakedNodesAllowlist,
+    agave_quic_datagram::AllowlistSender,
     lazy_lru::LruCache,
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -48,8 +48,8 @@ pub struct StakedValidatorsCache {
     /// Whether to include the running validator's socket address in cache entries
     include_self: bool,
 
-    /// Allowlist for the votor datagram endpoint.
-    allowlist: Option<Arc<StakedNodesAllowlist>>,
+    /// Publisher for the votor datagram endpoint's inbound admission allowlist.
+    allowlist: Option<AllowlistSender>,
 
     /// Live, shared override of the (pubkey -> socket) set
     #[cfg(feature = "dev-context-only-utils")]
@@ -63,7 +63,7 @@ impl StakedValidatorsCache {
         ttl: Duration,
         target_cache_size: usize,
         include_self: bool,
-        allowlist: Option<Arc<StakedNodesAllowlist>>,
+        allowlist: Option<AllowlistSender>,
         #[cfg(feature = "dev-context-only-utils")] test_overrides: Arc<
             ArcSwap<HashMap<Pubkey, SocketAddr>>,
         >,
@@ -148,7 +148,10 @@ impl StakedValidatorsCache {
             }
         }
         self.inject_overrides(&mut staked);
-        allowlist.swap(Arc::new(staked));
+        // A `watch` send replaces the whole snapshot; the endpoint wakes on the
+        // change and sweeps connections for peers that dropped out. `send`
+        // failing means the endpoint is gone, which is harmless here.
+        let _ = allowlist.send(Arc::new(staked));
     }
 
     #[inline]
