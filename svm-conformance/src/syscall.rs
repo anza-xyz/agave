@@ -1,7 +1,7 @@
 //! VM syscall conformance harness.
 
 use {
-    crate::conformance::{
+    crate::{
         callback::DefaultCallback,
         err::{UnpackedResult, unpack_stable_result},
         instr::context::InstrContext,

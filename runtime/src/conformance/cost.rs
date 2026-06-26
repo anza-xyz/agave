@@ -1,17 +1,18 @@
 //! Transaction cost conformance harness.
 
 use {
-    super::versioned_message_from_proto,
     protosol::protos::{
         CostContext as ProtoCostContext, CostResult as ProtoCostResult,
         SanitizedTransaction as ProtoSanitizedTransaction, TxnCostMode as ProtoTxnCostMode,
     },
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+    solana_svm_conformance::{
+        feature_set::feature_set_from_proto, message::versioned_message_from_proto,
+    },
     solana_message::SimpleAddressLoader,
     solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_signature::Signature,
-    solana_svm::conformance::feature_set::feature_set_from_proto,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
         versioned::VersionedTransaction,

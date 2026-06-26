@@ -1,9 +1,9 @@
 //! Shared setup helpers for the execution harnesses.
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 use solana_account::ReadableAccount;
 use {
-    crate::conformance::instr::context::InstrContext,
+    crate::instr::context::InstrContext,
     solana_account::Account,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
@@ -91,7 +91,7 @@ pub(crate) fn compute_budget(feature_set: &SVMFeatureSet) -> ComputeBudget {
 /// The loader that owns the program account in `accounts`, used as the program
 /// account's owner when compiling the transaction. `None` if the program
 /// account isn't present.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 pub(crate) fn program_loader_key(accounts: &[(Pubkey, Account)], program_id: &Pubkey) -> Pubkey {
     accounts
         .iter()
@@ -152,7 +152,7 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 
 /// Build a sysvar cache populated from any sysvar accounts present in the
 /// input account set.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 pub(crate) fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {

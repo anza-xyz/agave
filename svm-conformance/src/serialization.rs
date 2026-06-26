@@ -1,7 +1,7 @@
 //! VM serialization conformance harness.
 
 use {
-    crate::conformance::{
+    crate::{
         callback::DefaultCallback,
         fd_hash::fd_hash,
         instr::context::InstrContext,

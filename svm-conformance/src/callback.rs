@@ -1,7 +1,7 @@
 //! Invoke-context callbacks shared by the conformance harnesses.
 
 use solana_svm_callback::InvokeContextCallback;
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 use {
     agave_feature_set::FeatureSet,
     agave_precompiles::{get_precompile, is_precompile},
@@ -15,10 +15,10 @@ pub struct DefaultCallback;
 impl InvokeContextCallback for DefaultCallback {}
 
 /// Conformance callback. Full precompile support across all features.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 pub struct ConformanceCallback;
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 impl InvokeContextCallback for ConformanceCallback {
     fn is_precompile(&self, program_id: &Pubkey) -> bool {
         is_precompile(program_id, |_| true)

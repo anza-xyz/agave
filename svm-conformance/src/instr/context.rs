@@ -1,8 +1,8 @@
 //! Instruction context (input).
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 use {
-    crate::conformance::{account_state::account_from_proto, feature_set::feature_set_from_proto},
+    crate::{account_state::account_from_proto, feature_set::feature_set_from_proto},
     protosol::protos::InstrContext as ProtoInstrContext,
     solana_instruction::AccountMeta,
 };
@@ -37,7 +37,7 @@ impl InstrContext {
     }
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 impl From<ProtoInstrContext> for InstrContext {
     fn from(value: ProtoInstrContext) -> Self {
         let program_id = Pubkey::try_from(value.program_id).expect("invalid program_id bytes");

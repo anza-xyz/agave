@@ -1,7 +1,7 @@
 //! ELF loader conformance harness.
 
 use {
-    crate::conformance::{
+    crate::{
         err::elf_error_code,
         fd_hash::{fd_hash_u64_without_seed, fd_hash_without_seed},
         feature_set::feature_set_from_proto,
@@ -105,11 +105,11 @@ mod tests {
     use {super::*, protosol::protos::FeatureSet as ProtoFeatureSet};
 
     const NOOP_ALIGNED: &[u8] =
-        include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
     const NOOP_UNALIGNED: &[u8] =
-        include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_unaligned.so");
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/noop_unaligned.so");
     const SBPFV3_RETURN_OK: &[u8] =
-        include_bytes!("../../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
 
     fn assert_loads_ok(elf: &[u8], deploy_checks: bool, features: Option<ProtoFeatureSet>) {
         let effects = execute_elf_loader(&ProtoElfLoaderCtx {
