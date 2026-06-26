@@ -684,7 +684,10 @@ fn default_xdp_test_step() -> buildkite::Step {
         env: Some(HashMap::from([
             (
                 String::from("EXTRA_DOCKER_RUN_ARGS"),
-                String::from("--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN"),
+                String::from(
+                    "--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN --security-opt \
+                     apparmor=unconfined",
+                ),
             ),
             (
                 String::from("SOLANA_DOCKER_RUN_NOSETUID"),
