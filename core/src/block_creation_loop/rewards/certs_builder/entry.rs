@@ -3,6 +3,7 @@ use {
     crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{reward_certificate::SkipRewardCertificate, vote::Vote},
+    bitvec::vec::BitVec,
     notar_entry::NotarEntry,
     partial_cert::{BuildSigBitmapError, PartialCert},
     solana_bls_signatures::BlsError,
@@ -13,6 +14,14 @@ use {
 
 mod notar_entry;
 mod partial_cert;
+
+fn has_common_bits(a: &BitVec<u8>, b: &BitVec<u8>) -> bool {
+    assert_eq!(a.len(), b.len());
+    a.as_raw_slice()
+        .iter()
+        .zip(b.as_raw_slice())
+        .any(|(&x, &y)| (x & y) != 0)
+}
 
 /// Different types of errors that can be returned from adding votes.
 #[derive(Debug, Error)]

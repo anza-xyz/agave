@@ -1,5 +1,6 @@
 use {
     super::AddVoteError,
+    crate::block_creation_loop::rewards::certs_builder::entry::has_common_bits,
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     bitvec::{order::Lsb0, vec::BitVec},
     solana_bls_signatures::{
@@ -46,10 +47,7 @@ impl PartialCert {
 
     /// Returns true if the [`PartialCert`] needs the vote else false.
     pub(super) fn wants_vote(&self, ranks: &BitVec<u8>) -> bool {
-        !self
-            .bitvec
-            .iter_ones()
-            .any(|i| ranks.get(i).is_some_and(|bit| *bit))
+        !has_common_bits(&self.bitvec, ranks)
     }
 
     /// Adds a new observed vote to the aggregate.

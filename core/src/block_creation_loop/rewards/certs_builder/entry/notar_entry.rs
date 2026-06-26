@@ -3,6 +3,7 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
+    crate::block_creation_loop::rewards::certs_builder::entry::has_common_bits,
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
     bitvec::vec::BitVec,
@@ -35,11 +36,7 @@ impl NotarEntry {
 
     /// Returns true if the [`NotarEntry`] needs the vote else false.
     pub(super) fn wants_vote(&self, ranks: &BitVec<u8>) -> bool {
-        ranks
-            .iter()
-            .by_vals()
-            .zip(self.voted.iter().by_vals())
-            .any(|(x, y)| x && y)
+        !has_common_bits(&self.voted, ranks)
     }
 
     /// Adds a new observed vote to the aggregate.
