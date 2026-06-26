@@ -8,7 +8,8 @@ use {
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         stats::SigVerifyVoteStats,
         utils::{
-            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
+            send_sig_verified_batch_to_pool, send_votes_to_metrics, send_votes_to_repair,
+            send_votes_to_rewards,
         },
     },
     agave_votor_messages::{
@@ -115,10 +116,10 @@ pub(super) fn verify_and_send_votes(
         );
         stats.sig_verified_votes += verified_votes.len() as u64;
 
-        let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
+        let (sig_verified_batch, msgs_for_repair, msg_for_reward, msg_for_metrics) =
             process_verified_votes(verified_votes, root_bank, cluster_info, leader_schedule);
 
-        send_votes_to_pool(votes_for_pool, &channels.channel_to_pool, &mut stats)?;
+        send_sig_verified_batch_to_pool(sig_verified_batch, &channels.channel_to_pool, &mut stats)?;
         send_votes_to_repair(msgs_for_repair, &channels.channel_to_repair, &mut stats)?;
         send_votes_to_rewards(msg_for_reward, &channels.channel_to_reward, &mut stats)?;
         send_votes_to_metrics(msg_for_metrics, &channels.channel_to_metrics, &mut stats)?;
@@ -165,7 +166,7 @@ fn process_verified_votes(
 ) {
     let mut votes_for_reward = Vec::with_capacity(verified_votes.len());
     let mut msgs_for_repair = HashMap::new();
-    let mut votes_for_pool = Vec::with_capacity(verified_votes.len());
+    let mut vote_aggregates_for_pool = Vec::with_capacity(verified_votes.len());
     let mut votes_for_metrics = Vec::with_capacity(verified_votes.len());
     for payload in verified_votes {
         if rewards_wants_vote(
@@ -185,7 +186,7 @@ fn process_verified_votes(
                 vote: payload.vote_aggregate.vote,
             });
         }
-        votes_for_pool.push(payload.vote_aggregate);
+        vote_aggregates_for_pool.push(payload.vote_aggregate);
     }
     let msgs_for_repair = msgs_for_repair
         .into_iter()
@@ -195,9 +196,9 @@ fn process_verified_votes(
             (pubkey, slots)
         })
         .collect();
-    let votes_for_pool = SigVerifiedBatch::Votes(votes_for_pool);
+    let sig_verified_batch = SigVerifiedBatch::Votes(vote_aggregates_for_pool);
     (
-        votes_for_pool,
+        sig_verified_batch,
         msgs_for_repair,
         AddVoteMessage {
             votes: votes_for_reward,

@@ -192,8 +192,8 @@ impl ConsensusPoolService {
             SigVerifiedBatch::Certificates(certs) => {
                 stats.received_certificates += certs.len();
             }
-            SigVerifiedBatch::Votes(votes) => {
-                stats.received_votes += votes.len();
+            SigVerifiedBatch::Votes(aggregates) => {
+                stats.received_vote_aggregates += aggregates.len();
             }
         }
         let root_bank = ctx.sharable_banks.root();
@@ -633,8 +633,8 @@ impl ConsensusPoolService {
             .map(|m| match m {
                 ConsensusMessage::Certificate(c) => SigVerifiedBatch::Certificates(vec![c]),
                 ConsensusMessage::Vote(v) => {
-                    let msg = VoteAggregate::new_from_verified_vote(root_bank, v);
-                    SigVerifiedBatch::Votes(vec![msg])
+                    let aggregate = VoteAggregate::new_from_verified_vote(root_bank, v);
+                    SigVerifiedBatch::Votes(vec![aggregate])
                 }
             })
         {
@@ -792,7 +792,7 @@ mod tests {
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
-            let message = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
+            let batch = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
                 &root_bank,
                 VoteMessage {
                     vote: notarize_vote,
@@ -806,7 +806,7 @@ mod tests {
                 &root_bank,
                 &ctx.ctx.cluster_info.id(),
                 ctx.ctx.my_vote_pubkey,
-                message,
+                batch,
                 &mut ctx.consensus_pool,
                 &mut events,
                 &mut stats,

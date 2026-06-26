@@ -57,7 +57,7 @@ pub(super) fn send_votes_to_rewards(
 
 /// Sends the `batch` to the consensus pool.  If the channel is full, then does a
 /// blocking send.
-pub(super) fn send_votes_to_pool(
+pub(super) fn send_sig_verified_batch_to_pool(
     batch: SigVerifiedBatch,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut SigVerifyVoteStats,

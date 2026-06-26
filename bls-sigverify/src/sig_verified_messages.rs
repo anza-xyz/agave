@@ -23,7 +23,7 @@ impl SigVerifiedBatch {
     /// Returns the length of the batch
     pub fn len(&self) -> usize {
         match self {
-            Self::Votes(votes) => votes.len(),
+            Self::Votes(aggregates) => aggregates.len(),
             Self::Certificates(certs) => certs.len(),
         }
     }
@@ -31,7 +31,7 @@ impl SigVerifiedBatch {
     /// Returns true if the batch is empty.
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Votes(votes) => votes.is_empty(),
+            Self::Votes(aggregates) => aggregates.is_empty(),
             Self::Certificates(certs) => certs.is_empty(),
         }
     }

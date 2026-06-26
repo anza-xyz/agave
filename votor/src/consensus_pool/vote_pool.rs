@@ -426,7 +426,7 @@ impl VotePool {
     }
 
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
-    pub(super) fn add_vote(
+    pub(super) fn add_aggregate(
         &mut self,
         root_bank: &Bank,
         total_stake: NonZero<u64>,
@@ -641,11 +641,11 @@ mod tests {
                 let src = create_new_vote(src, ctx.slot, ctx.block_id);
                 let src = ctx.new_vote(src, 1);
                 ctx.pool
-                    .add_vote(&ctx.bank, ctx.total_stake, &conflicting, &BTreeMap::new())
+                    .add_aggregate(&ctx.bank, ctx.total_stake, &conflicting, &BTreeMap::new())
                     .unwrap();
                 let err = ctx
                     .pool
-                    .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                    .add_aggregate(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
                     .unwrap_err();
                 assert!(matches!(err, VotePoolAddVoteError::Invalid));
             }
@@ -654,11 +654,11 @@ mod tests {
             let src = create_new_vote(src, ctx.slot, ctx.block_id);
             let src = ctx.new_vote(src, 1);
             ctx.pool
-                .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                .add_aggregate(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
                 .unwrap();
             let err = ctx
                 .pool
-                .add_vote(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                .add_aggregate(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
                 .unwrap_err();
             assert!(
                 matches!(err, VotePoolAddVoteError::Duplicate)
@@ -674,14 +674,14 @@ mod tests {
             let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
             let notar = ctx.new_vote(notar, 1);
             ctx.pool
-                .add_vote(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
+                .add_aggregate(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
                 .unwrap();
         }
         let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
         let notar = ctx.new_vote(notar, 1);
         let err = ctx
             .pool
-            .add_vote(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
+            .add_aggregate(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
             .unwrap_err();
         assert!(matches!(err, VotePoolAddVoteError::Invalid));
     }

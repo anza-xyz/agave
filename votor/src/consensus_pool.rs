@@ -174,7 +174,7 @@ impl ConsensusPool {
             .vote_pools
             .entry(slot)
             .or_insert_with(|| VotePool::new(slot, max_validators));
-        pool.add_vote(
+        pool.add_aggregate(
             root_bank,
             total_stake,
             aggregate,
@@ -283,10 +283,11 @@ impl ConsensusPool {
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let current_highest_finalized_slot = self.highest_finalized_slot();
         let new_certficates_to_send = match batch {
-            SigVerifiedBatch::Votes(votes) => {
+            SigVerifiedBatch::Votes(aggregates) => {
                 let mut new_certs = vec![];
-                for vote in votes {
-                    let mut certs = self.add_vote(root_bank, my_vote_pubkey, vote, events)?;
+                for aggregate in aggregates {
+                    let mut certs =
+                        self.add_aggregate(root_bank, my_vote_pubkey, aggregate, events)?;
                     new_certs.append(&mut certs);
                 }
                 new_certs
@@ -312,7 +313,7 @@ impl ConsensusPool {
         ))
     }
 
-    fn add_vote(
+    fn add_aggregate(
         &mut self,
         root_bank: &Bank,
         my_vote_pubkey: Pubkey,
@@ -696,7 +697,7 @@ mod tests {
         fn add_certificate(&mut self, vote: Vote) {
             let bank = self.bank_forks.read().unwrap().root_bank();
             for rank in 0..=6 {
-                self.add_batch(dummy_vote_message(
+                self.add_batch(new_vote_aggregate(
                     &bank,
                     &self.validators,
                     self.pool.cluster_info.my_shred_version(),
@@ -722,7 +723,7 @@ mod tests {
         }
     }
 
-    fn dummy_vote_message(
+    fn new_vote_aggregate(
         bank: &Bank,
         keypairs: &[ValidatorVoteKeypairs],
         shred_version: u16,
@@ -771,7 +772,7 @@ mod tests {
             pool.add_batch(
                 root_bank,
                 keypairs[0].vote_keypair.pubkey(),
-                dummy_vote_message(
+                new_vote_aggregate(
                     root_bank,
                     keypairs,
                     pool.cluster_info.my_shred_version(),
@@ -1069,7 +1070,7 @@ mod tests {
             Vote::Genesis(_genesis_vote) => |_pool: &ConsensusPool| 0,
         };
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        ctx.add_batch(dummy_vote_message(
+        ctx.add_batch(new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
@@ -1083,7 +1084,7 @@ mod tests {
             .add_batch(
                 &bank,
                 ctx.validators[0].vote_keypair.pubkey(),
-                dummy_vote_message(
+                new_vote_aggregate(
                     &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
@@ -1095,7 +1096,7 @@ mod tests {
             .unwrap_err();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         for rank in 0..4 {
-            ctx.add_batch(dummy_vote_message(
+            ctx.add_batch(new_vote_aggregate(
                 &bank,
                 &ctx.validators,
                 ctx.pool.cluster_info.my_shred_version(),
@@ -1105,7 +1106,7 @@ mod tests {
         }
         assert!(highest_slot_fn(&ctx.pool) < slot);
         let new_validator_ix = 6;
-        let (new_finalized_slot, certs_to_send) = ctx.add_batch(dummy_vote_message(
+        let (new_finalized_slot, certs_to_send) = ctx.add_batch(new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
@@ -1208,7 +1209,7 @@ mod tests {
                 .add_batch(
                     &root_bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &root_bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -1248,7 +1249,7 @@ mod tests {
             let slot = (i as u64).saturating_add(16);
             let vote = Vote::new_skip_vote(slot);
             // These should not extend the skip range
-            ctx.add_batch(dummy_vote_message(
+            ctx.add_batch(new_vote_aggregate(
                 &bank,
                 &ctx.validators,
                 ctx.pool.cluster_info.my_shred_version(),
@@ -1341,7 +1342,7 @@ mod tests {
         }
         // 10% vote for skip 2
         let vote = Vote::new_skip_vote(2);
-        ctx.add_batch(dummy_vote_message(
+        ctx.add_batch(new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
@@ -1353,7 +1354,7 @@ mod tests {
         assert_single_certificate_range(&ctx.pool, 2, 2);
         // 10% vote for skip 4
         let vote = Vote::new_skip_vote(4);
-        ctx.add_batch(dummy_vote_message(
+        ctx.add_batch(new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
@@ -1366,7 +1367,7 @@ mod tests {
         assert_single_certificate_range(&ctx.pool, 4, 4);
         // 10% vote for skip 3
         let vote = Vote::new_skip_vote(3);
-        ctx.add_batch(dummy_vote_message(
+        ctx.add_batch(new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
@@ -1407,7 +1408,7 @@ mod tests {
         }
         // Range expansion on a singleton vote should be ok
         let vote = Vote::new_skip_vote(1);
-        ctx.add_batch(dummy_vote_message(
+        ctx.add_batch(new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
@@ -1447,7 +1448,7 @@ mod tests {
             .add_batch(
                 &bank,
                 ctx.validators[0].vote_keypair.pubkey(),
-                dummy_vote_message(
+                new_vote_aggregate(
                     &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
@@ -1543,7 +1544,7 @@ mod tests {
             .add_batch(
                 &bank,
                 my_vote_key,
-                dummy_vote_message(
+                new_vote_aggregate(
                     &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
@@ -1562,7 +1563,7 @@ mod tests {
                 .add_batch(
                     &bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -1592,7 +1593,7 @@ mod tests {
                 .add_batch(
                     &bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -1614,7 +1615,7 @@ mod tests {
             .add_batch(
                 &bank,
                 my_vote_key,
-                dummy_vote_message(
+                new_vote_aggregate(
                     &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
@@ -1634,7 +1635,7 @@ mod tests {
                 .add_batch(
                     &bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -1670,7 +1671,7 @@ mod tests {
                 .add_batch(
                     &bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -1711,7 +1712,7 @@ mod tests {
             .add_batch(
                 &bank,
                 my_vote_key,
-                dummy_vote_message(
+                new_vote_aggregate(
                     &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
@@ -1730,7 +1731,7 @@ mod tests {
                 .add_batch(
                     &bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -1754,7 +1755,7 @@ mod tests {
             .add_batch(
                 &bank,
                 ctx.validators[0].vote_keypair.pubkey(),
-                dummy_vote_message(
+                new_vote_aggregate(
                     &bank,
                     &ctx.validators,
                     ctx.pool.cluster_info.my_shred_version(),
@@ -1800,7 +1801,7 @@ mod tests {
         pool.add_batch(
             bank,
             validators[0].vote_keypair.pubkey(),
-            dummy_vote_message(
+            new_vote_aggregate(
                 bank,
                 validators,
                 pool.cluster_info.my_shred_version(),
@@ -1813,7 +1814,7 @@ mod tests {
         pool.add_batch(
             bank,
             validators[0].vote_keypair.pubkey(),
-            dummy_vote_message(
+            new_vote_aggregate(
                 bank,
                 validators,
                 pool.cluster_info.my_shred_version(),
@@ -1906,7 +1907,7 @@ mod tests {
                 .add_batch(
                     &new_bank,
                     ctx.validators[0].vote_keypair.pubkey(),
-                    dummy_vote_message(
+                    new_vote_aggregate(
                         &new_bank,
                         &ctx.validators,
                         ctx.pool.cluster_info.my_shred_version(),
@@ -2201,14 +2202,14 @@ mod tests {
             block_id: Hash::new_unique(),
         });
 
-        let batch = dummy_vote_message(
+        let batch = new_vote_aggregate(
             &bank,
             &ctx.validators,
             ctx.pool.cluster_info.my_shred_version(),
             &vote,
             rank_to_test,
         );
-        let SigVerifiedBatch::Votes(msgs) = batch else {
+        let SigVerifiedBatch::Votes(aggregates) = batch else {
             panic!("Expected Vote message")
         };
 
@@ -2218,7 +2219,7 @@ mod tests {
                 .unwrap();
 
         let payload = get_vote_payload_to_sign(vote, ctx.pool.cluster_info.my_shred_version());
-        msgs[0]
+        aggregates[0]
             .signature()
             .verify(&bls_keypair.public, &payload)
             .expect("vote message signature should verify");
