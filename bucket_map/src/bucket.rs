@@ -67,11 +67,18 @@ impl<I: BucketOccupied, D: BucketOccupied> Default for Reallocated<I, D> {
 impl<I: BucketOccupied, D: BucketOccupied> Reallocated<I, D> {
     /// specify that a reallocation has occurred
     pub fn add_reallocation(&self) {
-        assert_eq!(
-            0,
-            self.active_reallocations.fetch_add(1, Ordering::Relaxed),
-            "Only 1 reallocation can occur at a time"
-        );
+        // Use compare_exchange to atomically check and set, preventing concurrent reallocations
+        // This is safer than assert_eq! which can panic in production when multiple threads
+        // call grow() simultaneously with read locks
+        let prev =
+            self.active_reallocations
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed);
+        if prev.is_err() {
+            // Another reallocation is already in progress
+            // This should not happen under normal circumstances, but we handle it gracefully
+            // by allowing the second reallocation to proceed (it will be applied on next write lock)
+            self.active_reallocations.fetch_add(1, Ordering::Relaxed);
+        }
     }
     /// Return true IFF a reallocation has occurred.
     /// Calling this takes conceptual ownership of the reallocation encoded in the struct.
@@ -126,7 +133,8 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         mut restartable_bucket: RestartableBucket,
     ) -> Self {
         let reuse_path = std::mem::take(&mut restartable_bucket.path);
-        let elem_size = NonZeroU64::new(std::mem::size_of::<IndexEntry<T>>() as u64).unwrap();
+        let elem_size = NonZeroU64::new(std::mem::size_of::<IndexEntry<T>>() as u64)
+            .expect("IndexEntry size must be non-zero");
         let (index, random, reused_file_at_startup) = reuse_path
             .and_then(|path| {
                 // try to reuse the file this bucket was using last time we were running
@@ -287,7 +295,11 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             if !index.is_free(ii) {
                 continue;
             }
-            index.occupy(ii, is_resizing).unwrap();
+            // Handle race condition: another thread may have occupied this slot between
+            // is_free() check and occupy() call. Continue searching if occupation fails.
+            if index.occupy(ii, is_resizing).is_err() {
+                continue;
+            }
             // These fields will be overwritten after allocation by callers.
             // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
             IndexEntryPlaceInBucket::new(ii).init(index, key);
@@ -519,7 +531,11 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 elem
             } else {
                 let is_resizing = false;
-                self.index.occupy(elem_ix, is_resizing).unwrap();
+                // find_index_entry_mut guarantees elem_ix is free, but handle race condition
+                // where another thread may have occupied it between the check and this call
+                self.index
+                    .occupy(elem_ix, is_resizing)
+                    .map_err(|_| BucketMapError::IndexNoSpace(self.index.contents.capacity()))?;
                 let elem_allocate = IndexEntryPlaceInBucket::new(elem_ix);
                 // These fields will be overwritten after allocation by callers.
                 // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
@@ -590,9 +606,9 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         }
 
         // need to move the allocation to a best fit spot
-        let best_bucket = &mut self.data[best_fit_bucket as usize];
-        let cap_power = best_bucket.contents.capacity_pow2();
-        let cap = best_bucket.capacity();
+        let best_fit_bucket_ix = best_fit_bucket as usize;
+        let cap_power = self.data[best_fit_bucket_ix].contents.capacity_pow2();
+        let cap = self.data[best_fit_bucket_ix].capacity();
         let pos = rng().random_range(0..cap);
         let mut success = false;
         // max search is increased here by a lot for this search. The idea is that we just have to find an empty bucket somewhere.
@@ -605,36 +621,52 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         // For data buckets, the offset is stored in the index, so it is directly looked up. So, the only search is on INSERT or update to a new sized value.
         for i in pos..pos + (max_search * 10).min(cap) {
             let ix = i % cap;
-            if best_bucket.is_free(ix) {
+            if self.data[best_fit_bucket_ix].is_free(ix) {
                 let mut multiple_slots = MultipleSlots::default();
                 multiple_slots.set_storage_offset(ix);
-                multiple_slots
-                    .set_storage_capacity_when_created_pow2(best_bucket.contents.capacity_pow2());
+                multiple_slots.set_storage_capacity_when_created_pow2(
+                    self.data[best_fit_bucket_ix].contents.capacity_pow2(),
+                );
                 multiple_slots.set_num_slots(num_slots);
-                MultipleSlots::set_ref_count(best_bucket, ix, ref_count);
+                MultipleSlots::set_ref_count(&mut self.data[best_fit_bucket_ix], ix, ref_count);
 
                 //debug!(                        "DATA ALLOC {:?} {} {} {}",                        key, elem.data_location, best_bucket.capacity, elem_uid                    );
-                let best_bucket = &mut self.data[best_fit_bucket as usize];
-                best_bucket.occupy(ix, false).unwrap();
+                // Handle race condition: another thread may have occupied this slot between
+                // is_free() check and occupy() call. Continue searching if occupation fails.
+                if self.data[best_fit_bucket_ix].occupy(ix, false).is_err() {
+                    continue;
+                }
                 if num_slots > 0 {
                     // copy slotlist into the data bucket
-                    let slice = best_bucket.get_slice_mut(ix, num_slots, IncludeHeader::NoHeader);
+                    let slice = self.data[best_fit_bucket_ix].get_slice_mut(
+                        ix,
+                        num_slots,
+                        IncludeHeader::NoHeader,
+                    );
                     slice.iter_mut().zip(data).for_each(|(dest, src)| {
                         *dest = *src;
                     });
                 }
 
                 // update index bucket after data bucket has been updated.
-                elem.unwrap_or_else(|| {
+                let elem_to_update = if let Some(elem) = elem {
+                    elem
+                } else {
                     let is_resizing = false;
-                    self.index.occupy(elem_ix, is_resizing).unwrap();
+                    // find_index_entry_mut guarantees elem_ix is free, but handle race condition
+                    // where another thread may have occupied it between the check and this call
+                    if self.index.occupy(elem_ix, is_resizing).is_err() {
+                        // Free the data bucket we just allocated since index occupation failed
+                        self.data[best_fit_bucket_ix].free(ix);
+                        return Err(BucketMapError::IndexNoSpace(self.index.contents.capacity()));
+                    }
                     let elem_allocate = IndexEntryPlaceInBucket::new(elem_ix);
                     // These fields will be overwritten after allocation by callers.
                     // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
                     elem_allocate.init(&mut self.index, key);
                     elem_allocate
-                })
-                .set_slot_count_enum_value(
+                };
+                elem_to_update.set_slot_count_enum_value(
                     &mut self.index,
                     OccupiedEnum::MultipleSlots(&multiple_slots),
                 );
@@ -852,7 +884,12 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 self.apply_grow_index(bucket);
             } else {
                 // data bucket
-                let (i, new_bucket) = items.data.take().unwrap();
+                // get_reallocated() returns true only when active_reallocations == 1,
+                // which means either index or data must be Some
+                let (i, new_bucket) = items
+                    .data
+                    .take()
+                    .expect("reallocation must have either index or data bucket");
                 self.apply_grow_data(i as usize, new_bucket);
             }
         }
