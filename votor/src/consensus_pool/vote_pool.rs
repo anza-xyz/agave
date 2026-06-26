@@ -86,7 +86,6 @@ impl NotarVoteEntry {
     fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
         if has_common_bits(&self.ranks, aggregate.ranks()) {
-            // TODO: is it important to figure out if this is invalid or duplicate vote?
             return Err(VotePoolAddVoteError::Invalid);
         }
         let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
