@@ -272,7 +272,7 @@ impl QuicXdpSender {
 }
 
 /// Collects IPv4 addresses assigned to local network interfaces.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
     use nix::ifaddrs::getifaddrs;
 
@@ -289,7 +289,7 @@ fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
     Ok(ips)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "linux"))]
 fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
     Ok(Vec::new())
 }
