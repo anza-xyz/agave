@@ -181,8 +181,8 @@ impl AcceptLoop {
                     }
                 }
                 // A handshake finished, failed, or timed out. Forward or discard.
-                Some((stamped, outcome)) = handshakes.next(), if !handshakes.is_empty() => {
-                    process_handshake_result(stamped, generation, outcome, &events_tx, &stats).await;
+                Some((stamp, outcome)) = handshakes.next(), if !handshakes.is_empty() => {
+                    process_handshake_result(stamp, generation, outcome, &events_tx, &stats).await;
                 }
                 // Rate gate refilled: resume pulling connection attempts.
                 _ = &mut accept_gate, if !accept_allowed => {
@@ -205,9 +205,9 @@ impl AcceptLoop {
                         stats.handshakes_started.fetch_add(1, Ordering::Relaxed);
                         // Stamp with the generation at accept time so a handshake
                         // that completes across an identity rotation is rejected.
-                        let stamped = generation;
+                        let stamp = generation;
                         handshakes.push(async move {
-                            (stamped, timeout(HANDSHAKE_TIMEOUT, connecting).await)
+                            (stamp, timeout(HANDSHAKE_TIMEOUT, connecting).await)
                         });
                         if handshake_limiter.consume_tokens(1).is_err() {
                             let wait_us = handshake_limiter.us_to_have_tokens(1).unwrap_or(1000);
@@ -248,14 +248,14 @@ fn accept_incoming(incoming: Incoming, stats: &QuicDatagramStats) -> Option<Conn
 }
 
 /// A handshake finished, failed, or timed out. On success, extract the attested
-/// pubkey and forward to the control loop for admission. `stamped` is the
+/// pubkey and forward to the control loop for admission. `stamp` is the
 /// generation in force when the handshake was accepted; if it no longer matches
-/// `current`, the local identity rotated mid-handshake and the connection
+/// `current_stamp`, the local identity rotated mid-handshake and the connection
 /// authenticated under our previous cert, so we reject it here rather than
 /// forwarding it.
 async fn process_handshake_result(
-    stamped: u64,
-    current: u64,
+    stamp: u64,
+    current_stamp: u64,
     outcome: Result<Result<Connection, ConnectionError>, tokio::time::error::Elapsed>,
     events_tx: &mpsc::Sender<InboundEvent>,
     stats: &QuicDatagramStats,
@@ -275,7 +275,7 @@ async fn process_handshake_result(
             return;
         }
     };
-    if stamped != current {
+    if stamp != current_stamp {
         close_codes::IDENTITY_ROTATED.close(&connection);
         stats
             .connection_evicted_identity_rotated

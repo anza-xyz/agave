@@ -31,9 +31,9 @@ use {
 
 /// State of a peer's entry in the outbound table.
 pub(crate) enum PeerState {
-    /// Dialing attempt in progress; holds the most recent datagram to send once
+    /// Connecting attempt in progress; holds the most recent datagram to send once
     /// the connection is up (newer arrivals overwrite older ones).
-    Dialing { trigger: Bytes },
+    Connecting { initial_buffer: Bytes },
     /// Live send-only connection. `addr` is cached at install (no migration on
     /// our send-only client) so the egress hot path avoids a quinn state-lock
     /// acquisition for `remote_address()` on every datagram.
@@ -44,7 +44,7 @@ pub(crate) enum PeerState {
 }
 
 /// Dial result reported by a dial task to the outbound control loop.
-pub(crate) struct DialEvent {
+pub(crate) struct ConnectEvent {
     pub(crate) peer: Pubkey,
     pub(crate) generation: u64,
     pub(crate) outcome: Result<Connection, ()>,
@@ -55,7 +55,7 @@ pub(crate) struct ClientConnection {
     pub(crate) peer: Pubkey,
     pub(crate) addr: SocketAddr,
     pub(crate) generation: u64,
-    pub(crate) events: mpsc::Sender<DialEvent>,
+    pub(crate) events: mpsc::Sender<ConnectEvent>,
     pub(crate) stats: Arc<QuicDatagramStats>,
 }
 
@@ -72,11 +72,11 @@ impl ClientConnection {
                 Err(())
             }
         };
-        // Blocking send to make sure we clear the `Dialing` placeholder. If the
+        // Blocking send to make sure we clear the `Connecting` placeholder. If the
         // send fails there is nothing left to do.
         let _ = self
             .events
-            .send(DialEvent {
+            .send(ConnectEvent {
                 peer: self.peer,
                 generation: self.generation,
                 outcome,
@@ -112,9 +112,9 @@ pub(crate) struct OutboundLoop {
     /// connection via quinn's implicit close.
     pub(crate) peer_state: LruCache<Pubkey, PeerState, PubkeyHasherBuilder>,
     /// Channel for spawned tasks to report their lifetime events
-    pub(crate) events_tx: mpsc::Sender<DialEvent>,
+    pub(crate) events_tx: mpsc::Sender<ConnectEvent>,
     /// Channel for spawned tasks to report their lifetime events
-    pub(crate) events_rx: mpsc::Receiver<DialEvent>,
+    pub(crate) events_rx: mpsc::Receiver<ConnectEvent>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) stats: Arc<QuicDatagramStats>,
 }
@@ -135,7 +135,7 @@ impl OutboundLoop {
         shutdown: CancellationToken,
         stats: Arc<QuicDatagramStats>,
     ) -> Self {
-        let (events_tx, events_rx) = mpsc::channel::<DialEvent>(CONN_EVENT_CHANNEL_CAP);
+        let (events_tx, events_rx) = mpsc::channel::<ConnectEvent>(CONN_EVENT_CHANNEL_CAP);
         Self {
             endpoint,
             local_pubkey,
@@ -237,9 +237,9 @@ impl OutboundLoop {
 
         if let Some(entry) = self.peer_state.get_mut(&peer) {
             match entry {
-                PeerState::Dialing { trigger } => {
+                PeerState::Connecting { initial_buffer } => {
                     // Newer datagrams replace older ones.
-                    *trigger = bytes;
+                    *initial_buffer = bytes;
                     self.stats
                         .egress_dropped_dial_in_progress
                         .fetch_add(1, Ordering::Relaxed);
@@ -255,8 +255,10 @@ impl OutboundLoop {
                             return;
                         }
                         Err(SendDatagramError::ConnectionLost(_)) => {
-                            // Connection is dead; swap to Dialing.
-                            *entry = PeerState::Dialing { trigger: bytes };
+                            // Connection is dead; swap to Connecting.
+                            *entry = PeerState::Connecting {
+                                initial_buffer: bytes,
+                            };
                         }
                         Err(e) => {
                             record_error(&Error::from(e), &self.stats);
@@ -265,8 +267,13 @@ impl OutboundLoop {
                     }
                 }
                 PeerState::Established { .. } => {
-                    // Peer moved - swap the slot to `Dialing`...
-                    let old = mem::replace(entry, PeerState::Dialing { trigger: bytes });
+                    // Peer moved - swap the slot to `Connecting`...
+                    let old = mem::replace(
+                        entry,
+                        PeerState::Connecting {
+                            initial_buffer: bytes,
+                        },
+                    );
                     // ... and close the displaced connection with PEER_MOVED.
                     if let PeerState::Established {
                         connection: old_connection,
@@ -287,8 +294,12 @@ impl OutboundLoop {
             // any displaced `Connection` is closed when it is dropped.
             // Any connection idle long enough to fall out of the LRU should
             // already have been axed, so there is nothing useful left to signal.
-            self.peer_state
-                .push(peer, PeerState::Dialing { trigger: bytes });
+            self.peer_state.push(
+                peer,
+                PeerState::Connecting {
+                    initial_buffer: bytes,
+                },
+            );
         };
 
         spawn(
@@ -304,9 +315,9 @@ impl OutboundLoop {
         );
     }
 
-    /// Cleans up Dialing placeholder (if still there), then registers the connection.
-    fn handle_dial_event(&mut self, event: DialEvent) {
-        let DialEvent {
+    /// Cleans up Connecting placeholder (if still there), then registers the connection.
+    fn handle_dial_event(&mut self, event: ConnectEvent) {
+        let ConnectEvent {
             peer,
             generation,
             outcome,
@@ -322,9 +333,9 @@ impl OutboundLoop {
         }
         match outcome {
             Ok(connection) => match self.peer_state.get_mut(&peer) {
-                Some(slot @ PeerState::Dialing { .. }) => {
-                    // Extract the latest trigger and install the live connection.
-                    let PeerState::Dialing { trigger } = mem::replace(
+                Some(slot @ PeerState::Connecting { .. }) => {
+                    // Extract the latest initial_buffer and install the live connection.
+                    let PeerState::Connecting { initial_buffer } = mem::replace(
                         slot,
                         PeerState::Established {
                             addr: connection.remote_address(),
@@ -333,7 +344,7 @@ impl OutboundLoop {
                     ) else {
                         unreachable!()
                     };
-                    match connection.send_datagram(trigger) {
+                    match connection.send_datagram(initial_buffer) {
                         Ok(()) => add(&self.stats.datagrams_sent),
                         Err(e) => record_error(&Error::from(e), &self.stats),
                     }
@@ -349,7 +360,10 @@ impl OutboundLoop {
                 }
             },
             Err(()) => {
-                if matches!(self.peer_state.peek(&peer), Some(PeerState::Dialing { .. })) {
+                if matches!(
+                    self.peer_state.peek(&peer),
+                    Some(PeerState::Connecting { .. })
+                ) {
                     self.peer_state.pop(&peer);
                 }
             }

@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_info::{DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS, NodeConfig, Sockets},
+        cluster_info::{DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig, Sockets},
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
@@ -108,7 +108,7 @@ impl Node {
             num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
             num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                 .expect("Number of QUIC endpoints can not be zero"),
-            num_alpenglow_quic_endpoints: DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS,
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
         let mut node = Self::new_with_external_ip(pubkey, config);
         let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
@@ -131,7 +131,7 @@ impl Node {
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
-            num_alpenglow_quic_endpoints: num_alpenglow_endpoints,
+            num_votor_quic_endpoints: num_votor_endpoints,
         } = config;
         let bind_ip_addr = bind_ip_addrs.active();
 
@@ -303,7 +303,7 @@ impl Node {
                 .expect("Alpenglow port bind should succeed");
         let alpenglow = bind_more_with_config(
             alpenglow_primary,
-            num_alpenglow_endpoints.get(),
+            num_votor_endpoints.get(),
             socket_configs.read_write,
         )
         .expect("Alpenglow SO_REUSEPORT bind should succeed");

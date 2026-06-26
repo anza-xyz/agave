@@ -156,7 +156,7 @@ pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
 // Number of QUIC endpoints for the alpenglow datagram transport.
-pub const DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+pub const DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 
 // Contact-info save/restore handles trusted local data, so disable wincode's
 // default 4 MiB preallocation limit (which defends untrusted wire input).
@@ -2440,7 +2440,7 @@ pub struct NodeConfig {
     /// The number of QUIC tpu endpoints
     pub num_quic_endpoints: NonZeroUsize,
     /// The number of QUIC endpoints for the votor transport.
-    pub num_alpenglow_quic_endpoints: NonZeroUsize,
+    pub num_votor_quic_endpoints: NonZeroUsize,
 }
 
 pub fn push_messages_to_peer_for_tests(
@@ -2980,7 +2980,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
-            num_alpenglow_quic_endpoints: DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS,
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
@@ -3006,7 +3006,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
-            num_alpenglow_quic_endpoints: DEFAULT_NUM_ALPENGLOW_QUIC_ENDPOINTS,
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
