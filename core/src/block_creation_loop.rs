@@ -1329,7 +1329,7 @@ fn maybe_include_genesis_certificate(
 
     // Process the genesis certificate
     let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
-    let processor = bank.block_component_processor.read().unwrap();
+    let mut processor = bank.block_component_processor.write().unwrap();
     processor
         .on_genesis_cert_block_marker_leader(
             bank.clone(),

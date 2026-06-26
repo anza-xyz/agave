@@ -5278,9 +5278,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "4PhJip2GUR1cihJKUwGam9GeFChyU5S9KsxhB3kMSYgk"
+                    "5PG7F5xaWbdVbGqMK4swGStgw6Dc3CRBwg3aYcDmY9q"
                 } else {
-                    "BvPkQKe71uT4XBsSoBtw5ynydnrgPjEccbge235sXQiL"
+                    "BKPZ9wePLfR5995UW3zc487emH7KXh7fAMTG1unYBYbC"
                 },
             );
         }
@@ -5289,9 +5289,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "AHdJaAqajYELEDxx6iE9F6yc2MobHLNrrVZr2egARz9m"
+                    "6P7mQgYgfCKXJT4giFVG9AUTG1k2oqbEz9oaJkQFzaFZ"
                 } else {
-                    "H6wrFKB918yKMNe32rGuEML5aQP59o6pcUVJnm3vKGLr"
+                    "9X9n98FSzPHCrEns4We6giA6QnsQEeYXqbxxULT5tHL1"
                 },
             );
             break;

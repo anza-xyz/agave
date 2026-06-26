@@ -1816,7 +1816,7 @@ pub fn confirm_slot(
         // Skip block component validation for genesis block. Slot 0 is handled specially,
         // since it won't have the required block markers.
         if is_final && slot != 0 {
-            processor.on_final(migration_status, slot)?;
+            processor.on_final(migration_status, slot, bank.parent_slot())?;
         }
     }
 
