@@ -312,9 +312,13 @@ impl VotePool {
             (Some(entry), None) | (None, Some(entry)) => {
                 entry.try_build_cert(cert_type, total_stake, completed_certs)
             }
-            (Some(notar_entry), Some(nf_entry)) => {
-                try_build_from_entries(cert_type, total_stake, notar_entry, nf_entry)
-            }
+            (Some(notar_entry), Some(nf_entry)) => try_build_from_entries(
+                cert_type,
+                total_stake,
+                notar_entry,
+                nf_entry,
+                completed_certs,
+            ),
         }
     }
 
@@ -371,9 +375,13 @@ impl VotePool {
                 self.skip_fallback
                     .try_build_cert(cert_type, total_stake, completed_certs)
             }
-            (true, true) => {
-                try_build_from_entries(cert_type, total_stake, &self.skip, &self.skip_fallback)
-            }
+            (true, true) => try_build_from_entries(
+                cert_type,
+                total_stake,
+                &self.skip,
+                &self.skip_fallback,
+                completed_certs,
+            ),
         }
     }
 
@@ -515,7 +523,11 @@ fn try_build_from_entries(
     total_stake: NonZero<u64>,
     entry0: &VoteEntry,
     entry1: &VoteEntry,
+    completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
 ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+    if completed_certs.contains_key(&cert_type) {
+        return Ok(None);
+    }
     let observed_fraction = Fraction::new(entry0.stake.saturating_add(entry1.stake), total_stake);
     if observed_fraction < cert_type.threshold() {
         return Ok(None);
