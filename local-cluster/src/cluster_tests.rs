@@ -35,7 +35,7 @@ use {
     solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_quic_datagram::{
+    agave_quic_datagram::{
         allowlist::AllowAll,
         endpoint::{Datagram, QuicDatagramEndpoint},
     },

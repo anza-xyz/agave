@@ -82,6 +82,7 @@ version = "4.3.0-alpha.0"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-math-utils",
+ "agave-quic-datagram",
  "agave-votor-messages",
  "bitvec",
  "crossbeam-channel",
@@ -99,7 +100,6 @@ dependencies = [
  "solana-packet 4.1.0",
  "solana-perf",
  "solana-pubkey 4.2.0",
- "solana-quic-datagram",
  "solana-runtime",
  "solana-signer-store",
  "solana-streamer",
@@ -284,6 +284,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-quic-datagram"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "arc-swap",
+ "arrayvec",
+ "bytes",
+ "crossbeam-channel",
+ "futures 0.3.32",
+ "log",
+ "lru 0.18.0",
+ "quinn",
+ "rustls",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+ "solana-tls-utils",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
+]
+
+[[package]]
 name = "agave-random"
 version = "4.3.0-alpha.0"
 dependencies = [
@@ -388,6 +411,7 @@ dependencies = [
  "agave-bls-sigverify",
  "agave-logger",
  "agave-math-utils",
+ "agave-quic-datagram",
  "agave-votor-messages",
  "arc-swap",
  "bitvec",
@@ -412,7 +436,6 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-pubkey 4.2.0",
- "solana-quic-datagram",
  "solana-rpc",
  "solana-runtime",
  "solana-signature",
@@ -6410,6 +6433,7 @@ dependencies = [
  "agave-fs",
  "agave-logger",
  "agave-math-utils",
+ "agave-quic-datagram",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
@@ -6487,7 +6511,6 @@ dependencies = [
  "solana-poh",
  "solana-poh-config",
  "solana-pubkey 4.2.0",
- "solana-quic-datagram",
  "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
@@ -7719,29 +7742,6 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.18",
  "tokio",
-]
-
-[[package]]
-name = "solana-quic-datagram"
-version = "4.2.0-alpha.0"
-dependencies = [
- "arc-swap",
- "arrayvec",
- "bytes",
- "crossbeam-channel",
- "futures 0.3.32",
- "log",
- "lru 0.18.0",
- "quinn",
- "rustls",
- "solana-keypair",
- "solana-metrics",
- "solana-net-utils",
- "solana-pubkey 4.2.0",
- "solana-tls-utils",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util 0.7.18",
 ]
 
 [[package]]

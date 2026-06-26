@@ -42,7 +42,7 @@ solana-net-utils = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-datagram = { workspace = true }
+agave-quic-datagram = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-streamer = { workspace = true }

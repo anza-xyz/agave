@@ -12,7 +12,7 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
-    solana_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::Datagram},
+    agave_quic_datagram::{allowlist::StakedNodesAllowlist, endpoint::Datagram},
     solana_runtime::{
         bank_forks::BankForks, validated_block_finalization::ValidatedBlockFinalizationCert,
     },
@@ -470,7 +470,7 @@ mod tests {
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, banlist::Banlist, sockets::bind_to_localhost_unique},
-        solana_quic_datagram::{
+        agave_quic_datagram::{
             allowlist::{AllowAll, Allowlist},
             endpoint::{Datagram, QuicDatagramEndpoint},
         },

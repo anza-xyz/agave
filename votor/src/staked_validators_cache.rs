@@ -5,7 +5,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
-    solana_quic_datagram::allowlist::StakedNodesAllowlist,
+    agave_quic_datagram::allowlist::StakedNodesAllowlist,
     solana_runtime::bank_forks::SharableBanks,
     std::{
         collections::HashMap,
