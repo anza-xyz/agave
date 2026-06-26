@@ -1,0 +1,83 @@
+[package]
+name = "solana-svm-conformance"
+description = "Solana SVM conformance"
+documentation = "https://docs.rs/solana-svm-conformance"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+workspace = "../dev-bins"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib", "cdylib"]
+name = "solana_svm_conformance"
+
+[features]
+default = ["metrics"]
+agave-unstable-api = []
+ffi = [
+    "agave-unstable-api",
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
+    "dep:bincode",
+    "dep:prost",
+    "dep:protosol",
+    "dep:solana-poseidon",
+    "dep:solana-precompile-error",
+    "dep:solana-vote-program",
+    "dep:solana-zk-elgamal-proof-program",
+    "dep:xxhash-rust",
+    "solana-instruction-error/serde",
+    "solana-pubkey/default",
+]
+dummy-for-ci-check = ["ffi", "metrics"]
+metrics = [
+    "solana-bpf-loader-program/metrics",
+    "solana-program-runtime/metrics",
+    "solana-svm/metrics",
+    "solana-syscalls/metrics",
+]
+
+[dependencies]
+agave-feature-set = { workspace = true, optional = true }
+agave-precompiles = { workspace = true, optional = true }
+bincode = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+protosol = { workspace = true, optional = true }
+solana-account = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-compute-budget-program = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
+solana-message = { workspace = true }
+solana-poseidon = { workspace = true, optional = true }
+solana-precompile-error = { workspace = true, optional = true }
+solana-program-runtime = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
+solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-timings = { workspace = true }
+solana-svm-transaction = { workspace = true }
+solana-syscalls = { workspace = true }
+solana-system-program = { workspace = true }
+solana-transaction-context = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-vote-program = { workspace = true, optional = true }
+solana-zk-elgamal-proof-program = { workspace = true, optional = true }
+xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
+
+[lints]
+workspace = true

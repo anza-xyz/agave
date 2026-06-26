@@ -8395,6 +8395,7 @@ dependencies = [
  "solana-signer",
  "solana-stake-interface",
  "solana-svm",
+ "solana-svm-conformance",
  "solana-svm-feature-set",
  "solana-svm-timings",
  "solana-svm-transaction",
@@ -9511,6 +9512,34 @@ dependencies = [
  "solana-clock",
  "solana-precompile-error",
  "solana-pubkey 4.2.0",
+]
+
+[[package]]
+name = "solana-svm-conformance"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "solana-account 4.3.1",
+ "solana-bpf-loader-program",
+ "solana-compute-budget",
+ "solana-compute-budget-program",
+ "solana-hash 4.4.0",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-message",
+ "solana-program-runtime",
+ "solana-pubkey 4.2.0",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-svm",
+ "solana-svm-callback",
+ "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-timings",
+ "solana-svm-transaction",
+ "solana-syscalls",
+ "solana-system-program",
+ "solana-transaction-context",
+ "solana-transaction-error",
 ]
 
 [[package]]

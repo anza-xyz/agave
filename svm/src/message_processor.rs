@@ -11,6 +11,7 @@ use {
 /// For each instruction it calls the program entrypoint method and verifies that the result of
 /// the call does not violate the bank's accounting rules.
 /// The accounts are committed back to the bank only if every instruction succeeds.
+#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
 pub(crate) fn process_message<'ix_data>(
     message: &'ix_data impl SVMMessage,
     invoke_context: &mut InvokeContext<'_, 'ix_data>,
