@@ -5,7 +5,7 @@ use {
         close_codes,
         endpoint::Datagram,
         error::Error,
-        stats::{self, QuicDatagramStats, add, record_error},
+        stats::{self, ClientStats, add, record_client_error},
         transport::{IdentitySnapshot, new_client_config},
     },
     bytes::Bytes,
@@ -57,7 +57,7 @@ pub(crate) struct ClientConnection {
     pub(crate) addr: SocketAddr,
     pub(crate) generation: u64,
     pub(crate) events: mpsc::Sender<ConnectEvent>,
-    pub(crate) stats: Arc<QuicDatagramStats>,
+    pub(crate) stats: Arc<ClientStats>,
 }
 
 impl ClientConnection {
@@ -80,7 +80,7 @@ impl ClientConnection {
                     "Connection attempt to ({}, {}) failed: {e:?}",
                     self.peer, self.addr
                 );
-                record_error(&e, &self.stats);
+                record_client_error(&e, &self.stats);
                 Err(())
             }
         };
@@ -117,7 +117,7 @@ pub(crate) struct OutboundLoop {
     /// Channel for spawned tasks to report their lifetime events
     pub(crate) events_rx: mpsc::Receiver<ConnectEvent>,
     pub(crate) shutdown: CancellationToken,
-    pub(crate) stats: Arc<QuicDatagramStats>,
+    pub(crate) stats: Arc<ClientStats>,
 }
 
 impl OutboundLoop {
@@ -134,7 +134,7 @@ impl OutboundLoop {
         banlist: Arc<Banlist<Pubkey>>,
         identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         shutdown: CancellationToken,
-        stats: Arc<QuicDatagramStats>,
+        stats: Arc<ClientStats>,
     ) -> Self {
         let (events_tx, events_rx) = mpsc::channel::<ConnectEvent>(CONN_EVENT_CHANNEL_CAP);
         Self {
@@ -262,7 +262,7 @@ impl OutboundLoop {
                             };
                         }
                         Err(e) => {
-                            record_error(&Error::from(e), &self.stats);
+                            record_client_error(&Error::from(e), &self.stats);
                             return;
                         }
                     }
@@ -347,10 +347,12 @@ impl OutboundLoop {
                     };
                     match connection.send_datagram(initial_buffer) {
                         Ok(()) => add(&self.stats.datagrams_sent),
-                        Err(e) => record_error(&Error::from(e), &self.stats),
+                        Err(e) => record_client_error(&Error::from(e), &self.stats),
                     }
-                    self.stats
-                        .record_connection_count(self.peer_state.len() as u64);
+                    stats::record_connection_count(
+                        &self.stats.peak_connections,
+                        self.peer_state.len() as u64,
+                    );
                 }
                 _ => {
                     // Connect succeeded but the slot is no longer waiting for it
@@ -361,12 +363,11 @@ impl OutboundLoop {
                 }
             },
             Err(()) => {
-                if matches!(
+                debug_assert!(matches!(
                     self.peer_state.peek(&peer),
                     Some(PeerState::Connecting { .. })
-                ) {
-                    self.peer_state.pop(&peer);
-                }
+                ));
+                self.peer_state.pop(&peer);
             }
         }
     }

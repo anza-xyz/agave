@@ -6,7 +6,7 @@ use {
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundEvent, InboundLoop},
-        stats::QuicDatagramStats,
+        stats::{ClientStats, ServerStats},
         transport::{IdentitySnapshot, new_client_config, new_server_config},
     },
     bytes::Bytes,
@@ -57,7 +57,7 @@ pub struct QuicDatagramEndpoint {
     pub egress: mpsc::Sender<Datagram>,
     /// Handle for rotating the local identity (TLS cert / pubkey).
     pub key_updater: Arc<KeyUpdater>,
-    pub server_stats: Arc<QuicDatagramStats>,
+    pub server_stats: Arc<ServerStats>,
     shutdown: CancellationToken,
 }
 
@@ -128,8 +128,8 @@ impl QuicDatagramEndpoint {
         };
         outbound_endpoint.set_default_client_config(client_config);
 
-        let client_stats = Arc::default();
-        let server_stats: Arc<QuicDatagramStats> = Arc::default();
+        let client_stats: Arc<ClientStats> = Arc::default();
+        let server_stats: Arc<ServerStats> = Arc::default();
         // The egress buffer must absorb an entire standstill-refresh broadcast
         // (and a concurrent fresh-vote broadcast) without dropping: the voting
         // thread fans a full second's worth of messages out to every peer in a

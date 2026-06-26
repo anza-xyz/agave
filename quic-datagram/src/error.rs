@@ -63,7 +63,7 @@ pub(crate) mod close_codes {
 }
 
 /// All errors observed by the endpoint. Returned from public APIs and stamped
-/// into [`crate::stats::QuicDatagramStats`] via `record_error`.
+/// into the stats counters via `record_client_error` / `record_server_error`.
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]

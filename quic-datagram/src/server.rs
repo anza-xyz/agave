@@ -10,7 +10,7 @@ use {
         close_codes,
         endpoint::Datagram,
         error::Error,
-        stats::{self, QuicDatagramStats, record_error},
+        stats::{self, ServerStats, record_server_error},
         transport::{IdentitySnapshot, new_server_config},
     },
     arrayvec::ArrayVec,
@@ -79,7 +79,7 @@ pub(crate) struct AcceptLoop {
     generation: u64,
     identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     events_tx: mpsc::Sender<InboundEvent>,
-    stats: Arc<QuicDatagramStats>,
+    stats: Arc<ServerStats>,
     shutdown: CancellationToken,
 }
 
@@ -97,7 +97,7 @@ impl AcceptLoop {
         endpoints: Vec<Endpoint>,
         identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         events_tx: mpsc::Sender<InboundEvent>,
-        stats: Arc<QuicDatagramStats>,
+        stats: Arc<ServerStats>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
@@ -232,7 +232,7 @@ impl AcceptLoop {
 /// `None` if the attempt was shed. Sheds are always `ignore()` (silent, no
 /// reply) and never `refuse()`, so a spoofed source address can't make us
 /// reflect a CONNECTION_CLOSE back at a victim.
-fn accept_incoming(incoming: Incoming, stats: &QuicDatagramStats) -> Option<Connecting> {
+fn accept_incoming(incoming: Incoming, stats: &ServerStats) -> Option<Connecting> {
     let remote_addr = incoming.remote_address();
     if remote_addr.is_ipv6() || remote_addr.ip().is_multicast() {
         incoming.ignore();
@@ -241,7 +241,7 @@ fn accept_incoming(incoming: Incoming, stats: &QuicDatagramStats) -> Option<Conn
     match incoming.accept() {
         Ok(connecting) => Some(connecting),
         Err(e) => {
-            record_error(&Error::from(e), stats);
+            record_server_error(&Error::from(e), stats);
             None
         }
     }
@@ -258,7 +258,7 @@ async fn process_handshake_result(
     current_stamp: u64,
     outcome: Result<Result<Connection, ConnectionError>, tokio::time::error::Elapsed>,
     events_tx: &mpsc::Sender<InboundEvent>,
-    stats: &QuicDatagramStats,
+    stats: &ServerStats,
 ) {
     let connection = match outcome {
         Ok(Ok(connection)) => {
@@ -266,7 +266,7 @@ async fn process_handshake_result(
             connection
         }
         Ok(Err(e)) => {
-            record_error(&Error::from(e), stats);
+            record_server_error(&Error::from(e), stats);
             return;
         }
         // Handshake has timed out
@@ -285,7 +285,7 @@ async fn process_handshake_result(
     let remote_addr = connection.remote_address();
     let Some(peer) = get_remote_pubkey(&connection) else {
         close_codes::INVALID_IDENTITY.close(&connection);
-        record_error(&Error::InvalidIdentity(remote_addr), stats);
+        record_server_error(&Error::InvalidIdentity(remote_addr), stats);
         return;
     };
     let _ = events_tx
@@ -302,7 +302,7 @@ pub(crate) struct ConnectionReader {
     pub(crate) banlist: Arc<Banlist<Pubkey>>,
     pub(crate) rate_limiter: Arc<TokenBucket>,
     pub(crate) events: mpsc::Sender<InboundEvent>,
-    pub(crate) stats: Arc<QuicDatagramStats>,
+    pub(crate) stats: Arc<ServerStats>,
 }
 
 impl ConnectionReader {
@@ -370,7 +370,7 @@ impl ConnectionReader {
                     // The peer (or we) closed this inbound, or it timed out.
                     // Record and exit; the control loop reaps the table slot
                     // from the `Closed` event below.
-                    record_error(&Error::from(e), &stats);
+                    record_server_error(&Error::from(e), &stats);
                     break;
                 }
             }
@@ -395,7 +395,7 @@ pub(crate) struct InboundLoop {
     pub(crate) events_tx: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_rx: mpsc::Receiver<InboundEvent>,
-    pub(crate) stats: Arc<QuicDatagramStats>,
+    pub(crate) stats: Arc<ServerStats>,
     pub(crate) shutdown: CancellationToken,
     /// Sustained datagrams-per-second each peer is allowed to send.
     pub(crate) max_datagrams_per_second_per_peer: f64,
@@ -409,7 +409,7 @@ impl InboundLoop {
         allowlist: Arc<dyn Allowlist>,
         events_tx: mpsc::Sender<InboundEvent>,
         events_rx: mpsc::Receiver<InboundEvent>,
-        stats: Arc<QuicDatagramStats>,
+        stats: Arc<ServerStats>,
         shutdown: CancellationToken,
         max_datagrams_per_second_per_peer: f64,
     ) -> Self {
@@ -567,12 +567,12 @@ impl InboundLoop {
     fn maybe_admit_connection(&mut self, peer: Pubkey, connection: Connection) {
         if self.banlist.is_banned(&peer) {
             close_codes::BANNED.close(&connection);
-            record_error(&Error::Banned(peer), &self.stats);
+            record_server_error(&Error::Banned(peer), &self.stats);
             return;
         }
         if !self.allowlist.allow(&peer) {
             close_codes::NOT_ADMITTED.close(&connection);
-            record_error(&Error::NotAdmitted(peer), &self.stats);
+            record_server_error(&Error::NotAdmitted(peer), &self.stats);
             return;
         }
         let remote_addr = connection.remote_address();
@@ -597,13 +597,13 @@ impl InboundLoop {
                     Ok(()) => Arc::clone(&entry.rate_limiter),
                     Err(_) => {
                         close_codes::TABLE_FULL.close(&connection);
-                        record_error(&Error::TableFull, &self.stats);
+                        record_server_error(&Error::TableFull, &self.stats);
                         return;
                     }
                 }
             }
         };
-        self.stats.record_connection_count(self.connection_count());
+        stats::record_connection_count(&self.stats.peak_connections, self.connection_count());
         // The read loop reports [`InboundEvent::Closed`] when it exits so this
         // loop can reap the table slot.
         spawn(
@@ -660,7 +660,7 @@ mod tests {
         let (_identity_tx, identity_rx) = watch::channel(None);
         // Sized so a never-completing handshake never needs to send.
         let (events_tx, _events_rx) = mpsc::channel(1);
-        let stats = Arc::new(QuicDatagramStats::default());
+        let stats = Arc::new(ServerStats::default());
         let shutdown = CancellationToken::new();
         let accept = AcceptLoop::new(
             vec![endpoint],
