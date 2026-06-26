@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "agave-banking-stage-ingress-types/dev-context-only-utils",
     "solana-entry/dev-context-only-utils",
     "solana-ledger/dev-context-only-utils",
     "solana-perf/dev-context-only-utils",

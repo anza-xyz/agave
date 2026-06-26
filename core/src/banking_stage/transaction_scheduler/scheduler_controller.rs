@@ -536,7 +536,9 @@ mod tests {
             tests::create_slow_genesis_config,
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
-        agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
+        },
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -545,7 +547,6 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{NUM_PACKETS, to_packet_batches},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -665,10 +666,6 @@ mod tests {
         let prioritization = ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price);
         let message = Message::new(&[transfer, prioritization], Some(&from_keypair.pubkey()));
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
-    }
-
-    fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS).pop().unwrap())
     }
 
     // Helper function to let test receive and then schedule packets.
