@@ -84,6 +84,8 @@ impl VoteAggregate {
     ///
     /// WARN: this function should not be exposed outside of this crate.  This crate uses it after
     /// it has verified the votes.
+    ///
+    /// WARN: this function also assumes that there there are no duplicates in ranks_iter.
     pub(crate) fn new_from_verified_votes(
         bank: &Bank,
         vote_payload_to_sign: VotePayloadToSign,
@@ -97,9 +99,7 @@ impl VoteAggregate {
         let mut ranks = BitVec::repeat(false, max_validators);
         let mut total_stake = None;
         for rank in ranks_iter {
-            if *ranks.get(rank as usize)? {
-                continue;
-            }
+            assert!(!*ranks.get(rank as usize)?);
             let stake = rank_map.get_pubkey_stake_entry(rank as usize)?.stake;
             match total_stake {
                 None => total_stake = Some(stake),

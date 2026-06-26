@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(debug_assertions)]
+use std::collections::HashSet;
 use {
     crate::{
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
@@ -287,6 +289,15 @@ fn verify_votes_optimistic(
     stats: &mut SigVerifyVoteStats,
     thread_pool: &ThreadPool,
 ) -> Option<SignatureProjective> {
+    #[cfg(debug_assertions)]
+    {
+        let deduped = unverified_votes
+            .iter()
+            .map(|v| &v.vote_message)
+            .collect::<HashSet<_>>();
+        assert_eq!(deduped.len(), unverified_votes.len());
+    }
+
     let mut measure = Measure::start("verify_votes_optimistic");
 
     // For BLS verification, minimizing the expensive pairing operation is key.
