@@ -1,3 +1,5 @@
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
+use crate::MAX_ACCOUNTS_PER_TRANSACTION;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey};
@@ -504,28 +506,36 @@ impl TransactionAccounts {
         std::ptr::slice_from_raw_parts(ptr.cast(), self.shared_account_fields.len())
     }
 
-    pub fn account_payload_regions(&self, accounts_regions: &mut [MemoryRegion]) {
-        for ((shared_fields, private_fields), region) in self
+    pub fn account_payload_regions(&self) -> impl Iterator<Item = MemoryRegion> {
+        debug_assert_eq!(
+            self.shared_account_fields.len(),
+            self.private_account_fields.len()
+        );
+        let non_empty_iter = self
             .shared_account_fields
             .iter()
             .zip(self.private_account_fields.iter())
-            .zip(accounts_regions.iter_mut())
-        {
-            unsafe {
-                *region = MemoryRegion::new(
+            .map(|(shared_fields, private_fields)| unsafe {
+                // SAFETY:
+                // Contract from raw pointer dereference: ...
+                // Evidence: The raw pointers come from `UnsafeCell::get` which always returns valid
+                // pointers. The `VmSlice` here is a trivial type, with no internal consistency
+                // requirements. The `Vec` from `private_fields` has to be maintained in a
+                // consistent and valid state during the lifetime of `TransactionAccounts` itself.
+                // We don't `ptr::read` either value itself, only the pointer/address part of it
+                // (which is `Copy`.)
+                MemoryRegion::new(
                     &raw const (*(*private_fields.get()).payload)[..],
                     (*shared_fields.get()).payload.ptr(),
-                );
-            };
-        }
-
-        // Fill the remaining regions as empty
-        let accounts_no = self.shared_account_fields.len();
-        for (idx, region) in accounts_regions.iter_mut().skip(accounts_no).enumerate() {
-            region.vm_addr = GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(
-                GUEST_REGION_SIZE.saturating_mul(accounts_no.saturating_add(idx) as u64),
-            );
-        }
+                )
+            });
+        let empty_region_filler = (self.shared_account_fields.len()..MAX_ACCOUNTS_PER_TRANSACTION)
+            .map(|index| {
+                let vm_addr = GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS
+                    .saturating_add(GUEST_REGION_SIZE.saturating_mul(index as u64));
+                MemoryRegion::new_empty(vm_addr)
+            });
+        non_empty_iter.chain(empty_region_filler)
     }
 }
 
@@ -647,7 +657,7 @@ mod tests {
         solana_account::AccountSharedData,
         solana_instruction::error::InstructionError,
         solana_pubkey::Pubkey,
-        solana_sbpf::memory_region::MemoryRegion,
+        solana_sbpf::memory_region::{HostBuffer, MemoryRegion},
         std::sync::Arc,
     };
 
@@ -799,51 +809,52 @@ mod tests {
             ),
         );
         let tx_accounts = TransactionAccounts::new(vec![acc_a, acc_b]);
-
-        let mut regions = vec![MemoryRegion::default(); 4];
-
-        tx_accounts.account_payload_regions(&mut regions);
+        let regions = tx_accounts.account_payload_regions().collect::<Vec<_>>();
 
         let r1 = regions.first().unwrap();
+        let region_host_ptr = |region: &MemoryRegion| match region.host_buffer() {
+            HostBuffer::Immutable(p) => p.cast(),
+            HostBuffer::Mutable(p) => p.cast(),
+        };
         unsafe {
             assert_eq!(
-                r1.vm_addr,
+                r1.vm_addr_range().start,
                 (*tx_accounts.shared_account_fields.first().unwrap().get())
                     .payload
                     .ptr()
             );
             let payload = &(*tx_accounts.private_account_fields.first().unwrap().get()).payload;
-            assert_eq!(r1.len, payload.len() as u64);
-            assert_eq!(r1.host_addr, payload.as_ptr() as u64);
+            assert_eq!(r1.len(), payload.len());
+            assert_eq!(region_host_ptr(r1), payload.as_ptr());
         }
 
         let r2 = regions.get(1).unwrap();
         unsafe {
             assert_eq!(
-                r2.vm_addr,
+                r2.vm_addr_range().start,
                 (*tx_accounts.shared_account_fields.get(1).unwrap().get())
                     .payload
                     .ptr()
             );
             let payload = &(*tx_accounts.private_account_fields.get(1).unwrap().get()).payload;
-            assert_eq!(r2.len, payload.len() as u64);
-            assert_eq!(r2.host_addr, payload.as_ptr() as u64);
+            assert_eq!(r2.len(), payload.len());
+            assert_eq!(region_host_ptr(r2), payload.as_ptr());
         }
 
         let r3 = regions.get(2).unwrap();
         assert_eq!(
-            r3.vm_addr,
+            r3.vm_addr_range().start,
             GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
         );
-        assert_eq!(r3.len, 0);
-        assert_eq!(r3.host_addr, 0);
+        assert_eq!(r3.len(), 0);
+        assert!(region_host_ptr(r3).is_null());
 
         let r4 = regions.get(3).unwrap();
         assert_eq!(
-            r4.vm_addr,
+            r4.vm_addr_range().start,
             GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
         );
-        assert_eq!(r4.len, 0);
-        assert_eq!(r4.host_addr, 0);
+        assert_eq!(r4.len(), 0);
+        assert!(region_host_ptr(r4).is_null());
     }
 }

@@ -2792,10 +2792,10 @@ declare_builtin_function!(
         let Some((idx, region)) = memory_mapping.find_region(region_base_address) else {
             return Err(SyscallError::InvalidPointer.into());
         };
-        if region.vm_addr != region_base_address {
+        if region.vm_addr_range().start != region_base_address {
             return Err(SyscallError::InvalidPointer.into());
         }
-        if let Some(_increase_bytes) = new_len.checked_sub(region.len) {
+        if let Some(_increase_bytes) = new_len.checked_sub(region.len() as u64) {
             // We have to charge for the entire new_length whenever the syscall increases the size
             // of the buffer. That's because not only do we have to zero out the newly added
             // capacity but also may need to copy data from the old buffer to a new one in case the
@@ -2870,7 +2870,7 @@ declare_builtin_function!(
                 .get(account_region_index)
                 .ok_or(InstructionError::MissingAccount)?
                 .clone();
-            region.writable = false;
+            region.make_immutable();
             region.access_violation_handler_payload = None;
             unsafe {
                 memory_mapping.replace_region(account_region_index, region)?;
@@ -2939,7 +2939,6 @@ mod tests {
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext},
-            memory::address_is_aligned,
             memory_context::{MemoryContext, create_abiv2_regions},
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
@@ -8176,7 +8175,10 @@ mod tests {
         invoke_context.memory_contexts.set_abi_v2().unwrap();
         let mut regions = create_abiv2_regions(invoke_context.transaction_context);
         for region in &mut regions {
-            region.writable = true;
+            unsafe {
+                // SAFETY: never actually reading or writing host buffers.
+                region.redirect(region.host_buffer().mutable());
+            }
         }
         invoke_context
             .memory_contexts
@@ -8198,7 +8200,10 @@ mod tests {
         invoke_context.memory_contexts.set_abi_v2().unwrap();
         let mut regions = create_abiv2_regions(invoke_context.transaction_context);
         for region in &mut regions {
-            region.writable = true;
+            unsafe {
+                // SAFETY: never actually reading or writing host buffers
+                region.redirect(region.host_buffer().mutable());
+            }
         }
         let mapping = unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V4).unwrap() };
         invoke_context
@@ -8211,7 +8216,7 @@ mod tests {
             .unwrap()
             .find_region(addr)
             .unwrap();
-        assert_eq!(region.len, 4096);
+        assert_eq!(region.len(), 4096);
     }
 
     #[test]
@@ -8221,7 +8226,10 @@ mod tests {
         invoke_context.memory_contexts.set_abi_v2().unwrap();
         let mut regions = create_abiv2_regions(invoke_context.transaction_context);
         for region in &mut regions {
-            region.writable = true;
+            unsafe {
+                // SAFETY: never actually reading or writing host buffers.
+                region.redirect(region.host_buffer().mutable());
+            }
         }
 
         let allowed_addresses: HashSet<u64> = HashSet::from([
@@ -8231,22 +8239,28 @@ mod tests {
         ]);
 
         for (idx, region) in regions.clone().into_iter().enumerate() {
-            if allowed_addresses.contains(&region.vm_addr) {
+            if allowed_addresses.contains(&region.vm_addr_range().start) {
                 // These regions can be resized even when they are not writable
                 continue;
             }
-            regions[idx].writable = false;
+            regions[idx].make_immutable();
             let mapping =
                 unsafe { MemoryMapping::new(regions.clone(), &config, SBPFVersion::V4).unwrap() };
             invoke_context
                 .memory_contexts
                 .mock_set_mapping_abi_v2(mapping);
-            let err =
-                SyscallSetBufferLength::rust(&mut invoke_context, region.vm_addr, 4096, 0, 0, 0)
-                    .unwrap_err();
+            let err = SyscallSetBufferLength::rust(
+                &mut invoke_context,
+                region.vm_addr_range().start,
+                4096,
+                0,
+                0,
+                0,
+            )
+            .unwrap_err();
             let err = err.downcast::<InstructionError>().unwrap();
             if (GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS..GUEST_ACCOUNT_PAYLOAD_END_ADDRESS)
-                .contains(&region.vm_addr)
+                .contains(&region.vm_addr_range().start)
             {
                 assert_eq!(InstructionError::MissingAccount, *err);
             } else {
@@ -8278,7 +8292,9 @@ mod tests {
             abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS)
                 .saturating_add(1);
         let acc_region = regions.get_mut(account_region_index).unwrap();
-        acc_region.writable = true;
+        unsafe {
+            acc_region.redirect(acc_region.host_buffer().mutable());
+        }
         acc_region.access_violation_handler_payload = Some(7);
 
         let memory_mapping =
@@ -8322,7 +8338,7 @@ mod tests {
             .get_regions()
             .get(account_region_index)
             .unwrap();
-        assert!(!acc_region.writable);
+        assert!(!acc_region.host_buffer().is_mutable());
         assert!(acc_region.access_violation_handler_payload.is_none());
 
         // Invalid u16

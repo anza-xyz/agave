@@ -2,7 +2,7 @@
 use {
     crate::{
         IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
-        MAX_ACCOUNTS_PER_TRANSACTION,
+        MAX_ACCOUNTS_PER_TRANSACTION, MAX_INSTRUCTION_TRACE_LENGTH,
         instruction::{InstructionContext, InstructionFrame},
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
@@ -603,7 +603,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     return;
                 }
 
-                if region.writable {
+                if region.host_buffer().is_mutable() {
                     // The region has already been made writable
                     return;
                 }
@@ -792,41 +792,42 @@ impl<'ix_data> TransactionContext<'ix_data> {
         )
     }
 
-    pub fn instruction_payload_regions(&self, regions: &mut [MemoryRegion]) {
-        for ((ix_frame, ix_data), region) in self
+    pub fn instruction_payload_regions(&self) -> impl Iterator<Item = MemoryRegion> {
+        let populated_frames = self
             .instruction_trace
             .iter()
             .zip(self.instruction_data.iter())
-            .zip(regions.iter_mut())
-        {
-            *region = MemoryRegion::new(&raw const ix_data[..], ix_frame.instruction_data.ptr());
-        }
-
-        self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_DATA_BASE_ADDRESS);
+            .map(|(ix_frame, ix_data)| {
+                MemoryRegion::new(&raw const ix_data[..], ix_frame.instruction_data.ptr())
+            });
+        populated_frames
+            .chain(self.fill_missing_instruction_regions(GUEST_INSTRUCTION_DATA_BASE_ADDRESS))
     }
 
-    pub fn instruction_accounts_regions(&self, regions: &mut [MemoryRegion]) {
-        for ((ix_frame, accounts), region) in self
+    pub fn instruction_accounts_regions(&self) -> impl Iterator<Item = MemoryRegion> {
+        let populated_frames = self
             .instruction_trace
             .iter()
             .zip(self.instruction_accounts.iter())
-            .zip(regions.iter_mut())
-        {
-            let len = ix_frame.instruction_accounts.len();
-            let host_slice = std::ptr::slice_from_raw_parts(accounts.as_ptr(), len as usize);
-            *region = MemoryRegion::new(host_slice, ix_frame.instruction_accounts.ptr());
-        }
-        self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
+            .map(|(ix_frame, accounts)| {
+                let len = ix_frame.instruction_accounts.len();
+                let host_slice = std::ptr::slice_from_raw_parts(accounts.as_ptr(), len as usize);
+                MemoryRegion::new(host_slice, ix_frame.instruction_accounts.ptr())
+            });
+        populated_frames
+            .chain(self.fill_missing_instruction_regions(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS))
     }
 
-    fn fill_missing_instruction_regions(&self, regions: &mut [MemoryRegion], base_address: u64) {
+    fn fill_missing_instruction_regions(
+        &self,
+        base_address: u64,
+    ) -> impl Iterator<Item = MemoryRegion> {
         // Fill the address for the rest of the regions
         let num_ixs = self.get_instruction_trace_length();
-        for (idx, region) in regions.iter_mut().skip(num_ixs).enumerate() {
-            region.vm_addr = base_address.saturating_add(
-                GUEST_REGION_SIZE.saturating_mul(idx.saturating_add(num_ixs) as u64),
-            );
-        }
+        (num_ixs..MAX_INSTRUCTION_TRACE_LENGTH).map(move |idx| {
+            let vm_addr = base_address.saturating_add(GUEST_REGION_SIZE.saturating_mul(idx as u64));
+            MemoryRegion::new_empty(vm_addr)
+        })
     }
 
     pub fn resize_region(
@@ -834,7 +835,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         old_region: &MemoryRegion,
         new_len: u64,
     ) -> Result<MemoryRegion, InstructionError> {
-        let vm_address = old_region.vm_addr;
+        let vm_address = old_region.vm_addr_range().start;
         let new_region = match vm_address {
             RETURN_DATA_SCRATCHPAD => {
                 self.return_data_bytes.resize(new_len as usize, 0);
@@ -1838,35 +1839,33 @@ mod tests {
             instruction_data: vec![Cow::Borrowed(&p1), Cow::Borrowed(&p2)],
         };
 
-        let mut regions = vec![MemoryRegion::default(); 4];
-
-        tx_ctx.instruction_payload_regions(&mut regions);
+        let regions = tx_ctx.instruction_payload_regions().collect::<Vec<_>>();
 
         let r1 = regions.first().unwrap();
-        assert_eq!(r1.vm_addr, 1);
-        assert_eq!(r1.len, 5);
-        assert_eq!(r1.host_addr, p1.as_ptr() as u64);
+        assert_eq!(r1.vm_addr_range().start, 1);
+        assert_eq!(r1.len(), 5);
+        assert_eq!(r1.host_buffer().ptr().cast(), p1.as_ptr());
 
         let r2 = regions.get(1).unwrap();
-        assert_eq!(r2.vm_addr, 2);
-        assert_eq!(r2.len, 4);
-        assert_eq!(r2.host_addr, p2.as_ptr() as u64);
+        assert_eq!(r2.vm_addr_range().start, 2);
+        assert_eq!(r2.len(), 4);
+        assert_eq!(r2.host_buffer().ptr().cast(), p2.as_ptr());
 
         let r3 = regions.get(2).unwrap();
         assert_eq!(
-            r3.vm_addr,
+            r3.vm_addr_range().start,
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS
                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(2u64))
         );
-        assert_eq!(r3.len, 0);
+        assert_eq!(r3.len(), 0);
 
         let r4 = regions.get(3).unwrap();
         assert_eq!(
-            r4.vm_addr,
+            r4.vm_addr_range().start,
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS
                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(3u64))
         );
-        assert_eq!(r4.len, 0);
+        assert_eq!(r4.len(), 0);
     }
 
     #[test]
@@ -1917,47 +1916,45 @@ mod tests {
             instruction_data: vec![],
         };
 
-        let mut regions = vec![MemoryRegion::default(); 4];
+        let regions = tx_ctx.instruction_accounts_regions().collect::<Vec<_>>();
 
-        tx_ctx.instruction_accounts_regions(&mut regions);
-
-        let r1 = regions.first().unwrap();
-        assert_eq!(r1.vm_addr, 3);
+        let r1 = dbg!(&regions).first().unwrap();
+        assert_eq!(r1.vm_addr_range().start, 3);
         assert_eq!(
-            r1.len,
-            4usize.saturating_mul(size_of::<InstructionAccount>()) as u64
+            r1.len(),
+            4usize.saturating_mul(size_of::<InstructionAccount>())
         );
         assert_eq!(
-            r1.host_addr,
-            tx_ctx.instruction_accounts.first().unwrap().as_ptr() as u64
+            r1.host_buffer().ptr().cast(),
+            tx_ctx.instruction_accounts.first().unwrap().as_ptr()
         );
 
         let r2 = regions.get(1).unwrap();
-        assert_eq!(r2.vm_addr, 1);
+        assert_eq!(r2.vm_addr_range().start, 1);
         assert_eq!(
-            r2.len,
-            2usize.saturating_mul(size_of::<InstructionAccount>()) as u64
+            r2.len(),
+            2usize.saturating_mul(size_of::<InstructionAccount>())
         );
         assert_eq!(
-            r2.host_addr,
-            tx_ctx.instruction_accounts.get(1).unwrap().as_ptr() as u64
+            r2.host_buffer().ptr().cast(),
+            tx_ctx.instruction_accounts.get(1).unwrap().as_ptr()
         );
 
         let r3 = regions.get(2).unwrap();
         assert_eq!(
-            r3.vm_addr,
+            r3.vm_addr_range().start,
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(2u64))
         );
-        assert_eq!(r3.len, 0);
+        assert_eq!(r3.len(), 0);
 
         let r4 = regions.get(3).unwrap();
         assert_eq!(
-            r4.vm_addr,
+            r4.vm_addr_range().start,
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(3u64))
         );
-        assert_eq!(r4.len, 0);
+        assert_eq!(r4.len(), 0);
     }
 
     #[test]
@@ -2171,27 +2168,29 @@ mod tests {
         let handler = tx_context.abi_v2_access_violation_handler();
 
         handler(&mut region, 0, AccessType::Load, 0, 0);
-        assert!(!region.writable);
-        assert_eq!(region.host_addr, data.as_ptr() as u64);
+        assert!(!region.host_buffer().is_mutable());
+        assert_eq!(region.host_buffer().ptr().cast(), data.as_ptr());
 
-        region.writable = true;
+        unsafe {
+            region.redirect(region.host_buffer().mutable());
+        }
         handler(&mut region, 0, AccessType::Store, 0, 0);
-        assert!(region.writable);
-        assert_eq!(region.host_addr, data.as_ptr() as u64);
+        assert!(region.host_buffer().is_mutable());
+        assert_eq!(region.host_buffer().ptr().cast(), data.as_ptr());
 
-        region.writable = false;
+        region.make_immutable();
         handler(&mut region, 0, AccessType::Store, 0, 0);
-        assert!(!region.writable);
-        assert_eq!(region.host_addr, data.as_ptr() as u64);
+        assert!(!region.host_buffer().is_mutable());
+        assert_eq!(region.host_buffer().ptr().cast(), data.as_ptr());
 
         region.access_violation_handler_payload = Some(1);
-        region.writable = false;
+        region.make_immutable();
         handler(&mut region, 0, AccessType::Store, 0, 0);
-        assert!(region.writable);
+        assert!(region.host_buffer().is_mutable());
         assert!(region.access_violation_handler_payload.is_none());
         assert_eq!(
-            region.host_addr,
-            tx_context.accounts.try_borrow(1).unwrap().data().as_ptr() as u64
+            region.host_buffer().ptr().cast(),
+            tx_context.accounts.try_borrow(1).unwrap().data().as_ptr()
         );
     }
 }
