@@ -10758,6 +10758,8 @@ dependencies = [
  "serde",
  "smpl_jwt",
  "solana-clock",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-hash 4.4.0",
  "solana-keypair",
  "solana-message",
