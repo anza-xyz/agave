@@ -175,7 +175,7 @@ impl BLSPubkeyToRankMap {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
@@ -198,7 +198,10 @@ pub(crate) enum DeserializableVersionedEpochStakes {
 }
 
 #[derive(Clone, Debug, Serialize)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
@@ -207,6 +210,7 @@ pub enum VersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+        #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
         #[serde(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
@@ -369,7 +373,7 @@ impl VersionedEpochStakes {
 
 /// The current version of epoch stakes
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     epoch: Epoch,

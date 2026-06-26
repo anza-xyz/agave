@@ -95,7 +95,7 @@ pub(crate) struct AccountsDbFields<T>(
     Vec<(Slot, Hash)>,
 );
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnusedIncrementalSnapshotPersistence {
@@ -106,7 +106,14 @@ pub struct UnusedIncrementalSnapshotPersistence {
     pub incremental_capitalization: u64,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "EcPdH21GSyYYTiSZbAN157YfrT3G8rKvDiNh7q1fw8Bc",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BankHashInfo {
     unused_accounts_delta_hash: [u8; 32],
@@ -114,7 +121,7 @@ struct BankHashInfo {
     stats: BankHashStats,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 struct UnusedAccounts {
     unused1: HashSet<Pubkey>,
@@ -201,6 +208,16 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    // Write-only type (its deserialize counterpart is `DeserializableVersionedBank`), so the abi
+    // digest only verifies the serialized wire format; there is no roundtrip.
+    frozen_abi(
+        abi_digest = "6sm6hSNiTsNBAbSAiNe2BSQgnum3UdeNBpZnZiX7aM9r",
+        test_roundtrip = "no"
+    )
+)]
 #[derive(Serialize)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
@@ -413,7 +430,16 @@ struct ExtraFieldsToDeserialize {
 /// ExtraFieldsToDeserialize with the exception that new "extra fields" should
 /// be added to the deserialize struct a minor release before they are added to
 /// this one.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    // Write-only type (its deserialize counterpart is `ExtraFieldsToDeserialize`), so the abi digest
+    // only verifies the serialized wire format; there is no roundtrip.
+    frozen_abi(
+        abi_digest = "726M1TRfibJsSAGcFqan4TSC8qKkJhDZfiK2P3h71eoo",
+        test_roundtrip = "no"
+    )
+)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Debug, Serialize)]
 pub struct ExtraFieldsToSerialize {

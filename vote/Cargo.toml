@@ -30,6 +30,8 @@ dev-context-only-utils = [
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "solana-account/frozen-abi",
+    "solana-pubkey/frozen-abi",
     "solana-vote-interface/frozen-abi",
 ]
 

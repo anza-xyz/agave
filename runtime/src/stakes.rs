@@ -1,5 +1,7 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
 use {
     crate::{
         alpenglow_epoch_type::RewardEpochDelegatedStakes,
@@ -188,7 +190,7 @@ impl StakesCache {
 /// account and StakeStateV2 deserialized from the account. Doing so, will remove
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Debug, Serialize)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
@@ -206,9 +208,14 @@ pub struct Stakes<T: Clone> {
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
+    )]
     stake_delegations: ImblHashMap<Pubkey, T>,
 
     /// current effective stake delegated to each vote account pubkey
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
     delegated_stakes: DelegatedStakes,
 
