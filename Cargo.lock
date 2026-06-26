@@ -7342,10 +7342,10 @@ dependencies = [
 [[package]]
 name = "solana-big-mod-exp"
 version = "3.0.0"
-source = "git+https://github.com/anza-xyz/solana-sdk?rev=983a0db06fb5223310836b7ba7476cd3267a0723#983a0db06fb5223310836b7ba7476cd3267a0723"
+source = "git+https://github.com/anza-xyz/solana-sdk?rev=f24d0887f1a2aa00c9ed306b79e35864cc53650e#f24d0887f1a2aa00c9ed306b79e35864cc53650e"
 dependencies = [
  "num-bigint 0.4.6",
- "solana-define-syscall 5.1.0 (git+https://github.com/anza-xyz/solana-sdk?rev=983a0db06fb5223310836b7ba7476cd3267a0723)",
+ "solana-define-syscall 5.1.0 (git+https://github.com/anza-xyz/solana-sdk?rev=f24d0887f1a2aa00c9ed306b79e35864cc53650e)",
 ]
 
 [[package]]
@@ -8276,7 +8276,7 @@ checksum = "21e14a4f604117f379840956a8fc8695e4c84f5b0ebed192f31f60d9b85d581d"
 [[package]]
 name = "solana-define-syscall"
 version = "5.1.0"
-source = "git+https://github.com/anza-xyz/solana-sdk?rev=983a0db06fb5223310836b7ba7476cd3267a0723#983a0db06fb5223310836b7ba7476cd3267a0723"
+source = "git+https://github.com/anza-xyz/solana-sdk?rev=f24d0887f1a2aa00c9ed306b79e35864cc53650e#f24d0887f1a2aa00c9ed306b79e35864cc53650e"
 
 [[package]]
 name = "solana-derivation-path"
