@@ -89,6 +89,18 @@ check-cfg = [
     'cfg(target_feature, values("dynamic-frames"))',
 ]
 
+# Keep in sync with the root [workspace.lints.clippy].
+[workspace.lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"
+
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=4.2.0-alpha.0" }
 agave-logger = { path = "../../logger", version = "=4.2.0-alpha.0" }
@@ -213,7 +225,7 @@ solana-system-interface = { workspace = true }
 solana-sysvar = "4.0.0"
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = "4.1.0"
-solana-transaction-error = "3.2.0"
+solana-transaction-error = "3.3.0"
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -238,3 +250,6 @@ strip = true
 
 [patch.crates-io]
 solana-big-mod-exp = { git = "https://github.com/anza-xyz/solana-sdk", rev = "983a0db06fb5223310836b7ba7476cd3267a0723" }
+
+[lints]
+workspace = true

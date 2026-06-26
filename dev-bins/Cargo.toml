@@ -25,6 +25,7 @@ check-cfg = [
 arithmetic_side_effects = "deny"
 default_trait_access = "deny"
 manual_let_else = "deny"
+uninlined_format_args = "deny"
 used_underscore_binding = "deny"
 
 # Allowed lints
@@ -97,7 +98,7 @@ solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=
 solana-hash = "4.4.0"
 solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
-solana-instruction-error = "2.3.0"
+solana-instruction-error = "2.4.0"
 solana-keypair = "3.1.2"
 solana-ledger = { path = "../ledger", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "7.0.0"
