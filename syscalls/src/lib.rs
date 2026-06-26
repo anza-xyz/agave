@@ -2411,17 +2411,6 @@ declare_builtin_function!(
             params.exponent_len,
             check_aligned,
         )?;
-
-        let execution_cost = invoke_context.get_execution_cost();
-        let Some(cost) = big_mod_exp_cost(execution_cost, &params, exponent) else {
-            ic_msg!(
-                invoke_context,
-                "Overflow while calculating the compute cost"
-            );
-            return Err(SyscallError::ArithmeticOverflow.into());
-        };
-        invoke_context.compute_meter.consume_checked(cost)?;
-
         let base = translate_slice::<u8>(
             memory_mapping,
             params.base as u64,
@@ -2434,9 +2423,27 @@ declare_builtin_function!(
             params.modulus_len,
             check_aligned,
         )?;
+        let _ = translate_slice_inner!(
+            memory_mapping,
+            AccessType::Store,
+            result_addr,
+            params.modulus_len,
+            u8,
+            check_aligned,
+        )?;
+
+        let execution_cost = invoke_context.get_execution_cost();
+        let Some(cost) = big_mod_exp_cost(execution_cost, &params, exponent) else {
+            ic_msg!(
+                invoke_context,
+                "Overflow while calculating the compute cost"
+            );
+            return Err(SyscallError::ArithmeticOverflow.into());
+        };
+        invoke_context.compute_meter.consume_checked(cost)?;
 
         let Some(value) = big_mod_exp(base, exponent, modulus) else {
-            return Ok(1);
+            return Err(SyscallError::InvalidAttribute.into());
         };
 
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -6213,7 +6220,10 @@ mod tests {
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
 
-        assert_eq!(result.unwrap(), 1);
+        assert_matches!(
+            result,
+            Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidAttribute
+        );
         assert_eq!(data_out, [0x00]);
     }
 
