@@ -1051,7 +1051,7 @@ pub struct ProcessedTransactionCounts {
 
 /// Account stats for computing the bank hash
 /// This struct is serialized and stored in the snapshot.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,

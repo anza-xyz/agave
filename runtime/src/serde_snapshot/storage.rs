@@ -8,6 +8,14 @@ use {
 pub(crate) type SerializedAccountsFileId = usize;
 
 // Serializable version of AccountStorageEntry for snapshot format
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "CMckX3HiC6K5FSmFo4tH44wU1mvGfabNtYAs65uaGvGU",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SerializableAccountStorageEntry {
     id: SerializedAccountsFileId,
