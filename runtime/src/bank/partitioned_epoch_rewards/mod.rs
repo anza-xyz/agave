@@ -32,6 +32,8 @@ pub(crate) struct PartitionedStakeReward {
     pub stake_pubkey: Pubkey,
     /// Inflation reward information
     pub inflation: InflationReward,
+    /// Block rewards distributed
+    pub block_reward: u64,
 }
 
 /// Just the inflation portion of a partitioned stake reward
@@ -114,6 +116,18 @@ impl FromIterator<Option<PartitionedStakeReward>> for PartitionedStakeRewards {
         Self {
             rewards,
             num_rewards: len_some,
+        }
+    }
+}
+
+#[cfg(test)]
+impl FromIterator<PartitionedStakeReward> for PartitionedStakeRewards {
+    fn from_iter<T: IntoIterator<Item = PartitionedStakeReward>>(iter: T) -> Self {
+        let rewards = Vec::from_iter(iter.into_iter().map(Some));
+        let num_rewards = rewards.len();
+        Self {
+            rewards,
+            num_rewards,
         }
     }
 }
@@ -431,6 +445,7 @@ mod tests {
             stake_utils,
         },
         assert_matches::assert_matches,
+        rand::Rng,
         solana_account::{Account, state_traits::StateMut},
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -440,7 +455,6 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_rent::Rent,
         solana_reward_info::RewardType,
         solana_signer::Signer,
         solana_stake_interface::state::StakeStateV2,
@@ -452,7 +466,7 @@ mod tests {
     };
 
     impl PartitionedStakeReward {
-        fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
+        fn maybe_from(stake_reward: &StakeReward, block_reward: u64) -> Option<Self> {
             if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) =
                 stake_reward.stake_account.state()
             {
@@ -463,14 +477,55 @@ mod tests {
                         stake_reward: stake_reward.stake_reward_info.lamports as u64,
                         commission_bps: stake_reward.stake_reward_info.commission_bps,
                     },
+                    block_reward,
                 })
             } else {
                 None
             }
         }
 
-        pub fn new_random(rent: &Rent) -> Self {
-            Self::maybe_from(&StakeReward::new_random(rent)).unwrap()
+        pub fn new_random() -> Self {
+            let mut rng = rand::rng();
+            let stake_reward = rng.random_range(1..200);
+            Self {
+                stake_pubkey: Pubkey::new_unique(),
+                inflation: InflationReward {
+                    stake: Stake {
+                        delegation: Delegation {
+                            voter_pubkey: Pubkey::new_unique(),
+                            stake: rng.random_range(1..200) + stake_reward,
+                            activation_epoch: 0,
+                            deactivation_epoch: u64::MAX,
+                            ..Default::default()
+                        },
+                        credits_observed: rng.random_range(1..200),
+                    },
+                    stake_reward,
+                    commission_bps: None,
+                },
+                block_reward: rng.random_range(0..10_000_000_000),
+            }
+        }
+
+        pub fn new_with_lamport_amounts(stake_reward: u64, block_reward: u64, stake: u64) -> Self {
+            Self {
+                stake_pubkey: Pubkey::new_unique(),
+                inflation: InflationReward {
+                    stake: Stake {
+                        delegation: Delegation {
+                            voter_pubkey: Pubkey::new_unique(),
+                            stake: stake + stake_reward,
+                            activation_epoch: 0,
+                            deactivation_epoch: u64::MAX,
+                            ..Default::default()
+                        },
+                        credits_observed: 0,
+                    },
+                    stake_reward,
+                    commission_bps: None,
+                },
+                block_reward,
+            }
         }
     }
 
@@ -492,11 +547,13 @@ mod tests {
     }
 
     pub fn convert_rewards(
-        stake_rewards: impl IntoIterator<Item = StakeReward>,
+        stake_rewards: impl IntoIterator<Item = (StakeReward, u64)>,
     ) -> PartitionedStakeRewards {
         stake_rewards
             .into_iter()
-            .map(|stake_reward| Some(PartitionedStakeReward::maybe_from(&stake_reward).unwrap()))
+            .map(|(stake_reward, block_reward)| {
+                Some(PartitionedStakeReward::maybe_from(&stake_reward, block_reward).unwrap())
+            })
             .collect()
     }
 
@@ -679,11 +736,7 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| {
-                Some(PartitionedStakeReward::new_random(
-                    &bank.rent_collector.rent,
-                ))
-            })
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices = vec![(0..expected_num).collect()];
@@ -741,11 +794,7 @@ mod tests {
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
                 // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
                 let stake_rewards = (0..num_stakes)
-                    .map(|_| {
-                        Some(PartitionedStakeReward::new_random(
-                            &bank.rent_collector.rent,
-                        ))
-                    })
+                    .map(|_| Some(PartitionedStakeReward::new_random()))
                     .collect::<PartitionedStakeRewards>();
 
                 assert_eq!(
@@ -783,11 +832,7 @@ mod tests {
         // Given 8k rewards, it will take 2 blocks to credit all the rewards
         let expected_num = 8192;
         let stake_rewards = (0..expected_num)
-            .map(|_| {
-                Some(PartitionedStakeReward::new_random(
-                    &bank.rent_collector.rent,
-                ))
-            })
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<PartitionedStakeRewards>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);
@@ -822,9 +867,7 @@ mod tests {
                 if i % 4 == 0 {
                     None
                 } else {
-                    Some(PartitionedStakeReward::new_random(
-                        &bank.rent_collector.rent,
-                    ))
+                    Some(PartitionedStakeReward::new_random())
                 }
             })
             .collect::<PartitionedStakeRewards>();

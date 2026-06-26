@@ -140,10 +140,11 @@ impl StakeReward {
     }
 
     pub fn new_with_pre_stake_account(
-        reward_lamports: i64,
+        inflation_reward_lamports: i64,
+        block_reward_lamports: u64,
         stake_lamports: u64,
         rent: &Rent,
-    ) -> (AccountSharedData, Self) {
+    ) -> (AccountSharedData, Self, u64) {
         let vote_pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
         let vote_account = vote_state::create_v4_account_with_authorized(
@@ -167,13 +168,16 @@ impl StakeReward {
             rent,
             rent_exempt_reserve + stake_lamports,
         );
-        let post_stake_account = create_stake_account(
+        let mut post_stake_account = create_stake_account(
             &stake_pubkey,
             &vote_pubkey,
             &vote_account,
             rent,
-            rent_exempt_reserve + stake_lamports + reward_lamports as u64,
+            rent_exempt_reserve + stake_lamports + inflation_reward_lamports as u64,
         );
+        post_stake_account
+            .checked_add_lamports(block_reward_lamports)
+            .unwrap();
 
         (
             pre_stake_account,
@@ -181,13 +185,13 @@ impl StakeReward {
                 stake_pubkey,
                 stake_reward_info: StakeRewardInfo {
                     reward_type: solana_reward_info::RewardType::Staking,
-                    lamports: reward_lamports,
+                    lamports: inflation_reward_lamports + block_reward_lamports as i64,
                     post_balance: 0,         /* unused atm */
                     commission_bps: Some(0), /* unused but tests require some value */
                 },
-
                 stake_account: post_stake_account,
             },
+            block_reward_lamports,
         )
     }
 
