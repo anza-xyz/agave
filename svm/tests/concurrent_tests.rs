@@ -97,7 +97,8 @@ fn program_cache_execution(threads: usize) {
                 }
             })
         })
-        .chain(std::iter::once({
+        .chain(programs.iter().map(|program| {
+            let program = *program;
             let local_bank = mock_bank.clone();
             let processor = TransactionBatchProcessor::new_from(
                 &batch_processor,
@@ -118,7 +119,7 @@ fn program_cache_execution(threads: usize) {
                     &account_loader,
                     false,
                     &upcoming_environment,
-                    &programs[0],
+                    &program,
                     &ProgramStatistics::default(),
                 );
             })
