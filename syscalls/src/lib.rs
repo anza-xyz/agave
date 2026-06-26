@@ -2405,22 +2405,10 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidLength.into());
         }
 
-        let base = translate_slice::<u8>(
-            memory_mapping,
-            params.base as u64,
-            params.base_len,
-            check_aligned,
-        )?;
         let exponent = translate_slice::<u8>(
             memory_mapping,
             params.exponent as u64,
             params.exponent_len,
-            check_aligned,
-        )?;
-        let modulus = translate_slice::<u8>(
-            memory_mapping,
-            params.modulus as u64,
-            params.modulus_len,
             check_aligned,
         )?;
 
@@ -2433,6 +2421,19 @@ declare_builtin_function!(
             return Err(SyscallError::ArithmeticOverflow.into());
         };
         invoke_context.compute_meter.consume_checked(cost)?;
+
+        let base = translate_slice::<u8>(
+            memory_mapping,
+            params.base as u64,
+            params.base_len,
+            check_aligned,
+        )?;
+        let modulus = translate_slice::<u8>(
+            memory_mapping,
+            params.modulus as u64,
+            params.modulus_len,
+            check_aligned,
+        )?;
 
         let Some(value) = big_mod_exp(base, exponent, modulus) else {
             return Ok(1);
