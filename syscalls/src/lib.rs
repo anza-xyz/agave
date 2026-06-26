@@ -2395,14 +2395,8 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let params = *translate_slice::<BigModExpParams>(
-            memory_mapping,
-            params_addr,
-            1,
-            check_aligned,
-        )?
-        .first()
-        .ok_or(SyscallError::InvalidLength)?;
+        let params =
+            *translate_type::<BigModExpParams>(memory_mapping, params_addr, check_aligned)?;
 
         if params.base_len > BIG_MOD_EXP_MAX_BYTES
             || params.exponent_len > BIG_MOD_EXP_MAX_BYTES
