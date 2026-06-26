@@ -98,11 +98,11 @@ impl QuicDatagramEndpoint {
         // One quinn endpoint per SO_REUSEPORT socket. All carry the server
         // config so any of them can accept; the kernel decides which socket a
         // given inbound 4-tuple lands on.
-        let endpoints: Vec<Endpoint> = {
+        let (endpoints, mut outbound_endpoint) = {
             // Endpoint::new requires being inside the runtime context, else it
             // panics on its first internal `tokio::spawn`.
             let _guard = runtime.enter();
-            server_sockets
+            let endpoints = server_sockets
                 .into_iter()
                 .map(|socket| {
                     Endpoint::new(
@@ -113,20 +113,17 @@ impl QuicDatagramEndpoint {
                     )
                     .map_err(Error::Endpoint)
                 })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        // The outbound (we-dial, send-only) direction that runs on its own
-        // client-only endpoint bound to `client_socket`.
-        let mut outbound_endpoint = {
-            let _guard = runtime.enter();
-            Endpoint::new(
+                .collect::<Result<Vec<_>, _>>()?;
+            // The outbound (we-dial, send-only) direction runs on its own
+            // client-only endpoint bound to `client_socket`.
+            let outbound_endpoint = Endpoint::new(
                 EndpointConfig::default(),
                 None,
                 client_socket,
                 Arc::new(TokioRuntime),
             )
-            .map_err(Error::Endpoint)?
+            .map_err(Error::Endpoint)?;
+            (endpoints, outbound_endpoint)
         };
         outbound_endpoint.set_default_client_config(client_config);
 

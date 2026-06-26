@@ -27,6 +27,7 @@ dev-context-only-utils = [
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
+agave-quic-datagram = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
@@ -65,7 +66,6 @@ solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
-agave-quic-datagram = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }

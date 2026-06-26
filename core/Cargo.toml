@@ -52,6 +52,7 @@ agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
+agave-quic-datagram = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -135,7 +136,6 @@ solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
-agave-quic-datagram = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }

@@ -25,6 +25,7 @@ dev-context-only-utils = [
 [dependencies]
 agave-bls-cert-verify = { workspace = true }
 agave-math-utils = { workspace = true }
+agave-quic-datagram = { workspace = true }
 agave-votor-messages = { workspace = true }
 bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -42,7 +43,6 @@ solana-net-utils = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
-agave-quic-datagram = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-streamer = { workspace = true }
