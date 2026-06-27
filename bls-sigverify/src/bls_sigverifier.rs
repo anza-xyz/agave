@@ -180,6 +180,7 @@ impl SigVerifier {
                     &self.banlist,
                     &self.thread_pool,
                     &self.channels,
+                    &mut self.received_votes,
                 )
             },
             || {
@@ -255,8 +256,9 @@ impl SigVerifier {
                     if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
                         self.keep_vote(&vote, &unverified_vote, root_bank)
                     {
-                        let entry = self.received_votes.entry(vote).or_default();
-                        if entry.insert(sender_vote_account_pubkey) {
+                        if let Some(validators) = self.received_votes.get(&vote)
+                            && !validators.contains(&sender_vote_account_pubkey)
+                        {
                             let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                                 unverified_vote.vote,
                                 unverified_vote.shred_version,
