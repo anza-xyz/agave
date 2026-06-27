@@ -83,7 +83,7 @@ impl NotarVoteEntry {
         }
     }
 
-    fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+    fn add_aggregate(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
         if has_common_bits(&self.ranks, aggregate.ranks()) {
             return Err(VotePoolAddVoteError::Invalid);
@@ -91,7 +91,7 @@ impl NotarVoteEntry {
         let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_vote(aggregate)?
+                entry.add_aggregate(aggregate)?
             }
             HashMapEntry::Vacant(e) => {
                 let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
@@ -122,7 +122,7 @@ impl GenesisVoteEntry {
         }
     }
 
-    fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+    fn add_aggregate(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
         if has_common_bits(&self.ranks, aggregate.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
@@ -130,7 +130,7 @@ impl GenesisVoteEntry {
         let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_vote(aggregate)?
+                entry.add_aggregate(aggregate)?
             }
             HashMapEntry::Vacant(e) => {
                 let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
@@ -163,7 +163,7 @@ impl NotarFallbackVoteEntry {
         }
     }
 
-    fn add_vote(
+    fn add_aggregate(
         &mut self,
         root_bank: &Bank,
         aggregate: &VoteAggregate,
@@ -182,7 +182,7 @@ impl NotarFallbackVoteEntry {
         let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_vote(aggregate)?
+                entry.add_aggregate(aggregate)?
             }
             HashMapEntry::Vacant(e) => {
                 let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
@@ -228,7 +228,7 @@ impl VoteEntry {
         }
     }
 
-    fn add_vote(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+    fn add_aggregate(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
         if has_common_bits(&self.ranks, aggregate.ranks()) {
             return Err(VotePoolAddVoteError::Duplicate);
         }
@@ -456,7 +456,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.notar.add_vote(aggregate)
+                self.notar.add_aggregate(aggregate)
             }
             Vote::NotarizeFallback(_) => {
                 if has_common_bits(&self.finalize.ranks, aggregate.ranks())
@@ -469,7 +469,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.notar_fallback.add_vote(root_bank, aggregate)
+                self.notar_fallback.add_aggregate(root_bank, aggregate)
             }
             Vote::Skip(_) => {
                 if has_common_bits(&self.notar.ranks, aggregate.ranks())
@@ -479,7 +479,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.skip.add_vote(aggregate)
+                self.skip.add_aggregate(aggregate)
             }
             Vote::SkipFallback(_) => {
                 if has_common_bits(&self.finalize.ranks, aggregate.ranks())
@@ -488,7 +488,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.skip_fallback.add_vote(aggregate)
+                self.skip_fallback.add_aggregate(aggregate)
             }
             Vote::Finalize(_) => {
                 if has_common_bits(&self.skip.ranks, aggregate.ranks())
@@ -498,7 +498,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.finalize.add_vote(aggregate)
+                self.finalize.add_aggregate(aggregate)
             }
             Vote::Genesis(_) => {
                 if has_common_bits(&self.skip.ranks, aggregate.ranks())
@@ -509,7 +509,7 @@ impl VotePool {
                 {
                     return Err(VotePoolAddVoteError::Invalid);
                 }
-                self.genesis.add_vote(aggregate)
+                self.genesis.add_aggregate(aggregate)
             }
         }?;
         let certs = self.try_produce_certs(total_stake, aggregate, completed_certs)?;
