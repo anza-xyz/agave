@@ -207,7 +207,7 @@ impl SigVerifier {
             self.last_checked_root_slot = root_slot;
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
             self.received_votes
-                .retain(|vote, _| should_prune_vote(vote, root_slot));
+                .retain(|vote, _| !should_prune_vote(vote, root_slot));
         }
     }
 

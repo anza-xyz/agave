@@ -8,6 +8,8 @@ use {
     std::collections::{HashMap, HashSet},
 };
 
+/// Tracks vote aggregates that conflicted with existing aggregates in the vote pool but should
+/// still be considered when building a certificate.
 #[derive(Debug, Default)]
 pub(super) struct ConflictedAggregates {
     skip: HashSet<VoteAggregate>,
@@ -34,7 +36,7 @@ impl ConflictedAggregates {
                     .insert(aggregate);
             }
             Vote::Genesis(genesis) => {
-                self.notar
+                self.genesis
                     .entry(genesis.block.block_id)
                     .or_default()
                     .insert(aggregate);

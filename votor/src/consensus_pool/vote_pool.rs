@@ -1,3 +1,26 @@
+//! This module defines VotePool which tracks verified votes received from other
+//! validators and when enough stake has been received, produces appropriate
+//! certificates.
+//!
+//! Since we verify votes in batches, the pool does not receive individual votes
+//! but instead receives aggregates of votes called `VoteAggregate`s.  Normally,
+//! the vote pool should reject newer aggregates if there are duplicates or
+//! conflicts compared to already accepted aggregates.  This creates some attack
+//! vectors e.g.:
+//!
+//! - If an attacker gets their vote into an initial aggregate, they can keep
+//!   poisoning future aggregates by repeating their votes.
+//! - Another attack vector is if all honest validators want to send vote A
+//!   (e.g. Notar), the malicious actor first sends vote B (e.g. Skip) and then
+//!   keeps sending vote A.  All aggregates containing vote A from the malicious
+//!   actor will be deemed incompatible and not included in the pool.
+//!
+//! To address these issues, the vote pool first relies on the bls-sigverifier
+//! to dedup votes before sending them.  And then the vote pool stores
+//! aggregates that were not compatible with the existing aggregates separately
+//! in `ConflictedAggregates`.  When it builds a certificate, it includes as
+//! many aggregates from the conflicted set as possible.
+
 use {
     crate::consensus_pool::vote_pool::conflicted_aggregates::ConflictedAggregates,
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
@@ -623,7 +646,7 @@ fn try_build_from_entries(
         .add_to_cert(vote0, &mut signature0, &mut ranks0);
     let mut signature1 = entry1.signature;
     let mut ranks1 = entry1.ranks.clone();
-    entry0
+    entry1
         .conflicted
         .add_to_cert(vote1, &mut signature1, &mut ranks1);
     let last_one_0 = ranks0.last_one().map_or(0, |i| i.saturating_add(1));
