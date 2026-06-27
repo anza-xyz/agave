@@ -795,7 +795,7 @@ pub mod tests {
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
+            solana_client::connection_cache::ConnectionCache::new_quic(
                 "connection_cache_vote_quic",
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
@@ -805,7 +805,7 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
-        let bls_connection_cache = ConnectionCache::new_quic_for_tests(
+        let bls_connection_cache = solana_client::connection_cache::ConnectionCache::new_quic(
             "connection_cache_bls_quic",
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
         );
