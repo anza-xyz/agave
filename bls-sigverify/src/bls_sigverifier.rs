@@ -6,7 +6,7 @@ use {
         bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
-        rewards::{AddVoteMessage, rewards_wants_vote},
+        rewards::{AddVoteMessage, rewards_wants_vote, should_prune_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
     },
@@ -100,6 +100,7 @@ struct SigVerifier {
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
+    received_votes: HashMap<Vote, HashSet<Pubkey>>,
 }
 
 impl SigVerifier {
@@ -126,6 +127,7 @@ impl SigVerifier {
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
             verified_certs: HashSet::new(),
+            received_votes: HashMap::new(),
             last_checked_root_slot: 0,
             cluster_info,
             leader_schedule,
@@ -204,6 +206,8 @@ impl SigVerifier {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
+            self.received_votes
+                .retain(|vote, _| should_prune_vote(vote, root_slot));
         }
     }
 
@@ -218,7 +222,6 @@ impl SigVerifier {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
-        let mut deduped_votes = HashSet::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for packet in batches.iter().flatten() {
@@ -248,10 +251,12 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
-                    if deduped_votes.insert(unverified_vote.clone()) {
-                        if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
-                            self.keep_vote(&unverified_vote.vote, &unverified_vote, root_bank)
-                        {
+                    let vote = unverified_vote.vote;
+                    if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
+                        self.keep_vote(&vote, &unverified_vote, root_bank)
+                    {
+                        let entry = self.received_votes.entry(vote).or_default();
+                        if entry.insert(sender_vote_account_pubkey) {
                             let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                                 unverified_vote.vote,
                                 unverified_vote.shred_version,
