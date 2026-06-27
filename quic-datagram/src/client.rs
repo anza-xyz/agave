@@ -1,24 +1,21 @@
 //! Outbound (client) direction: we initiate, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, MAX_ALPENGLOW_VOTE_ACCOUNTS, METRICS_INTERVAL,
-        close_codes,
-        endpoint::Datagram,
+        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, METRICS_INTERVAL, PeerlistReceiver, close_codes,
         error::Error,
         stats::{self, ClientStats, add, record_client_error},
         transport::{IdentitySnapshot, new_client_config},
     },
     bytes::Bytes,
     log::{error, info, warn},
-    lru::LruCache,
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::{get_remote_pubkey, socket_addr_to_quic_server_name},
     std::{
-        mem,
+        collections::HashMap,
         net::SocketAddr,
-        num::NonZeroUsize,
         sync::{Arc, atomic::Ordering},
+        time::Duration,
     },
     tokio::{
         spawn,
@@ -28,14 +25,16 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+/// How often the outbound loop reconciles its connection table against the
+/// peerlist. Doubles as the retry interval for failed connects.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+
 /// State of a peer's entry in the outbound table.
 pub(crate) enum PeerState {
-    /// Connecting attempt in progress; holds the most recent datagram to send once
-    /// the connection is up (newer arrivals overwrite older ones).
-    Connecting { initial_buffer: Bytes },
-    /// Live send-only connection. `addr` is cached at install (no migration on
-    /// our send-only client) so the egress hot path avoids a quinn state-lock
-    /// acquisition for `remote_address()` on every datagram.
+    /// Connection initiated but is not ready yet.
+    Connecting,
+    /// Live send-only connection. `addr` is cached at install so reconcile can
+    /// detect an address change (peer moved) without locking quinn state.
     Established {
         connection: Connection,
         addr: SocketAddr,
@@ -55,7 +54,7 @@ pub(crate) struct ClientConnection {
     pub(crate) peer: Pubkey,
     pub(crate) addr: SocketAddr,
     pub(crate) generation: u64,
-    pub(crate) events: mpsc::Sender<ConnectEvent>,
+    pub(crate) events_sender: mpsc::Sender<ConnectEvent>,
     pub(crate) stats: Arc<ClientStats>,
 }
 
@@ -86,7 +85,7 @@ impl ClientConnection {
         // Report back to the OutboundLoop. If send fails
         // the OutboundLoop must have exited.
         let _ = self
-            .events
+            .events_sender
             .send(ConnectEvent {
                 peer: self.peer,
                 generation: self.generation,
@@ -96,90 +95,108 @@ impl ClientConnection {
     }
 }
 
-/// Outbound control loop: client egress (we-connect, send-only). Owns the per-peer
-/// send-only connection state and the connect-task event channel.
+/// Outbound control loop: client egress (we-connect, send-only). Owns the
+/// per-peer send-only connection state. Keeps open connections to everyone
+/// in the peerlist.
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
     /// Identity-rotation counter, local to this loop.
     pub(crate) generation: u64,
-    pub(crate) egress_rx: mpsc::Receiver<Datagram>,
-    pub(crate) identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    /// Per-peer send-only connection state.
-    /// Idle connections are reclaimed lazily: `peer_state` is the sole owner of
-    /// each `Connection`, so anything evicted/popped from the LRU closes the
-    /// connection via quinn's implicit close.
-    pub(crate) peer_state: LruCache<Pubkey, PeerState, PubkeyHasherBuilder>,
+    pub(crate) egress_receiver: mpsc::Receiver<Bytes>,
+    pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+    /// Receiver for updated peer lists. The loop is purely peerlist-driven, so
+    /// it is only spawned when a peerlist exists; a receive-only endpoint with
+    /// no peerlist simply omits the outbound loop.
+    pub(crate) peerlist_receiver: PeerlistReceiver,
+    /// Per-peer send-only connection state, owned solely by this loop.
+    /// Sized by the peerlist size by reconcile task.
+    pub(crate) peer_state: HashMap<Pubkey, PeerState, PubkeyHasherBuilder>,
     /// Channel for spawned tasks to report their lifetime events
-    pub(crate) events_tx: mpsc::Sender<ConnectEvent>,
+    pub(crate) events_sender: mpsc::Sender<ConnectEvent>,
     /// Channel for spawned tasks to report their lifetime events
-    pub(crate) events_rx: mpsc::Receiver<ConnectEvent>,
+    pub(crate) events_receiver: mpsc::Receiver<ConnectEvent>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) stats: Arc<ClientStats>,
 }
 
 impl OutboundLoop {
-    /// Capacity of the peer-state table. The LRU owns every send-only
-    /// `Connection`. It is sized to the full expected peer set (one outbound
-    /// per peer) with headroom, old connections are recycled as needed.
-    const LRU_SIZE: NonZeroUsize =
-        NonZeroUsize::new(2 * MAX_ALPENGLOW_VOTE_ACCOUNTS).expect("LRU size is non-zero");
-
     pub(crate) fn new(
         endpoint: Endpoint,
         local_pubkey: Pubkey,
-        egress_rx: mpsc::Receiver<Datagram>,
-        identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        egress_receiver: mpsc::Receiver<Bytes>,
+        identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        peerlist_receiver: PeerlistReceiver,
         shutdown: CancellationToken,
         stats: Arc<ClientStats>,
     ) -> Self {
-        let (events_tx, events_rx) = mpsc::channel::<ConnectEvent>(CONN_EVENT_CHANNEL_CAP);
+        let (events_sender, events_receiver) =
+            mpsc::channel::<ConnectEvent>(CONN_EVENT_CHANNEL_CAP);
         Self {
             endpoint,
             local_pubkey,
             generation: 0,
-            egress_rx,
-            identity_rx,
-            peer_state: LruCache::with_hasher(Self::LRU_SIZE, PubkeyHasherBuilder::default()),
-            events_tx,
-            events_rx,
+            egress_receiver,
+            identity_receiver,
+            peerlist_receiver,
+            peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
+            events_sender,
+            events_receiver,
             shutdown,
             stats,
         }
     }
 
     pub(crate) async fn run(mut self) {
-        let mut bookkeeping_timer = interval(METRICS_INTERVAL);
-        bookkeeping_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut metrics = interval(METRICS_INTERVAL);
+        metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        let mut reconcile_timer = interval(RECONCILE_INTERVAL);
+        reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         // The identity arm tolerates the `KeyUpdater` sender being dropped (some
         // local-cluster tests drop it); once closed we stop polling that arm.
         let mut id_closed = false;
+
+        // A separate receiver clone drives change-notifications; the snapshot
+        // reads in `reconcile` go through `self.peerlist_receiver`.
+        let mut peerlist_receiver = self.peerlist_receiver.clone();
+
         loop {
             tokio::select! {
                 biased;
                 // ID changes are rare but very important
-                changed = self.identity_rx.changed(), if !id_closed => {
+                changed = self.identity_receiver.changed(), if !id_closed => {
                     if changed.is_err() {
                         warn!("identity rotation channel closed; outbound loop running without rotation support");
                         id_closed = true;
                         continue;
                     }
-                    let snap = self.identity_rx.borrow_and_update().clone();
+                    let snap = self.identity_receiver.borrow_and_update().clone();
                     if let Some(snap) = snap {
                         self.apply_identity_change(snap);
                     }
                 }
+                // The peer set changed: reconcile the connection table right away.
+                changed = peerlist_receiver.changed() => {
+                    if changed.is_err() {
+                        info!("peerlist channel closed; outbound loop exiting");
+                        break;
+                    }
+                    self.reconcile();
+                }
                 // Connect outcomes must come ahead of egress to ensure new
                 // connections are registered even when egress is busy.
-                Some(event) = self.events_rx.recv() => self.handle_connect_event(event),
-                // Egress
-                maybe_datagram = self.egress_rx.recv() => {
-                    let Some(datagram) = maybe_datagram else { break };
-                    self.handle_datagram(datagram);
+                Some(event) = self.events_receiver.recv() => self.handle_connect_event(event),
+                // Egress: broadcast one message to every live connection.
+                maybe_message = self.egress_receiver.recv() => {
+                    let Some(message) = maybe_message else { break };
+                    self.handle_broadcast(message);
                 }
-                // Bookkeeping is best effort
-                _ = bookkeeping_timer.tick() => {
+                // Periodic reconcile: connect to missing peers, drop departed peers.
+                _ = reconcile_timer.tick() => self.reconcile(),
+                // Metrics are best effort
+                _ = metrics.tick() => {
                     stats::report_client(&self.stats, self.peer_state.len() as u64);
                 }
                 // Shutdown is never something we do in a hurry
@@ -190,28 +207,27 @@ impl OutboundLoop {
 
     /// Rebuild the client TLS config against the new identity, swap it into the
     /// quinn endpoint, evict the peer-state table so peers are re-connected, and
-    /// adopt the new pubkey.
+    /// adopt the new pubkey. The next reconcile will reconnect to everyone.
     fn apply_identity_change(&mut self, snap: Arc<IdentitySnapshot>) {
         let client_config =
             new_client_config(snap.cert.clone(), snap.key.clone_key(), ALPENGLOW_ALPN);
         self.local_pubkey = snap.pubkey;
         self.endpoint.set_default_client_config(client_config);
-        // Bump first so any in-flight connect that completes after this point is
-        // dropped at the event boundary (its event carries the old generation).
+        // Bump generation so any in-flight connect that completes after this point is
+        // dropped (its event carries the old generation).
         self.generation = self.generation.wrapping_add(1);
         let evicted = self
             .peer_state
-            .iter()
-            .map(|(_peer, entry)| {
+            .drain()
+            .filter(|(_peer, entry)| {
                 if let PeerState::Established { connection, .. } = entry {
                     close_codes::IDENTITY_ROTATED.close(connection);
-                    1
+                    true
                 } else {
-                    0
+                    false
                 }
             })
-            .sum();
-        self.peer_state.clear();
+            .count() as u64;
         self.stats
             .connection_evicted_identity_rotated
             .fetch_add(evicted, Ordering::Relaxed);
@@ -221,95 +237,98 @@ impl OutboundLoop {
         );
     }
 
-    fn handle_datagram(&mut self, datagram: Datagram) {
-        let Datagram {
-            peer_pubkey: peer,
-            peer_address: addr,
-            message: bytes,
-        } = datagram;
-        debug_assert_ne!(self.local_pubkey, peer, "egress to self is a caller bug");
+    /// Reconcile the connection table against the current peerlist.
+    fn reconcile(&mut self) {
+        // Clone the Arc so the watch borrow is released before we mutate the
+        // table (and so `snapshot` is independent of `self`).
+        let snapshot = self.peerlist_receiver.borrow().clone();
 
-        if let Some(entry) = self.peer_state.get_mut(&peer) {
-            match entry {
-                PeerState::Connecting { initial_buffer } => {
-                    // Newer datagrams replace older ones.
-                    *initial_buffer = bytes;
-                    self.stats
-                        .egress_dropped_connect_in_progress
-                        .fetch_add(1, Ordering::Relaxed);
-                    return;
-                }
-                PeerState::Established {
+        // 1. Drop connections for peers that left the peerlist.
+        let mut evicted = 0u64;
+        self.peer_state.retain(|peer, state| {
+            if snapshot.contains_key(peer) {
+                return true;
+            }
+            if let PeerState::Established { connection, .. } = state {
+                close_codes::NOT_ADMITTED.close(connection);
+                evicted = evicted.saturating_add(1);
+            }
+            false
+        });
+        self.stats
+            .connection_evicted_peerlist
+            .fetch_add(evicted, Ordering::Relaxed);
+
+        // 2. Ensure a connection for every addressable peer.
+        for (peer, addr) in snapshot.iter() {
+            if *peer == self.local_pubkey {
+                continue;
+            }
+            // No gossip address yet (or anymore)
+            if addr.ip().is_unspecified() {
+                add(&self.stats.connect_no_route);
+                continue;
+            }
+            let needs_connection = match self.peer_state.get(peer) {
+                Some(PeerState::Connecting) => false,
+                Some(PeerState::Established {
                     connection,
-                    addr: conn_addr,
-                } if *conn_addr == addr => {
-                    match connection.send_datagram(bytes.clone()) {
-                        Ok(()) => {
-                            add(&self.stats.datagrams_sent);
-                            return;
-                        }
-                        Err(SendDatagramError::ConnectionLost(_)) => {
-                            // Connection is dead; swap to Connecting.
-                            *entry = PeerState::Connecting {
-                                initial_buffer: bytes,
-                            };
-                        }
-                        Err(e) => {
-                            record_client_error(&Error::from(e), &self.stats);
-                            return;
-                        }
-                    }
-                }
-                PeerState::Established { .. } => {
-                    // Peer moved - swap the slot to `Connecting`...
-                    let old = mem::replace(
-                        entry,
-                        PeerState::Connecting {
-                            initial_buffer: bytes,
-                        },
-                    );
-                    // ... and close the displaced connection with PEER_MOVED.
-                    if let PeerState::Established {
-                        connection: old_connection,
-                        ..
-                    } = old
-                    {
-                        close_codes::PEER_MOVED.close(&old_connection);
+                    addr: cur,
+                }) => {
+                    // desired peer address has changed
+                    if cur != addr {
+                        close_codes::PEER_MOVED.close(connection);
                         self.stats
                             .connection_evicted_peer_moved
                             .fetch_add(1, Ordering::Relaxed);
-                        info!("peer {peer} moved; re-connecting at {addr}");
+                        true
+                    } else {
+                        // Reconnect if the connection has died.
+                        connection.close_reason().is_some()
                     }
                 }
+                None => true,
+            };
+            if needs_connection {
+                self.peer_state.insert(*peer, PeerState::Connecting);
+                spawn(
+                    ClientConnection {
+                        endpoint: self.endpoint.clone(),
+                        peer: *peer,
+                        addr: *addr,
+                        generation: self.generation,
+                        events_sender: self.events_sender.clone(),
+                        stats: self.stats.clone(),
+                    }
+                    .run(),
+                );
             }
-        } else {
-            // Register a connecting placeholder and proceed to connect.
-            // If this overflows the LRU it evicts the least-recently-used entry;
-            // any displaced `Connection` is closed when it is dropped.
-            // Any connection idle long enough to fall out of the LRU should
-            // already have been axed, so there is nothing useful left to signal.
-            self.peer_state.push(
-                peer,
-                PeerState::Connecting {
-                    initial_buffer: bytes,
-                },
-            );
-        };
-
-        spawn(
-            ClientConnection {
-                endpoint: self.endpoint.clone(),
-                peer,
-                addr,
-                generation: self.generation,
-                events: self.events_tx.clone(),
-                stats: self.stats.clone(),
-            }
-            .run(),
-        );
+        }
     }
 
-    /// Cleans up Connecting placeholder (if still there), then registers the connection.
+    /// Broadcast one message to every live connection. Broken connections are
+    /// dropped from the table so the next reconcile remakes them.
+    fn handle_broadcast(&mut self, message: Bytes) {
+        let mut sent = 0u64;
+        let mut dead: Vec<Pubkey> = Vec::new();
+        for (peer, state) in self.peer_state.iter() {
+            let PeerState::Established { connection, .. } = state else {
+                continue;
+            };
+            match connection.send_datagram(message.clone()) {
+                Ok(()) => sent = sent.saturating_add(1),
+                Err(SendDatagramError::ConnectionLost(_)) => dead.push(*peer),
+                Err(e) => record_client_error(&Error::from(e), &self.stats),
+            }
+        }
+        self.stats.datagrams_sent.fetch_add(sent, Ordering::Relaxed);
+        for peer in dead {
+            self.peer_state.remove(&peer);
+        }
+    }
+
+    /// Install a freshly connected peer, or drop the placeholder on failure so
+    /// reconcile reconnects to it.
     fn handle_connect_event(&mut self, event: ConnectEvent) {
         let ConnectEvent {
             peer,
@@ -327,40 +346,29 @@ impl OutboundLoop {
         }
         match outcome {
             Ok(connection) => match self.peer_state.get_mut(&peer) {
-                Some(slot @ PeerState::Connecting { .. }) => {
-                    // Extract the latest initial_buffer and install the live connection.
-                    let PeerState::Connecting { initial_buffer } = mem::replace(
-                        slot,
-                        PeerState::Established {
-                            addr: connection.remote_address(),
-                            connection: connection.clone(),
-                        },
-                    ) else {
-                        unreachable!()
+                Some(slot @ PeerState::Connecting) => {
+                    *slot = PeerState::Established {
+                        addr: connection.remote_address(),
+                        connection,
                     };
-                    match connection.send_datagram(initial_buffer) {
-                        Ok(()) => add(&self.stats.datagrams_sent),
-                        Err(e) => record_client_error(&Error::from(e), &self.stats),
-                    }
                     stats::record_connection_count(
                         &self.stats.peak_connections,
                         self.peer_state.len() as u64,
                     );
                 }
                 _ => {
-                    // Connect succeeded but the slot is no longer waiting for it
-                    // (peer LRU-evicted mid-connect, or a newer connect already
-                    // installed a connection). The connection is redundant;
-                    // close it. This is vanishingly rare and not worth a metric.
+                    // Connect succeeded but the slot is no longer waiting for it.
+                    // The connection is redundant; close it.
                     close_codes::IDENTITY_ROTATED.close(&connection);
                 }
             },
+            // Connection failed: drop the placeholder.
             Err(()) => {
                 debug_assert!(matches!(
-                    self.peer_state.peek(&peer),
-                    Some(PeerState::Connecting { .. })
+                    self.peer_state.get(&peer),
+                    Some(PeerState::Connecting)
                 ));
-                self.peer_state.pop(&peer);
+                self.peer_state.remove(&peer);
             }
         }
     }

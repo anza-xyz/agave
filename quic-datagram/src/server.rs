@@ -2,10 +2,10 @@
 
 use {
     crate::{
-        ALPENGLOW_ALPN, AllowlistReceiver, BANLIST_PRUNE_INTERVAL, HANDSHAKE_BURST,
-        HANDSHAKE_GLOBAL_RATE, HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER,
-        MAX_INFLIGHT_HANDSHAKES, METRICS_INTERVAL, PEER_RATE_LIMIT_BURST,
-        PEER_RATE_LIMIT_BURST_DOS, close_codes,
+        ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
+        HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, MAX_INFLIGHT_HANDSHAKES,
+        METRICS_INTERVAL, PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW,
+        PeerlistReceiver, close_codes,
         endpoint::{BanCommand, Datagram},
         error::Error,
         stats::{self, ServerStats, record_server_error},
@@ -67,8 +67,8 @@ pub(crate) struct AcceptLoop {
     endpoints: Vec<Endpoint>,
     /// Identity-rotation counter
     generation: u64,
-    identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    events_tx: mpsc::Sender<InboundEvent>,
+    identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+    events_sender: mpsc::Sender<InboundEvent>,
     stats: Arc<ServerStats>,
     shutdown: CancellationToken,
 }
@@ -85,16 +85,16 @@ async fn accept_next(idx: usize, endpoint: &Endpoint) -> (usize, Option<Incoming
 impl AcceptLoop {
     pub(crate) fn new(
         endpoints: Vec<Endpoint>,
-        identity_rx: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-        events_tx: mpsc::Sender<InboundEvent>,
+        identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        events_sender: mpsc::Sender<InboundEvent>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             endpoints,
             generation: 0,
-            identity_rx,
-            events_tx,
+            identity_receiver,
+            events_sender,
             stats,
             shutdown,
         }
@@ -106,8 +106,8 @@ impl AcceptLoop {
         let Self {
             endpoints,
             mut generation,
-            mut identity_rx,
-            events_tx,
+            mut identity_receiver,
+            events_sender,
             stats,
             shutdown,
         } = self;
@@ -140,13 +140,13 @@ impl AcceptLoop {
         loop {
             tokio::select! {
                 biased;
-                changed = identity_rx.changed(), if !id_closed => {
+                changed = identity_receiver.changed(), if !id_closed => {
                     if changed.is_err() {
                         warn!("identity rotation channel closed; accept loop running without rotation support");
                         id_closed = true;
                         continue;
                     }
-                    let snap = identity_rx.borrow_and_update().clone();
+                    let snap = identity_receiver.borrow_and_update().clone();
                     if let Some(snap) = snap {
                         // Swap every endpoint's server TLS config to the rotated
                         // identity and bump the generation so subsequent
@@ -167,12 +167,12 @@ impl AcceptLoop {
                         );
                         // Tell the control loop to evict the table so peers
                         // re-handshake under the new cert.
-                        let _ = events_tx.send(InboundEvent::IdentityRotated).await;
+                        let _ = events_sender.send(InboundEvent::IdentityRotated).await;
                     }
                 }
                 // A handshake finished, failed, or timed out. Forward or discard.
                 Some((stamp, outcome)) = handshakes.next(), if !handshakes.is_empty() => {
-                    process_handshake_result(stamp, generation, outcome, &events_tx, &stats).await;
+                    process_handshake_result(stamp, generation, outcome, &events_sender, &stats).await;
                 }
                 // Rate gate refilled: resume pulling connection attempts.
                 _ = &mut accept_gate, if !accept_allowed => {
@@ -247,7 +247,7 @@ async fn process_handshake_result(
     stamp: u64,
     current_stamp: u64,
     outcome: Result<Result<Connection, ConnectionError>, tokio::time::error::Elapsed>,
-    events_tx: &mpsc::Sender<InboundEvent>,
+    events_sender: &mpsc::Sender<InboundEvent>,
     stats: &ServerStats,
 ) {
     let connection = match outcome {
@@ -278,7 +278,7 @@ async fn process_handshake_result(
         record_server_error(&Error::InvalidIdentity(remote_addr), stats);
         return;
     };
-    let _ = events_tx
+    let _ = events_sender
         .send(InboundEvent::Accepted { peer, connection })
         .await;
 }
@@ -290,7 +290,9 @@ pub(crate) struct ConnectionReader {
     pub(crate) remote_addr: SocketAddr,
     pub(crate) ingress: Sender<Datagram>,
     pub(crate) rate_limiter: Arc<TokenBucket>,
-    pub(crate) events: mpsc::Sender<InboundEvent>,
+    /// Tokens that may remain before shaping kicks in (burst headroom).
+    pub(crate) rate_limit_watermark: u64,
+    pub(crate) events_sender: mpsc::Sender<InboundEvent>,
     pub(crate) stats: Arc<ServerStats>,
 }
 
@@ -302,21 +304,17 @@ impl ConnectionReader {
             remote_addr,
             ingress,
             rate_limiter,
-            events,
+            rate_limit_watermark,
+            events_sender,
             stats,
         } = self;
         let stable_id = connection.stable_id();
-        // Use the same bucket to be reused for both shaping and flood control
-        const RATE_LIMIT_WATERMARK: u64 = PEER_RATE_LIMIT_BURST_DOS - PEER_RATE_LIMIT_BURST;
         loop {
             match connection.read_datagram().await {
                 Ok(bytes) => {
-                    // No per-datagram banlist check: a ban arrives on the
-                    // control loop's command channel and force-closes this
-                    // connection promptly, so the read path stays lookup-free.
                     match rate_limiter.consume_tokens(1) {
                         // normal operation
-                        Ok(remaining) if remaining > RATE_LIMIT_WATERMARK => {}
+                        Ok(remaining) if remaining > rate_limit_watermark => {}
                         // drop excess packets if peer exceeds normal rate
                         Ok(_) => {
                             drop(bytes);
@@ -326,7 +324,9 @@ impl ConnectionReader {
                         // peer drained bucket dry - kick them
                         Err(_) => {
                             drop(bytes);
-                            let _ = events.send(InboundEvent::FloodDetected { peer }).await;
+                            let _ = events_sender
+                                .send(InboundEvent::FloodDetected { peer })
+                                .await;
                             break;
                         }
                     }
@@ -360,7 +360,9 @@ impl ConnectionReader {
             }
         }
         // Send the notification to control that this connection died.
-        let _ = events.send(InboundEvent::Closed { peer, stable_id }).await;
+        let _ = events_sender
+            .send(InboundEvent::Closed { peer, stable_id })
+            .await;
     }
 }
 
@@ -368,59 +370,69 @@ impl ConnectionReader {
 /// connections handed over by [`AcceptLoop`]. Does no handshake work itself.
 pub(crate) struct InboundLoop {
     pub(crate) ingress: Sender<Datagram>,
-    /// Temporary per-peer ban set, owned solely by this loop. Bans arrive as
-    /// commands on `ban_rx`; a ban force-closes the peer's open connections and
-    /// bounces re-handshakes at admission until it expires.
+    /// Temporary per-peer banlist.
     pub(crate) banlist: Banlist<Pubkey>,
-    /// Inbound ban commands `(peer, duration)` from the sig-verifier.
-    pub(crate) ban_rx: mpsc::Receiver<BanCommand>,
+    /// Inbound ban commands `(peer, duration)` from the BLS sigverifier.
+    pub(crate) ban_receiver: mpsc::Receiver<BanCommand>,
     /// Latest admitted-peer snapshot, or `None` to admit all peers (dev/test).
-    /// A change publishes a new snapshot and triggers one eviction sweep.
-    pub(crate) allowlist_rx: Option<AllowlistReceiver>,
+    /// A change publishes a new snapshot and triggers an eviction sweep.
+    pub(crate) peerlist_receiver: Option<PeerlistReceiver>,
     /// Per-peer accepted receive-only connection state, owned solely by this
     /// loop.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
     /// Channel for read tasks to report their lifetime events.
-    pub(crate) events_tx: mpsc::Sender<InboundEvent>,
+    pub(crate) events_sender: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
-    pub(crate) events_rx: mpsc::Receiver<InboundEvent>,
+    pub(crate) events_receiver: mpsc::Receiver<InboundEvent>,
     pub(crate) stats: Arc<ServerStats>,
     pub(crate) shutdown: CancellationToken,
     /// Sustained datagrams-per-second each peer is allowed to send.
     pub(crate) max_datagrams_per_second_per_peer: f64,
+    /// Burst headroom above the sustained rate, in tokens.
+    pub(crate) peer_rate_limit_burst: u64,
+    /// Bucket capacity; draining it dry trips flood control.
+    pub(crate) peer_rate_limit_burst_dos: u64,
 }
 
 impl InboundLoop {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         ingress: Sender<Datagram>,
-        ban_rx: mpsc::Receiver<BanCommand>,
-        allowlist_rx: Option<AllowlistReceiver>,
-        events_tx: mpsc::Sender<InboundEvent>,
-        events_rx: mpsc::Receiver<InboundEvent>,
+        ban_receiver: mpsc::Receiver<BanCommand>,
+        peerlist_receiver: Option<PeerlistReceiver>,
+        events_sender: mpsc::Sender<InboundEvent>,
+        events_receiver: mpsc::Receiver<InboundEvent>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
         max_datagrams_per_second_per_peer: f64,
     ) -> Self {
+        let tokens_over = |window: Duration| {
+            (max_datagrams_per_second_per_peer * window.as_secs_f64()).ceil() as u64
+        };
+        let peer_rate_limit_burst = tokens_over(PEER_RATE_LIMIT_BURST_WINDOW).max(1);
+        let peer_rate_limit_burst_dos =
+            tokens_over(PEER_RATE_LIMIT_DOS_WINDOW).max(peer_rate_limit_burst.saturating_add(1));
         Self {
             ingress,
             banlist: Banlist::default(),
-            ban_rx,
-            allowlist_rx,
+            ban_receiver,
+            peerlist_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
-            events_tx,
-            events_rx,
+            events_sender,
+            events_receiver,
             stats,
             shutdown,
             max_datagrams_per_second_per_peer,
+            peer_rate_limit_burst,
+            peer_rate_limit_burst_dos,
         }
     }
 
-    /// Whether `peer` is currently admitted. With no allowlist (dev/test), all
+    /// Whether `peer` is currently admitted. With no peerlist (dev/test), all
     /// peers are admitted.
     fn is_allowed(&self, peer: &Pubkey) -> bool {
-        match &self.allowlist_rx {
-            Some(rx) => rx.borrow().contains_key(peer),
+        match &self.peerlist_receiver {
+            Some(receiver) => receiver.borrow().contains_key(peer),
             None => true,
         }
     }
@@ -451,38 +463,32 @@ impl InboundLoop {
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        // The allowlist arm is only armed when an allowlist was supplied. With
-        // no allowlist (dev/test) all peers are admitted and there is nothing
-        // to sweep. A separate receiver clone tracks change-notifications; the
-        // snapshot reads in `is_allowed` go through `self.allowlist_rx`.
-        let mut allowlist_rx = self.allowlist_rx.clone();
-        let mut allowlist_closed = allowlist_rx.is_none();
+        let mut peerlist_receiver = self.peerlist_receiver.clone();
 
         loop {
             tokio::select! {
                 biased;
                 // Admission, lifecycle, and rotation events from the accept loop
                 // and the per-connection read tasks.
-                Some(event) = self.events_rx.recv() => self.handle_event(event),
-                // A peer was banned by the sig-verifier: apply it and close any
-                // open connections from that peer right away.
-                Some((peer, timeout)) = self.ban_rx.recv() => self.handle_ban(peer, timeout),
-                // The admitted-peer set changed: sweep the table once and close
-                // every connection whose peer is no longer in the set.
+                Some(event) = self.events_receiver.recv() => self.handle_event(event),
+                // A peer was banned by the sig-verifier.
+                Some((peer, timeout)) = self.ban_receiver.recv() => self.apply_ban(peer, timeout),
+                // The admitted-peer set changed.
                 changed = async {
-                    match allowlist_rx.as_mut() {
-                        Some(rx) => rx.changed().await,
+                    match peerlist_receiver.as_mut() {
+                        Some(receiver) => receiver.changed().await,
                         None => std::future::pending().await,
                     }
-                }, if !allowlist_closed => {
+                } => {
                     match changed {
                         Ok(()) => self.evict_not_allowed(),
                         Err(_) => {
                             warn!(
-                                "allowlist channel closed; inbound admission frozen at last \
+                                "peerlist channel closed; inbound admission frozen at last \
                                  snapshot"
                             );
-                            allowlist_closed = true;
+                            // Disarm: parks the arm via the `None` branch above.
+                            peerlist_receiver = None;
                         }
                     }
                 }
@@ -492,9 +498,10 @@ impl InboundLoop {
                 _ = prune.tick() => {
                     self.banlist.prune();
                     // Reclaim empty connection slots
+                    let burst_dos = self.peer_rate_limit_burst_dos;
                     self.peer_state.retain(|_, e| {
                         !e.connections.is_empty()
-                            || e.rate_limiter.current_tokens() < PEER_RATE_LIMIT_BURST_DOS
+                            || e.rate_limiter.current_tokens() < burst_dos
                     });
                 }
                 // Shutdown is never done in a hurry
@@ -519,28 +526,25 @@ impl InboundLoop {
         info!("inbound identity rotated ({evicted} connection(s) evicted)");
     }
 
-    /// Table-wide admission sweep, driven by an allowlist change. Closes every
+    /// Table-wide admission sweep, driven by a peerlist change. Closes every
     /// connection whose peer is no longer admitted.
-    ///
-    /// Connections are drained but the (now empty) `PeerEntry` is kept so the
-    /// peer's rate limiter survives a reconnect.
     fn evict_not_allowed(&mut self) {
-        // Disjoint field borrows so the membership check can read `allowlist_rx`
+        // Disjoint field borrows so the membership check can read `peerlist_receiver`
         // while iterating `peer_state` mutably.
         let Self {
             peer_state,
-            allowlist_rx,
+            peerlist_receiver,
             stats,
             ..
         } = self;
         // `None` means admit-all; nothing to evict.
-        let Some(allowlist_rx) = allowlist_rx.as_ref() else {
+        let Some(peerlist_receiver) = peerlist_receiver.as_ref() else {
             return;
         };
-        let allowlist = allowlist_rx.borrow();
-        let mut evicted_allowlist = 0u64;
+        let peerlist = peerlist_receiver.borrow();
+        let mut evicted_peerlist = 0u64;
         for (peer, entry) in peer_state.iter_mut() {
-            if entry.connections.is_empty() || allowlist.contains_key(peer) {
+            if entry.connections.is_empty() || peerlist.contains_key(peer) {
                 continue;
             }
             let closed = entry
@@ -548,24 +552,24 @@ impl InboundLoop {
                 .drain(..)
                 .inspect(|connection| close_codes::NOT_ADMITTED.close(connection))
                 .count() as u64;
-            evicted_allowlist = evicted_allowlist.saturating_add(closed);
+            evicted_peerlist = evicted_peerlist.saturating_add(closed);
         }
         stats
-            .connection_evicted_allowlist
-            .fetch_add(evicted_allowlist, Ordering::Relaxed);
+            .connection_evicted_peerlist
+            .fetch_add(evicted_peerlist, Ordering::Relaxed);
     }
 
-    /// Apply an inbound ban command and immediately close any open connections
-    /// from that peer. The `PeerEntry` is kept so the rate limiter survives a
-    /// reconnect (which admission will then bounce while the ban holds).
-    fn handle_ban(&mut self, peer: Pubkey, timeout: Duration) {
+    /// Apply the ban command and close any open connections
+    /// from that peer.
+    fn apply_ban(&mut self, peer: Pubkey, timeout: Duration) {
         self.banlist.ban(peer, timeout);
-        if let Some(entry) = self.peer_state.get_mut(&peer) {
+        if let Some(mut entry) = self.peer_state.remove(&peer) {
             let closed = entry
                 .connections
                 .drain(..)
                 .inspect(|connection| close_codes::BANNED.close(connection))
                 .count() as u64;
+
             self.stats
                 .connection_evicted_banned
                 .fetch_add(closed, Ordering::Relaxed);
@@ -614,8 +618,8 @@ impl InboundLoop {
         let rate_limiter = match self.peer_state.entry(peer) {
             Entry::Vacant(slot) => {
                 let rate_limiter = Arc::new(TokenBucket::new(
-                    PEER_RATE_LIMIT_BURST_DOS,
-                    PEER_RATE_LIMIT_BURST_DOS,
+                    self.peer_rate_limit_burst_dos,
+                    self.peer_rate_limit_burst_dos,
                     self.max_datagrams_per_second_per_peer,
                 ));
                 let mut connections = ArrayVec::new();
@@ -648,7 +652,10 @@ impl InboundLoop {
                 remote_addr,
                 ingress: self.ingress.clone(),
                 rate_limiter,
-                events: self.events_tx.clone(),
+                rate_limit_watermark: self
+                    .peer_rate_limit_burst_dos
+                    .saturating_sub(self.peer_rate_limit_burst),
+                events_sender: self.events_sender.clone(),
                 stats: self.stats.clone(),
             }
             .run(),
@@ -680,9 +687,9 @@ mod tests {
     async fn stalled_handshake_reclaimed_by_timeout() {
         let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
 
-        // --- Server endpoint driven by the accept loop (where the handshake
+        // Server endpoint driven by the accept loop (where the handshake
         // timeout lives). The control loop is not needed: the handshake never
-        // completes, so no Accepted event is ever forwarded. ---
+        // completes, so no Accepted event is ever forwarded.
         let server_kp = Keypair::new();
         let id = IdentitySnapshot::from_keypair(&server_kp);
         let server_cfg = new_server_config(id.cert, id.key, ALPENGLOW_ALPN);
@@ -691,21 +698,21 @@ mod tests {
 
         // Keep the sender alive so the loop keeps rotation support enabled; we
         // never rotate in this test.
-        let (_identity_tx, identity_rx) = watch::channel(None);
+        let (_identity_sender, identity_receiver) = watch::channel(None);
         // Sized so a never-completing handshake never needs to send.
-        let (events_tx, _events_rx) = mpsc::channel(1);
+        let (events_sender, _events_receiver) = mpsc::channel(1);
         let stats = Arc::new(ServerStats::default());
         let shutdown = CancellationToken::new();
         let accept = AcceptLoop::new(
             vec![endpoint],
-            identity_rx,
-            events_tx,
+            identity_receiver,
+            events_sender,
             stats.clone(),
             shutdown.clone(),
         );
         let loop_handle = spawn(accept.run());
 
-        // --- One-way proxy: forward client->server, drop server->client. ---
+        // One-way proxy: forward client->server, drop server->client.
         let proxy = solana_net_utils::sockets::bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
             .await
             .unwrap();
@@ -721,7 +728,7 @@ mod tests {
             }
         });
 
-        // --- Client connects to the proxy, so it sends but never hears back. ---
+        // Client connects to the proxy, so it sends but never hears back.
         let client_kp = Keypair::new();
         let cid = IdentitySnapshot::from_keypair(&client_kp);
         let client_cfg = new_client_config(cid.cert, cid.key, ALPENGLOW_ALPN);

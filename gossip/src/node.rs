@@ -348,10 +348,6 @@ impl Node {
         )
         .unwrap();
 
-        // Dedicated egress socket for the alpenglow QUIC datagram transport. It
-        // is intentionally bound on its own port (not a member of the
-        // `alpenglow` SO_REUSEPORT accept group) so peers' handshake replies
-        // always return to the dialing endpoint.
         let (_, quic_alpenglow_client) = bind_in_range_with_config(
             bind_ip_addr,
             port_range,

@@ -67,6 +67,7 @@ use {
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
+        bank::MAX_ALPENGLOW_VOTE_ACCOUNTS,
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommandReceiver, BankForksController},
         commitment::BlockCommitmentCache,
@@ -78,8 +79,8 @@ use {
     solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     std::{
-        collections::HashSet,
-        net::UdpSocket,
+        collections::{HashMap, HashSet},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         num::NonZeroUsize,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
@@ -302,27 +303,29 @@ impl Tvu {
         };
         let (ingress_tx, votor_ingress) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         // Inbound bans flow from the sig-verifier to the endpoint over this
-        // channel; sized to tolerate banning the whole validator set at once.
-        let (votor_ban_tx, votor_ban_rx) = mpsc::channel(MAX_ALPENGLOW_PACKET_NUM);
-        // Seed the allowlist from the last rooted bank so inbound votor
+        // channel; sized generously.
+        let (votor_ban_tx, votor_ban_receiver) = mpsc::channel(MAX_ALPENGLOW_VOTE_ACCOUNTS * 2);
+        // Seed the peerlist from the last rooted bank so inbound votor
         // connections from staked peers are admitted during ledger replay and
-        // wait_for_supermajority. The voting service republishes it on its
-        // heartbeat; the endpoint sweeps connections on each change.
-        let allowlist_seed = {
+        // wait_for_supermajority.
+        let peerlist_seed = {
             let root_bank = bank_forks.read().unwrap().root_bank();
-            root_bank
+            let unresolved = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+            let map: HashMap<Pubkey, SocketAddr> = root_bank
                 .epoch_staked_nodes(root_bank.epoch())
-                .unwrap_or_default()
+                .map(|nodes| nodes.keys().map(|pubkey| (*pubkey, unresolved)).collect())
+                .unwrap_or_default();
+            Arc::new(map)
         };
-        let (votor_allowlist_tx, votor_allowlist_rx) = watch::channel(allowlist_seed);
+        let (votor_peerlist_tx, votor_peerlist_receiver) = watch::channel(peerlist_seed);
         let endpoint = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
             &cluster_info.keypair(),
             alpenglow_sockets,
             alpenglow_client_socket,
             ingress_tx,
-            Some(votor_allowlist_rx),
-            votor_ban_rx,
+            Some(votor_peerlist_receiver),
+            votor_ban_receiver,
             VOTOR_RATE_LIMIT_PPS as f64,
         )
         .map_err(|e| format!("alpenglow endpoint: {e:?}"))?;
@@ -603,7 +606,7 @@ impl Tvu {
             cluster_info.clone(),
             vote_history_storage,
             votor_egress,
-            votor_allowlist_tx,
+            votor_peerlist_tx,
             bank_forks.clone(),
             highest_finalized,
             #[cfg(feature = "dev-context-only-utils")]

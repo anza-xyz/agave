@@ -288,13 +288,11 @@ dependencies = [
 name = "agave-quic-datagram"
 version = "4.2.0-alpha.0"
 dependencies = [
- "arc-swap",
  "arrayvec",
  "bytes",
  "crossbeam-channel",
  "futures 0.3.32",
  "log",
- "lru 0.18.0",
  "quinn",
  "rustls",
  "solana-keypair",

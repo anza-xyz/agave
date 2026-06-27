@@ -1,7 +1,7 @@
 //! QUIC datagram endpoint
 use {
     crate::{
-        ALPENGLOW_ALPN, AllowlistReceiver, CONN_EVENT_CHANNEL_CAP, MAX_ALPENGLOW_VOTE_ACCOUNTS,
+        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, PeerlistReceiver,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundEvent, InboundLoop},
@@ -33,13 +33,13 @@ pub type BanCommand = (Pubkey, Duration);
 
 /// Handle for caller-driven identity rotation. Cloneable and thread-safe.
 pub struct KeyUpdater {
-    tx: watch::Sender<Option<Arc<IdentitySnapshot>>>,
+    sender: watch::Sender<Option<Arc<IdentitySnapshot>>>,
 }
 
 impl NotifyKeyUpdate for KeyUpdater {
     fn update_key(&self, keypair: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let snap = Arc::new(IdentitySnapshot::from_keypair(keypair));
-        self.tx
+        self.sender
             .send(Some(snap))
             .map_err(|_| -> Box<dyn std::error::Error> {
                 "quic-datagram endpoint has shut down; identity update rejected".into()
@@ -58,7 +58,9 @@ pub struct Datagram {
 
 /// Datagram-only QUIC endpoint bound to a UDP socket.
 pub struct QuicDatagramEndpoint {
-    pub egress: mpsc::Sender<Datagram>,
+    /// Egress is broadcast: one queued message is fanned out to every live
+    /// outbound connection by the loop. The caller does not address peers.
+    pub egress: mpsc::Sender<Bytes>,
     /// Handle for rotating the local identity (TLS cert / pubkey).
     pub key_updater: Arc<KeyUpdater>,
     pub server_stats: Arc<ServerStats>,
@@ -80,26 +82,27 @@ impl QuicDatagramEndpoint {
     /// full ingress channel results in a drop
     /// (counted in `datagram_ingress_dropped_channel_full`).
     ///
-    /// Admission policy is event-driven: `allowlist_rx` carries whole-set
-    /// snapshots of admitted peers (a change triggers an eviction sweep), and
-    /// `ban_rx` carries temporary per-peer ban commands (each force-closes the
-    /// peer's open connections). `allowlist_rx` is `None` only in dev/test
-    /// builds, where it admits all peers.
+    /// `peerlist_receiver` carries whole-set peerlist updates: inbound evicts
+    /// peers no longer in the set, outbound connects to peers in it.
+    /// `ban_receiver` carries temporary per-peer ban commands (each force-closes
+    /// the peer's open connections). `peerlist_receiver` is `None` only in
+    /// dev/test builds, where inbound admits all peers and outbound connects to
+    /// nobody.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
         server_sockets: Vec<UdpSocket>,
         client_socket: UdpSocket,
         ingress: Sender<Datagram>,
-        allowlist_rx: Option<AllowlistReceiver>,
-        ban_rx: mpsc::Receiver<BanCommand>,
+        peerlist_receiver: Option<PeerlistReceiver>,
+        ban_receiver: mpsc::Receiver<BanCommand>,
         max_datagrams_per_second_per_peer: f64,
     ) -> Result<Self, Error> {
-        // A release build must gate inbound admission on a real allowlist;
+        // A release build must gate inbound admission on a real peerlist;
         // `None` (admit-all) is only legitimate in dev/test builds.
         assert!(
-            cfg!(feature = "dev-context-only-utils") || allowlist_rx.is_some(),
-            "allowlist receiver must be set in release builds",
+            cfg!(feature = "dev-context-only-utils") || peerlist_receiver.is_some(),
+            "peerlist receiver must be set in release builds",
         );
         if server_sockets.is_empty() {
             return Err(Error::NoSockets);
@@ -144,48 +147,49 @@ impl QuicDatagramEndpoint {
 
         let client_stats: Arc<ClientStats> = Arc::default();
         let server_stats: Arc<ServerStats> = Arc::default();
-        // The egress buffer must absorb an entire standstill-refresh broadcast
-        // (and a concurrent fresh-vote broadcast) without dropping: the voting
-        // thread fans a full second's worth of messages out to every peer in a
-        // synchronous burst, while the outbound loop drains them one datagram at
-        // a time. Size it to one second of the admissible per-peer send rate
-        // across the full peer set, with a floor of one full single-message
-        // broadcast.
-        let egress_cap = (max_datagrams_per_second_per_peer.ceil() as usize)
-            .saturating_mul(MAX_ALPENGLOW_VOTE_ACCOUNTS)
-            .max(MAX_ALPENGLOW_VOTE_ACCOUNTS);
-        let (egress_tx, egress_rx) = mpsc::channel(egress_cap);
+        // Egress channel carries *distinct* messages.
+        // Size it to 5 seconds of the per-peer send rate - votor rates are very low.
+        let egress_cap = (max_datagrams_per_second_per_peer.ceil() as usize).saturating_mul(5);
+        let (egress_sender, egress_receiver) = mpsc::channel(egress_cap);
         let shutdown = CancellationToken::new();
-        let (id_tx, identity_rx) = watch::channel(None);
-        let key_updater = Arc::new(KeyUpdater { tx: id_tx });
+        let (identity_sender, identity_receiver) = watch::channel(None);
+        let key_updater = Arc::new(KeyUpdater {
+            sender: identity_sender,
+        });
 
-        let outbound = OutboundLoop::new(
-            outbound_endpoint,
-            local_pubkey,
-            egress_rx,
-            identity_rx.clone(),
-            shutdown.clone(),
-            client_stats,
-        );
-        runtime.spawn(outbound.run());
+        // A receive-only endpoint with no peerlist has nothing to connect to
+        // so we don't spawn OutboundLoop at all.
+        if let Some(peerlist_receiver) = peerlist_receiver.clone() {
+            let outbound = OutboundLoop::new(
+                outbound_endpoint,
+                local_pubkey,
+                egress_receiver,
+                identity_receiver.clone(),
+                peerlist_receiver,
+                shutdown.clone(),
+                client_stats,
+            );
+            runtime.spawn(outbound.run());
+        }
 
         // Shared inbound event channel: the accept loop forwards authenticated
         // connections, and per-connection read tasks report lifecycle events.
-        let (events_tx, events_rx) = mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
+        let (events_sender, events_receiver) =
+            mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
         let accept = AcceptLoop::new(
             endpoints,
-            identity_rx,
-            events_tx.clone(),
+            identity_receiver,
+            events_sender.clone(),
             server_stats.clone(),
             shutdown.clone(),
         );
         runtime.spawn(accept.run());
         let inbound = InboundLoop::new(
             ingress,
-            ban_rx,
-            allowlist_rx,
-            events_tx,
-            events_rx,
+            ban_receiver,
+            peerlist_receiver,
+            events_sender,
+            events_receiver,
             server_stats.clone(),
             shutdown.clone(),
             max_datagrams_per_second_per_peer,
@@ -193,7 +197,7 @@ impl QuicDatagramEndpoint {
         runtime.spawn(inbound.run());
 
         Ok(Self {
-            egress: egress_tx,
+            egress: egress_sender,
             key_updater,
             server_stats,
             shutdown,

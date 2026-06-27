@@ -11,22 +11,23 @@ pub(crate) mod transport;
 
 use {
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, sync::Arc, time::Duration},
+    std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration},
     tokio::sync::watch,
 };
 
-/// Snapshot of admitted peers for inbound admission. The value is the peer's
-/// epoch stake, which we keep since in most cases the original data structure
-/// comes with it already.
-pub type AllowlistSnapshot = Arc<HashMap<Pubkey, u64>>;
+/// Snapshot of desired peers. Peers we cannot yet resolve via gossip
+/// carry the sentinel IP set to `0.0.0.0:0`.
+///
+/// Inbound admission uses membership only (the address is ignored).
+pub type PeerlistSnapshot = Arc<HashMap<Pubkey, SocketAddr>>;
 
-pub type AllowlistSender = watch::Sender<AllowlistSnapshot>;
+pub type PeerlistSender = watch::Sender<PeerlistSnapshot>;
 
-pub type AllowlistReceiver = watch::Receiver<AllowlistSnapshot>;
+pub type PeerlistReceiver = watch::Receiver<PeerlistSnapshot>;
 
 /// Maximum number of unique peer pubkeys we expect in steady state.
 /// Used to size buffers and channels, actual peer count is controlled
-/// by admission policy.
+/// by the peer list.
 ///
 /// The authoritative version of this lives in
 /// `solana_runtime::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS`; this is a deliberate
@@ -34,25 +35,23 @@ pub type AllowlistReceiver = watch::Receiver<AllowlistSnapshot>;
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
 /// Maximum simultaneous inbound (we-accepted, receive-only) connections we keep
-/// from a single peer pubkey. Two is needed to let a hot-spare of the same
-/// identity to connect while the previous instance's connection is still alive.
+/// from a single peer pubkey. Two are needed to let a hot-spare of the same
+/// identity connect while the previous instance's connection is still alive.
 pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 
 /// Capacity of each task -> control-loop connection-event channel.
 /// Picked to absorb several slots worth of work.
 pub(crate) const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
-/// Per-peer receive side burst limit.
-pub const PEER_RATE_LIMIT_BURST: u64 = 100;
-
-/// Per-peer receive side DOS protection limit.
-/// If peer exhausts this burst size they are considered to be attacking and their
-/// connection is closed.
-pub const PEER_RATE_LIMIT_BURST_DOS: u64 = 1000;
+/// Tolerance to burst as window over the nominal per-peer send rate.
+pub const PEER_RATE_LIMIT_BURST_WINDOW: Duration = Duration::from_secs(2);
+/// Used to compute number of packets to allow at over-limit rate before dropping
+/// the connection.
+pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(20);
 
 /// Sustained rate at which we start inbound TLS handshakes across all peers
 /// (handshakes/second). Feeds a token bucket consulted before we call
-/// `Incoming::accept()`, so it bounds the rate at which we begin handshake
+/// `Endpoint::accept()`, so it bounds the rate at which we begin handshake
 /// crypto at all, not how many run at once.
 pub const HANDSHAKE_GLOBAL_RATE: f64 = MAX_ALPENGLOW_VOTE_ACCOUNTS as f64;
 
@@ -62,8 +61,7 @@ pub(crate) const HANDSHAKE_BURST: u64 = 500;
 
 /// Maximum inbound TLS handshakes allowed in flight at once. Once this many are
 /// pending we stop pulling new attempts off the endpoint until one finishes.
-/// This is the limiter on handshake memory use; the rate at which we *start*
-/// handshakes is smoothed separately by [`HANDSHAKE_GLOBAL_RATE`].
+/// This is the limiter on handshake memory use.
 pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Hard timeout for inbound handshake. During handshakes connections

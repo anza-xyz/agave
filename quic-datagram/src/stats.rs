@@ -14,17 +14,18 @@ pub struct ClientStats {
     pub(crate) datagrams_sent: AtomicU64,
     /// A connection ended through an expected teardown path.
     pub(crate) connection_lost: AtomicU64,
-    /// Egress dropped because the connection for the peer is not ready.
-    pub(crate) egress_dropped_connect_in_progress: AtomicU64,
     /// A connection failed abnormally: connect setup error, protocol-level
     /// connection fault, or a non-transient `send_datagram` failure.
     pub(crate) connect_failed: AtomicU64,
+    /// A peer in the peerlist had no resolvable address.
+    pub(crate) connect_no_route: AtomicU64,
     /// Connections closed because the local identity (TLS cert / pubkey) was
     /// rotated.
     pub(crate) connection_evicted_identity_rotated: AtomicU64,
-    /// Existing connection closed because the caller supplied
-    /// a new address for the same pubkey.
+    /// Existing connection closed because the peer's gossip address changed.
     pub(crate) connection_evicted_peer_moved: AtomicU64,
+    /// Connections closed because the peer is no longer in the peerlist.
+    pub(crate) connection_evicted_peerlist: AtomicU64,
 }
 
 /// Counters for the inbound (we-accept, receive-only) direction.
@@ -44,19 +45,17 @@ pub struct ServerStats {
     /// authenticated connection.
     pub(crate) handshakes_completed: AtomicU64,
     /// Handshake refused because the peer is not permitted: not in the
-    /// allowlist, or currently banned.
+    /// peerlist, or currently banned.
     pub(crate) handshake_rejected_unauthorized: AtomicU64,
     /// Handshake refused due to a resource limit: connection table full.
     pub(crate) handshake_rejected_overload: AtomicU64,
-    /// Number of times the accept gate closed because the global handshake rate
-    /// limit was exhausted, pausing how fast we pull new attempts off the
-    /// endpoint.
+    /// Number of times the accept gate was closed.
     pub(crate) handshake_rate_limited: AtomicU64,
     /// Handshakes that did not complete within `HANDSHAKE_TIMEOUT`.
     pub(crate) handshake_timed_out: AtomicU64,
     /// Connections closed because the peer is no longer
     /// admitted (e.g. evicted at an epoch boundary).
-    pub(crate) connection_evicted_allowlist: AtomicU64,
+    pub(crate) connection_evicted_peerlist: AtomicU64,
     /// Connections closed because the peer was banned by the sig-verifier.
     pub(crate) connection_evicted_banned: AtomicU64,
     /// Connections closed because the local identity (TLS cert / pubkey) was
@@ -101,14 +100,14 @@ pub(crate) fn record_client_error(err: &Error, stats: &ClientStats) {
             | SendDatagramError::UnsupportedByPeer
             | SendDatagramError::Disabled,
         ) => add(&stats.connect_failed),
-        // The outbound direction never produces admission, ban, table-full,
-        // rotation, or construction-time errors.
         Error::NotAdmitted(_)
         | Error::Banned(_)
         | Error::TableFull
         | Error::IdentityRotated(_)
         | Error::Endpoint(_)
-        | Error::NoSockets => unreachable!("outbound direction does not produce {err:?}"),
+        | Error::NoSockets => {
+            debug_assert!(false, "outbound direction does not produce {err:?}");
+        }
     }
 }
 
@@ -130,13 +129,13 @@ pub(crate) fn record_server_error(err: &Error, stats: &ServerStats) {
         | Error::InvalidIdentity(_) => add(&stats.connection_failed),
         Error::NotAdmitted(_) | Error::Banned(_) => add(&stats.handshake_rejected_unauthorized),
         Error::TableFull => add(&stats.handshake_rejected_overload),
-        // The inbound direction never dials, is receive-only, and records
-        // rotation evictions directly, so it never routes these through here.
         Error::Connect(_)
         | Error::SendDatagram(_)
         | Error::IdentityRotated(_)
         | Error::Endpoint(_)
-        | Error::NoSockets => unreachable!("inbound direction does not produce {err:?}"),
+        | Error::NoSockets => {
+            debug_assert!(false, "inbound direction does not produce {err:?}");
+        }
     }
 }
 
@@ -165,15 +164,16 @@ pub(crate) fn report_client(stats: &ClientStats, live_connections: u64) {
         ),
         ("datagrams_sent", swap!(stats.datagrams_sent), i64),
         ("connect_failed", swap!(stats.connect_failed), i64),
+        ("connect_no_route", swap!(stats.connect_no_route), i64),
         ("connection_lost", swap!(stats.connection_lost), i64),
-        (
-            "egress_dropped_connect_in_progress",
-            swap!(stats.egress_dropped_connect_in_progress),
-            i64
-        ),
         (
             "connection_evicted_peer_moved",
             swap!(stats.connection_evicted_peer_moved),
+            i64
+        ),
+        (
+            "connection_evicted_peerlist",
+            swap!(stats.connection_evicted_peerlist),
             i64
         ),
         (
@@ -200,7 +200,7 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
             swap!(stats.handshakes_completed),
             i64
         ),
-        ("connect_failed", swap!(stats.connection_failed), i64),
+        ("connection_failed", swap!(stats.connection_failed), i64),
         ("connection_lost", swap!(stats.connection_lost), i64),
         (
             "datagram_rate_limited",
@@ -229,8 +229,8 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
         ),
         ("handshake_timed_out", swap!(stats.handshake_timed_out), i64),
         (
-            "connection_evicted_allowlist",
-            swap!(stats.connection_evicted_allowlist),
+            "connection_evicted_peerlist",
+            swap!(stats.connection_evicted_peerlist),
             i64
         ),
         (

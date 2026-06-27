@@ -602,10 +602,10 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         .build()
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    // Listener admits all peers (no allowlist) and never bans; the ban sender
+    // Listener admits all peers (no peerlist) and never bans; the ban sender
     // is dropped so no commands ever arrive.
-    let (_ban_tx, ban_rx) = tokio::sync::mpsc::channel(1);
-    // Listener never dials, but the endpoint requires a dedicated egress socket.
+    let (_ban_tx, ban_receiver) = tokio::sync::mpsc::channel(1);
+    // Listener never connects.
     let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
     let endpoint = QuicDatagramEndpoint::spawn(
         rt.handle(),
@@ -614,7 +614,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         client_socket,
         sender,
         None,
-        ban_rx,
+        ban_receiver,
         agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS as f64,
     )
     .expect("alpenglow datagram listener");
