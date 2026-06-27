@@ -4,7 +4,7 @@ use {
         wire::VotePayloadToSign,
     },
     bitvec::vec::BitVec,
-    solana_bls_signatures::{AsSignatureProjective, SignatureProjective},
+    solana_bls_signatures::{Signature as BLSSignature, SignatureProjective},
     solana_runtime::bank::Bank,
     std::num::NonZero,
 };
@@ -41,12 +41,12 @@ impl SigVerifiedBatch {
 ///
 /// NOTE: the fields should not be exposed outside of the crate so that users use approved paths to
 /// build it to ensure signature verification takes place.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VoteAggregate {
     /// The type of vote in the batch.
     pub(crate) vote: Vote,
     /// The aggregate signature of the votes in the batch.
-    pub(crate) signature: SignatureProjective,
+    pub(crate) signature: BLSSignature,
     /// The total stake in the batch.
     pub(crate) stake: NonZero<u64>,
     /// Ranks of the various validators whose votes are in the batch.
@@ -74,7 +74,7 @@ impl VoteAggregate {
         ranks.set(msg.rank as usize, true);
         Self {
             vote: msg.vote,
-            signature: msg.signature.try_as_projective().unwrap(),
+            signature: msg.signature,
             stake,
             ranks,
         }
@@ -110,7 +110,7 @@ impl VoteAggregate {
         let vote = Vote::from(vote_payload_to_sign);
         Some(Self {
             vote,
-            signature: aggregate_signature,
+            signature: aggregate_signature.into(),
             stake: total_stake?,
             ranks,
         })
@@ -124,7 +124,7 @@ impl VoteAggregate {
         &self.ranks
     }
 
-    pub fn signature(&self) -> &SignatureProjective {
+    pub fn signature(&self) -> &BLSSignature {
         &self.signature
     }
 

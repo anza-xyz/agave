@@ -7,7 +7,9 @@ use {
         vote::Vote,
     },
     bitvec::vec::BitVec,
-    solana_bls_signatures::{BlsError, Signature as BLSSignature, SignatureProjective},
+    solana_bls_signatures::{
+        AsSignatureProjective, BlsError, Signature as BLSSignature, SignatureProjective,
+    },
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -223,7 +225,7 @@ impl VoteEntry {
         ranks |= aggregate.ranks();
         Self {
             ranks,
-            signature: *aggregate.signature(),
+            signature: aggregate.signature().try_as_projective().unwrap(),
             stake: aggregate.stake().get(),
         }
     }
