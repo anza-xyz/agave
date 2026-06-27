@@ -2,10 +2,9 @@
 
 use {
     crate::{
-        ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-        HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, MAX_INFLIGHT_HANDSHAKES,
-        METRICS_INTERVAL, PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW,
-        PeerlistReceiver, close_codes,
+        ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, HANDSHAKE_TIMEOUT,
+        MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL, PEER_RATE_LIMIT_BURST_WINDOW,
+        PEER_RATE_LIMIT_DOS_WINDOW, PeerlistReceiver, close_codes,
         endpoint::{BanCommand, Datagram},
         error::Error,
         stats::{self, ServerStats, record_server_error},
@@ -15,7 +14,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     futures::{StreamExt as _, stream::FuturesUnordered},
     log::{debug, info, warn},
-    quinn::{Connecting, Connection, ConnectionError, Endpoint, Incoming},
+    quinn::{Connecting, Connection, Endpoint},
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::get_remote_pubkey,
@@ -39,9 +38,7 @@ pub(crate) struct PeerEntry {
     rate_limiter: Arc<TokenBucket>,
 }
 
-/// Event reported to the InboundLoop. All identity-rotation handling lives in
-/// [`AcceptLoop`]; the only rotation signal that reaches here is
-/// [`InboundEvent::IdentityRotated`], so this loop carries no generation state.
+/// Event reported to the InboundLoop by other tasks.
 pub(crate) enum InboundEvent {
     /// A TLS handshake completed and yielded an authenticated peer. The accept
     /// loop has already dropped any handshake that completed across a rotation,
@@ -55,232 +52,179 @@ pub(crate) enum InboundEvent {
     Closed { peer: Pubkey, stable_id: usize },
     /// The ingress traffic shaping bucket was drained by a sustained flood.
     FloodDetected { peer: Pubkey },
-    /// The local identity rotated; evict the table so peers re-handshake under
-    /// the new cert. The matching server-config swap happens in [`AcceptLoop`].
-    IdentityRotated,
 }
 
-/// Accept loop: pulls connection attempts off every endpoint, and drives the
-/// TLS handshakes. `Incoming::accept()` runs the server side of the handshake
-/// (ECDHE + certificate signature) synchronously, thus a separate task.
+/// Accept loop: one per endpoint. Pulls connection attempts off its endpoint,
+/// runs the server side of the TLS handshake (`Incoming::accept()` — the
+/// CPU-bound ECDHE + certificate signature), then spawns a task that awaits the
+/// client's reply. This coarsely bounds the number of cores that can be dedicated
+/// to handshake work to the number of accept loops (one per endpoint).
 pub(crate) struct AcceptLoop {
-    endpoints: Vec<Endpoint>,
-    /// Identity-rotation counter
-    generation: u64,
+    endpoint: Endpoint,
     identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     events_sender: mpsc::Sender<InboundEvent>,
     stats: Arc<ServerStats>,
     shutdown: CancellationToken,
-}
-
-/// Pull the next connection attempt off endpoint `idx`, tagging the result with
-/// `idx` so the loop knows which endpoint to re-arm. Borrows the endpoint for
-/// the lifetime of the returned future; the endpoints live in the loop's owned
-/// `Vec`, so the (shared) borrow coexists with the per-rotation
-/// `set_server_config` sweep.
-async fn accept_next(idx: usize, endpoint: &Endpoint) -> (usize, Option<Incoming>) {
-    (idx, endpoint.accept().await)
+    /// Paces how fast this endpoint *starts* handshakes.
+    limiter: TokenBucket,
+    /// Bounds the number of in-flight handshakes for this endpoint.
+    max_inflight_handshakes: usize,
 }
 
 impl AcceptLoop {
     pub(crate) fn new(
-        endpoints: Vec<Endpoint>,
+        endpoint: Endpoint,
         identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         events_sender: mpsc::Sender<InboundEvent>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
+        handshake_rate_limiter: TokenBucket,
+        max_inflight_handshakes: usize,
     ) -> Self {
         Self {
-            endpoints,
-            generation: 0,
+            endpoint,
             identity_receiver,
             events_sender,
             stats,
             shutdown,
+            limiter: handshake_rate_limiter,
+            max_inflight_handshakes,
         }
     }
 
     pub(crate) async fn run(self) {
-        // Destructure so the accept futures can hold shared borrows of
-        // `endpoints` while the rest of the state is mutated freely.
         let Self {
-            endpoints,
-            mut generation,
+            endpoint,
             mut identity_receiver,
             events_sender,
             stats,
             shutdown,
+            limiter,
+            max_inflight_handshakes,
         } = self;
 
-        // Paces how fast we *start* handshakes across all peers and all
-        // endpoints (one shared bucket, not one per endpoint).
-        let handshake_limiter =
-            TokenBucket::new(HANDSHAKE_BURST, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE);
-        // Accept gate: while closed the accept arm is disabled for every
-        // endpoint. The timer arm re-opens it once the limiter has refilled.
+        // A time to reopen the admission of Incoming from Endpoint once `limiter`
+        // has refilled.
         let mut accept_gate = Box::pin(sleep(Duration::ZERO));
-        let mut accept_allowed = true;
+        let mut rate_limited = false;
 
-        // Stores all in-flight handshakes for polling
+        // In-flight handshake tasks. We use this to be notified whenever any of the
+        // per-peer admission tasks complete.
         let mut handshakes = FuturesUnordered::new();
 
-        // One in-flight `accept()` per endpoint. A resolved accept is re-armed
-        // for its endpoint; while the accept arm is gated off the resolved
-        // futures simply sit unpolled here, so excess Incomings stay buffered in
-        // quinn exactly as with a single endpoint.
-        let mut accepts: FuturesUnordered<_> = endpoints
-            .iter()
-            .enumerate()
-            .map(|(idx, endpoint)| accept_next(idx, endpoint))
-            .collect();
-
-        // TODO: this flag is a workaround for some local-cluster tests that are a
-        // nightmare to refactor. But they really should be.
+        // Some local-cluster tests drop the KeyUpdater sender; once the identity
+        // channel closes we stop polling that arm.
         let mut id_closed = false;
         loop {
             tokio::select! {
                 biased;
+                // Identity rotation: swap this endpoint's server config so new
+                // handshakes present the new cert. In-flight handshakes that
+                // complete under the old cert are harmless and ignored here.
                 changed = identity_receiver.changed(), if !id_closed => {
                     if changed.is_err() {
                         warn!("identity rotation channel closed; accept loop running without rotation support");
                         id_closed = true;
                         continue;
                     }
-                    let snap = identity_receiver.borrow_and_update().clone();
-                    if let Some(snap) = snap {
-                        // Swap every endpoint's server TLS config to the rotated
-                        // identity and bump the generation so subsequent
-                        // handshakes are stamped with it.
+                    if let Some(new_identity) = identity_receiver.borrow_and_update().clone() {
                         let server_config = new_server_config(
-                            snap.cert.clone(),
-                            snap.key.clone_key(),
+                            new_identity.cert.clone(),
+                            new_identity.key.clone_key(),
                             ALPENGLOW_ALPN,
                         );
-                        for endpoint in &endpoints {
-                            endpoint.set_server_config(Some(server_config.clone()));
-                        }
-                        generation = generation.wrapping_add(1);
-                        info!(
-                            "accept loop applied identity rotation to {} across {} endpoint(s)",
-                            snap.pubkey,
-                            endpoints.len(),
-                        );
-                        // Tell the control loop to evict the table so peers
-                        // re-handshake under the new cert.
-                        let _ = events_sender.send(InboundEvent::IdentityRotated).await;
+                        endpoint.set_server_config(Some(server_config));
+                        info!("AcceptLoop applied new identity {}", new_identity.pubkey);
                     }
                 }
-                // A handshake finished, failed, or timed out. Forward or discard.
-                Some((stamp, outcome)) = handshakes.next(), if !handshakes.is_empty() => {
-                    process_handshake_result(stamp, generation, outcome, &events_sender, &stats).await;
+                // Handshake task finished: this potentially reopens the accept arm below.
+                Some(_joined) = handshakes.next(), if !handshakes.is_empty() => {}
+                // Rate gate refilled: allow pulling connection attempts.
+                _ = &mut accept_gate, if rate_limited => {
+                    rate_limited = false;
                 }
-                // Rate gate refilled: resume pulling connection attempts.
-                _ = &mut accept_gate, if !accept_allowed => {
-                    accept_allowed = true;
-                }
-                // Pull a new connection attempt off whichever endpoint has one
-                // ready, only while the rate gate is open and we have handshake
-                // headroom; otherwise the Incoming stays buffered in quinn.
-                Some((idx, maybe_incoming)) = accepts.next(),
-                    if accept_allowed && handshakes.len() < MAX_INFLIGHT_HANDSHAKES =>
+                // Pull the next attempt only while the rate limit allows and we
+                // have a free handshake task slot. We never call `accept()` faster
+                // than the limiter permits, nor run more than `max_inflight_handshakes`
+                // handshakes at once.
+                incoming = endpoint.accept(),
+                    if !rate_limited && handshakes.len() < max_inflight_handshakes =>
                 {
-                    let Some(incoming) = maybe_incoming else {
-                        // Endpoint `idx` closed; stop polling it. Real shutdown
-                        // arrives via the cancellation token below.
-                        continue;
+                    let Some(incoming) = incoming else {
+                        break; // Endpoint closed
                     };
-                    // Re-arm this endpoint before doing any handshake work.
-                    accepts.push(accept_next(idx, &endpoints[idx]));
-                    if let Some(connecting) = accept_incoming(incoming, &stats) {
-                        stats.handshakes_started.fetch_add(1, Ordering::Relaxed);
-                        // Stamp with the generation at accept time so a handshake
-                        // that completes across an identity rotation is rejected.
-                        let stamp = generation;
-                        handshakes.push(async move {
-                            (stamp, timeout(HANDSHAKE_TIMEOUT, connecting).await)
-                        });
-                        if handshake_limiter.consume_tokens(1).is_err() {
-                            let wait_us = handshake_limiter.us_to_have_tokens(1).unwrap_or(1000);
-                            let deadline = Instant::now()
-                                .checked_add(Duration::from_micros(wait_us))
-                                .expect("accept-gate deadline should never overflow");
-                            accept_gate.as_mut().reset(deadline);
-                            accept_allowed = false;
-                            stats
-                                .handshake_rate_limited
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
+                    // Handshake ratelimiter check - stop admitting tasks once limiter
+                    // is exhausted.
+                    if limiter.consume_tokens(1).is_err() {
+                        incoming.ignore();
+                        let wait_us = limiter.us_to_have_tokens(1).unwrap_or(1000);
+                        let deadline = Instant::now()
+                            .checked_add(Duration::from_micros(wait_us))
+                            .expect("accept-gate deadline should never overflow");
+                        accept_gate.as_mut().reset(deadline);
+                        rate_limited = true;
+                        stats.handshake_rate_limited.fetch_add(1, Ordering::Relaxed);
+                        continue;
                     }
+                    let remote_addr = incoming.remote_address();
+                    if remote_addr.is_ipv6() || remote_addr.ip().is_multicast() {
+                        incoming.ignore();
+                        continue;
+                    }
+                    // Run the server side of the handshake (CPU-bound crypto).
+                    let connecting = match incoming.accept() {
+                        Ok(connecting) => connecting,
+                        Err(e) => {
+                            record_server_error(&Error::from(e), &stats);
+                            continue;
+                        }
+                    };
+                    stats.handshakes_started.fetch_add(1, Ordering::Relaxed);
+                    // Track the spawned task so the accept guard's `handshakes.len()`
+                    // check bounds the in-flight handshakes.
+                    handshakes.push(spawn(Self::wait_for_complete_handshake(
+                        connecting,
+                        events_sender.clone(),
+                        stats.clone(),
+                    )));
                 }
                 _ = shutdown.cancelled() => break,
             }
         }
     }
-}
 
-/// Cheap pre-handshake gates. Returns the in-progress handshake to drive, or
-/// `None` if the attempt was shed. Sheds are always `ignore()` (silent, no
-/// reply) and never `refuse()`, so a spoofed source address can't make us
-/// reflect a CONNECTION_CLOSE back at a victim.
-fn accept_incoming(incoming: Incoming, stats: &ServerStats) -> Option<Connecting> {
-    let remote_addr = incoming.remote_address();
-    if remote_addr.is_ipv6() || remote_addr.ip().is_multicast() {
-        incoming.ignore();
-        return None;
-    }
-    match incoming.accept() {
-        Ok(connecting) => Some(connecting),
-        Err(e) => {
-            record_server_error(&Error::from(e), stats);
-            None
-        }
-    }
-}
-
-/// A handshake finished, failed, or timed out. On success, extract the attested
-/// pubkey and forward to the control loop for admission. `stamp` is the
-/// generation in force when the handshake was accepted; if it no longer matches
-/// `current_stamp`, the local identity rotated mid-handshake and the connection
-/// authenticated under our previous cert, so we reject it here rather than
-/// forwarding it.
-async fn process_handshake_result(
-    stamp: u64,
-    current_stamp: u64,
-    outcome: Result<Result<Connection, ConnectionError>, tokio::time::error::Elapsed>,
-    events_sender: &mpsc::Sender<InboundEvent>,
-    stats: &ServerStats,
-) {
-    let connection = match outcome {
-        Ok(Ok(connection)) => {
-            stats.handshakes_completed.fetch_add(1, Ordering::Relaxed);
-            connection
-        }
-        Ok(Err(e)) => {
-            record_server_error(&Error::from(e), stats);
+    /// Wait for an inbound TLS handshake to complete. This mostly just
+    /// awaits the client's reply (network-bound), and enforces handshake timeouts.
+    async fn wait_for_complete_handshake(
+        connecting: Connecting,
+        events_sender: mpsc::Sender<InboundEvent>,
+        stats: Arc<ServerStats>,
+    ) {
+        let connection = match timeout(HANDSHAKE_TIMEOUT, connecting).await {
+            Ok(Ok(connection)) => {
+                stats.handshakes_completed.fetch_add(1, Ordering::Relaxed);
+                connection
+            }
+            Ok(Err(e)) => {
+                record_server_error(&Error::from(e), &stats);
+                return;
+            }
+            // Handshake has timed out
+            Err(_elapsed) => {
+                stats.handshake_timed_out.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        };
+        let remote_addr = connection.remote_address();
+        let Some(peer) = get_remote_pubkey(&connection) else {
+            close_codes::INVALID_IDENTITY.close(&connection);
+            record_server_error(&Error::InvalidIdentity(remote_addr), &stats);
             return;
-        }
-        // Handshake has timed out
-        Err(_elapsed) => {
-            stats.handshake_timed_out.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-    };
-    if stamp != current_stamp {
-        close_codes::IDENTITY_ROTATED.close(&connection);
-        stats
-            .connection_evicted_identity_rotated
-            .fetch_add(1, Ordering::Relaxed);
-        return;
+        };
+        let _ = events_sender
+            .send(InboundEvent::Accepted { peer, connection })
+            .await;
     }
-    let remote_addr = connection.remote_address();
-    let Some(peer) = get_remote_pubkey(&connection) else {
-        close_codes::INVALID_IDENTITY.close(&connection);
-        record_server_error(&Error::InvalidIdentity(remote_addr), stats);
-        return;
-    };
-    let _ = events_sender
-        .send(InboundEvent::Accepted { peer, connection })
-        .await;
 }
 
 /// Per-connection read loop for an accepted inbound connection.
@@ -366,8 +310,8 @@ impl ConnectionReader {
     }
 }
 
-/// Inbound control loop: owns the connection table and admits authenticated
-/// connections handed over by [`AcceptLoop`]. Does no handshake work itself.
+/// Inbound control loop: owns the connection table and registers authenticated
+/// connections handed over by [`AcceptLoop`].
 pub(crate) struct InboundLoop {
     pub(crate) ingress: Sender<Datagram>,
     /// Temporary per-peer banlist.
@@ -377,10 +321,12 @@ pub(crate) struct InboundLoop {
     /// Latest admitted-peer snapshot, or `None` to admit all peers (dev/test).
     /// A change publishes a new snapshot and triggers an eviction sweep.
     pub(crate) peerlist_receiver: Option<PeerlistReceiver>,
-    /// Per-peer accepted receive-only connection state, owned solely by this
-    /// loop.
+    /// Identity-rotation channel. On change the whole table is evicted so peers
+    /// re-handshake.
+    pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+    /// Per-peer receive-only connection state.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
-    /// Channel for read tasks to report their lifetime events.
+    /// Clone of event_sender.
     pub(crate) events_sender: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_receiver: mpsc::Receiver<InboundEvent>,
@@ -400,8 +346,9 @@ impl InboundLoop {
         ingress: Sender<Datagram>,
         ban_receiver: mpsc::Receiver<BanCommand>,
         peerlist_receiver: Option<PeerlistReceiver>,
-        events_sender: mpsc::Sender<InboundEvent>,
-        events_receiver: mpsc::Receiver<InboundEvent>,
+        inbound_events_sender: mpsc::Sender<InboundEvent>,
+        inbound_events_receiver: mpsc::Receiver<InboundEvent>,
+        identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
         max_datagrams_per_second_per_peer: f64,
@@ -417,9 +364,10 @@ impl InboundLoop {
             banlist: Banlist::default(),
             ban_receiver,
             peerlist_receiver,
+            identity_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
-            events_sender,
-            events_receiver,
+            events_sender: inbound_events_sender,
+            events_receiver: inbound_events_receiver,
             stats,
             shutdown,
             max_datagrams_per_second_per_peer,
@@ -464,15 +412,30 @@ impl InboundLoop {
         metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let mut peerlist_receiver = self.peerlist_receiver.clone();
+        let mut identity_receiver = self.identity_receiver.clone();
+        // Some local-cluster tests drop the KeyUpdater sender; once the identity
+        // channel closes we stop polling that arm.
+        let mut id_closed = false;
 
         loop {
             tokio::select! {
                 biased;
-                // Admission, lifecycle, and rotation events from the accept loop
-                // and the per-connection read tasks.
+                // Admission and lifecycle events from the accept loops and the
+                // per-connection read tasks.
                 Some(event) = self.events_receiver.recv() => self.handle_event(event),
                 // A peer was banned by the sig-verifier.
                 Some((peer, timeout)) = self.ban_receiver.recv() => self.apply_ban(peer, timeout),
+                // The local identity rotated: evict the table so peers
+                // re-handshake under the new cert.
+                changed = identity_receiver.changed(), if !id_closed => {
+                    if changed.is_err() {
+                        warn!("identity rotation channel closed; inbound loop running without rotation eviction");
+                        id_closed = true;
+                    } else {
+                        let _ = identity_receiver.borrow_and_update();
+                        self.evict_all();
+                    }
+                }
                 // The admitted-peer set changed.
                 changed = async {
                     match peerlist_receiver.as_mut() {
@@ -511,8 +474,8 @@ impl InboundLoop {
     }
 
     /// Evict the whole inbound table so peers re-handshake under the new
-    /// identity. Driven by [`InboundEvent::IdentityRotated`] from [`AcceptLoop`],
-    /// which owns the matching server-TLS-config swap.
+    /// identity. Driven by a change on the identity channel; the accept loops
+    /// own the matching per-endpoint server-TLS-config swaps.
     fn evict_all(&mut self) {
         let evicted = self
             .peer_state
@@ -598,7 +561,6 @@ impl InboundLoop {
                         .fetch_add(closed, Ordering::Relaxed);
                 }
             }
-            InboundEvent::IdentityRotated => self.evict_all(),
         }
     }
 
@@ -667,7 +629,10 @@ impl InboundLoop {
 mod tests {
     use {
         super::*,
-        crate::transport::new_client_config,
+        crate::{
+            HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE, MAX_INFLIGHT_HANDSHAKES,
+            transport::new_client_config,
+        },
         solana_keypair::Keypair,
         std::{
             net::{IpAddr, Ipv4Addr},
@@ -679,8 +644,8 @@ mod tests {
     /// A peer that completes the QUIC Initial but never finishes the handshake
     /// must not pin an in-flight slot indefinitely. quinn resets the idle timer
     /// on every authenticated packet, so a real client that keeps retransmitting
-    /// its Initial (because it never hears a reply) would defeat a pure idle
-    /// timeout. This drives exactly that case through a one-way proxy that
+    /// its Initial (because it never hears a reply) would not trigger idle
+    /// timeout. This reproduces the scenario through a one-way proxy that
     /// black-holes server->client traffic, and asserts the accept loop reclaims
     /// the handshake via `HANDSHAKE_TIMEOUT` (the `handshake_timed_out` counter).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -704,11 +669,13 @@ mod tests {
         let stats = Arc::new(ServerStats::default());
         let shutdown = CancellationToken::new();
         let accept = AcceptLoop::new(
-            vec![endpoint],
+            endpoint,
             identity_receiver,
             events_sender,
             stats.clone(),
             shutdown.clone(),
+            TokenBucket::new(HANDSHAKE_BURST, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE),
+            MAX_INFLIGHT_HANDSHAKES,
         );
         let loop_handle = spawn(accept.run());
 

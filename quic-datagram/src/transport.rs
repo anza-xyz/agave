@@ -35,10 +35,10 @@ impl IdentitySnapshot {
 
 /// Receive datagram buffer (per connection).
 /// Provisions enough room for 1 full slot of votes.
-const DATAGRAM_RECEIVE_BUFFER_BYTES: usize = 8 * 1024;
+const DATAGRAM_RECEIVE_BUFFER_BYTES: usize = 8 * DATAGRAM_MTU as usize;
 /// Send datagram buffer (per connection).
-/// Provisions enough room for 1 full slot of votes.
-const DATAGRAM_SEND_BUFFER_BYTES: usize = 8 * 1024;
+/// Provisions enough room for a full standstill broadcast.
+const DATAGRAM_SEND_BUFFER_BYTES: usize = 50 * DATAGRAM_MTU as usize;
 /// Close connections after this much time without feedback from peer.
 /// This should be more than reasonable max time between PING (or data)
 /// frames arriving from the peer. We also want to keep this rather short

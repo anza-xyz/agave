@@ -155,7 +155,7 @@ pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIV
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
-// Number of QUIC endpoints for the alpenglow datagram transport.
+/// Number of QUIC endpoints for the votor datagram transport.
 pub const DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 
 // Contact-info save/restore handles trusted local data, so disable wincode's
@@ -2411,11 +2411,11 @@ pub struct Sockets {
     pub tpu_vote_forwarding_client: UdpSocket, // udp write only
     /// Client-side socket for ForwardingStage non-vote transactions
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
-    /// UDP sockets for the alpenglow consensus QUIC datagram endpoints.
-    pub alpenglow: Vec<UdpSocket>, // quic read/write
+    /// UDP sockets for the alpenglow votor QUIC server endpoints.
+    pub alpenglow: Vec<UdpSocket>, // quic read only
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket, // quic write only
-    /// Client-side socket for the alpenglow QUIC.
+    /// Client-side socket for the alpenglow votor QUIC endpoint.
     pub quic_alpenglow_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
     pub rpc_sts_client: UdpSocket, // quic write only

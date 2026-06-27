@@ -299,12 +299,12 @@ impl Node {
                 .expect("ancestor_hashes_requests bind");
 
         let (alpenglow_port, alpenglow_primary) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
                 .expect("Alpenglow port bind should succeed");
         let alpenglow = bind_more_with_config(
             alpenglow_primary,
             num_votor_endpoints.get(),
-            socket_configs.read_write,
+            socket_configs.primarily_read_quic,
         )
         .expect("Alpenglow SO_REUSEPORT bind should succeed");
 

@@ -34,9 +34,9 @@ pub type PeerlistReceiver = watch::Receiver<PeerlistSnapshot>;
 /// copy to avoid a `solana-runtime` dependency from this transport crate.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
-/// Maximum simultaneous inbound (we-accepted, receive-only) connections we keep
-/// from a single peer pubkey. Two are needed to let a hot-spare of the same
-/// identity connect while the previous instance's connection is still alive.
+/// Maximum simultaneous inbound connections we keep from a single peer pubkey.
+/// Two are needed to let a hot-spare of the same identity connect while the
+/// previous instance's connection is still alive.
 pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 
 /// Capacity of each task -> control-loop connection-event channel.
@@ -49,24 +49,23 @@ pub const PEER_RATE_LIMIT_BURST_WINDOW: Duration = Duration::from_secs(2);
 /// the connection.
 pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(20);
 
-/// Sustained rate at which we start inbound TLS handshakes across all peers
-/// (handshakes/second). Feeds a token bucket consulted before we call
-/// `Endpoint::accept()`, so it bounds the rate at which we begin handshake
-/// crypto at all, not how many run at once.
+/// Sustained rate at which we start inbound TLS handshakes in (handshakes/second).
+/// This is consulted before we call `Endpoint::accept()`, so it bounds the rate
+/// at which we begin any kind of handshake crypto at all.
 pub const HANDSHAKE_GLOBAL_RATE: f64 = MAX_ALPENGLOW_VOTE_ACCOUNTS as f64;
 
 /// Burst of inbound handshakes tolerated above [`HANDSHAKE_GLOBAL_RATE`] before
-/// new attempts are shed. Sized to ensure load spikes are smoothed.
+/// new attempts are shed. Sized to ensure that reasonable load spikes are tolerated.
 pub(crate) const HANDSHAKE_BURST: u64 = 500;
 
-/// Maximum inbound TLS handshakes allowed in flight at once. Once this many are
-/// pending we stop pulling new attempts off the endpoint until one finishes.
+/// Maximum inbound handshakes allowed in flight. Once this many are
+/// pending we stop pulling new attempts off the endpoint.
 /// This is the limiter on handshake memory use.
 pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Hard timeout for inbound handshake. During handshakes connections
-/// may be kept alive, this explicit cap (mirroring the streamer transport)
-/// reclaims the handshake slots regardless of what the peer sends.
+/// may be kept alive, this explicit cap reclaims the resources
+/// regardless of what the peer sends.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often expired banlist entries are pruned.

@@ -44,11 +44,8 @@ use {
     tokio::sync::mpsc,
 };
 
-/// Best-effort request to the endpoint to ban `peer` for [`BAN_TIMEOUT`]. The
-/// verifier runs on its own thread and must never block on the endpoint, so a
-/// full or closed channel drops the request (logged); the endpoint owns the
-/// banlist and acts on whatever commands it receives.
-pub(super) fn request_ban(ban_sender: &mpsc::Sender<BanCommand>, peer: Pubkey) {
+/// Ask the endpoint to ban `peer` for [`BAN_TIMEOUT`].
+pub(super) fn send_ban_request(ban_sender: &mpsc::Sender<BanCommand>, peer: Pubkey) {
     match ban_sender.try_send((peer, BAN_TIMEOUT)) {
         Ok(()) => info!("requested ban for sender={peer}"),
         Err(mpsc::error::TrySendError::Full(_)) => {
@@ -70,8 +67,7 @@ pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
-    /// Channel to request peer bans from the datagram endpoint (which owns the
-    /// banlist and force-closes banned peers' connections).
+    /// Channel to send peer ban commands to the datagram endpoint.
     pub ban_sender: mpsc::Sender<BanCommand>,
     pub sharable_banks: SharableBanks,
     pub cluster_info: Arc<ClusterInfo>,
@@ -377,8 +373,7 @@ fn recv_batches(
             Err(TryRecvError::Disconnected) => return Err(()),
         }
     };
-    // Size to what is actually queued (plus the batch we just took) rather than
-    // always reserving the full cap: the channel is usually far from full.
+    // Size to what is actually queued (plus the batch we just took).
     let capacity = receiver.len().saturating_add(1).min(soft_receive_cap);
     let mut batches = Vec::with_capacity(capacity);
     batches.push(batch);

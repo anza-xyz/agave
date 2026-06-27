@@ -1,6 +1,6 @@
 use {
     crate::{
-        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, request_ban},
+        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, send_ban_request},
         errors::SigVerifyCertError,
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifyCertStats,
@@ -118,7 +118,7 @@ fn verify_certs(
             Err(e) => {
                 match &e {
                     CertVerifyError::CertVerifyFailed(_) => {
-                        request_ban(ban_sender, sender_identity_pubkey);
+                        send_ban_request(ban_sender, sender_identity_pubkey);
                     }
                     CertVerifyError::TooFarInFuture { .. } => {}
                 }

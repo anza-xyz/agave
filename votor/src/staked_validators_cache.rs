@@ -20,10 +20,9 @@ const EPOCH_BOUNDARY_SLOTS: u64 = 100;
 
 /// Builds and publishes the votor datagram endpoint's peerlist: the set of
 /// staked validators (merged across an epoch boundary) paired with each peer's
-/// votor socket as resolved from gossip. The endpoint uses it both to filter
-/// inbound connections and to initiate outbound connections.
+/// votor server sockets from gossip. The QUIC endpoint uses it to filter
+/// inbound connections, to initiate outbound connections and to fan out packets.
 pub struct StakedValidatorsCache {
-    /// Lock-free handle to the root/working banks.
     sharable_banks: SharableBanks,
 
     /// Publisher for the endpoint's peerlist snapshot.
@@ -100,7 +99,6 @@ impl StakedValidatorsCache {
     }
 
     /// Publish the peerlist for the QUIC endpoint.
-    /// This is driven on the voting-service heartbeat so it stays fresh.
     ///
     /// Near an epoch boundary (within [`EPOCH_BOUNDARY_SLOTS`] on either side)
     /// the adjacent epoch's staked set is merged in so peers transitioning

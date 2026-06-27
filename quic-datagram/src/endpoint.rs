@@ -1,7 +1,8 @@
 //! QUIC datagram endpoint
 use {
     crate::{
-        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, PeerlistReceiver,
+        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
+        MAX_INFLIGHT_HANDSHAKES, PeerlistReceiver,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundEvent, InboundLoop},
@@ -12,6 +13,7 @@ use {
     crossbeam_channel::Sender,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
+    solana_net_utils::token_bucket::TokenBucket,
     solana_pubkey::Pubkey,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate},
     std::{
@@ -70,24 +72,20 @@ pub struct QuicDatagramEndpoint {
 impl QuicDatagramEndpoint {
     /// Construct a datagram-only QUIC endpoint. `server_sockets` back the
     /// inbound (we-accept) direction and are expected to be SO_REUSEPORT
-    /// siblings bound to the same address to load-balance inbound datagrams
-    /// across them. The outbound (send-only) direction runs on a
-    /// dedicated `client_socket` bound to its own port — NOT a member of the
-    /// SO_REUSEPORT accept group. A client Endpoint sharing the group's port
-    /// would have peers' handshake replies load-balanced by the kernel across
-    /// the other sockets, making connections time out.
+    /// bound to the same port to load-balance inbound datagrams. The outbound
+    /// (send-only) direction runs on a dedicated `client_socket` bound to its
+    /// own port.
     ///
     /// Spawns the inbound and outbound loops on `runtime`; dropping the handle
-    /// cancels them. Received datagrams flow into `ingress` via `try_send`;
-    /// full ingress channel results in a drop
-    /// (counted in `datagram_ingress_dropped_channel_full`).
+    /// cancels them.
+    /// Received datagrams flow into `ingress`, per-peer receive rate is capped
+    /// by `max_datagrams_per_second_per_peer`.
     ///
-    /// `peerlist_receiver` carries whole-set peerlist updates: inbound evicts
+    /// `peerlist_receiver` carries desired peer set updates: inbound evicts
     /// peers no longer in the set, outbound connects to peers in it.
-    /// `ban_receiver` carries temporary per-peer ban commands (each force-closes
-    /// the peer's open connections). `peerlist_receiver` is `None` only in
-    /// dev/test builds, where inbound admits all peers and outbound connects to
-    /// nobody.
+    /// `ban_receiver` carries temporary per-peer ban commands (banning also closes
+    /// the peer's connections). `peerlist_receiver` can be `None` , then inbound
+    /// admits all peers and outbound connects to nobody.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
@@ -98,26 +96,33 @@ impl QuicDatagramEndpoint {
         ban_receiver: mpsc::Receiver<BanCommand>,
         max_datagrams_per_second_per_peer: f64,
     ) -> Result<Self, Error> {
-        // A release build must gate inbound admission on a real peerlist;
-        // `None` (admit-all) is only legitimate in dev/test builds.
         assert!(
             cfg!(feature = "dev-context-only-utils") || peerlist_receiver.is_some(),
             "peerlist receiver must be set in release builds",
         );
-        if server_sockets.is_empty() {
-            return Err(Error::NoSockets);
-        }
+        assert!(!server_sockets.is_empty(), "Must have sockets provided");
+
+        let client_stats: Arc<ClientStats> = Arc::default();
+        let server_stats: Arc<ServerStats> = Arc::default();
+        // Egress channel carries *distinct* messages to be sent.
+        // Size it to 5 seconds of the votor max send rate (these rates are quite low).
+        let egress_channel_capacity =
+            (max_datagrams_per_second_per_peer.ceil() as usize).saturating_mul(5);
+        let (egress_sender, egress_receiver) = mpsc::channel(egress_channel_capacity);
+        let shutdown = CancellationToken::new();
+        let (identity_sender, identity_receiver) = watch::channel(None);
+        let key_updater = Arc::new(KeyUpdater {
+            sender: identity_sender,
+        });
         let local_pubkey = keypair.pubkey();
+
         let (cert, key) = new_dummy_x509_certificate(keypair);
         let server_config = new_server_config(cert.clone(), key.clone_key(), ALPENGLOW_ALPN);
         let client_config = new_client_config(cert, key, ALPENGLOW_ALPN);
 
-        // One quinn endpoint per SO_REUSEPORT socket. All carry the server
-        // config so any of them can accept; the kernel decides which socket a
-        // given inbound 4-tuple lands on.
+        // Spawn a quinn endpoint for each socket.
         let (endpoints, mut outbound_endpoint) = {
-            // Endpoint::new requires being inside the runtime context, else it
-            // panics on its first internal `tokio::spawn`.
+            // Endpoint::new requires the runtime context.
             let _guard = runtime.enter();
             let endpoints = server_sockets
                 .into_iter()
@@ -131,9 +136,6 @@ impl QuicDatagramEndpoint {
                     .map_err(Error::Endpoint)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            // The outbound direction runs on its own
-            // client-only endpoint bound to `client_socket`, so inbound
-            // traffic does not interfere with egress.
             let outbound_endpoint = Endpoint::new(
                 EndpointConfig::default(),
                 None, // No server_config on this endpoint
@@ -144,18 +146,6 @@ impl QuicDatagramEndpoint {
             (endpoints, outbound_endpoint)
         };
         outbound_endpoint.set_default_client_config(client_config);
-
-        let client_stats: Arc<ClientStats> = Arc::default();
-        let server_stats: Arc<ServerStats> = Arc::default();
-        // Egress channel carries *distinct* messages.
-        // Size it to 5 seconds of the per-peer send rate - votor rates are very low.
-        let egress_cap = (max_datagrams_per_second_per_peer.ceil() as usize).saturating_mul(5);
-        let (egress_sender, egress_receiver) = mpsc::channel(egress_cap);
-        let shutdown = CancellationToken::new();
-        let (identity_sender, identity_receiver) = watch::channel(None);
-        let key_updater = Arc::new(KeyUpdater {
-            sender: identity_sender,
-        });
 
         // A receive-only endpoint with no peerlist has nothing to connect to
         // so we don't spawn OutboundLoop at all.
@@ -172,24 +162,43 @@ impl QuicDatagramEndpoint {
             runtime.spawn(outbound.run());
         }
 
-        // Shared inbound event channel: the accept loop forwards authenticated
-        // connections, and per-connection read tasks report lifecycle events.
-        let (events_sender, events_receiver) =
+        // Inbound event channel allows the accept loops to forward authenticated
+        // connections, and per-connection tasks report lifecycle events.
+        let (inbound_events_sender, inbound_events_receiver) =
             mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
-        let accept = AcceptLoop::new(
-            endpoints,
-            identity_receiver,
-            events_sender.clone(),
-            server_stats.clone(),
-            shutdown.clone(),
+        // One accept loop per endpoint. Splits the global handshake budgets
+        // evenly so the aggregate matches limits regardless of how many endpoints exist.
+        let num_endpoints = endpoints.len();
+        let handshake_burst = HANDSHAKE_BURST
+            .checked_div(num_endpoints as u64)
+            .expect("num_endpoints can not be zero");
+        let max_inflight_handshakes = MAX_INFLIGHT_HANDSHAKES
+            .checked_div(num_endpoints)
+            .expect("num_endpoints can not be zero");
+        let rate_limiter = TokenBucket::new(
+            handshake_burst,
+            handshake_burst,
+            HANDSHAKE_GLOBAL_RATE / num_endpoints as f64,
         );
-        runtime.spawn(accept.run());
+        for endpoint in endpoints {
+            let accept = AcceptLoop::new(
+                endpoint,
+                identity_receiver.clone(),
+                inbound_events_sender.clone(),
+                server_stats.clone(),
+                shutdown.clone(),
+                rate_limiter.clone(),
+                max_inflight_handshakes,
+            );
+            runtime.spawn(accept.run());
+        }
         let inbound = InboundLoop::new(
             ingress,
             ban_receiver,
             peerlist_receiver,
-            events_sender,
-            events_receiver,
+            inbound_events_sender,
+            inbound_events_receiver,
+            identity_receiver,
             server_stats.clone(),
             shutdown.clone(),
             max_datagrams_per_second_per_peer,

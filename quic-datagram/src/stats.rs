@@ -49,7 +49,8 @@ pub struct ServerStats {
     pub(crate) handshake_rejected_unauthorized: AtomicU64,
     /// Handshake refused due to a resource limit: connection table full.
     pub(crate) handshake_rejected_overload: AtomicU64,
-    /// Number of times the accept gate was closed.
+    /// Inbound attempts shed because the global handshake rate limit was
+    /// exhausted (and the accept gate was closed until it refills).
     pub(crate) handshake_rate_limited: AtomicU64,
     /// Handshakes that did not complete within `HANDSHAKE_TIMEOUT`.
     pub(crate) handshake_timed_out: AtomicU64,
@@ -104,8 +105,7 @@ pub(crate) fn record_client_error(err: &Error, stats: &ClientStats) {
         | Error::Banned(_)
         | Error::TableFull
         | Error::IdentityRotated(_)
-        | Error::Endpoint(_)
-        | Error::NoSockets => {
+        | Error::Endpoint(_) => {
             debug_assert!(false, "outbound direction does not produce {err:?}");
         }
     }
@@ -132,8 +132,7 @@ pub(crate) fn record_server_error(err: &Error, stats: &ServerStats) {
         Error::Connect(_)
         | Error::SendDatagram(_)
         | Error::IdentityRotated(_)
-        | Error::Endpoint(_)
-        | Error::NoSockets => {
+        | Error::Endpoint(_) => {
             debug_assert!(false, "inbound direction does not produce {err:?}");
         }
     }

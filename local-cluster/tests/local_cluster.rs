@@ -6196,10 +6196,7 @@ fn test_alpenglow_migration(
 ) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
 
-    let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
-
     let listener_keypair = Keypair::new();
-
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
@@ -6209,6 +6206,7 @@ fn test_alpenglow_migration(
             vote_listener_addr.local_addr().unwrap(),
         )]))),
     });
+    let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
     validator_config.wait_for_supermajority = Some(0);
 
     validator_config.fixed_leader_schedule = Some(FixedSchedule {
@@ -6242,8 +6240,6 @@ fn test_alpenglow_migration(
     // Create local cluster with alpenglow accounts but feature not activated
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
-    // Send feature activation transaction
-    info!("Sending feature activation transaction");
     let client = RpcClient::new_socket_with_commitment(
         cluster.entry_point_info.rpc().unwrap(),
         CommitmentConfig::processed(),

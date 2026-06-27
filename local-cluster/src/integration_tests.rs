@@ -480,9 +480,10 @@ pub fn run_cluster_partition<C>(
         .unwrap()
         .no_wait_for_vote_to_start_leader = true;
     let slots_per_epoch = 2048;
-    // Shared, live handle to the votor peer-socket override map. Starts empty; we
-    // populate it below to blackhole all peers (simulating a partition), then clear
-    // it to heal. Every validator's cache reads this same handle on each refresh.
+    // Shared handle to the votor peer-socket override maps on each validator.
+    // We populate it below to blackhole all peers (simulating a partition),
+    // then clear it to heal the cluster.
+    // Every validator's cache reads this same handle on each refresh.
     let alpenglow_port_override = Arc::new(ArcSwap::from_pointee(HashMap::new()));
     for config in &mut validator_configs {
         config.voting_service_test_override = Some(VotingServiceOverride {

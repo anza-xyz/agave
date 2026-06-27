@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, SigVerifierChannels, request_ban},
+        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, SigVerifierChannels, send_ban_request},
         errors::SigVerifyVoteError,
         rewards::rewards_wants_vote,
         sig_verified_messages::SigVerifiedBatch,
@@ -219,7 +219,7 @@ fn verify_votes(
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));
     for sender_identity_pubkey in invalid_remote_pubkeys {
-        request_ban(ban_sender, sender_identity_pubkey);
+        send_ban_request(ban_sender, sender_identity_pubkey);
     }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
 

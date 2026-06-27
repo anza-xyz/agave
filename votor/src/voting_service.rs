@@ -537,7 +537,8 @@ mod tests {
     }
 
     /// Spin up a quic-datagram "spy" endpoint with the given keypair.
-    /// Admits all peers.
+    /// With `peerlist_receiver: None` it admits all inbound peers; with `Some`,
+    /// inbound admission and outbound dialing follow that peerlist.
     fn spawn_endpoint(
         keypair: Keypair,
         peerlist_receiver: Option<PeerlistReceiver>,
@@ -644,8 +645,8 @@ mod tests {
         let listener_pubkey = listener_kp.pubkey();
         let (endpoint, ingress_rx, listener_addr, _rt) = spawn_endpoint(listener_kp, None);
 
-        // The client endpoint connects to every peer in the peerlist (empty here),
-        // the listener is injected via the test override below.
+        // Seed the client's peerlist empty; create_voting_service installs a test
+        // override that injects the listener.
         let (peerlist_tx, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
         let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) =
             spawn_endpoint(Keypair::new(), Some(peerlist_receiver));

@@ -103,9 +103,4 @@ pub enum Error {
     /// process). Construction-time only.
     #[error(transparent)]
     Endpoint(#[from] io::Error),
-
-    /// `spawn` was handed an empty socket set; at least one bound socket is
-    /// required (it also backs the outbound direction). Construction-time only.
-    #[error("no sockets supplied to quic-datagram endpoint")]
-    NoSockets,
 }

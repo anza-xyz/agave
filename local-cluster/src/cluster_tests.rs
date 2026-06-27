@@ -582,11 +582,11 @@ pub fn check_for_new_processed(
     );
 }
 
-/// Spawn a votor-flavored quic-datagram endpoint to sniff vote / cert
-/// traffic for a local-cluster test.
+/// Spawn a votor quic-datagram endpoint to sniff vote / cert traffic.
+/// This function is for tests only.
 ///
 /// Returns the endpoint, the ingress receiver, and a tokio runtime
-/// handle whose lifetime must outlive the endpoint.
+/// handle which must outlive the endpoint.
 pub fn start_datagram_listener_for_alpenglow_votor(
     vote_listener_socket: UdpSocket,
     listener_keypair: Keypair,
