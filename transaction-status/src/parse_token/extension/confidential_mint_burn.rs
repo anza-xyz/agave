@@ -284,20 +284,18 @@ mod test {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
+        solana_zk_sdk_pod::encryption::{
+            auth_encryption::PodAeCiphertext,
+            elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
+        },
         spl_token_2022_interface::{
             extension::confidential_mint_burn::instruction::{
                 confidential_burn_with_split_proofs, confidential_mint_with_split_proofs,
                 initialize_mint,
             },
-            solana_zk_sdk::{
-                encryption::pod::{
-                    auth_encryption::PodAeCiphertext,
-                    elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
-                },
-                zk_elgamal_proof_program::proof_data::{
-                    BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
-                    CiphertextCiphertextEqualityProofData, CiphertextCommitmentEqualityProofData,
-                },
+            solana_zk_elgamal_proof_interface::proof_data::{
+                BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
+                CiphertextCiphertextEqualityProofData, CiphertextCommitmentEqualityProofData,
             },
         },
         spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation,
