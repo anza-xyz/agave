@@ -676,6 +676,26 @@ where
     snapshot.serialize(serializer)
 }
 
+/// Serializes bank snapshot into `stream` with wincode.
+///
+/// Produces byte-for-byte the same output as [`serialize_bank_snapshot_into`] (which uses bincode),
+/// just through the wincode serializer.
+pub fn serialize_bank_snapshot_into_wincode(
+    stream: &mut dyn Write,
+    bank_fields: BankFieldsToSerialize,
+    bank_hash_stats: BankHashStats,
+    account_storage_entries: &[Arc<AccountStorageEntry>],
+    extra_fields: ExtraFieldsToSerialize,
+) -> wincode::WriteResult<()> {
+    let slot = bank_fields.slot;
+    let snapshot = SerializableBankSnapshot {
+        bank: SerializableVersionedBank::from(bank_fields),
+        accounts_db: SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
+        extra_fields,
+    };
+    serialize_into(stream, &snapshot)
+}
+
 #[cfg(test)]
 struct SerializableBankAndStorage<'a> {
     bank: &'a Bank,
