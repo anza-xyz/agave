@@ -1531,10 +1531,10 @@ mod tests {
         agave_logger::setup();
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        let my_vote_key = get_key(&bank, 0, 0);
 
         // Use slot 0 (first in leader window: 0 % 4 == 0) so SafeToNotar goes directly to events
         let slot = 0;
+        let my_vote_key = get_key(&bank, slot, 0);
         let block_id = Hash::new_unique();
 
         // Add a skip from myself.
@@ -1562,7 +1562,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    ctx.validators[0].vote_keypair.pubkey(),
+                    my_vote_key,
                     new_vote_aggregate(
                         &bank,
                         &ctx.validators,
@@ -1584,6 +1584,7 @@ mod tests {
 
         // Use slot 4 (first in leader window: 4 % 4 == 0) for the second part
         let slot = 4;
+        let my_vote_key = get_key(&bank, slot, 0);
         let block_id = Hash::new_unique();
 
         // Add 20% notarize, but no vote from myself, should fail
@@ -1592,7 +1593,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    ctx.validators[0].vote_keypair.pubkey(),
+                    my_vote_key,
                     new_vote_aggregate(
                         &bank,
                         &ctx.validators,
@@ -1634,7 +1635,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    ctx.validators[0].vote_keypair.pubkey(),
+                    my_vote_key,
                     new_vote_aggregate(
                         &bank,
                         &ctx.validators,
@@ -1670,7 +1671,7 @@ mod tests {
             ctx.pool
                 .add_batch(
                     &bank,
-                    ctx.validators[0].vote_keypair.pubkey(),
+                    my_vote_key,
                     new_vote_aggregate(
                         &bank,
                         &ctx.validators,
