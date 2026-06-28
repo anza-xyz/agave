@@ -365,12 +365,9 @@ impl InboundLoop {
         }
     }
 
-    /// Live inbound connections (each pubkey may hold several).
-    fn count_connections(&self) -> u64 {
-        self.peer_state
-            .values()
-            .map(|e| e.connections.len())
-            .sum::<usize>() as u64
+    /// Number of peers with live inbound connections.
+    fn total_peers(&self) -> u64 {
+        self.peer_state.len() as u64
     }
 
     /// Remove the connection with the given `stable_id` from `peer`'s inbound
@@ -421,7 +418,7 @@ impl InboundLoop {
                     self.evict_not_allowed();
                 }
                 // Metrics are quite handy to have even if we are flooded with incoming.
-                _ = metrics.tick() => stats::report_server(&self.stats, self.count_connections()),
+                _ = metrics.tick() => stats::report_server(&self.stats, self.total_peers()),
                 // When idle we can take care of bookkeeping.
                 _ = prune.tick() => {
                     self.banlist.prune();
@@ -569,9 +566,9 @@ impl InboundLoop {
                 }
             }
         };
-        stats::record_connection_count(&self.stats.peak_connections, self.count_connections());
-        // The read loop reports [`InboundEvent::Closed`] when it exits so this
-        // loop can reap the table slot.
+        stats::record_connection_count(&self.stats.peak_unique_peers, self.total_peers());
+        // The ConnectionReader reports [`InboundEvent::Closed`] when it exits so
+        // we can get notified when that happens and need not retain a handle here.
         spawn(
             ConnectionReader {
                 connection,

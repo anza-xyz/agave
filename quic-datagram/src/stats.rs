@@ -8,7 +8,7 @@ use {
 /// Counters for the outbound (we-connect, send-only) direction.
 #[derive(Default)]
 pub struct ClientStats {
-    /// High-water mark of live table entries over the reporting period.
+    /// High-water mark of live connections over the reporting period.
     pub(crate) peak_connections: AtomicU64,
     /// Datagrams successfully handed to quinn for transmission.
     pub(crate) datagrams_sent: AtomicU64,
@@ -32,7 +32,7 @@ pub struct ClientStats {
 #[derive(Default)]
 pub struct ServerStats {
     /// High-water mark of live table entries over the reporting period.
-    pub(crate) peak_connections: AtomicU64,
+    pub(crate) peak_unique_peers: AtomicU64,
     /// Datagrams successfully delivered to the ingress channel.
     pub(crate) datagrams_received: AtomicU64,
     /// A connection ended through an expected teardown path.
@@ -181,8 +181,8 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
     datapoint_info!(
         "votor_datagram_server",
         (
-            "connections_peak",
-            take_peak(&stats.peak_connections, live_connections),
+            "unique_peers_peak",
+            take_peak(&stats.peak_unique_peers, live_connections),
             i64
         ),
         ("datagrams_received", swap!(stats.datagrams_received), i64),
