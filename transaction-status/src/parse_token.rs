@@ -734,9 +734,12 @@ pub fn parse_token(
                 &instruction.accounts,
                 account_keys,
             ),
-            TokenInstruction::Batch { .. } => Err(ParseInstructionError::InstructionNotParsable(
-                ParsableProgram::SplToken,
-            )),
+            TokenInstruction::Batch { data } => parse_batch_instruction(
+                &data,
+                instruction.program_id_index,
+                &instruction.accounts,
+                account_keys,
+            ),
         }
     } else if let Ok(token_group_instruction) = TokenGroupInstruction::unpack(&instruction.data) {
         parse_token_group_instruction(
@@ -757,6 +760,52 @@ pub fn parse_token(
             ParsableProgram::SplToken,
         ))
     }
+}
+
+// Parses a `Batch` instruction (shared by spl-token and spl-token-2022). The
+// instruction data holds, for each inner instruction, a `u8` account count, a
+// `u8` data length, then that many data bytes; the outer accounts are each inner
+// instruction's accounts concatenated in the same order.
+fn parse_batch_instruction(
+    data: &[u8],
+    program_id_index: u8,
+    accounts: &[u8],
+    account_keys: &AccountKeys,
+) -> Result<ParsedInstructionEnum, ParseInstructionError> {
+    let not_parsable = || ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken);
+    let mut data_cursor: usize = 0;
+    let mut account_cursor: usize = 0;
+    let mut instructions = vec![];
+    while data_cursor < data.len() {
+        let num_accounts = *data.get(data_cursor).ok_or_else(not_parsable)? as usize;
+        let data_len = *data.get(data_cursor + 1).ok_or_else(not_parsable)? as usize;
+        data_cursor += 2;
+        let data_end = data_cursor.checked_add(data_len).ok_or_else(not_parsable)?;
+        let inner_data = data.get(data_cursor..data_end).ok_or_else(not_parsable)?;
+        data_cursor = data_end;
+        let account_end = account_cursor
+            .checked_add(num_accounts)
+            .ok_or_else(not_parsable)?;
+        let inner_accounts = accounts
+            .get(account_cursor..account_end)
+            .ok_or_else(not_parsable)?;
+        account_cursor = account_end;
+        // Nested batches are not permitted by the program.
+        if inner_data.first() == Some(&255) {
+            return Err(not_parsable());
+        }
+        let inner_instruction = CompiledInstruction {
+            program_id_index,
+            accounts: inner_accounts.to_vec(),
+            data: inner_data.to_vec(),
+        };
+        let parsed = parse_token(&inner_instruction, account_keys)?;
+        instructions.push(serde_json::to_value(parsed).map_err(|_| not_parsable())?);
+    }
+    Ok(ParsedInstructionEnum {
+        instruction_type: "batch".to_string(),
+        info: json!({ "instructions": instructions }),
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -925,7 +974,7 @@ fn map_coption_pubkey(pubkey: COption<Pubkey>) -> Option<String> {
 #[cfg(test)]
 mod test {
     use {
-        super::*, solana_message::Message, solana_pubkey::Pubkey,
+        super::*, solana_instruction::Instruction, solana_message::Message, solana_pubkey::Pubkey,
         spl_token_2022_interface::instruction::*, std::iter::repeat_with,
     };
 
@@ -2195,5 +2244,51 @@ mod test {
     #[test]
     fn test_not_enough_keys_token_2022() {
         test_token_ix_not_enough_keys(&spl_token_2022_interface::id());
+    }
+
+    fn test_parse_batch(program_id: &Pubkey) {
+        let source = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let transfer_ix =
+            transfer_checked(program_id, &source, &mint, &destination, &owner, &[], 10, 2).unwrap();
+        let burn_ix = burn(program_id, &source, &mint, &owner, &[], 5).unwrap();
+
+        let mut data = TokenInstruction::Batch { data: vec![] }.pack();
+        let mut accounts = vec![];
+        for ix in [&transfer_ix, &burn_ix] {
+            data.push(ix.accounts.len() as u8);
+            data.push(ix.data.len() as u8);
+            data.extend_from_slice(&ix.data);
+            accounts.extend_from_slice(&ix.accounts);
+        }
+        let batch_ix = Instruction {
+            program_id: *program_id,
+            accounts,
+            data,
+        };
+        let message = Message::new(&[batch_ix], None);
+        let compiled_instruction = &message.instructions[0];
+        let parsed = parse_token(
+            compiled_instruction,
+            &AccountKeys::new(&message.account_keys, None),
+        )
+        .unwrap();
+        assert_eq!(parsed.instruction_type, "batch");
+        let inner = parsed.info["instructions"].as_array().unwrap();
+        assert_eq!(inner.len(), 2);
+        assert_eq!(inner[0]["type"], "transferChecked");
+        assert_eq!(inner[1]["type"], "burn");
+    }
+
+    #[test]
+    fn test_parse_batch_token() {
+        test_parse_batch(&spl_token_interface::id());
+    }
+
+    #[test]
+    fn test_parse_batch_token_2022() {
+        test_parse_batch(&spl_token_2022_interface::id());
     }
 }
