@@ -7,7 +7,7 @@ use {
         transport::{IdentitySnapshot, new_client_config},
     },
     bytes::Bytes,
-    log::{error, info, warn},
+    log::{error, info},
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::{get_remote_pubkey, socket_addr_to_quic_server_name},
@@ -151,10 +151,6 @@ impl OutboundLoop {
         let mut reconcile_timer = interval(RECONCILE_INTERVAL);
         reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        // The identity arm tolerates the `KeyUpdater` sender being dropped (some
-        // local-cluster tests drop it), once closed we stop polling that arm.
-        let mut id_closed = false;
-
         // A separate receiver clone drives change notifications, the snapshot
         // reads in `reconcile` go through `self.peer_list_receiver`.
         let mut peer_list_receiver = self.peer_list_receiver.clone();
@@ -163,11 +159,10 @@ impl OutboundLoop {
             tokio::select! {
                 biased;
                 // ID changes are rare but very important and must be acted on immediately
-                changed = self.identity_receiver.changed(), if !id_closed => {
-                    if changed.is_err() {
-                        warn!("identity rotation channel closed; outbound loop running without rotation support");
-                        id_closed = true;
-                        continue;
+                changed = self.identity_receiver.changed() => {
+                    if changed.is_err(){
+                        info!("identity rotation channel closed; outbound loop exiting");
+                        break;
                     }
                     let snap = self.identity_receiver.borrow_and_update().clone();
                     if let Some(snap) = snap {

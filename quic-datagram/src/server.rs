@@ -109,20 +109,16 @@ impl AcceptLoop {
         // per-peer admission tasks complete and to track total count.
         let mut handshakes = FuturesUnordered::new();
 
-        // Some local-cluster tests drop the KeyUpdater sender; once the identity
-        // channel closes we stop polling that arm.
-        let mut id_closed = false;
         loop {
             tokio::select! {
                 biased;
                 // Identity rotation: swap this endpoint's server config so new
                 // handshakes observe the new cert. In-flight handshakes that
                 // complete under the old cert are harmless and ignored here.
-                changed = identity_receiver.changed(), if !id_closed => {
+                changed = identity_receiver.changed() => {
                     if changed.is_err() {
-                        warn!("identity rotation channel closed; accept loop running without rotation support");
-                        id_closed = true;
-                        continue;
+                        info!("identity rotation channel closed; accept loop exiting");
+                        break;
                     }
                     if let Some(new_identity) = identity_receiver.borrow_and_update().clone() {
                         let server_config = new_server_config(
@@ -399,9 +395,6 @@ impl InboundLoop {
 
         let mut peer_list_receiver = self.peer_list_receiver.clone();
         let mut identity_receiver = self.identity_receiver.clone();
-        // Some local-cluster tests drop the KeyUpdater sender; once the identity
-        // channel closes we stop polling that arm.
-        let mut id_closed = false;
 
         loop {
             tokio::select! {
@@ -413,14 +406,13 @@ impl InboundLoop {
                 Some(BanCommand { peer, duration }) = self.ban_receiver.recv() => self.apply_ban(peer, duration),
                 // The local identity rotated: evict the table so peers
                 // re-handshake under the new cert.
-                changed = identity_receiver.changed(), if !id_closed => {
+                changed = identity_receiver.changed() => {
                     if changed.is_err() {
-                        warn!("identity rotation channel closed; inbound loop running without rotation eviction");
-                        id_closed = true;
-                    } else {
-                        let _ = identity_receiver.borrow_and_update();
-                        self.evict_all();
+                        info!("identity rotation channel closed; inbound loop exiting");
+                        break;
                     }
+                    let _ = identity_receiver.borrow_and_update();
+                    self.evict_all();
                 }
                 // The admitted-peer set changed.
                 changed = async {
