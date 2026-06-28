@@ -340,7 +340,6 @@ impl SigVerifier {
 
 /// Wraps  [`Datagram`] as a one-packet [`PacketBatch`] so the
 /// rest of the sigverifier can keep operating on the `PacketBatch` abstraction.
-/// TODO: remove this in a later refactor.
 fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
     let Datagram {
         peer_pubkey,

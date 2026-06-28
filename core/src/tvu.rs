@@ -286,8 +286,6 @@ impl Tvu {
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
         // Bring up the votor QUIC datagram endpoint.
-        // TODO: change test-validator tests from starting validator inside a
-        // tokio runtime so the nested runtime hack can be dropped.
         let (votor_runtime, votor_rt_handle) = match Handle::try_current() {
             Ok(handle) => (None, handle),
             Err(_) => {
